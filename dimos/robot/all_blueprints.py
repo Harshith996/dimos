@@ -95,7 +95,6 @@ all_modules = {
     "cost_mapper": "dimos.mapping.costmapper",
     "demo_calculator_skill": "dimos.agents.skills.demo_calculator_skill",
     "demo_robot": "dimos.agents.skills.demo_robot",
-    "depth_module": "dimos.robot.unitree.depth_module",
     "detection3d_module": "dimos.perception.detection.module3D",
     "detection_db_module": "dimos.perception.detection.moduleDB",
     "fastlio2_module": "dimos.hardware.sensors.lidar.fastlio2.module",
