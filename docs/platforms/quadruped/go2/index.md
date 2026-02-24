@@ -35,14 +35,33 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 ## Run on Your Go2
 
+### Pre-flight checks
+
+1. Robot is reachable and low latency <10ms, 0% packet loss
+```bash
+ping $ROBOT_IP
+```
+
+2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+
+3. If video is not in sync with lidar/robot position, sync your clock with an NTP server
+
+```bash
+sudo ntpdate pool.ntp.org
+```
+or
+```bash
+sudo sntp -sS pool.ntp.org
+```
+
+### Ready to run DimOS
+
 ```bash
 export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center.
-
-> **Tip:** Keep the Unitree built-in obstacle avoidance enabled on the robot for now. DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer.
+That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
 
 ### What's Running
 
