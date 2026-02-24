@@ -11,9 +11,9 @@ The Unitree Go2 is DimOS's primary reference platform. Full autonomous navigatio
 ## Install
 
 First, install system dependencies for your platform:
-- [Ubuntu](../../../installation/ubuntu.md)
-- [macOS](../../../installation/osx.md)
-- [Nix](../../../installation/nix.md)
+- [Ubuntu](/docs/installation/ubuntu.md)
+- [macOS](/docs/installation/osx.md)
+- [Nix](/docs/installation/nix.md)
 
 Then install DimOS:
 
@@ -125,8 +125,8 @@ The agent subscribes to camera, LiDAR, and spatial memory streams — it sees wh
 
 ## Deep Dive
 
-- [Navigation Stack](../../../capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Visualization](../../../usage/visualization.md) — Rerun, Foxglove, performance tuning
-- [Data Streams](../../../usage/data_streams/) — RxPY streams, backpressure, quality filtering
-- [Transports](../../../usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](../../../usage/blueprints.md) — composing modules
+- [Navigation Stack](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
+- [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
+- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md) — composing modules
