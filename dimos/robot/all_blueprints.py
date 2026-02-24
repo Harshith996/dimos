@@ -113,6 +113,7 @@ all_modules = {
     "keyboard_teleop_module": "dimos.teleop.keyboard.keyboard_teleop_module",
     "manipulation_module": "dimos.manipulation.manipulation_module",
     "mapper": "dimos.robot.unitree.type.map",
+    "mcp_client": "dimos.agents.mcp.mcp_client",
     "mid360_module": "dimos.hardware.sensors.lidar.livox.module",
     "navigation_skill": "dimos.agents.skills.navigation",
     "object_scene_registration_module": "dimos.perception.object_scene_registration",
