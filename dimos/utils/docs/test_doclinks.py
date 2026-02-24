@@ -773,7 +773,3 @@ class TestLinkResolution:
         assert len(errors) == 0
         assert len(changes) == 0
         assert new_content == content
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

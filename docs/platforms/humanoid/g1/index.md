@@ -13,9 +13,9 @@ The Unitree G1 is a humanoid robot platform with full-body locomotion, arm gestu
 ## Install
 
 First, install system dependencies for your platform:
-- [Ubuntu](../../../installation/ubuntu.md)
-- [macOS](../../../installation/osx.md)
-- [Nix](../../../installation/nix.md)
+- [Ubuntu](/docs/installation/ubuntu.md)
+- [macOS](/docs/installation/osx.md)
+- [Nix](/docs/installation/nix.md)
 
 Then install DimOS:
 
@@ -159,9 +159,9 @@ primitive (sensors + vis)
 
 ## Deep Dive
 
-- [Navigation Stack](../../../capabilities/navigation/readme.md) — path planning and autonomous exploration
-- [Visualization](../../../usage/visualization.md) — Rerun, Foxglove, performance tuning
-- [Data Streams](../../../usage/data_streams/) — RxPY streams, backpressure, quality filtering
-- [Transports](../../../usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](../../../usage/blueprints.md) — composing modules
-- [Agents](../../../capabilities/agents/readme.md) — LLM agent framework
+- [Navigation Stack](/docs/capabilities/navigation/readme.md) — path planning and autonomous exploration
+- [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
+- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md) — composing modules
+- [Agents](/docs/capabilities/agents/readme.md) — LLM agent framework
