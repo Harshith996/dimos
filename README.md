@@ -128,6 +128,33 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 </div>
 
+
+# System Requirements
+
+## Tested and Supported Hardware
+
+DimOS has been tested and validated on the following hardware configurations:
+
+### GPU
+- **NVIDIA RTX 4070 or better** (for perception, VLMs, and AI features)
+- CUDA support required
+- Minimum 8GB VRAM recommended
+
+### CPU
+- **Intel Core i7 (recent generation) or better**
+- AMD Ryzen 7 or better
+- Multi-core recommended for distributed execution
+
+### Memory
+- **16GB RAM minimum**
+- 32GB+ recommended for larger models and multi-robot deployments
+
+### Storage
+- **50GB+ free disk space**
+- SSD strongly recommended for model loading and data logging
+
+> **Note:** DimOS may run on older hardware (e.g., NVIDIA 3000-series GPUs), but performance and stability are not guaranteed. If you encounter issues, please upgrade to the recommended specifications above.
+
 # Installation
 
 ## System Install
