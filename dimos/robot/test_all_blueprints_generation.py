@@ -31,7 +31,7 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements"}
+BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
 
 
 def test_all_blueprints_is_current() -> None:

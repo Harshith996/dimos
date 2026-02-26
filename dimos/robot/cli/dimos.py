@@ -102,7 +102,6 @@ def run(
 ) -> None:
     """Start a robot blueprint"""
     from dimos.core.blueprints import autoconnect
-    from dimos.protocol import pubsub
     from dimos.robot.get_all_blueprints import get_by_name
     from dimos.utils.logging_config import setup_exception_handler
 
@@ -110,7 +109,6 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
     global_config.update(**cli_config_overrides)
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
     blueprint = autoconnect(*map(get_by_name, robot_types))
     dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
