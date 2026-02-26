@@ -24,6 +24,15 @@ from dimos.protocol.service.lcmservice import autoconf
 load_dotenv()
 
 
+def _has_ros() -> bool:
+    try:
+        import rclpy  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line("markers", "slow: tests that are too slow for the fast loop")
@@ -31,6 +40,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
+    config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
 
 
 @pytest.hookimpl()
@@ -39,6 +49,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
+        "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:
