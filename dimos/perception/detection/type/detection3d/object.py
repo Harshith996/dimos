@@ -34,7 +34,7 @@ from dimos.perception.detection.type.detection3d.base import Detection3D
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.perception.detection.type.detection2d import ImageDetections2D
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 @dataclass(kw_only=True)

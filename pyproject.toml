@@ -42,10 +42,8 @@ dependencies = [
     "python-dotenv",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
-
-    # Multiprocess
-    "dask[complete]==2025.5.1",
     "plum-dispatch==2.5.7",
+
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -284,7 +282,6 @@ docker = [
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "reactivex",
-    "dask[distributed]==2025.5.1",
     "plum-dispatch==2.5.7",
     "structlog>=25.5.0,<26",
     "pydantic",

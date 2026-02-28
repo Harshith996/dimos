@@ -20,21 +20,21 @@ Interface layers:
 - @skill (long-horizon): Multi-step composed behaviors (pick, place, place_back, pick_and_place)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import Enum
 import math
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core import In, Module, rpc
+from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
+from dimos.core.stream import In
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.planning import (
     JointPath,
@@ -50,20 +50,12 @@ from dimos.manipulation.planning import (
     create_planner,
 )
 from dimos.manipulation.planning.monitor import WorldMonitor
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-
-# These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs import Pose, PoseArray, Quaternion, Vector3
+from dimos.msgs.sensor_msgs import JointState, PointCloud2
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.perception.detection.type.detection3d.object import Object as DetObject
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import PoseArray
-    from dimos.msgs.sensor_msgs import PointCloud2
-    from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 logger = setup_logger()
 
@@ -234,7 +226,7 @@ class ManipulationModule(Module):
 
         # Start TF publishing thread if any robot has tf_extra_links
         if any(c.tf_extra_links for _, c, _ in self._robots.values()):
-            _ = self.tf  # Eager init — lazy init blocks in Dask workers
+            _ = self.tf  # Eager init
             self._tf_stop_event.clear()
             self._tf_thread = threading.Thread(
                 target=self._tf_publish_loop, name="ManipTFThread", daemon=True

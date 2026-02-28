@@ -134,7 +134,6 @@ all_modules = {
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory",
     "twist-teleop-module": "dimos.teleop.quest.quest_extensions",
     "unitree-skills": "dimos.robot.unitree.unitree_skill_container",
-    "utilization": "dimos.utils.monitoring",
     "visualizing-teleop-module": "dimos.teleop.quest.quest_extensions",
     "vlm-agent": "dimos.agents.vlm_agent",
     "vlm-stream-tester": "dimos.agents.vlm_stream_tester",

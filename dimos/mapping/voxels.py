@@ -22,9 +22,10 @@ from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger

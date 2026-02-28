@@ -490,6 +490,7 @@ class Blueprint:
         self,
         cli_config_overrides: Mapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
+        logger.info("Building the blueprint")
         global_config.update(**dict(self.global_config_overrides))
         if cli_config_overrides:
             global_config.update(**dict(cli_config_overrides))
@@ -498,6 +499,7 @@ class Blueprint:
         self._check_requirements()
         self._verify_no_name_conflicts()
 
+        logger.info("Starting the modules")
         module_coordinator = ModuleCoordinator(cfg=global_config)
         module_coordinator.start()
 

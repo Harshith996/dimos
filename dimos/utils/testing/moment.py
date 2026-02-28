@@ -21,7 +21,7 @@ from dimos.types.timestamped import Timestamped
 from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
-    from dimos.core import Transport
+    from dimos.core.stream import Transport
 
 T = TypeVar("T", bound=Timestamped)
 

@@ -21,7 +21,7 @@ from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray

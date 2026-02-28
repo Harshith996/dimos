@@ -47,7 +47,7 @@ from dimos.types.timestamped import to_ros_stamp
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.perception.detection.type.detection2d import Detection2DBBox
+    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
 @dataclass

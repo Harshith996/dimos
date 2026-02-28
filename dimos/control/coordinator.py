@@ -25,9 +25,8 @@ Features:
 - Aggregated preemption notifications
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -43,28 +42,28 @@ from dimos.control.components import (
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
-from dimos.core import In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs import (
-    PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
-    Twist,  # noqa: TC001 - needed at runtime for In[Twist]
+    PoseStamped,
+    Twist,
 )
 from dimos.msgs.sensor_msgs import (
     JointState,
 )
 from dimos.teleop.quest.quest_types import (
-    Buttons,  # noqa: TC001 - needed at runtime for In[Buttons]
+    Buttons,
 )
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
-    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
 

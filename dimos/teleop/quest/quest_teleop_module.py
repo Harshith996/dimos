@@ -32,8 +32,9 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
