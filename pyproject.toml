@@ -333,6 +333,9 @@ known-first-party = ["dimos"]
 combine-as-imports = true
 force-sort-within-sections = true
 
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["dimos.core.module.Module"]
+
 [tool.mypy]
 python_version = "3.12"
 incremental = true

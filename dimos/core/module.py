@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
-import sys
 import threading
 from typing import (
     TYPE_CHECKING,
@@ -392,14 +391,8 @@ class Module(ModuleBase[ModuleConfigT]):
         """
         super().__init_subclass__(**kwargs)
 
-        # Get type hints for this class only (not inherited ones).
-        globalns = {}
-        for c in cls.__mro__:
-            if c.__module__ in sys.modules:
-                globalns.update(sys.modules[c.__module__].__dict__)
-
         try:
-            hints = get_type_hints(cls, globalns=globalns, include_extras=True)
+            hints = get_type_hints(cls, include_extras=True)
         except (NameError, AttributeError, TypeError):
             hints = {}
 
@@ -413,18 +406,9 @@ class Module(ModuleBase[ModuleConfigT]):
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.ref = None  # type: ignore[assignment]
 
-        # Get type hints with proper namespace resolution for subclasses
-        # Collect namespaces from all classes in the MRO chain
-        globalns = {}
-        for cls in self.__class__.__mro__:
-            if cls.__module__ in sys.modules:
-                globalns.update(sys.modules[cls.__module__].__dict__)
-
         try:
-            hints = get_type_hints(self.__class__, globalns=globalns, include_extras=True)
+            hints = get_type_hints(self.__class__, include_extras=True)
         except (NameError, AttributeError, TypeError):
-            # If we still can't resolve hints, skip type hint processing
-            # This can happen with complex forward references
             hints = {}
 
         for name, ann in hints.items():
