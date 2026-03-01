@@ -44,6 +44,7 @@ class SensorMoment(Generic[T], Resource):
         pass
 
     def stop(self) -> None:
+        self.value = None
         self.transport.stop()
 
 
@@ -65,6 +66,7 @@ class OutputMoment(Generic[T], Resource):
         pass
 
     def stop(self) -> None:
+        self.value = None
         self.transport.stop()
 
 

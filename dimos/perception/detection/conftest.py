@@ -113,7 +113,8 @@ def get_moment(tf):
             "tf": tf,
         }
 
-    return moment_provider
+    yield moment_provider
+    moment_provider.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -217,6 +218,7 @@ def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
 
     yield moment_provider
 
+    moment_provider.cache_clear()
     module._close_module()
 
 
@@ -250,6 +252,7 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
         }
 
     yield moment_provider
+    moment_provider.cache_clear()
     if module is not None:
         module._close_module()
 

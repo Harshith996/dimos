@@ -95,7 +95,7 @@ class Object(Detection3D):
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
-        return self.pointcloud.get_oriented_bounding_box()
+        return self.pointcloud.oriented_bounding_box
 
     def scene_entity_label(self) -> str:
         """Get label for scene visualization."""

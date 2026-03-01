@@ -74,15 +74,15 @@ class Detection3DPC(Detection3D):
 
     def get_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get axis-aligned bounding box of the detection's pointcloud."""
-        return self.pointcloud.get_axis_aligned_bounding_box()
+        return self.pointcloud.axis_aligned_bounding_box
 
     def get_oriented_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get oriented bounding box of the detection's pointcloud."""
-        return self.pointcloud.get_oriented_bounding_box()
+        return self.pointcloud.oriented_bounding_box
 
     def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of the detection's bounding box."""
-        return self.pointcloud.get_bounding_box_dimensions()
+        return self.pointcloud.bounding_box_dimensions
 
     def bounding_box_intersects(self, other: Detection3DPC) -> bool:
         """Check if this detection's bounding box intersects with another's."""

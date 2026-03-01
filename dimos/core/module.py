@@ -149,6 +149,12 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 
+        # Break the In/Out -> owner -> self reference cycle so the instance
+        # can be freed by refcount instead of waiting for GC.
+        for attr in list(vars(self).values()):
+            if isinstance(attr, (In, Out)):
+                attr.owner = None
+
     def _close_rpc(self) -> None:
         if self.rpc:
             self.rpc.stop()  # type: ignore[attr-defined]

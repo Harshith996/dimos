@@ -105,6 +105,11 @@ class VoxelGridMapper(Module):
     @rpc
     def stop(self) -> None:
         super().stop()
+        # Free tensor-tracked objects eagerly so Open3D does not report them as leaks.
+        self.get_global_pointcloud.invalidate_cache(self)
+        self.get_global_pointcloud2.invalidate_cache(self)
+        self.vbg = None
+        self._voxel_hashmap = None
 
     def _on_frame(self, frame: PointCloud2) -> None:
         self.add_frame(frame)
