@@ -32,9 +32,16 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
 
+      - name: Install Python dependencies
+        run: uv sync --all-extras --no-extra dds --frozen
+
+      - name: Remove pydrake stubs
+        run: |
+          find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
+
       - name: Run tests
         run: |
-          /entrypoint.sh bash -c "${{ inputs.cmd }}"
+          /entrypoint.sh bash -c "source .venv/bin/activate && ${{ inputs.cmd }}"
 
       - name: check disk space
         if: failure()
