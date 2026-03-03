@@ -20,6 +20,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections import deque
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -61,6 +62,33 @@ def _bar(value: float, max_val: float, width: int = 12) -> Text:
     return Text("█" * filled + "░" * (width - filled), style=_heat(ratio))
 
 
+# Braille sparkline — each cell packs two samples (left / right column)
+_BRAILLE_BASE = 0x2800
+_LDOTS = (0x00, 0x40, 0x44, 0x46, 0x47)  # left col: 0‥4 filled rows
+_RDOTS = (0x00, 0x80, 0xA0, 0xB0, 0xB8)  # right col: 0‥4 filled rows
+_SPARK_WIDTH = 12  # characters (×2 = 24 samples of history)
+_LABEL_COLOR = "#cccccc"  # metric label color (CPU, PSS, Thr, etc.)
+
+
+def _spark(history: deque[float], width: int = _SPARK_WIDTH) -> Text:
+    """Render a braille sparkline from CPU% history (0‥100 values)."""
+    n = width * 2
+    vals = list(history)
+    if len(vals) < n:
+        vals = [0.0] * (n - len(vals)) + vals
+    else:
+        vals = vals[-n:]
+    result = Text()
+    for i in range(0, n, 2):
+        lv = min(vals[i] / 100.0, 1.0)
+        rv = min(vals[i + 1] / 100.0, 1.0)
+        li = min(int(lv * 4 + 0.5), 4)
+        ri = min(int(rv * 4 + 0.5), 4)
+        ch = chr(_BRAILLE_BASE | _LDOTS[li] | _RDOTS[ri])
+        result.append(ch, style=_heat(max(lv, rv)))
+    return result
+
+
 def _rel_style(value: float, lo: float, hi: float) -> str:
     """Color a value by where it sits in the observed [lo, hi] range."""
     if hi <= lo:
@@ -74,7 +102,7 @@ def _rel_style(value: float, lo: float, hi: float) -> str:
 
 
 def _fmt_pct(v: float) -> str:
-    return f"{v:.0f}%"
+    return f"{v:3.0f}%"
 
 
 def _fmt_mem(v: float) -> str:
@@ -174,6 +202,7 @@ class ResourceSpyApp(App[None]):
         self._lock = threading.Lock()
         self._latest: dict[str, Any] | None = None
         self._last_msg_time: float = 0.0
+        self._cpu_history: dict[str, deque[float]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -182,7 +211,7 @@ class ResourceSpyApp(App[None]):
     def on_mount(self) -> None:
         self._lcm.subscribe(Topic(self._topic_name), self._on_msg)
         self._lcm.start()
-        self.set_interval(1.0, self._refresh)
+        self.set_interval(0.5, self._refresh)
 
     async def on_unmount(self) -> None:
         self._lcm.stop()
@@ -217,39 +246,51 @@ class ResourceSpyApp(App[None]):
         dim = "#606060"
         border_style = dim if stale else "#777777"
 
-        # Collect (role, role_style, data_dict, modules) entries
-        entries: list[tuple[str, str, dict[str, Any], str]] = []
+        # Collect (role, role_style, data_dict, modules, pid) entries
+        entries: list[tuple[str, str, dict[str, Any], str, str]] = []
 
         coord = data.get("coordinator", {})
-        entries.append(("coordinator", theme.BRIGHT_CYAN, coord, ""))
+        entries.append(("coordinator", theme.BRIGHT_CYAN, coord, "", str(coord.get("pid", ""))))
 
         for w in data.get("workers", []):
             alive = w.get("alive", False)
             wid = w.get("worker_id", "?")
             role_style = theme.BRIGHT_GREEN if alive else theme.BRIGHT_RED
             modules = ", ".join(w.get("modules", [])) or ""
-            entries.append((f"worker {wid}", role_style, w, modules))
+            entries.append((f"worker {wid}", role_style, w, modules, str(w.get("pid", ""))))
 
         # Per-metric max for relative coloring
-        ranges = _compute_ranges([d for _, _, d, _ in entries])
+        ranges = _compute_ranges([d for _, _, d, _, _ in entries])
 
         # Build inner content: sections separated by Rules
         parts: list[RenderableType] = []
-        for i, (role, rs, d, mods) in enumerate(entries):
+        for i, (role, rs, d, mods, pid) in enumerate(entries):
+            if role not in self._cpu_history:
+                self._cpu_history[role] = deque(maxlen=_SPARK_WIDTH * 2)
+            if not stale:
+                self._cpu_history[role].append(d.get("cpu_percent", 0))
             if i > 0:
-                title = Text(
-                    f" {role}: {mods} " if mods else f" {role} ",
-                    style=dim if stale else rs,
-                )
+                title = Text(" ")
+                title.append(role, style=dim if stale else _LABEL_COLOR)
+                if mods:
+                    title.append(": ", style=dim if stale else _LABEL_COLOR)
+                    title.append(mods, style=dim if stale else rs)
+                if pid:
+                    title.append(f" [{pid}]", style=dim if stale else "#777777")
+                title.append(" ")
                 parts.append(Rule(title=title, style=border_style))
-            parts.extend(self._make_lines(d, stale, ranges))
+            parts.extend(self._make_lines(d, stale, ranges, self._cpu_history[role]))
 
         # First entry title goes on the Panel itself
-        first_role, first_rs, _, first_mods = entries[0]
-        panel_title = Text(
-            f" {first_role}: {first_mods} " if first_mods else f" {first_role} ",
-            style=dim if stale else first_rs,
-        )
+        first_role, first_rs, _, first_mods, first_pid = entries[0]
+        panel_title = Text(" ")
+        panel_title.append(first_role, style=dim if stale else _LABEL_COLOR)
+        if first_mods:
+            panel_title.append(": ", style=dim if stale else _LABEL_COLOR)
+            panel_title.append(first_mods, style=dim if stale else first_rs)
+        if first_pid:
+            panel_title.append(f" [{first_pid}]", style=dim if stale else "#777777")
+        panel_title.append(" ")
 
         panel = Panel(
             Group(*parts),
@@ -263,14 +304,18 @@ class ResourceSpyApp(App[None]):
         d: dict[str, Any],
         stale: bool,
         ranges: dict[str, tuple[float, float]],
+        cpu_hist: deque[float] | None = None,
     ) -> list[Text]:
         dim = "#606060"
-        label1_style = dim if stale else theme.WHITE
+        label1_style = dim if stale else _LABEL_COLOR
         label2_style = label1_style
+
+        sep = " · "
+        sep_style = dim if stale else "#555555"
 
         # Line 1
         line1 = Text()
-        for label, key, fmt in _LINE1:
+        for idx, (label, key, fmt) in enumerate(_LINE1):
             val = d.get(key, 0)
             lo, hi = ranges[key]
             # CPU% uses absolute 0-100 scale; everything else is relative
@@ -278,32 +323,37 @@ class ResourceSpyApp(App[None]):
                 val_style = dim if stale else _heat(min(val / 100.0, 1.0))
             else:
                 val_style = dim if stale else _rel_style(val, lo, hi)
+            if idx > 0:
+                line1.append(sep, style=sep_style)
             line1.append(f"{label} ", style=label1_style)
             line1.append(fmt(val), style=val_style)
             # CPU bar right after CPU%
             if key == "cpu_percent":
                 line1.append(" ")
                 if stale:
-                    line1.append("░" * 12, style=dim)
+                    line1.append("░" * _SPARK_WIDTH, style=dim)
+                elif cpu_hist is not None and len(cpu_hist) > 0:
+                    line1.append_text(_spark(cpu_hist))
                 else:
                     line1.append_text(_bar(val, 100))
-            line1.append("  ")
 
         # Line 2
         line2 = Text()
-        for _i, (label, key, fmt) in enumerate(_LINE2):
+        for idx, (label, key, fmt) in enumerate(_LINE2):
             val = d.get(key, 0)
             lo, hi = ranges[key]
             val_style = dim if stale else _rel_style(val, lo, hi)
+            if idx > 0:
+                line2.append(sep, style=sep_style)
             line2.append(f"{label} ", style=label2_style)
             line2.append(fmt(val), style=val_style)
-            line2.append("  ")
 
         # IO r/w — compound field
         io_r = d.get(_IO_KEYS[0], 0)
         io_w = d.get(_IO_KEYS[1], 0)
         lo_r, hi_r = ranges[_IO_KEYS[0]]
         lo_w, hi_w = ranges[_IO_KEYS[1]]
+        line2.append(sep, style=sep_style)
         line2.append("IO r/w ", style=label2_style)
         line2.append(_fmt_io(io_r), style=dim if stale else _rel_style(io_r, lo_r, hi_r))
         line2.append("/", style=label2_style)
@@ -369,29 +419,57 @@ _PREVIEW_DATA: dict[str, Any] = {
 
 def _preview() -> None:
     """Print a static preview with fake data (no LCM needed)."""
+    import math
+
     from rich.console import Console
 
     data = _PREVIEW_DATA
     border_style = "#555555"
 
-    entries: list[tuple[str, str, dict[str, Any], str]] = []
-    entries.append(("coordinator", theme.BRIGHT_CYAN, data["coordinator"], ""))
+    entries: list[tuple[str, str, dict[str, Any], str, str]] = []
+    entries.append(
+        (
+            "coordinator",
+            theme.BRIGHT_CYAN,
+            data["coordinator"],
+            "",
+            str(data["coordinator"].get("pid", "")),
+        )
+    )
     for w in data["workers"]:
         rs = theme.BRIGHT_GREEN if w.get("alive") else theme.BRIGHT_RED
         mods = ", ".join(w.get("modules", []))
-        entries.append((f"worker {w['worker_id']}", rs, w, mods))
+        entries.append((f"worker {w['worker_id']}", rs, w, mods, str(w.get("pid", ""))))
 
-    ranges = _compute_ranges([d for _, _, d, _ in entries])
+    ranges = _compute_ranges([d for _, _, d, _, _ in entries])
 
     parts: list[RenderableType] = []
-    for i, (role, rs, d, mods) in enumerate(entries):
+    for i, (role, rs, d, mods, pid) in enumerate(entries):
+        cpu = d.get("cpu_percent", 0)
+        hist: deque[float] = deque(maxlen=_SPARK_WIDTH * 2)
+        for j in range(_SPARK_WIDTH * 2):
+            hist.append(max(0, min(100, cpu + 20 * math.sin(j * 0.6))))
         if i > 0:
-            title = Text(f" {role}: {mods} " if mods else f" {role} ", style=rs)
+            title = Text(" ")
+            title.append(role, style=_LABEL_COLOR)
+            if mods:
+                title.append(": ", style=_LABEL_COLOR)
+                title.append(mods, style=rs)
+            if pid:
+                title.append(f" [{pid}]", style="#777777")
+            title.append(" ")
             parts.append(Rule(title=title, style=border_style))
-        parts.extend(ResourceSpyApp._make_lines(d, stale=False, ranges=ranges))
+        parts.extend(ResourceSpyApp._make_lines(d, stale=False, ranges=ranges, cpu_hist=hist))
 
-    first_role, first_rs, _, first_mods = entries[0]
-    panel_title = Text(f" {first_role} ", style=first_rs)
+    first_role, first_rs, _, first_mods, first_pid = entries[0]
+    panel_title = Text(" ")
+    panel_title.append(first_role, style=_LABEL_COLOR)
+    if first_mods:
+        panel_title.append(": ", style=_LABEL_COLOR)
+        panel_title.append(first_mods, style=first_rs)
+    if first_pid:
+        panel_title.append(f" [{first_pid}]", style="#777777")
+    panel_title.append(" ")
     Console().print(Panel(Group(*parts), title=panel_title, border_style=border_style))
 
 
