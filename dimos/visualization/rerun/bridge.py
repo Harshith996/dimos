@@ -16,8 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import field
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import (
     TYPE_CHECKING,
@@ -89,12 +88,14 @@ RERUN_WEB_PORT = 9090
 logger = setup_logger()
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
     from dimos.protocol.pubsub.spec import SubscribeAllCapable
 
-BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
+BlueprintFactory: TypeAlias = "Callable[[], Blueprint]"
 
 # to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
@@ -141,6 +142,7 @@ def _default_blueprint() -> Blueprint:
     )
 
 
+@dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
@@ -163,7 +165,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module[Config]):
+class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -180,6 +182,7 @@ class RerunBridgeModule(Module[Config]):
     """
 
     default_config = Config
+    config: Config
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
