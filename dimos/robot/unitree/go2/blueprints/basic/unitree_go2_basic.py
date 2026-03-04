@@ -105,6 +105,12 @@ match global_config.viewer_backend:
         from dimos.visualization.rerun.bridge import rerun_bridge
 
         with_vis = autoconnect(_transports_base, rerun_bridge(**rerun_config))
+    case "rerun-connect":
+        from dimos.visualization.rerun.bridge import rerun_bridge
+
+        with_vis = autoconnect(
+            _transports_base, rerun_bridge(viewer_mode="connect", **rerun_config)
+        )
     case "rerun-web":
         from dimos.visualization.rerun.bridge import rerun_bridge
 

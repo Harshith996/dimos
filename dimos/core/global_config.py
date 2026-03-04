@@ -19,7 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.mapping.occupancy.path_map import NavigationStrategy
 
-ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "foxglove", "none"]
+ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
