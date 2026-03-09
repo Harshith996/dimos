@@ -187,6 +187,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         install_signal_handlers(entry, coordinator)
@@ -200,6 +201,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         try:
@@ -260,7 +262,6 @@ def stop(
 @main.command()
 def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Restart in background"),
 ) -> None:
     """Restart the running DimOS instance with the same arguments."""
     from dimos.core.run_registry import get_most_recent, stop_entry
@@ -270,32 +271,19 @@ def restart(
         typer.echo("No running DimOS instance to restart", err=True)
         raise typer.Exit(1)
 
-    # Save args before stopping (stop removes the entry)
-    blueprint_args = entry.cli_args
-    config_overrides = entry.config_overrides
+    if not entry.original_argv:
+        typer.echo("Cannot restart: run entry missing original command", err=True)
+        raise typer.Exit(1)
+
+    # Save argv before stopping (stop removes the entry)
+    argv = entry.original_argv
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
     msg, _ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
 
-    # Re-invoke run with saved arguments
-    cmd = [sys.executable, "-m", "dimos.robot.cli.dimos"]
-    for key, value in config_overrides.items():
-        flag = f"--{key.replace('_', '-')}"
-        if isinstance(value, bool):
-            if value:
-                cmd.append(flag)
-            else:
-                cmd.append(f"--no-{key.replace('_', '-')}")
-        else:
-            cmd.extend([flag, str(value)])
-    cmd.append("run")
-    if daemon:
-        cmd.append("--daemon")
-    cmd.extend(blueprint_args)
-
-    typer.echo(f"  Running: {' '.join(cmd)}")
-    os.execvp(cmd[0], cmd)
+    typer.echo(f"  Running: {' '.join(argv)}")
+    os.execvp(argv[0], argv)
 
 
 @main.command()
