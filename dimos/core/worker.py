@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-import multiprocessing as mp
+import multiprocessing
+import os
 import threading
 import traceback
 from typing import TYPE_CHECKING, Any
@@ -125,7 +126,7 @@ _forkserver_ctx: Any = None
 def get_forkserver_context() -> Any:
     global _forkserver_ctx
     if _forkserver_ctx is None:
-        _forkserver_ctx = mp.get_context("forkserver")
+        _forkserver_ctx = multiprocessing.get_context("forkserver")
     return _forkserver_ctx
 
 
@@ -157,10 +158,17 @@ class Worker:
     @property
     def pid(self) -> int | None:
         """PID of the worker process, or ``None`` if not alive."""
-        if self._process is not None and self._process.is_alive():
-            p: int | None = self._process.pid
-            return p
-        return None
+        if self._process is None:
+            return None
+        try:
+            # Signal 0 just checks if the process is alive.
+            pid: int | None = self._process.pid
+            if pid is None:
+                return None
+            os.kill(pid, 0)
+            return pid
+        except OSError:
+            return None
 
     @property
     def worker_id(self) -> int:
