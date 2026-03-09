@@ -17,6 +17,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import time
 from typing import Any, get_args, get_origin
 
 from dotenv import load_dotenv
@@ -275,15 +276,28 @@ def restart(
         typer.echo("Cannot restart: run entry missing original command", err=True)
         raise typer.Exit(1)
 
-    # Save argv before stopping (stop removes the entry)
+    # Save argv and pid before stopping (stop removes the entry)
     argv = entry.original_argv
+    old_pid = entry.pid
 
     typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
     msg, _ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
 
+    # Wait for the old process to fully exit so ports are released.
+    from dimos.core.run_registry import is_pid_alive
+
+    for _ in range(20):  # up to 2s
+        if not is_pid_alive(old_pid):
+            break
+        time.sleep(0.1)
+
     typer.echo(f"  Running: {' '.join(argv)}")
-    os.execvp(argv[0], argv)
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as exc:
+        typer.echo(f"Error: failed to restart — {exc}", err=True)
+        raise typer.Exit(1)
 
 
 @main.command()
