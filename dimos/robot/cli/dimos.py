@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import sys
+import time
 from typing import Any, get_args, get_origin
 
 import click
@@ -190,6 +192,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         install_signal_handlers(entry, coordinator)
@@ -203,6 +206,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         try:
@@ -392,6 +396,46 @@ def agent_send_cmd(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     typer.echo(text)
+
+
+@main.command()
+def restart(
+    force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
+) -> None:
+    """Restart the running DimOS instance with the same arguments."""
+    from dimos.core.run_registry import get_most_recent, stop_entry
+
+    entry = get_most_recent(alive_only=True)
+    if not entry:
+        typer.echo("No running DimOS instance to restart", err=True)
+        raise typer.Exit(1)
+
+    if not entry.original_argv:
+        typer.echo("Cannot restart: run entry missing original command", err=True)
+        raise typer.Exit(1)
+
+    # Save argv and pid before stopping (stop removes the entry)
+    argv = entry.original_argv
+    old_pid = entry.pid
+
+    typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
+    msg, _ok = stop_entry(entry, force=force)
+    typer.echo(f"  {msg}")
+
+    # Wait for the old process to fully exit so ports are released.
+    from dimos.core.run_registry import is_pid_alive
+
+    for _ in range(20):  # up to 2s
+        if not is_pid_alive(old_pid):
+            break
+        time.sleep(0.1)
+
+    typer.echo(f"  Running: {' '.join(argv)}")
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as exc:
+        typer.echo(f"Error: failed to restart — {exc}", err=True)
+        raise typer.Exit(1)
 
 
 @main.command()
