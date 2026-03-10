@@ -80,7 +80,10 @@ class LCMSpyApp(App):  # type: ignore[type-arg]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
+        # start LCM before .run() takes over the terminal (raw mode),
+        # because autoconf uses typer.confirm() which deadlocks inside a TUI.
         self.spy = GraphLCMSpy(autoconf=True, graph_log_window=0.5)
+        self.spy.start()
         self.table: DataTable | None = None  # type: ignore[type-arg]
 
     def compose(self) -> ComposeResult:
@@ -92,7 +95,6 @@ class LCMSpyApp(App):  # type: ignore[type-arg]
         yield self.table
 
     def on_mount(self) -> None:
-        self.spy.start()
         self.set_interval(self.refresh_interval, self.refresh_table)
 
     async def on_unmount(self) -> None:
