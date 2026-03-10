@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import inspect
 import json
 import os
@@ -28,6 +29,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -111,11 +113,9 @@ def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
 ) -> None:
     """Start a robot blueprint"""
-    from datetime import datetime, timezone
-    import os
-
     logger.info("Starting DimOS")
 
     from dimos.core.blueprints import autoconnect
@@ -126,7 +126,7 @@ def run(
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name
+    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
@@ -158,6 +158,11 @@ def run(
     set_run_log_dir(log_dir)
 
     blueprint = autoconnect(*map(get_by_name, robot_types))
+
+    if disable:
+        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
     coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
 
     if daemon:
@@ -218,10 +223,6 @@ def run(
 @main.command()
 def status() -> None:
     """Show the running DimOS instance."""
-    from datetime import datetime, timezone
-
-    from dimos.core.run_registry import get_most_recent
-
     entry = get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance")
@@ -249,24 +250,16 @@ def stop(
 ) -> None:
     """Stop the running DimOS instance."""
 
-    from dimos.core.run_registry import get_most_recent
-
     entry = get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance", err=True)
         raise typer.Exit(1)
-
-    from dimos.core.run_registry import stop_entry
 
     sig_name = "SIGKILL" if force else "SIGTERM"
     typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
     msg, _ok = stop_entry(entry, force=force)
     typer.echo(f"  {msg}")
 
-
-# ---------------------------------------------------------------------------
-# MCP subcommands
-# ---------------------------------------------------------------------------
 
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 main.add_typer(mcp_app, name="mcp")
@@ -403,8 +396,6 @@ def restart(
     force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
 ) -> None:
     """Restart the running DimOS instance with the same arguments."""
-    from dimos.core.run_registry import get_most_recent, stop_entry
-
     entry = get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance to restart", err=True)
@@ -423,8 +414,6 @@ def restart(
     typer.echo(f"  {msg}")
 
     # Wait for the old process to fully exit so ports are released.
-    from dimos.core.run_registry import is_pid_alive
-
     for _ in range(20):  # up to 2s
         if not is_pid_alive(old_pid):
             break
