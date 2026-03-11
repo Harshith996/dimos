@@ -205,6 +205,9 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         ip = ip if ip is not None else self._global_config.robot_ip
         self.connection = make_connection(ip, self._global_config)
 
+        if hasattr(self.connection, "camera_info_static"):
+            self.camera_info_static = self.connection.camera_info_static
+
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -290,7 +293,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(_camera_info_static())
+            self.camera_info.publish(self.camera_info_static)
             time.sleep(1.0)
 
     @rpc
