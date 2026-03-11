@@ -68,7 +68,7 @@ def _static_base_link(rr: Any) -> list[Any]:
 
 
 rerun_config = {
-    "pubsubs": [LCM(autoconf=True)],
+    "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,

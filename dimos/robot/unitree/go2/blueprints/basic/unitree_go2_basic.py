@@ -75,7 +75,7 @@ def _static_base_link(rr: Any) -> list[Any]:
 rerun_config = {
     # any pubsub that supports subscribe_all and topic that supports str(topic)
     # is acceptable here
-    "pubsubs": [LCM(autoconf=True)],
+    "pubsubs": [LCM()],
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
     # Until this is implemented we have central overrides here
