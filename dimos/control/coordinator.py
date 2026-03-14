@@ -49,13 +49,9 @@ from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Twist,
-)
-from dimos.msgs.sensor_msgs import (
-    JointState,
-)
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -258,7 +254,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         task_type = cfg.type.lower()
 
         if task_type == "trajectory":
-            from dimos.control.tasks import JointTrajectoryTask, JointTrajectoryTaskConfig
+            from dimos.control.tasks.trajectory_task import (
+                JointTrajectoryTask,
+                JointTrajectoryTaskConfig,
+            )
 
             return JointTrajectoryTask(
                 cfg.name,
@@ -269,7 +268,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "servo":
-            from dimos.control.tasks import JointServoTask, JointServoTaskConfig
+            from dimos.control.tasks.servo_task import JointServoTask, JointServoTaskConfig
 
             return JointServoTask(
                 cfg.name,
@@ -280,7 +279,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "velocity":
-            from dimos.control.tasks import JointVelocityTask, JointVelocityTaskConfig
+            from dimos.control.tasks.velocity_task import JointVelocityTask, JointVelocityTaskConfig
 
             return JointVelocityTask(
                 cfg.name,
@@ -291,7 +290,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             )
 
         elif task_type == "cartesian_ik":
-            from dimos.control.tasks import CartesianIKTask, CartesianIKTaskConfig
+            from dimos.control.tasks.cartesian_ik_task import CartesianIKTask, CartesianIKTaskConfig
 
             if cfg.model_path is None:
                 raise ValueError(f"CartesianIKTask '{cfg.name}' requires model_path in TaskConfig")

@@ -38,7 +38,8 @@ from dimos.control.tasks.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.fixture

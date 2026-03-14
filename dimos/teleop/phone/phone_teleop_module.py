@@ -36,7 +36,9 @@ from fastapi.staticfiles import StaticFiles
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root

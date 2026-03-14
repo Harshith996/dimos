@@ -32,7 +32,8 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

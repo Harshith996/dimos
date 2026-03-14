@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -33,15 +33,15 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import (
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
+    from dimos.manipulation.planning.spec.models import (
         CollisionObjectMessage,
         JointPath,
         Obstacle,
-        RobotModelConfig,
         WorldRobotID,
-        WorldSpec,
     )
-    from dimos.msgs.vision_msgs import Detection3D
+    from dimos.manipulation.planning.spec.protocols import WorldSpec
+    from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()
@@ -366,7 +366,7 @@ class WorldMonitor:
             link_name: Name of the link in the URDF
             joint_state: Joint state to use (uses current if None)
         """
-        from dimos.msgs.geometry_msgs import Quaternion
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
         with self._world.scratch_context() as ctx:
             if joint_state is None:

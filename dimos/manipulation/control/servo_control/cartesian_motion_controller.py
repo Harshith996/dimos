@@ -34,8 +34,14 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 

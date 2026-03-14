@@ -26,9 +26,12 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.fixture

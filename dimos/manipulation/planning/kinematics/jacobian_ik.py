@@ -28,7 +28,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldRobotID, WorldSpec
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
     compute_error_twist,
@@ -41,8 +43,11 @@ from dimos.utils.transform_utils import pose_to_matrix
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 

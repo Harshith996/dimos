@@ -54,7 +54,7 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 )
 
 if TYPE_CHECKING:
-    from dimos.msgs.trajectory_msgs import JointTrajectory
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class CoordinatorClient:

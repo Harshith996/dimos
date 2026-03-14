@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporal memory package."""
+"""Simulation engine registry."""
 
-from .frame_window_accumulator import Frame, FrameWindowAccumulator
-from .temporal_memory import TemporalMemory, TemporalMemoryConfig, temporal_memory
-from .temporal_state import TemporalState
-from .window_analyzer import WindowAnalyzer
+from __future__ import annotations
 
-__all__ = [
-    "Frame",
-    "FrameWindowAccumulator",
-    "TemporalMemory",
-    "TemporalMemoryConfig",
-    "TemporalState",
-    "WindowAnalyzer",
-    "temporal_memory",
-]
+from typing import Literal
+
+from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.engines.mujoco_engine import MujocoEngine
+
+EngineType = Literal["mujoco"]
+
+_ENGINES: dict[EngineType, type[SimulationEngine]] = {
+    "mujoco": MujocoEngine,
+}
+
+
+def get_engine(engine_name: EngineType) -> type[SimulationEngine]:
+    return _ENGINES[engine_name]

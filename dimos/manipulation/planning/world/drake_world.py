@@ -25,14 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import (
-    JointPath,
-    Obstacle,
-    ObstacleType,
-    RobotModelConfig,
-    WorldRobotID,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
@@ -41,8 +37,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 try:
     from pydrake.geometry import (  # type: ignore[import-not-found]

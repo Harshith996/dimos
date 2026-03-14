@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ZED camera hardware interfaces."""
+"""ZED camera compatibility layer and SDK detection."""
 
 from pathlib import Path
 

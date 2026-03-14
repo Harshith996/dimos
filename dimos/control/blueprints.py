@@ -39,8 +39,9 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.data import LfsPath
 

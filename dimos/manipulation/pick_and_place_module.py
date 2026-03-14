@@ -37,7 +37,9 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.object import (
     Object as DetObject,
 )
@@ -45,8 +47,8 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseArray
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 

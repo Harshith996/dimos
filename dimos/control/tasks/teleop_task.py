@@ -51,7 +51,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.teleop.quest.quest_types import Buttons
 
 logger = setup_logger()

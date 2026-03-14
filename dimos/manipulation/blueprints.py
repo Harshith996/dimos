@@ -35,12 +35,15 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera.realsense import realsense_camera
+from dimos.hardware.sensors.camera.realsense.camera import realsense_camera
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.pick_and_place_module import pick_and_place_module
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import JointState
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import object_scene_registration_module
 from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data

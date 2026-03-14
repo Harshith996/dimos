@@ -38,7 +38,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

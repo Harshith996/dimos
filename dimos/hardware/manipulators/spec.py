@@ -26,7 +26,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 class DriverStatus(Enum):

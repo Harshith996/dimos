@@ -25,7 +25,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass

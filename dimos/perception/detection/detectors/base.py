@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,21 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility re-exports for legacy dimos.robot.unitree_webrtc.type.* imports."""
+from abc import ABC, abstractmethod
 
-import importlib
-
-__all__ = []
-
-
-def __getattr__(name: str):  # type: ignore[no-untyped-def]
-    module = importlib.import_module("dimos.robot.unitree.type")
-    try:
-        return getattr(module, name)
-    except AttributeError as exc:
-        raise AttributeError(f"No {__name__} attribute {name}") from exc
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
-def __dir__() -> list[str]:
-    module = importlib.import_module("dimos.robot.unitree.type")
-    return [name for name in dir(module) if not name.startswith("_")]
+class Detector(ABC):
+    @abstractmethod
+    def process_image(self, image: Image) -> ImageDetections2D: ...

@@ -34,15 +34,17 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.experimental.temporal_memory import (
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
     Frame,
     FrameWindowAccumulator,
+)
+from dimos.perception.experimental.temporal_memory.temporal_memory import (
     TemporalMemory,
     TemporalMemoryConfig,
-    TemporalState,
 )
-from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.temporal_state import TemporalState
 from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
     extract_time_window,
 )

@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs import PoseStamped
-    from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 RobotName: TypeAlias = str

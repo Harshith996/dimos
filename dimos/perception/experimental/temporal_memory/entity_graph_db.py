@@ -30,9 +30,12 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
 
+from .temporal_utils.parsers import parse_batch_distance_response
+from .temporal_utils.prompts import build_batch_distance_estimation_prompt
+
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 logger = setup_logger()
 
@@ -564,7 +567,6 @@ class EntityGraphDB:
         """Estimate distances between entities using VLM and save to database."""
         if not frame_image:
             return
-        from . import temporal_utils as tu
 
         enriched_entities: list[dict[str, Any]] = []
         for entity in parsed.get("new_entities", []):
@@ -593,8 +595,8 @@ class EntityGraphDB:
         if not pairs:
             return
         try:
-            response = vlm.query(frame_image, tu.build_batch_distance_estimation_prompt(pairs))
-            for r in tu.parse_batch_distance_response(response, pairs):
+            response = vlm.query(frame_image, build_batch_distance_estimation_prompt(pairs))
+            for r in parse_batch_distance_response(response, pairs):
                 if r["category"] in ("near", "medium", "far"):
                     self.add_distance(
                         entity_a_id=r["entity_a_id"],

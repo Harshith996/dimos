@@ -34,23 +34,20 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning import (
-    JointPath,
+from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
+from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
-    KinematicsSpec,
-    Obstacle,
-    ObstacleType,
-    PlannerSpec,
-    RobotModelConfig,
-    RobotName,
-    WorldRobotID,
-    create_kinematics,
-    create_planner,
 )
-from dimos.manipulation.planning.monitor import WorldMonitor
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -247,7 +244,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs import Transform
+        from dimos.msgs.geometry_msgs.Transform import Transform
 
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
@@ -406,7 +403,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return self._fail("No joint state")
 
         # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
             frame_id="world",
@@ -750,7 +747,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return ""
 
         # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         obstacle = Obstacle(
             name=name,

@@ -37,8 +37,8 @@ from fastapi.staticfiles import StaticFiles
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Joy
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger

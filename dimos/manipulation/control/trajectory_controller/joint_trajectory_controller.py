@@ -36,8 +36,11 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState, TrajectoryStatus
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

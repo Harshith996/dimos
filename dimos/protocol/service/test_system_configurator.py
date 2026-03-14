@@ -19,22 +19,22 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dimos.protocol.service.system_configurator import (
-    IDEAL_RMEM_SIZE,
-    BufferConfiguratorLinux,
-    BufferConfiguratorMacOS,
-    ClockSyncConfigurator,
-    MaxFileConfiguratorMacOS,
-    MulticastConfiguratorLinux,
-    MulticastConfiguratorMacOS,
-    SystemConfigurator,
-    configure_system,
-    sudo_run,
-)
 from dimos.protocol.service.system_configurator.base import (
+    SystemConfigurator,
     _is_root_user,
     _read_sysctl_int,
     _write_sysctl_int,
+    configure_system,
+    sudo_run,
+)
+from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
+from dimos.protocol.service.system_configurator.lcm import (
+    IDEAL_RMEM_SIZE,
+    BufferConfiguratorLinux,
+    BufferConfiguratorMacOS,
+    MaxFileConfiguratorMacOS,
+    MulticastConfiguratorLinux,
+    MulticastConfiguratorMacOS,
 )
 
 # Helper function tests
