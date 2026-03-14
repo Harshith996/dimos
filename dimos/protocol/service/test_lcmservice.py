@@ -34,7 +34,7 @@ from dimos.protocol.service.system_configurator import (
     MulticastConfiguratorMacOS,
 )
 
-# ----------------------------- autoconf tests -----------------------------
+# autoconf tests
 
 
 class TestConfigureSystemForLcm:
@@ -87,7 +87,7 @@ class TestConfigureSystemForLcm:
                     assert "Windows" in mock_logger.error.call_args[0][0]
 
 
-# ----------------------------- LCMConfig tests -----------------------------
+# LCMConfig tests
 
 
 class TestLCMConfig:
@@ -103,7 +103,7 @@ class TestLCMConfig:
         assert config.url == custom_url
 
 
-# ----------------------------- Topic tests -----------------------------
+# Topic tests
 
 
 class TestTopic:
@@ -118,7 +118,7 @@ class TestTopic:
         assert str(topic) == "my_topic#TestMessage"
 
 
-# ----------------------------- LCMService tests -----------------------------
+# LCMService tests
 
 
 class TestLCMService:

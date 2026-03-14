@@ -28,10 +28,6 @@ from typing import Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
-# ============================================================================
-# SHARED TYPES
-# ============================================================================
-
 
 class DriverStatus(Enum):
     """Status returned by driver operations."""
@@ -83,11 +79,6 @@ def default_base_transform() -> Transform:
     )
 
 
-# ============================================================================
-# ADAPTER PROTOCOL
-# ============================================================================
-
-
 @runtime_checkable
 class ManipulatorAdapter(Protocol):
     """Protocol for hardware-specific IO.
@@ -99,8 +90,6 @@ class ManipulatorAdapter(Protocol):
     - Position: meters
     - Force: Newtons
     """
-
-    # --- Connection ---
 
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
@@ -114,8 +103,6 @@ class ManipulatorAdapter(Protocol):
         """Check if connected."""
         ...
 
-    # --- Info ---
-
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
         ...
@@ -127,8 +114,6 @@ class ManipulatorAdapter(Protocol):
     def get_limits(self) -> JointLimits:
         """Get joint limits."""
         ...
-
-    # --- Control Mode ---
 
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode (position, velocity, torque, cartesian, etc).
@@ -152,8 +137,6 @@ class ManipulatorAdapter(Protocol):
         """
         ...
 
-    # --- State Reading ---
-
     def read_joint_positions(self) -> list[float]:
         """Read current joint positions (radians)."""
         ...
@@ -174,8 +157,6 @@ class ManipulatorAdapter(Protocol):
         """Read error code and message. (0, '') means no error."""
         ...
 
-    # --- Motion Control (Joint Space) ---
-
     def write_joint_positions(
         self,
         positions: list[float],
@@ -192,8 +173,6 @@ class ManipulatorAdapter(Protocol):
         """Stop all motion immediately."""
         ...
 
-    # --- Servo Control ---
-
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable servos. Returns success."""
         ...
@@ -206,7 +185,6 @@ class ManipulatorAdapter(Protocol):
         """Clear error state. Returns success."""
         ...
 
-    # --- Optional: Cartesian Control ---
     # Return None/False if not supported
 
     def read_cartesian_position(self) -> dict[str, float] | None:
@@ -234,8 +212,6 @@ class ManipulatorAdapter(Protocol):
         """
         ...
 
-    # --- Optional: Gripper ---
-
     def read_gripper_position(self) -> float | None:
         """Read gripper position (meters). None if no gripper."""
         ...
@@ -243,8 +219,6 @@ class ManipulatorAdapter(Protocol):
     def write_gripper_position(self, position: float) -> bool:
         """Command gripper position. False if no gripper."""
         ...
-
-    # --- Optional: Force/Torque Sensor ---
 
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor [fx, fy, fz, tx, ty, tz]. None if no sensor."""

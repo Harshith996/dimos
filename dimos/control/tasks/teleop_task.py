@@ -295,10 +295,6 @@ class TeleopIKTask(BaseControlTask):
         if joints & self._joint_names:
             logger.warning(f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}")
 
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
-
     def on_buttons(self, msg: Buttons) -> bool:
         """Press-and-hold engage: hold primary button to track, release to stop."""
         is_left = self._config.hand == "left"

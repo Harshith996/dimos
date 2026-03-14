@@ -122,7 +122,7 @@ class EntityGraphDB:
 
         conn.commit()
 
-    # ==================== Entity Operations ====================
+    # Entity Operations
 
     def upsert_entity(
         self,
@@ -216,7 +216,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Relation Operations ====================
+    # Relation Operations
 
     def add_relation(
         self,
@@ -290,7 +290,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Distance Operations ====================
+    # Distance Operations
 
     def add_distance(
         self,
@@ -424,7 +424,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Neighborhood Query ====================
+    # Neighborhood Query
 
     def get_entity_neighborhood(
         self,
@@ -471,7 +471,7 @@ class EntityGraphDB:
             "num_hops": max_hops,
         }
 
-    # ==================== Stats / Summary ====================
+    # Stats / Summary
 
     def get_stats(self) -> dict[str, Any]:
         conn = self._get_connection()
@@ -491,7 +491,7 @@ class EntityGraphDB:
             "recent_relations": self.get_recent_relations(limit=recent_relations_limit),
         }
 
-    # ==================== Bulk Save ====================
+    # Bulk Save
 
     def save_window_data(
         self,
@@ -608,7 +608,7 @@ class EntityGraphDB:
         except Exception as e:
             logger.warning(f"Failed to estimate distances: {e}", exc_info=True)
 
-    # ==================== Lifecycle ====================
+    # Lifecycle
 
     def commit(self) -> None:
         if hasattr(self._local, "conn"):

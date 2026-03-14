@@ -45,10 +45,6 @@ from dimos.perception.object_scene_registration import object_scene_registration
 from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
 
-# =============================================================================
-# Pose Helpers
-# =============================================================================
-
 
 def _make_base_pose(
     x: float = 0.0,
@@ -68,11 +64,6 @@ def _make_base_pose(
         position=Vector3(x=x, y=y, z=z),
         orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
     )
-
-
-# =============================================================================
-# URDF Helpers
-# =============================================================================
 
 
 def _get_xarm_urdf_path() -> Path:
@@ -131,11 +122,6 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "left_outer_knuckle"),
     ("link6", "right_outer_knuckle"),
 ]
-
-
-# =============================================================================
-# Robot Configs
-# =============================================================================
 
 
 def _make_xarm6_config(
@@ -281,11 +267,6 @@ def _make_piper_config(
         coordinator_task_name=coordinator_task,
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
-
-
-# =============================================================================
-# Blueprints
-# =============================================================================
 
 
 # Single XArm6 planner (standalone, no coordinator)

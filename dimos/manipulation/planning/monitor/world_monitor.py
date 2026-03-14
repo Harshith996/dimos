@@ -66,7 +66,7 @@ class WorldMonitor:
         self._viz_stop_event = threading.Event()
         self._viz_rate_hz: float = 10.0
 
-    # ============= Robot Management =============
+    # Robot Management
 
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot. Returns robot_id."""
@@ -93,7 +93,7 @@ class WorldMonitor:
         with self._lock:
             return self._world.get_joint_limits(robot_id)
 
-    # ============= Obstacle Management =============
+    # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add an obstacle. Returns obstacle_id."""
@@ -110,7 +110,7 @@ class WorldMonitor:
         with self._lock:
             self._world.clear_obstacles()
 
-    # ============= Monitor Control =============
+    # Monitor Control
 
     def start_state_monitor(
         self,
@@ -181,7 +181,7 @@ class WorldMonitor:
 
         self._world.close()
 
-    # ============= Message Handlers =============
+    # Message Handlers
 
     def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
         """Handle joint state message. Broadcasts to all monitors if robot_id is None."""
@@ -252,7 +252,7 @@ class WorldMonitor:
             return self._obstacle_monitor.list_added_obstacles()
         return []
 
-    # ============= State Access =============
+    # State Access
 
     def get_current_joint_state(self, robot_id: WorldRobotID) -> JointState | None:
         """Get current joint state. Returns None if not yet received."""
@@ -294,7 +294,7 @@ class WorldMonitor:
             return self._state_monitors[robot_id].is_state_stale(max_age)
         return True
 
-    # ============= Context Management =============
+    # Context Management
 
     @contextmanager
     def scratch_context(self) -> Generator[Any, None, None]:
@@ -306,7 +306,7 @@ class WorldMonitor:
         """Get live context. Prefer scratch_context() for planning."""
         return self._world.get_live_context()
 
-    # ============= Collision Checking =============
+    # Collision Checking
 
     def is_state_valid(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check if configuration is collision-free."""
@@ -340,7 +340,7 @@ class WorldMonitor:
         with self._world.scratch_context() as ctx:
             return self._world.get_min_distance(ctx, robot_id)
 
-    # ============= Kinematics =============
+    # Kinematics
 
     def get_ee_pose(
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
@@ -394,7 +394,7 @@ class WorldMonitor:
             self._world.set_joint_state(ctx, robot_id, joint_state)
             return self._world.get_jacobian(ctx, robot_id)
 
-    # ============= Lifecycle =============
+    # Lifecycle
 
     def finalize(self) -> None:
         """Finalize world. Must be called before collision checking."""
@@ -407,7 +407,7 @@ class WorldMonitor:
         """Check if world is finalized."""
         return self._world.is_finalized
 
-    # ============= Visualization =============
+    # Visualization
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL or None if not enabled."""
@@ -466,7 +466,7 @@ class WorldMonitor:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)
 
-    # ============= Direct World Access =============
+    # Direct World Access
 
     @property
     def world(self) -> WorldSpec:

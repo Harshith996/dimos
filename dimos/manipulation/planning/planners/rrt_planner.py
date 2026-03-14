@@ -315,7 +315,7 @@ class RRTConnectPlanner:
         return simplified
 
 
-# ============= Result Helpers =============
+# Result Helpers
 
 
 def _create_success_result(

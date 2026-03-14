@@ -68,11 +68,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-
 @dataclass
 class TaskConfig:
     """Configuration for a control task.
@@ -122,11 +117,6 @@ class ControlCoordinatorConfig(ModuleConfig):
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
-
-
-# =============================================================================
-# ControlCoordinator Module
-# =============================================================================
 
 
 class ControlCoordinator(Module[ControlCoordinatorConfig]):
@@ -200,10 +190,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
-
-    # =========================================================================
-    # Config-based Setup
-    # =========================================================================
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
@@ -343,10 +329,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
-    # =========================================================================
-    # Hardware Management (RPC)
-    # =========================================================================
-
     @rpc
     def add_hardware(
         self,
@@ -446,10 +428,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     positions[joint_name] = joint_state.position
             return positions
 
-    # =========================================================================
-    # Task Management (RPC)
-    # =========================================================================
-
     @rpc
     def add_task(self, task: ControlTask) -> bool:
         """Register a task with the coordinator."""
@@ -491,10 +469,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """List currently active task names."""
         with self._task_lock:
             return [name for name, task in self._tasks.items() if task.is_active()]
-
-    # =========================================================================
-    # Streaming Control
-    # =========================================================================
 
     def _on_joint_command(self, msg: JointState) -> None:
         """Route incoming JointState to streaming tasks by joint name.
@@ -603,10 +577,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
             return getattr(task, method)(**kwargs)
 
-    # =========================================================================
-    # Gripper
-    # =========================================================================
-
     @rpc
     def set_gripper_position(self, hardware_id: str, position: float) -> bool:
         """Set gripper position on a specific hardware device.
@@ -639,10 +609,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             if isinstance(hw, ConnectedTwistBase):
                 return None
             return hw.adapter.read_gripper_position()
-
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
 
     @rpc
     def start(self) -> None:

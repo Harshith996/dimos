@@ -79,10 +79,6 @@ class WindowAnalyzer:
     def vlm(self) -> VlModel[Any]:
         return self._vlm
 
-    # ------------------------------------------------------------------
-    # VLM Call #1: Window analysis
-    # ------------------------------------------------------------------
-
     def analyze_window(
         self,
         frames: list[Frame],
@@ -116,15 +112,7 @@ class WindowAnalyzer:
         parsed = tu.parse_window_response(raw, w_start, w_end, len(frames))
         return AnalysisResult(parsed=parsed, raw_vlm_response=raw, w_start=w_start, w_end=w_end)
 
-    # ------------------------------------------------------------------
-    # VLM Call #2: Distance estimation (delegated to EntityGraphDB)
-    # ------------------------------------------------------------------
-    # Distance estimation is handled by EntityGraphDB.estimate_and_save_distances.
     # It's called from the orchestrator, not here.
-
-    # ------------------------------------------------------------------
-    # VLM Call #3: Rolling summary
-    # ------------------------------------------------------------------
 
     def update_summary(
         self,
@@ -147,10 +135,6 @@ class WindowAnalyzer:
         except Exception as e:
             logger.error(f"summary update failed: {e}", exc_info=True)
         return None
-
-    # ------------------------------------------------------------------
-    # VLM Call #5: Query answer
-    # ------------------------------------------------------------------
 
     def answer_query(
         self,

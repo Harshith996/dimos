@@ -255,10 +255,6 @@ class CartesianIKTask(BaseControlTask):
                 f"CartesianIKTask {self._name} preempted by {by_task} on joints {joints}"
             )
 
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
-
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (target EE pose).
 

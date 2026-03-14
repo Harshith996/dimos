@@ -37,10 +37,6 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
     from dimos.teleop.quest.quest_types import Buttons
 
-# =============================================================================
-# Data Types
-# =============================================================================
-
 
 @dataclass(frozen=True)
 class ResourceClaim:
@@ -166,11 +162,6 @@ class JointCommandOutput:
                 return self.efforts
             case _:
                 return None
-
-
-# =============================================================================
-# ControlTask Protocol
-# =============================================================================
 
 
 @runtime_checkable

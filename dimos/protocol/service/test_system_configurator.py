@@ -37,7 +37,7 @@ from dimos.protocol.service.system_configurator.base import (
     _write_sysctl_int,
 )
 
-# ----------------------------- Helper function tests -----------------------------
+# Helper function tests
 
 
 class TestIsRootUser:
@@ -122,7 +122,7 @@ class TestWriteSysctlInt:
                 )
 
 
-# ----------------------------- configure_system tests -----------------------------
+# configure_system tests
 
 
 class MockConfigurator(SystemConfigurator):
@@ -186,7 +186,7 @@ class TestConfigureSystem:
         assert exc_info.value.code == 1
 
 
-# ----------------------------- MulticastConfiguratorLinux tests -----------------------------
+# MulticastConfiguratorLinux tests
 
 
 class TestMulticastConfiguratorLinux:
@@ -259,7 +259,7 @@ class TestMulticastConfiguratorLinux:
                 assert mock_run.call_count == 2
 
 
-# ----------------------------- MulticastConfiguratorMacOS tests -----------------------------
+# MulticastConfiguratorMacOS tests
 
 
 class TestMulticastConfiguratorMacOS:
@@ -311,7 +311,7 @@ class TestMulticastConfiguratorMacOS:
                 assert "224.0.0.0/4" in add_args
 
 
-# ----------------------------- BufferConfiguratorLinux tests -----------------------------
+# BufferConfiguratorLinux tests
 
 
 class TestBufferConfiguratorLinux:
@@ -354,7 +354,7 @@ class TestBufferConfiguratorLinux:
             mock_write.assert_called_once_with("net.core.rmem_max", IDEAL_RMEM_SIZE)
 
 
-# ----------------------------- BufferConfiguratorMacOS tests -----------------------------
+# BufferConfiguratorMacOS tests
 
 
 class TestBufferConfiguratorMacOS:
@@ -398,7 +398,7 @@ class TestBufferConfiguratorMacOS:
             )
 
 
-# ----------------------------- MaxFileConfiguratorMacOS tests -----------------------------
+# MaxFileConfiguratorMacOS tests
 
 
 class TestMaxFileConfiguratorMacOS:
@@ -489,7 +489,7 @@ class TestMaxFileConfiguratorMacOS:
                 configurator.fix()
 
 
-# ----------------------------- ClockSyncConfigurator tests -----------------------------
+# ClockSyncConfigurator tests
 
 
 class TestClockSyncConfigurator:

@@ -30,10 +30,6 @@ from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
-# =============================================================================
-# Fixtures
-# =============================================================================
-
 
 @pytest.fixture
 def robot_config():
@@ -103,11 +99,6 @@ def _make_module():
         return module
 
 
-# =============================================================================
-# Test State Machine
-# =============================================================================
-
-
 class TestStateMachine:
     """Test state transitions."""
 
@@ -167,11 +158,6 @@ class TestStateMachine:
         assert module._begin_planning() is None
 
 
-# =============================================================================
-# Test Robot Selection
-# =============================================================================
-
-
 class TestRobotSelection:
     """Test robot selection logic."""
 
@@ -201,11 +187,6 @@ class TestRobotSelection:
         assert result[0] == "left"
 
 
-# =============================================================================
-# Test Joint Name Translation (for coordinator integration)
-# =============================================================================
-
-
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
 
@@ -225,11 +206,6 @@ class TestJointNameTranslation:
         )
         assert result.joint_names == ["left_joint1", "left_joint2", "left_joint3"]
         assert len(result.points) == 2  # Points preserved
-
-
-# =============================================================================
-# Test Execute Method
-# =============================================================================
 
 
 class TestExecute:
@@ -286,11 +262,6 @@ class TestExecute:
 
         assert module.execute() is False
         assert module._state == ManipulationState.FAULT
-
-
-# =============================================================================
-# Test RobotModelConfig Mapping Helpers
-# =============================================================================
 
 
 class TestRobotModelConfigMapping:

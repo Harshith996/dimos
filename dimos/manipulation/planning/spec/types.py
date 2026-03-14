@@ -32,9 +32,6 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs import PoseStamped
     from dimos.msgs.sensor_msgs import JointState
 
-# =============================================================================
-# Semantic ID Types (documentation only, not enforced at runtime)
-# =============================================================================
 
 RobotName: TypeAlias = str
 """User-facing robot name (e.g., 'left_arm', 'right_arm')"""
@@ -45,17 +42,9 @@ WorldRobotID: TypeAlias = str
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
-# =============================================================================
-# Numeric Array Types
-# =============================================================================
 
 Jacobian: TypeAlias = "NDArray[np.float64]"
 """6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
-
-
-# =============================================================================
-# Data Classes
-# =============================================================================
 
 
 @dataclass

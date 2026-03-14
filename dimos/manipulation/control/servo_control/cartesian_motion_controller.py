@@ -272,10 +272,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
         super().stop()
         logger.info("CartesianMotionController stopped")
 
-    # =========================================================================
-    # RPC Methods - High-level control
-    # =========================================================================
-
     @rpc
     def set_target_pose(
         self, position: list[float], orientation: list[float], frame_id: str = "world"
@@ -349,10 +345,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
             and ori_error < self.config.orientation_tolerance
         )
 
-    # =========================================================================
-    # Private Methods - Callbacks
-    # =========================================================================
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when new joint state is received."""
         logger.debug(f"Received joint_state: {len(msg.position)} joints")
@@ -371,10 +363,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
             self._last_target_time = time.time()
             self._is_tracking = True
         logger.debug(f"New target received: {msg}")
-
-    # =========================================================================
-    # Private Methods - Control Loop
-    # =========================================================================
 
     def _control_loop(self) -> None:
         """

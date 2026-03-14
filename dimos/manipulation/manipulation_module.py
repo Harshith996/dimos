@@ -278,10 +278,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
             self._tf_stop_event.wait(period)
 
-    # =========================================================================
-    # RPC Methods
-    # =========================================================================
-
     @rpc
     def get_state(self) -> str:
         """Get current manipulation state name."""
@@ -355,10 +351,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             joint_state = JointState(name=config.joint_names, position=joints)
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
-
-    # =========================================================================
-    # Plan/Preview/Execute Workflow RPC Methods
-    # =========================================================================
 
     def _begin_planning(
         self, robot_name: RobotName | None = None
@@ -630,10 +622,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         )
         return True
 
-    # =========================================================================
-    # Coordinator Integration RPC Methods
-    # =========================================================================
-
     def _get_coordinator_client(self) -> RPCClient | None:
         """Get or create coordinator RPC client (lazy init)."""
         if not any(
@@ -780,10 +768,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return False
         return self._world_monitor.remove_obstacle(obstacle_id)
 
-    # =========================================================================
-    # Gripper Methods
-    # =========================================================================
-
     def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
         """Get gripper hardware ID for a robot."""
         robot = self._get_robot(robot_name)
@@ -855,10 +839,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         if self._set_gripper_position(0.0, robot_name):
             return "Gripper closed"
         return "Error: Failed to close gripper"
-
-    # =========================================================================
-    # Skill Helpers (internal)
-    # =========================================================================
 
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
@@ -943,10 +923,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return "Error: Trajectory execution timed out"
 
         return None
-
-    # =========================================================================
-    # Short-Horizon Skills — Single-step actions
-    # =========================================================================
 
     @skill
     def get_robot_state(self, robot_name: str | None = None) -> str:
@@ -1131,10 +1107,6 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return err
 
         return "Reached init position"
-
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
 
     @rpc
     def stop(self) -> None:

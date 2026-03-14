@@ -406,7 +406,7 @@ class WorldObstacleMonitor:
         if callback in self._obstacle_callbacks:
             self._obstacle_callbacks.remove(callback)
 
-    # ============= Object-Based Perception (from ObjectDB) =============
+    # Object-Based Perception (from ObjectDB)
 
     def on_objects(self, objects: list[object]) -> None:
         """Cache objects from ObjectDB (preserves stable object_id).

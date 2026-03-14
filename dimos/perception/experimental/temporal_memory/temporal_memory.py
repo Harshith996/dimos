@@ -203,10 +203,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             f"window={self.config.window_s}s, stride={self.config.stride_s}s"
         )
 
-    # ------------------------------------------------------------------
-    # VLM access (lazy)
-    # ------------------------------------------------------------------
-
     @property
     def vlm(self) -> VlModel[Any]:
         if self._vlm_raw is None:
@@ -230,10 +226,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             )
         return self.__analyzer
 
-    # ------------------------------------------------------------------
-    # JSONL logging
-    # ------------------------------------------------------------------
-
     def _log_jsonl(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, ensure_ascii=False) + "\n"
         # Write to per-run JSONL
@@ -249,10 +241,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                 f.write(line)
         except Exception as e:
             logger.warning(f"persistent jsonl log failed: {e}")
-
-    # ------------------------------------------------------------------
-    # Rerun visualization
-    # ------------------------------------------------------------------
 
     def _publish_entity_markers(self) -> None:
         """Publish entity positions as 3D markers for Rerun overlay on the map."""
@@ -287,10 +275,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                 logger.info(f"[temporal-memory] published {len(markers)} entity markers to Rerun")
         except Exception as e:
             logger.debug(f"entity marker publish error: {e}")
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     @rpc
     def start(self) -> None:
@@ -373,10 +357,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                     logger.warning(f"Failed to stop stream transport: {e}")
 
         logger.info("TemporalMemory stopped")
-
-    # ------------------------------------------------------------------
-    # Core loop
-    # ------------------------------------------------------------------
 
     def _analyze_window(self) -> None:
         if self._stopped:
@@ -518,10 +498,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             )
             logger.info(f"[temporal-memory] SUMMARY: {sr.summary_text[:300]}")
 
-    # ------------------------------------------------------------------
-    # Query (agent skill)
-    # ------------------------------------------------------------------
-
     @skill
     def query(self, question: str) -> str:
         """Answer a question about the video stream using temporal memory and graph knowledge.
@@ -610,10 +586,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             }
         )
         return qr.answer
-
-    # ------------------------------------------------------------------
-    # RPC accessors (backward compat)
-    # ------------------------------------------------------------------
 
     @rpc
     def clear_history(self) -> bool:

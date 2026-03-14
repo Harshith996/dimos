@@ -153,10 +153,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
         super().stop()
         logger.info("JointTrajectoryController stopped")
 
-    # =========================================================================
-    # RPC Methods - Action-server-like interface
-    # =========================================================================
-
     @rpc
     def execute_trajectory(self, trajectory: JointTrajectory) -> bool:
         """
@@ -270,10 +266,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                 error=self._error_message,
             )
 
-    # =========================================================================
-    # Callbacks
-    # =========================================================================
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback for joint state feedback."""
         self._latest_joint_state = msg
@@ -288,10 +280,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
             f"Received trajectory via topic: {len(msg.points)} points, duration={msg.duration:.3f}s"
         )
         self.execute_trajectory(msg)
-
-    # =========================================================================
-    # Execution Loop
-    # =========================================================================
 
     def _execution_loop(self) -> None:
         """

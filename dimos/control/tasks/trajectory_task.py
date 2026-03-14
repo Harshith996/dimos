@@ -171,10 +171,6 @@ class JointTrajectoryTask(BaseControlTask):
         if joints & self._joint_names:
             self._state = TrajectoryState.ABORTED
 
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
-
     def execute(self, trajectory: JointTrajectory) -> bool:
         """Start executing a trajectory.
 

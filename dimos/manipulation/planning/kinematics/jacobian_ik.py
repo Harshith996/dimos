@@ -395,7 +395,7 @@ class JacobianIK:
         return JointState(name=joint_names, velocity=q_dot.tolist())
 
 
-# ============= Result Helpers =============
+# Result Helpers
 
 
 def _create_success_result(

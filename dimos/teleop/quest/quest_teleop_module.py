@@ -98,10 +98,6 @@ class QuestTeleopModule(Module[_Config]):
     right_controller_output: Out[PoseStamped]
     buttons: Out[Buttons]
 
-    # -------------------------------------------------------------------------
-    # Initialization
-    # -------------------------------------------------------------------------
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
@@ -130,10 +126,6 @@ class QuestTeleopModule(Module[_Config]):
         }
 
         self._setup_routes()
-
-    # -------------------------------------------------------------------------
-    # Web Server Routes
-    # -------------------------------------------------------------------------
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -166,10 +158,6 @@ class QuestTeleopModule(Module[_Config]):
             except Exception:
                 logger.exception("WebSocket error")
 
-    # -------------------------------------------------------------------------
-    # Lifecycle
-    # -------------------------------------------------------------------------
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -182,10 +170,6 @@ class QuestTeleopModule(Module[_Config]):
         self._stop_control_loop()
         self._stop_server()
         super().stop()
-
-    # -------------------------------------------------------------------------
-    # Internal engage/disengage (assumes lock is held)
-    # -------------------------------------------------------------------------
 
     def _engage(self, hand: Hand | None = None) -> bool:
         """Engage a hand. Assumes self._lock is held."""
@@ -219,10 +203,6 @@ class QuestTeleopModule(Module[_Config]):
                 buttons=Buttons.from_controllers(left, right),
             )
 
-    # -------------------------------------------------------------------------
-    # WebSocket Message Decoders
-    # -------------------------------------------------------------------------
-
     @staticmethod
     def _resolve_hand(frame_id: str) -> Hand:
         if frame_id == "left":
@@ -252,10 +232,6 @@ class QuestTeleopModule(Module[_Config]):
             return
         with self._lock:
             self._controllers[hand] = controller
-
-    # -------------------------------------------------------------------------
-    # Embedded Web Server
-    # -------------------------------------------------------------------------
 
     def _start_server(self) -> None:
         """Start the embedded FastAPI server with HTTPS in a daemon thread."""
@@ -334,10 +310,6 @@ class QuestTeleopModule(Module[_Config]):
             sleep_time = period - elapsed
             if sleep_time > 0:
                 self._stop_event.wait(sleep_time)
-
-    # -------------------------------------------------------------------------
-    # Control Loop Internals
-    # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
         """Check for engage button press and update per-hand engage state.
