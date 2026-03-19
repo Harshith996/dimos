@@ -15,7 +15,7 @@
 
 """Teleop blueprints for testing and deployment."""
 
-from dimos.control.blueprints import (
+from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
     coordinator_teleop_xarm7,
