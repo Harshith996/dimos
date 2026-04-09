@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 import importlib
 import shutil
 import sys
@@ -35,7 +35,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint, _BlueprintAtom
+    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
 logger = setup_logger()
@@ -56,7 +56,7 @@ class ModuleCoordinator(Resource):
             cls.deployment_identifier: cls(g=g) for cls in manager_types
         }
         self._deployed_modules = {}
-        self._deployed_atoms: dict[type[ModuleBase], _BlueprintAtom] = {}
+        self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
@@ -114,7 +114,9 @@ class ModuleCoordinator(Resource):
         self._deployed_modules[module_class] = deployed_module
         return deployed_module  # type: ignore[return-value]
 
-    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
+    def deploy_parallel(
+        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+    ) -> list[ModuleProxy]:
         if not self._managers:
             raise ValueError("Not started")
 
@@ -130,7 +132,7 @@ class ModuleCoordinator(Resource):
         results: list[Any] = [None] * len(module_specs)
 
         def _deploy_group(dep: str) -> None:
-            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep])
+            deployed = self._managers[dep].deploy_parallel(specs_by_deployment[dep], blueprint_args)
             for index, module in zip(indices_by_deployment[dep], deployed, strict=True):
                 results[index] = module
 
@@ -221,12 +223,13 @@ class ModuleCoordinator(Resource):
     def build(
         cls,
         blueprint: Blueprint,
-        cli_config_overrides: Mapping[str, Any] | None = None,
+        blueprint_args: MutableMapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
         logger.info("Building the blueprint")
         global_config.update(**dict(blueprint.global_config_overrides))
-        if cli_config_overrides:
-            global_config.update(**dict(cli_config_overrides))
+        blueprint_args = blueprint_args or {}
+        if "g" in blueprint_args:
+            global_config.update(**blueprint_args.pop("g"))
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -236,7 +239,7 @@ class ModuleCoordinator(Resource):
         coordinator = cls(g=global_config)
         coordinator.start()
 
-        _deploy_all_modules(blueprint, coordinator, global_config)
+        _deploy_all_modules(blueprint, coordinator, global_config, blueprint_args)
         coordinator._connect_streams(blueprint)
         _connect_module_refs(blueprint, coordinator)
 
@@ -250,7 +253,7 @@ class ModuleCoordinator(Resource):
     def load_blueprint(
         self,
         blueprint: Blueprint,
-        cli_config_overrides: Mapping[str, Any] | None = None,
+        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Load a blueprint into an already-running coordinator.
 
@@ -263,8 +266,9 @@ class ModuleCoordinator(Resource):
 
         # Apply config overrides.
         self._global_config.update(**dict(blueprint.global_config_overrides))
-        if cli_config_overrides:
-            self._global_config.update(**dict(cli_config_overrides))
+        blueprint_args = blueprint_args or {}
+        if "g" in blueprint_args:
+            self._global_config.update(**blueprint_args.pop("g"))
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -288,7 +292,7 @@ class ModuleCoordinator(Resource):
 
         before = set(self._deployed_modules)
 
-        _deploy_all_modules(blueprint, self, self._global_config)
+        _deploy_all_modules(blueprint, self, self._global_config, blueprint_args)
         self._connect_streams(blueprint)
         _connect_module_refs(blueprint, self, existing_modules=before)
 
@@ -300,8 +304,12 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
-    def load_module(self, module_class: type[ModuleBase], **kwargs: Any) -> None:
-        self.load_blueprint(module_class.blueprint(**kwargs))
+    def load_module(
+        self,
+        module_class: type[ModuleBase],
+        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        self.load_blueprint(module_class.blueprint(**blueprint_args or {}))
 
     def unload_module(self, module_class: type[ModuleBase]) -> None:
         """Stop and tear down a single deployed module.
@@ -576,13 +584,16 @@ def _check_requirements(blueprint: Blueprint) -> None:
 
 
 def _deploy_all_modules(
-    blueprint: Blueprint, module_coordinator: ModuleCoordinator, gc: GlobalConfig
+    blueprint: Blueprint,
+    module_coordinator: ModuleCoordinator,
+    gc: GlobalConfig,
+    blueprint_args: Mapping[str, Mapping[str, Any]],
 ) -> None:
     module_specs: list[ModuleSpec] = []
     for bp in blueprint.active_blueprints:
-        module_specs.append((bp.module, gc, bp.kwargs))
+        module_specs.append((bp.module, gc, bp.kwargs.copy()))
 
-    module_coordinator.deploy_parallel(module_specs)
+    module_coordinator.deploy_parallel(module_specs, blueprint_args)
 
     for bp in blueprint.active_blueprints:
         module_coordinator._deployed_atoms[bp.module] = bp

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.python_worker import PythonWorker
@@ -134,7 +135,9 @@ class WorkerManagerPython:
             self._workers.remove(target)
             self._n_workers = max(0, self._n_workers - 1)
 
-    def deploy_parallel(self, specs: list[ModuleSpec]) -> list[ModuleProxyProtocol]:
+    def deploy_parallel(
+        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+    ) -> list[ModuleProxyProtocol]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
@@ -152,6 +155,7 @@ class WorkerManagerPython:
         for module_class, global_config, kwargs in specs:
             worker = self._select_worker()
             worker.reserve_slot()
+            kwargs.update(blueprint_args.get(module_class.name, {}))
             assignments.append((worker, module_class, global_config, kwargs))
 
         try:

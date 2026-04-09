@@ -21,9 +21,12 @@ import types as types_mod
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
 
+from pydantic import create_model
+
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
@@ -77,7 +80,7 @@ class ModuleRef:
 
 
 @dataclass(frozen=True)
-class _BlueprintAtom:
+class BlueprintAtom:
     kwargs: dict[str, Any]
     module: type[ModuleBase]
     streams: tuple[StreamRef, ...]
@@ -140,7 +143,7 @@ class _BlueprintAtom:
 
 @dataclass(frozen=True)
 class Blueprint:
-    blueprints: tuple[_BlueprintAtom, ...]
+    blueprints: tuple[BlueprintAtom, ...]
     disabled_modules_tuple: tuple[type[ModuleBase], ...] = field(default_factory=tuple)
     transport_map: Mapping[tuple[str, type], PubSubTransport[Any]] = field(
         default_factory=lambda: MappingProxyType({})
@@ -154,11 +157,19 @@ class Blueprint:
 
     @classmethod
     def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":
-        blueprint = _BlueprintAtom.create(module, kwargs)
+        blueprint = BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
+
+    def config(self) -> type:
+        configs = {
+            b.module.name: (get_type_hints(b.module)["config"] | None, None)
+            for b in self.blueprints
+        }
+        configs["g"] = (GlobalConfig | None, None)
+        return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
@@ -185,7 +196,7 @@ class Blueprint:
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
     @cached_property
-    def active_blueprints(self) -> tuple[_BlueprintAtom, ...]:
+    def active_blueprints(self) -> tuple[BlueprintAtom, ...]:
         if not self.disabled_modules_tuple:
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
@@ -219,7 +230,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     )
 
 
-def _eliminate_duplicates(blueprints: list[_BlueprintAtom]) -> list[_BlueprintAtom]:
+def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
     # The duplicates are eliminated in reverse so that newer blueprints override older ones.
     seen = set()
     unique_blueprints = []
