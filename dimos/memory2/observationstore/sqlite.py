@@ -272,7 +272,7 @@ class SqliteObservationStore(ObservationStore[T]):
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
-            self.register_disposables(disposable)
+            self.register_disposable(disposable)
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:

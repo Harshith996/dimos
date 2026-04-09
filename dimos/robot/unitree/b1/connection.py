@@ -121,24 +121,24 @@ class B1ConnectionModule(Module):
         # Subscribe to input streams
         if self.cmd_vel:
             unsub = self.cmd_vel.subscribe(self.handle_twist_stamped)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         if self.mode_cmd:
             unsub = self.mode_cmd.subscribe(self.handle_mode)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         if self.odom_in:
             unsub = self.odom_in.subscribe(self._publish_odom_pose)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         # Subscribe to ROS In ports
         if self.ros_cmd_vel:
             unsub = self.ros_cmd_vel.subscribe(self.handle_twist_stamped)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         if self.ros_odom_in:
             unsub = self.ros_odom_in.subscribe(self._publish_odom_pose)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         if self.ros_tf:
             unsub = self.ros_tf.subscribe(self._on_ros_tf)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         # Start threads
         self.running = True

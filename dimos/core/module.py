@@ -31,13 +31,13 @@ from typing import (
 )
 
 from pydantic import Field
-from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
-from dimos.core.resource import Resource
+from dimos.core.resource import CompositeResource
+from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
@@ -97,8 +97,9 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
-class ModuleBase(Configurable, Resource):
+class ModuleBase(Configurable, CompositeResource):
     config: ModuleConfig
+
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
     deployment: ClassVar[Deployment] = "python"
@@ -107,7 +108,7 @@ class ModuleBase(Configurable, Resource):
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
-    _disposables: CompositeDisposable
+    _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
@@ -116,7 +117,6 @@ class ModuleBase(Configurable, Resource):
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
-        self._disposables = CompositeDisposable()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
                 rpc_timeouts=self.config.rpc_timeouts,
@@ -149,6 +149,7 @@ class ModuleBase(Configurable, Resource):
 
     @rpc
     def stop(self) -> None:
+        super().stop()
         self._close_module()
 
     def _close_module(self) -> None:
@@ -175,14 +176,12 @@ class ModuleBase(Configurable, Resource):
         if hasattr(self, "_tf") and self._tf is not None:
             self._tf.stop()
             self._tf = None
-        if hasattr(self, "_disposables"):
-            self._disposables.dispose()
 
-        # Break the In/Out -> owner -> self reference cycle so the instance
-        # can be freed by refcount instead of waiting for GC.
-        for attr in list(vars(self).values()):
-            if isinstance(attr, (In, Out)):
-                attr.owner = None
+        # Stop transports and break the In/Out -> owner -> self reference
+        # cycle so the instance can be freed by refcount instead of waiting for GC.
+        for attr in [*self.inputs.values(), *self.outputs.values()]:
+            attr.stop()
+            attr.owner = None
 
     def _close_rpc(self) -> None:
         if self.rpc:
@@ -205,7 +204,6 @@ class ModuleBase(Configurable, Resource):
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
-        self._disposables = CompositeDisposable()
         self._module_closed_lock = threading.Lock()
         self._loop = None
         self._loop_thread = None

@@ -195,10 +195,10 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        self._disposables.add(Disposable(self.color_image.subscribe(set_video)))
+        self.register_disposable(Disposable(self.color_image.subscribe(set_video)))
 
         # Start periodic processing using interval
-        self._disposables.add(
+        self.register_disposable(
             interval(self._process_interval).subscribe(lambda _: self._process_frame())
         )
 

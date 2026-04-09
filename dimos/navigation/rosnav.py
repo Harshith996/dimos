@@ -131,7 +131,7 @@ class ROSNav(
     def start(self) -> None:
         self._running = True
 
-        self._disposables.add(
+        self.register_disposable(
             self._local_pointcloud_subject.pipe(
                 ops.sample(1.0 / self.config.local_pointcloud_freq),
             ).subscribe(
@@ -140,7 +140,7 @@ class ROSNav(
             )
         )
 
-        self._disposables.add(
+        self.register_disposable(
             self._global_map_subject.pipe(
                 ops.sample(1.0 / self.config.global_map_freq),
             ).subscribe(

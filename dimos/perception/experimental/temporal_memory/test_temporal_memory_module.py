@@ -537,7 +537,7 @@ class VideoReplayModule(Module):
                 time.sleep(0.5)
             observer.on_completed()
 
-        self._disposables.add(
+        self.register_disposable(
             reactivex.create(emit_frames)
             .pipe(
                 ops.observe_on(reactivex.scheduler.NewThreadScheduler()),

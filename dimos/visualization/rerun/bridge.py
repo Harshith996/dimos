@@ -339,12 +339,12 @@ class RerunBridgeModule(Module):
             if hasattr(pubsub, "start"):
                 pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self._disposables.add(Disposable(pubsub.stop))
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
 

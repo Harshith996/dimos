@@ -135,6 +135,10 @@ class Stream(Generic[T]):
             + ("" if not self._transport else " via " + str(self._transport))
         )
 
+    def stop(self) -> None:
+        if self._transport is not None:
+            self._transport.stop()
+
 
 class Out(Stream[T], ObservableMixin[T]):
     _transport: Transport  # type: ignore[type-arg]

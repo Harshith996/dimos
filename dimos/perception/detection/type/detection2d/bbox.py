@@ -98,33 +98,6 @@ class Detection2DBBox(Detection2D):
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
 
-    def center_to_3d(
-        self,
-        pixel: tuple[int, int],
-        camera_info: CameraInfo,  # type: ignore[name-defined]
-        assumed_depth: float = 1.0,
-    ) -> PoseStamped:  # type: ignore[name-defined]
-        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
-
-        Args:
-            camera_info: Camera calibration information
-            assumed_depth: Assumed depth in meters (default 1.0m from camera)
-
-        Returns:
-            Vector3 position in camera optical frame coordinates
-        """
-        # Extract camera intrinsics
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
-
-        # Unproject pixel to normalized camera coordinates
-        x_norm = (pixel[0] - cx) / fx
-        y_norm = (pixel[1] - cy) / fy
-
-        # Create 3D point at assumed depth in camera optical frame
-        # Camera optical frame: X right, Y down, Z forward
-        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)  # type: ignore[name-defined]
-
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
         """Return a cropped version of the image focused on the bounding box.

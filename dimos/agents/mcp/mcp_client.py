@@ -169,7 +169,7 @@ class McpClient(Module):
         def _on_human_input(string: str) -> None:
             self._message_queue.put(HumanMessage(content=string))
 
-        self._disposables.add(Disposable(self.human_input.subscribe(_on_human_input)))
+        self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:

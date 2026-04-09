@@ -224,7 +224,7 @@ class FakeZEDModule(Module):
             unsub = self._get_color_stream().subscribe(
                 lambda msg: self.color_image.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started color image replay stream")
         except Exception as e:
             logger.warning(f"Color image stream not available: {e}")
@@ -234,7 +234,7 @@ class FakeZEDModule(Module):
             unsub = self._get_depth_stream().subscribe(
                 lambda msg: self.depth_image.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started depth image replay stream")
         except Exception as e:
             logger.warning(f"Depth image stream not available: {e}")
@@ -244,7 +244,7 @@ class FakeZEDModule(Module):
             unsub = self._get_pose_stream().subscribe(
                 lambda msg: self._publish_pose(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started pose replay stream")
         except Exception as e:
             logger.warning(f"Pose stream not available: {e}")
@@ -254,7 +254,7 @@ class FakeZEDModule(Module):
             unsub = self._get_camera_info_stream().subscribe(
                 lambda msg: self.camera_info.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started camera info replay stream")
         except Exception as e:
             logger.warning(f"Camera info stream not available: {e}")

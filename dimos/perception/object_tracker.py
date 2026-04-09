@@ -148,7 +148,7 @@ class ObjectTracking(Module):
             match_tolerance=0.5,  # 500ms tolerance
         )
         unsub = aligned_frames.subscribe(on_aligned_frames)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # Subscribe to camera info stream separately (doesn't need alignment)
         def on_camera_info(camera_info_msg: CameraInfo) -> None:
@@ -163,7 +163,7 @@ class ObjectTracking(Module):
             ]
 
         unsub = self.camera_info.subscribe(on_camera_info)  # type: ignore[assignment]
-        self._disposables.add(Disposable(unsub))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(unsub))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:

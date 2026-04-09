@@ -56,7 +56,7 @@ class EmbeddingMemory(Module):
     def get_costmap(self) -> OccupancyGrid:
         if self._costmap_getter is None:
             self._costmap_getter = getter_hot(self.global_costmap.pure_observable())
-            self._disposables.add(self._costmap_getter)
+            self.register_disposable(self._costmap_getter)
         return self._costmap_getter()
 
     @rpc

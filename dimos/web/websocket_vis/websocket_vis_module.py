@@ -174,25 +174,25 @@ class WebsocketVisModule(Module):
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.path.subscribe(self._on_path)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception:
             ...
 

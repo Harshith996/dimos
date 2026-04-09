@@ -154,22 +154,22 @@ class WavefrontFrontierExplorer(Module):
         super().start()
 
         unsub = self.global_costmap.subscribe(self._on_costmap)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         unsub = self.odom.subscribe(self._on_odometry)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         if self.goal_reached.transport is not None:
             unsub = self.goal_reached.subscribe(self._on_goal_reached)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         if self.explore_cmd.transport is not None:
             unsub = self.explore_cmd.subscribe(self._on_explore_cmd)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         if self.stop_explore_cmd.transport is not None:
             unsub = self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:

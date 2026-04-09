@@ -68,11 +68,11 @@ class SimpleRobot(Module):
 
     @rpc
     def start(self) -> None:
-        self._disposables.add(self.cmd_vel.observable().subscribe(self._on_twist))
-        self._disposables.add(
+        self.register_disposable(self.cmd_vel.observable().subscribe(self._on_twist))
+        self.register_disposable(
             rx.interval(1.0 / self.config.update_rate).subscribe(lambda _: self._update())
         )
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: print(f"\033[34m{self._pose}\033[0m"))
         )
 

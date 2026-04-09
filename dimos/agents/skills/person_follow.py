@@ -94,9 +94,9 @@ class PersonFollowSkillContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         if self.config.use_3d_navigation:
-            self._disposables.add(Disposable(self.global_map.subscribe(self._on_pointcloud)))
+            self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))
 
     @rpc
     def stop(self) -> None:

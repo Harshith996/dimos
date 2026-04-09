@@ -162,7 +162,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._disposables.add(
+            self.register_disposable(
                 backpressure(rx.interval(interval_sec)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
                     on_error=lambda e: print(f"Pointcloud error: {e}"),
@@ -170,7 +170,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
                 on_error=lambda e: print(f"CameraInfo error: {e}"),

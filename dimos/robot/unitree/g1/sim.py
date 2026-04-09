@@ -68,10 +68,10 @@ class G1SimConnection(G1ConnectionBase):
         assert self.connection is not None
         self.connection.start()
 
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_sim_odom))
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
         self._camera_info_thread = Thread(
             target=self._publish_camera_info_loop,

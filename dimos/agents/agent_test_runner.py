@@ -48,8 +48,8 @@ class AgentTestRunner(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.agent.subscribe(self._on_agent_message)))
-        self._disposables.add(Disposable(self.agent_idle.subscribe(self._on_agent_idle)))
+        self.register_disposable(Disposable(self.agent.subscribe(self._on_agent_message)))
+        self.register_disposable(Disposable(self.agent_idle.subscribe(self._on_agent_idle)))
         # Signal that subscription is ready
         self._subscription_ready.set()
 

@@ -99,7 +99,7 @@ class ObjectTracker3D(ObjectTracker2D):
             match_tolerance=0.5,  # 500ms tolerance
         )
         unsub = aligned_frames.subscribe(on_aligned_frames)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # Subscribe to camera info
         def on_camera_info(camera_info_msg: CameraInfo) -> None:

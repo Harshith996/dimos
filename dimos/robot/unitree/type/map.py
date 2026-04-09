@@ -66,11 +66,11 @@ class Map(Module):
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.lidar.subscribe(self.add_frame)))
+        self.register_disposable(Disposable(self.lidar.subscribe(self.add_frame)))
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(self._publish)
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
 
     @rpc
     def stop(self) -> None:

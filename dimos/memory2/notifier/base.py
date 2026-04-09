@@ -17,6 +17,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from dimos.core.resource import Resource
 from dimos.memory2.registry import qual
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
@@ -33,7 +34,7 @@ class NotifierConfig(BaseConfig):
     pass
 
 
-class Notifier(Configurable, Generic[T]):
+class Notifier(Configurable, Resource, Generic[T]):
     """Push-notification for live observation delivery.
 
     Decouples the notification mechanism from storage.  The built-in
@@ -46,6 +47,12 @@ class Notifier(Configurable, Generic[T]):
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
 
     @abstractmethod
     def subscribe(self, buf: BackpressureBuffer[Observation[T]]) -> DisposableBase:

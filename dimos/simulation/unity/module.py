@@ -293,8 +293,8 @@ class UnityBridgeModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        self._disposables.add(Disposable(self.terrain_map.subscribe(self._on_terrain)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
         self._running.set()
         self._sim_thread = threading.Thread(target=self._sim_loop, daemon=True)
         self._sim_thread.start()

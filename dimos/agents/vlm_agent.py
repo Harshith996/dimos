@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from reactivex.disposable import Disposable
 
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core.core import rpc
@@ -60,8 +61,8 @@ class VLMAgent(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.color_image.subscribe(self._on_image))  # type: ignore[arg-type]
-        self._disposables.add(self.query_stream.subscribe(self._on_query))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
+        self.register_disposable(Disposable(self.query_stream.subscribe(self._on_query)))
 
     @rpc
     def stop(self) -> None:

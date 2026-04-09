@@ -91,7 +91,7 @@ class G1Connection(G1ConnectionBase):
         assert self.connection is not None
         self.connection.start()
 
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
     @rpc
     def stop(self) -> None:

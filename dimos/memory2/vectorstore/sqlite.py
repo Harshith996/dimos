@@ -75,7 +75,7 @@ class SqliteVectorStore(VectorStore):
         if self._conn is None:
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
-            self.register_disposables(disposable)
+            self.register_disposable(disposable)
 
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         vec = embedding.to_numpy().tolist()

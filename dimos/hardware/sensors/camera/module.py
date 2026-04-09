@@ -76,11 +76,11 @@ class CameraModule(Module, perception.Camera):
             self.color_image.publish(image)
             self._latest_image = image
 
-        self._disposables.add(
+        self.register_disposable(
             stream.subscribe(on_image),
         )
 
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )
 
