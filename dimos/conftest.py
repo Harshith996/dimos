@@ -85,6 +85,12 @@ def _is_macos() -> bool:
     return platform.system() == "Darwin"
 
 
+def _no_sqlite_vec() -> bool:
+    # The aarch64 wheel ships a 32-bit binary ("wrong ELF class: ELFCLASS32"),
+    # and the macOS wheel fails to load via sqlite3 in CI.
+    return platform.machine() == "aarch64" or _is_macos()
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line(
@@ -99,6 +105,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
+    config.addinivalue_line(
+        "markers", "skipif_no_sqlite_vec: skip when the sqlite-vec extension cannot be loaded"
+    )
 
     if config.pluginmanager.hasplugin("_cov"):
         os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
@@ -138,6 +147,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
+        "skipif_no_sqlite_vec": (_no_sqlite_vec(), "sqlite-vec extension not loadable here"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:
