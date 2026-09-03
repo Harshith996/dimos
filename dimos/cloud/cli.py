@@ -41,9 +41,25 @@ def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
 
 @contextlib.contextmanager
 def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
-    from rich.progress import Progress
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        TaskProgressColumn,
+        TextColumn,
+        TimeRemainingColumn,
+        TransferSpeedColumn,
+    )
 
-    with Progress(transient=True) as bar:
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        transient=True,
+    ) as bar:
         task = bar.add_task(name, total=None)
 
         def tick(phase: str, done: int, total: int) -> None:
@@ -88,6 +104,13 @@ def upload(
 @handle_fail
 def ls() -> None:
     from datetime import datetime, timezone
+    import sys
+
+    if sys.stdout.isatty() and sys.stdin.isatty():  # Textual needs a real TTY
+        from dimos.cloud.tui import DataBrowser
+
+        DataBrowser().run()
+        return
 
     from rich import box
     from rich.console import Console
@@ -145,7 +168,11 @@ def ls() -> None:
 @handle_fail
 def pull(upload_id: str | None, dest: Path | None) -> None:
     upload_id = None if upload_id == "latest" else upload_id
-    typer.echo(f"pulled to {CloudData().pull(upload_id, dest)}")
+    cloud = CloudData()
+    row = cloud.resolve(upload_id)
+    with _bar(row["filename"]) as tick:
+        out = cloud.pull(str(row["id"]), dest, progress=tick)
+    typer.echo(f"pulled to {out}")
 
 
 @handle_fail
