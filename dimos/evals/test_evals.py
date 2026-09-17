@@ -49,7 +49,7 @@ from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.module import list_agents
-from dimos.evals.runner import EvalRunner, summarize
+from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
     choice,
     exact,
@@ -864,6 +864,68 @@ def test_summary_and_trajectory_preserve_unknown_cost(
     assert summary.mean_score == summary.pass_rate == 0.0
 
 
+def _trajectory_with(command: str, result: str) -> Trajectory:
+    builder = TrajectoryBuilder("q", name="t", model="m")
+    builder.step(
+        message="",
+        reasoning="",
+        tool_calls=(
+            ToolCall(tool_call_id="c1", function_name="bash", arguments={"command": command}),
+        ),
+        metrics=Metrics(prompt_tokens=1, completion_tokens=1),
+        model_name="m",
+        latency_s=0.0,
+        reasoning_tokens=0,
+        request=Path("r"),
+        response=Path("s"),
+    )
+    builder.observe("c1", result)
+    return builder.build("answer")
+
+
+@pytest.mark.parametrize(
+    "command,result,ignored,expected",
+    [
+        (
+            "pip install dimos",
+            "Successfully installed dimos",
+            (),
+            "invalid: step 2 ran bash mentioning 'dimos'",
+        ),
+        (
+            "pip install dimos",
+            "Tool call denied: its arguments mention the excluded keyword",
+            (),
+            "",
+        ),
+        ("echo dimosaurus", "dimosaurus", (), ""),
+        ("cat /tmp/dimos/run/notes", "x", ("/tmp/dimos/run",), ""),
+        (
+            "git clone https://github.com/DimensionalOS/x",
+            "done",
+            (),
+            "invalid: step 2 ran bash mentioning 'dimensionalos'",
+        ),
+    ],
+)
+def test_forbidden_call_flags_only_executed_whole_word_hits(
+    command: str, result: str, ignored: tuple[str, ...], expected: str
+) -> None:
+    trajectory = _trajectory_with(command, result)
+    assert forbidden_call(trajectory, ("dimos", "dimensionalos"), *ignored) == expected
+    assert forbidden_call(trajectory, ()) == ""
+
+
+@pytest.mark.parametrize(
+    "reply,expected",
+    [("**Yes.**\n\nAll frames show a person", "yes"), ("_no_", "no"), ("Yes", "yes")],
+)
+def test_yes_no_tolerates_markdown_emphasis(reply: str, expected: str) -> None:
+    from dimos.evals.scorers import yes_no
+
+    assert yes_no(reply) == expected
+
+
 def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> None:
     class RaisingAgent(FakeAgent):
         def run(
@@ -881,3 +943,12 @@ def test_failed_agent_run_keeps_its_duration(dataset: str, tmp_path: Path) -> No
     result = EvalRunner(out_dir=tmp_path).run([case], RaisingAgent())[0]
     assert "adapter died" in result.error
     assert result.agent_duration_s >= 0.05
+
+
+def test_attach_with_raw_bridge_needs_a_listening_bridge() -> None:
+    from dimos.evals.environments.dimsim import DimSimEnvironment
+
+    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True, raw_bridge=True)
+    env.config.launch_timeout_s = 1.0
+    with pytest.raises(RuntimeError, match="raw-robot-bridge"):
+        env.start(())
