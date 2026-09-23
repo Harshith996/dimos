@@ -110,10 +110,9 @@ impl LiveSource {
         } else {
             None
         };
-        let cmd = UdpSocket::bind(SocketAddrV4::new(
-            config.host_ip,
-            config.ports.host_cmd_data,
-        ))?;
+        let cmd = shared_socket()?;
+        cmd.bind(&SocketAddrV4::new(config.host_ip, config.ports.host_cmd_data).into())?;
+        let cmd: UdpSocket = cmd.into();
 
         threads.push(spawn_reader(
             "point",
@@ -171,10 +170,18 @@ impl Drop for LiveSource {
     }
 }
 
+/// `SO_REUSEADDR` (+ `SO_REUSEPORT` for macOS) so the ports can be shared with an SDK2 process, which binds the same way.
+fn shared_socket() -> io::Result<Socket> {
+    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    raw.set_reuse_address(true)?;
+    raw.set_reuse_port(true)?;
+    Ok(raw)
+}
+
 /// Bind a data-plane receive socket, joining the multicast group when the
 /// device streams to one.
 fn data_socket(config: &LiveConfig, port: u16) -> io::Result<UdpSocket> {
-    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    let raw = shared_socket()?;
     if let Err(err) = raw.set_recv_buffer_size(RECV_BUFFER_BYTES) {
         tracing::warn!(port, "kernel refused the receive buffer request: {err}");
     }
