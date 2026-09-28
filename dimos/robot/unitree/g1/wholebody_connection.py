@@ -184,6 +184,7 @@ class G1WholeBodyConnection(Module):
         self._last_feedback_at: float | None = None
         self._last_feedback_tick: int | None = None
         self._feedback_wall_time = 0.0
+        self._warned_missing_feedback = False
 
     @rpc
     def start(self) -> None:
@@ -242,7 +243,7 @@ class G1WholeBodyConnection(Module):
 
         self._sport_mode_released = False
         logger.info(
-            "G1WholeBodyConnection connected; sport-mode handoff deferred until first command",
+            "G1 DDS initialized; waiting for feedback and first command before sport-mode handoff",
             mode_machine=self._mode_machine,
         )
 
@@ -276,10 +277,15 @@ class G1WholeBodyConnection(Module):
 
         # Leave a faulted robot in damping; graceful cleanup must not replace
         # a latched stop with a different actuator mode. Normal shutdown keeps
-        # its existing motor-disable behavior.
-        if self._publisher is not None and self._low_cmd is not None and self._crc is not None:
-            sent_safe_stop = False
-            with self._lock:
+        # its existing motor-disable behavior, only after controller handoff.
+        sent_safe_stop = False
+        with self._lock:
+            if (
+                self._sport_mode_released
+                and self._publisher is not None
+                and self._low_cmd is not None
+                and self._crc is not None
+            ):
                 for i in range(_NUM_MOTOR_SLOTS):
                     self._low_cmd.motor_cmd[i].mode = 0x00  # disable
                     self._low_cmd.motor_cmd[i].q = POS_STOP
@@ -287,7 +293,7 @@ class G1WholeBodyConnection(Module):
                     self._low_cmd.motor_cmd[i].kp = 0
                     self._low_cmd.motor_cmd[i].kd = 0
                     self._low_cmd.motor_cmd[i].tau = 0
-                if self._fault_reason is not None and self._sport_mode_released:
+                if self._fault_reason is not None:
                     self._fill_damping_command_locked()
                 self._low_cmd.crc = self._crc.Crc(self._low_cmd)
                 try:
@@ -295,8 +301,8 @@ class G1WholeBodyConnection(Module):
                     sent_safe_stop = True
                 except (OSError, RuntimeError) as e:
                     logger.warning("Safe-stop lowcmd failed", error=str(e))
-            if sent_safe_stop:
-                logger.info("Sent final lowcmd", fault=self._fault_reason)
+        if sent_safe_stop:
+            logger.info("Sent final lowcmd", fault=self._fault_reason)
 
         # Close DDS endpoints explicitly - GC-based cleanup races with in-flight
         # callbacks and segfaults on process exit (mirrors the Go2 adapter).
@@ -524,6 +530,11 @@ class G1WholeBodyConnection(Module):
                 self._latch_fault_locked("non-finite motor command")
                 return
             if self._last_feedback_at is None:
+                if not self._warned_missing_feedback:
+                    logger.warning(
+                        "Motor command ignored: waiting for first robot feedback on rt/lowstate"
+                    )
+                    self._warned_missing_feedback = True
                 return
             if time.perf_counter() - self._last_feedback_at >= self.config.feedback_timeout_seconds:
                 self._latch_fault_locked("robot feedback timeout")
@@ -630,6 +641,7 @@ class G1WholeBodyConnection(Module):
                 "frames_sent": self._command_frames_sent,
                 "latest_command_age_ms": age_ms,
                 "fault_reason": self._fault_reason,
+                "feedback_received": self._last_feedback_at is not None,
                 "feedback_age_ms": (
                     None
                     if self._last_feedback_at is None

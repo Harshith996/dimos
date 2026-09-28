@@ -139,6 +139,24 @@ def test_unavailable_face_down_mode_preserves_current_request(velocity_pipeline,
     assert velocity_pipeline.target_mode == 8
 
 
+@pytest.mark.parametrize("initial", ["CRAWLING", "ELBOW_CRAWLING"])
+@pytest.mark.parametrize("requested", ["CRAWLING", "ELBOW_CRAWLING"])
+def test_floor_requests_preserve_the_kneeling_dwell(
+    velocity_pipeline, planner_requests, initial, requested
+):
+    velocity_pipeline.set_mode(initial)
+    for _ in range(60):
+        _step(velocity_pipeline)
+
+    velocity_pipeline.set_mode(requested)
+    for _ in range(39):
+        _step(velocity_pipeline)
+    assert planner_requests.call_args.args[2]["mode"].item() == 5
+
+    _step(velocity_pipeline)
+    assert planner_requests.call_args.args[2]["mode"].item() == 8
+
+
 @pytest.mark.parametrize("vx, vy", [(0.04, 0.04), (0.06, 0.0), (0.0, 0.06)])
 def test_crawl_deadzone_crossing_replans_even_for_small_velocity_changes(
     velocity_pipeline, planner_requests, vx, vy
@@ -446,6 +464,47 @@ def test_failed_or_stuck_planner_raises_a_control_fault(
 
     with pytest.raises(SonicSafetyError, match=message):
         _step(velocity_pipeline)
+
+
+def test_reset_discards_old_inference_before_starting_a_fresh_deadline(
+    velocity_pipeline, planner_requests, mocker
+):
+    old, fresh = Future(), Future()
+    old.set_running_or_notify_cancel()
+    planner_requests.side_effect = [old, fresh]
+    clock = mocker.patch("dimos.control.sonic.sonic_pipeline.time.perf_counter", return_value=10.0)
+    _step(velocity_pipeline)
+
+    velocity_pipeline.reset()
+    _step(velocity_pipeline)
+    assert planner_requests.call_count == 1
+
+    # Completion while inactive must be discarded, even after the old deadline.
+    old.set_exception(RuntimeError("superseded inference"))
+    clock.return_value = 13.0
+    _step(velocity_pipeline)
+    assert planner_requests.call_count == 2
+    assert velocity_pipeline._trajectory is None
+
+    fresh.set_result(velocity_pipeline._planner.run.return_value)
+    clock.return_value = 13.6
+    _step(velocity_pipeline)
+    assert velocity_pipeline._trajectory is not None
+
+
+def test_reset_cannot_extend_a_stuck_planners_deadline(velocity_pipeline, planner_requests, mocker):
+    running = Future()
+    running.set_running_or_notify_cancel()
+    planner_requests.return_value = running
+    clock = mocker.patch("dimos.control.sonic.sonic_pipeline.time.perf_counter", return_value=10.0)
+    _step(velocity_pipeline)
+
+    clock.return_value = 10.8
+    velocity_pipeline.reset()
+    clock.return_value = 11.01
+    with pytest.raises(SonicSafetyError, match="planner inference timeout"):
+        _step(velocity_pipeline)
+    assert planner_requests.call_count == 1
 
 
 def test_live_pose_window_encodes_latest_ten_frames_without_backlog(velocity_pipeline):

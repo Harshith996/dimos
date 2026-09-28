@@ -48,13 +48,16 @@ def task(mocker):
         "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
     ).return_value
     pipeline.step.return_value = np.ones(29, dtype=np.float32)
+    pipeline.snapshot.return_value = {"stream_active": False}
     config = G1SonicWBCTaskConfig(
         encoder_onnx="encoder.onnx",
         decoder_onnx="decoder.onnx",
         planner_onnx="planner.onnx",
         joint_names=_JOINT_NAMES,
     )
-    task = G1SonicWBCTask("sonic", config, mocker.Mock())
+    adapter = mocker.Mock()
+    adapter.read_imu.return_value = IMUState()
+    task = G1SonicWBCTask("sonic", config, adapter)
     yield task
     task.stop()
 
@@ -93,6 +96,51 @@ def test_dry_run_republishes_hold_while_policy_runs(task):
     assert first.positions == second.positions == ramp.positions
     assert first.positions != [1.0] * 29
     assert task._pipeline.step.call_count == 2
+
+
+def test_runtime_reset_clears_velocity_and_repeats_the_measured_pose_ramp(task):
+    _arm(task)
+    task.set_velocity_command(0.5, 0.0, 0.0, t_now=3.0)
+    task.compute(_state(3.02))
+    task._pipeline.set_velocity.assert_called_with(0.5, 0.0, 0.0)
+
+    assert task.reset_runtime_state()
+    first = task.compute(_state(4.0, positions=0.4))
+    complete = task.compute(_state(7.0, positions=0.4))
+    live = task.compute(_state(7.02))
+
+    assert first.positions == pytest.approx([0.4] * 29)
+    assert complete.positions == pytest.approx(DEFAULT_ANGLES_DDS.tolist())
+    assert live.positions == [1.0] * 29
+    task._pipeline.set_velocity.assert_called_with(0.0, 0.0, 0.0)
+
+
+def test_disarm_holds_measured_pose_until_explicit_rearm(task):
+    _arm(task)
+    task.compute(_state(3.02))
+    task._pipeline.step.reset_mock()
+
+    assert task.disarm()
+    assert task.compute(_state(4.0, positions=0.6)).positions == pytest.approx([0.6] * 29)
+    assert task.compute(_state(7.0, positions=0.6)).positions == pytest.approx([0.6] * 29)
+    assert task.state_snapshot()["control_state"] == "unarmed"
+    task._pipeline.step.assert_not_called()
+
+    task.arm(ramp_seconds=0.0)
+    task.compute(_state(8.0, positions=0.6))
+    assert task.compute(_state(8.02)).positions == [1.0] * 29
+    assert task.state_snapshot()["control_state"] == "control"
+
+
+def test_velocity_timeout_stops_motion_but_keeps_balancing(task):
+    _arm(task)
+    task.set_velocity_command(0.5, 0.0, 0.0, t_now=3.0)
+    task.compute(_state(3.5))
+    task._pipeline.set_velocity.assert_called_with(0.5, 0.0, 0.0)
+
+    assert task.compute(_state(4.02)).positions == [1.0] * 29
+    task._pipeline.set_velocity.assert_called_with(0.0, 0.0, 0.0)
+    assert task.policy_active
 
 
 @pytest.mark.parametrize(

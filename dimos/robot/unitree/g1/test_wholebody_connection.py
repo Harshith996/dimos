@@ -250,7 +250,48 @@ def test_stale_feedback_or_commands_force_damping(connection, clock, fresh_feedb
     assert connection.command_stream_status()["fault_reason"] == reason
 
 
-def test_stop_before_handoff_does_not_take_control(connection, mocker):
+@pytest.mark.parametrize("handed_off, modes", [(False, []), (True, [[0] * 29])])
+def test_shutdown_only_sends_motor_disable_after_handoff(connection, mocker, handed_off, modes):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+    connection._sport_mode_released = handed_off
+    close_publisher = mocker.patch.object(publisher, "Close")
+    close_subscriber = mocker.patch.object(connection._subscriber, "Close")
+
+    connection.stop()
+
+    assert publisher.modes == modes
+    close_publisher.assert_called_once_with()
+    close_subscriber.assert_called_once_with()
+
+
+def test_missing_first_feedback_is_reported_without_taking_control(connection, mocker):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+    connection._sport_mode_released = False
+    connection._last_feedback_at = None
+    release = mocker.patch.object(connection, "_release_sport_mode")
+    warning = mocker.patch("dimos.robot.unitree.g1.wholebody_connection.logger.warning")
+
+    connection._on_motor_command(_command())
+    connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
+
+    warning.assert_called_once_with(
+        "Motor command ignored: waiting for first robot feedback on rt/lowstate"
+    )
+    assert connection.command_stream_status()["feedback_received"] is False
+    release.assert_not_called()
+    assert publisher.frames == []
+
+    _feedback(connection, tick=2)
+    connection._on_motor_command(_command())
+    connection._publish_latest_command(10.0)
+
+    release.assert_called_once_with()
+    assert connection.command_stream_status()["feedback_received"] is True
+    assert publisher.frames == [[(1.0, 0.0, 100.0, 5.0, 8.0)] * 29]
+
+
+def test_estop_before_handoff_does_not_take_control_even_during_shutdown(connection, mocker):
     publisher = _wire(connection, soft_start_seconds=0.0)
     connection._sport_mode_released = False
     release = mocker.patch.object(connection, "_release_sport_mode")
@@ -258,6 +299,7 @@ def test_stop_before_handoff_does_not_take_control(connection, mocker):
     connection.set_estop(True)
     connection._on_motor_command(_command())
     connection._publish_latest_command(10.0)
+    connection.stop()
 
     release.assert_not_called()
     assert publisher.frames == []

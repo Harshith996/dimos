@@ -584,6 +584,7 @@ class SonicPipeline:
         )
         self._planner_closed = False
         self._planner_future: Future[list[Any]] | None = None
+        self._discard_planner_result = False
         self._planner_generation_frame: int | None = None
         self._planner_started_at: float | None = None
         self._replan_timer = 0.0
@@ -679,7 +680,13 @@ class SonicPipeline:
         if mode is not None and not 0 <= int(mode) <= 26:
             raise ValueError(f"locomotion mode out of range: {mode}")
         target = LOCOMOTION_MODES["SLOW_WALK"] if mode is None else int(mode)
+        if target == self.target_mode:
+            return target
         stages = _transition_stages(self._mode_override, target)
+        if self._mode_queue:
+            # Finish the current dwell even when its final target changes.
+            self._mode_queue = stages
+            return target
         self._mode_queue = stages[1:]
         self._mode_dwell = 0.0
         first = stages[0]
@@ -860,9 +867,18 @@ class SonicPipeline:
         self._reset_heading_alignment()
         self._vx = self._vy = self._yaw_rate = 0.0
         self._last_planned_velocity = (0.0, 0.0, 0.0)
-        if self._planner_future is not None and not self._planner_future.done():
-            self._planner_future.cancel()
-        self._planner_future = None
+        if (
+            self._planner_future is not None
+            and not self._planner_future.cancel()
+            and not self._planner_future.done()
+        ):
+            # ONNX cannot cancel a running call. Keep its original deadline and
+            # wait for it before submitting fresh work, but discard its result.
+            self._discard_planner_result = True
+        else:
+            self._planner_future = None
+            self._planner_started_at = None
+            self._discard_planner_result = False
         self._upper_targets_dds = DEFAULT_ANGLES_DDS[15:].copy()
         self._planner_generation_frame = None
         self._mode_override = LOCOMOTION_MODES["SLOW_WALK"]
@@ -1117,6 +1133,11 @@ class SonicPipeline:
 
     def _check_planner_result(self) -> None:
         if self._planner_future is None:
+            return
+        if self._discard_planner_result and self._planner_future.done():
+            self._planner_future = None
+            self._planner_started_at = None
+            self._discard_planner_result = False
             return
         if self._planner_started_at is not None and (
             time.perf_counter() - self._planner_started_at >= PLANNER_TIMEOUT_SECONDS
