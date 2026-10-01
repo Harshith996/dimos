@@ -65,10 +65,12 @@ assert DeviceReading.decode(reading.encode()).value == 20.5
 Run the package and runtime regressions appropriate to your changed consumers:
 
 ```sh skip
-uv run pytest dimos/message_codegen/test_definitions.py \
+.venv/bin/python -m pytest dimos/message_codegen/test_definitions.py \
   dimos/message_codegen/test_stubs.py
 ```
 
+Use the active interpreter directly after installing your rebuilt wheel; a
+subsequent `uv run` may resync the local-source dependency from its cache.
 The new built-in wheel must be installed before testing a runtime module that
 imports the new type. In the runtime-cutover layer, use the same
 `Module`/`In[DeviceReading]`/`Out[DeviceReading]` API as other generated messages.

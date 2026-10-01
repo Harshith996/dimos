@@ -53,8 +53,21 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
     python = str(venv / "bin/python")
     dist = tmp_path / "dist"
+    uv = shutil.which("uv")
+    assert uv is not None, "Prepare uv before running the repository tutorial"
     subprocess.run(
-        [python, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(dist), str(package)],
+        [
+            uv,
+            "build",
+            str(package),
+            "--python",
+            python,
+            "--out-dir",
+            str(dist),
+            "--no-index",
+            "--find-links",
+            str(Path(wheelhouse).resolve()),
+        ],
         cwd=tmp_path,
         env=environment,
         check=True,
