@@ -45,6 +45,11 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     source.write_text(definition.group(1))
     environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     environment.update(
+        PATH=os.pathsep.join(
+            directory
+            for directory in os.environ["PATH"].split(os.pathsep)
+            if Path(directory) != Path(sys.executable).parent
+        ),
         PIP_NO_INDEX="1",
         PIP_FIND_LINKS=str(Path(wheelhouse).resolve()),
         CMAKE_PREFIX_PATH=str(Path(fastcdr).resolve()),
