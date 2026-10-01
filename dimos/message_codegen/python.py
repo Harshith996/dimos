@@ -46,6 +46,7 @@ def generate(
     """Emit importable packages; dependency messages retain their canonical class identity."""
     imported = imported or {}
     lines = [
+        *Path(__file__).read_text().splitlines()[:13],
         "# Generated from ROS2 .msg definitions. Do not edit.",
         "from __future__ import annotations",
         "from ._runtime import Codec, Message, Sequence",
@@ -133,14 +134,17 @@ def generate(
         "_types.py": "\n".join(lines) + "\n",
         "_runtime.py": Path(__file__).with_name("templates").joinpath("runtime.py").read_text(),
         "__init__.py": f"__dimos_version__ = {version!r}\n__dimos_abi__ = {ABI!r}\n"
-        + "".join(f"from . import {package}\n" for package in packages),
-        "py.typed": "",
+        + "".join(f"from . import {package} as {package}\n" for package in packages),
+        "py.typed": "# Generated message packages contain inline type annotations.\n",
     }
     for package in packages:
-        result[f"{package}/__init__.py"] = "from . import msg\n"
-        result[f"{package}/msg/__init__.py"] = "".join(
-            f"from ..._types import {message.name.replace('/', '__')} as {message.short_name}\n"
-            for message in messages
-            if message.package == package
+        result[f"{package}/__init__.py"] = "from . import msg as msg\n"
+        result[f"{package}/msg/__init__.py"] = (
+            "".join(
+                f"from ..._types import {message.name.replace('/', '__')} as {message.short_name}\n"
+                for message in messages
+                if message.package == package
+            )
+            + f"__all__ = {[message.short_name for message in messages if message.package == package]!r}\n"
         )
     return result

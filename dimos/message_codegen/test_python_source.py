@@ -16,6 +16,8 @@
 
 import struct
 
+import pytest
+
 generated = pytest.importorskip("dimos_generated", reason="Generate the source example first")
 if not hasattr(generated, "demo_msgs"):
     pytest.skip("Generate the source example first", allow_module_level=True)
@@ -23,7 +25,6 @@ Telemetry = generated.demo_msgs.msg.Telemetry
 Bool = generated.std_msgs.msg.Bool
 String = generated.std_msgs.msg.String
 UInt32MultiArray = generated.std_msgs.msg.UInt32MultiArray
-import pytest
 
 
 @pytest.mark.parametrize("little", [True, False])
