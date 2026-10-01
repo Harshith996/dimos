@@ -17,7 +17,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.models.vl.qwen import QwenVlModel
-from dimos_generated.sensor_msgs.msg import Image
 from dimos.msgs.image import image_from_file
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data

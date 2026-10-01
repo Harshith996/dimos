@@ -16,10 +16,10 @@ import os
 import time
 from typing import TYPE_CHECKING
 
+from dimos_generated.sensor_msgs.msg import Image
 import pytest
 
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos_generated.sensor_msgs.msg import Image
 from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
