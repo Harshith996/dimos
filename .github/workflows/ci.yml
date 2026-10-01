@@ -310,6 +310,8 @@ jobs:
         run: bash scripts/setup_message_codegen.sh
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Install native build typing dependencies
+        run: uv pip install --no-deps pybind11==3.0.1 types-setuptools==77.0.2.20250328
       - name: Mypy
         run: uv run mypy
 
@@ -1145,7 +1147,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
-            build-essential \
+            build-essential cmake \
             `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
             libgl1 \
             `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
