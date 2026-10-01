@@ -306,6 +306,8 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
@@ -362,6 +364,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
@@ -510,6 +514,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
+      - name: Build standalone CDR dependency
+        run: bash scripts/setup_message_codegen.sh
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
