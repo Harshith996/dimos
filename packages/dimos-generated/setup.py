@@ -16,7 +16,11 @@
 
 from pathlib import Path
 
+<<<<<<<< HEAD:packages/dimos-generated/setup.py
 from dimos_cdrgen.source_package import setup_arguments
 from setuptools import setup
+========
+from .definitions import Definitions
+>>>>>>>> 90c9ae8ae (feat: assemble standalone message authoring and shared package ownership):dimos/message_codegen/builtin_provider.py
 
 setup(**setup_arguments(Path(__file__).resolve().parent))
