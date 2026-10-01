@@ -79,7 +79,11 @@ class Sequence:
         kind = field[1]
         self.values: np.ndarray[Any, Any] | list[Any]
         if kind in _DTYPES:
-            array = np.asarray(values)
+            array = (
+                np.frombuffer(values, dtype=np.uint8)
+                if kind == "uint8" and isinstance(values, (bytes, bytearray))
+                else np.asarray(values)
+            )
             if array.ndim != 1:
                 raise ValueError("Expected a one-dimensional sequence")
             if kind != "bool" and not kind.startswith("float") and array.size:
@@ -172,8 +176,9 @@ class Sequence:
     def view(self, dtype: Any = None) -> np.ndarray[Any, Any]:
         if not isinstance(self.values, np.ndarray):
             raise TypeError("Only numeric sequences have NumPy views")
-        result = self.values.view(dtype) if dtype is not None else self.values.view()
-        result.setflags(write=False)
+        result = np.frombuffer(memoryview(self.values).toreadonly(), dtype=self.values.dtype)
+        if dtype is not None:
+            result = result.view(dtype)
         owner = self.owner._root()
         owner._borrows += 1
         weakref.finalize(result, owner._release)

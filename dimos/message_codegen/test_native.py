@@ -181,3 +181,22 @@ def test_standard_string_message_round_trips():
     value = generated.std_msgs.msg.String(data="hello")
 
     assert value.decode(value.encode()).data == "hello"
+
+
+def test_binary_sequence_copies_bytes_and_bytearray_without_scalar_conversion():
+    payload = bytes(range(256)) * 3600
+    image = Image(height=480, width=640, encoding="rgb8", step=1920, data=payload)
+    assert bytes(image.data.view()) == payload
+    assert bytes(Image.decode(image.encode()).data.view()) == payload
+    mutable = bytearray(payload)
+    image.data = mutable
+    mutable[0] = 255
+    assert image.data[0] == 0
+
+
+def test_borrowed_numeric_view_cannot_reenable_writes():
+    message = Image(data=bytes([1, 2, 3, 4]))
+    view = message.data.view()
+    with pytest.raises(ValueError, match="WRITEABLE"):
+        view.setflags(write=True)
+    assert bytes(view) == b"\x01\x02\x03\x04"
