@@ -21,6 +21,11 @@ import sys
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 
 def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     wheelhouse = os.environ.get("DIMOS_MESSAGE_WHEELHOUSE")
@@ -93,3 +98,64 @@ assert 'MSG: std_msgs/Header' in DeviceReading.schema
 """
     )
     subprocess.run([python, "-I", "-c", validation], cwd=tmp_path, env=environment, check=True)
+
+
+def test_checkout_sync_sees_generated_source_changes_without_reinstall(tmp_path):
+    wheelhouse = os.environ.get("DIMOS_MESSAGE_WHEELHOUSE")
+    if not wheelhouse:
+        pytest.skip("Set message wheelhouse for clean checkout acceptance")
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    source = config["tool"]["uv"]["sources"]["dimos-generated"]
+    checkout = tmp_path / "checkout"
+    package = checkout / source["path"]
+    shutil.copytree(
+        root / source["path"],
+        package,
+        ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__"),
+    )
+    (checkout / "pyproject.toml").write_text(
+        '[project]\nname = "checkout-probe"\nversion = "0.1.0"\n'
+        f'requires-python = "=={sys.version_info.major}.{sys.version_info.minor}.*"\n'
+        'dependencies = ["dimos-generated==0.1.0"]\n[tool.uv.sources]\n'
+        f'dimos-generated = {{ path = "{source["path"]}", editable = {str(source.get("editable", False)).lower()} }}\n'
+    )
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONPATH", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"}
+    }
+    environment.update(CC="/bin/false", CXX="/bin/false", UV_PYTHON_DOWNLOADS="never")
+    uv = shutil.which("uv")
+    assert uv is not None, "Prepare uv before running checkout acceptance"
+    subprocess.run(
+        [
+            uv,
+            "sync",
+            "--python",
+            sys.executable,
+            "--no-index",
+            "--find-links",
+            str(Path(wheelhouse).resolve()),
+        ],
+        cwd=checkout,
+        env=environment,
+        check=True,
+    )
+    python = str(checkout / ".venv/bin/python")
+    validation = (
+        "from dimos_generated.geometry_msgs.msg import Point; "
+        "assert Point.decode(Point(x=1.25).encode()).x == 1.25; "
+        "assert getattr(Point, 'CHECKOUT_PROBE', None) == 17"
+    )
+    # Stand in for a regenerated constant in a committed source value class.
+    # The isolated wheel tutorial separately verifies .msg -> all-language generation.
+    values = package / "src/dimos_generated/_types.py"
+    values.write_text(
+        values.read_text().replace(
+            "class geometry_msgs__msg__Point(Message):",
+            "class geometry_msgs__msg__Point(Message):\n    CHECKOUT_PROBE = 17",
+        )
+    )
+    subprocess.run([uv, "sync", "--frozen", "--offline"], cwd=checkout, env=environment, check=True)
+    subprocess.run([python, "-I", "-c", validation], cwd=checkout, env=environment, check=True)
