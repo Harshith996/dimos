@@ -272,6 +272,28 @@ jobs:
           path: .cachix-marker
           key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
 
+  message-alignment:
+    name: Built-in message alignment
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.92.0'
+          components: rustfmt
+      - name: Install locked generation/check dependencies only
+        run: uv sync --only-group message-codegen --frozen
+      - name: Reject built-in Python/C++/Rust/schema drift
+        run: .venv/bin/python -m scripts.generate_builtin_messages --check
+      - name: Verify drift rejection for changed inputs and output inventories
+        run: .venv/bin/python -m pytest -c /dev/null --rootdir . --noconftest -q dimos/message_codegen/test_builtin_alignment.py
+
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -1417,6 +1439,7 @@ jobs:
     needs:
     - commit-messages
     - lint
+    - message-alignment
     - rust
     - native
     - md-babel
