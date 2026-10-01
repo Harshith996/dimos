@@ -26,6 +26,17 @@ from types import ModuleType
 from typing import Any, ClassVar
 import xml.etree.ElementTree as ET
 
+from dimos_generated.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos_generated.sensor_msgs.msg import JointState
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -45,13 +56,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS, prepare_robot_model
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.geometry import pose_matrix, quaternion_from_euler
 from dimos.robot.assets.model import RobotModel
-from dimos.utils.transform_utils import pose_to_matrix
 
 
 class FakeJointConfiguration:
@@ -514,7 +520,9 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
     )
     return RobotModelConfig(
         model=RobotModel.from_file(model_path).with_default_joint_acceleration_limit(2.0),
-        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        base_pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
         planning_groups=[
@@ -601,16 +609,14 @@ def _selection(
     )
 
 
-def _relative_target(*waypoints: Transform) -> tuple[Transform, ...]:
-    return (Transform.identity(), *waypoints)
+def _relative_target(*waypoints: TransformStamped) -> tuple[TransformStamped, ...]:
+    return (TransformStamped(header=Header(frame_id="world"), child_frame_id=""), *waypoints)
 
 
 def _absolute_target(*waypoints: PoseStamped) -> tuple[PoseStamped, ...]:
     return (
         PoseStamped(
-            frame_id="world",
-            position=Vector3(),
-            orientation=Quaternion(),
+            header=Header(frame_id="world"), pose=Pose(position=Point(), orientation=Quaternion())
         ),
         *waypoints,
     )
@@ -724,22 +730,27 @@ def test_obstacle_mutation_updates_scene_and_stored_pose(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     assert world.add_obstacle(obstacle) == "box"
     assert add_box.call_args.args[2] == "dimos_world"
     assert "box" in world._scene.geometry
-    updated_pose = PoseStamped(position=Vector3(1, 0, 0), orientation=Quaternion())  # type: ignore[call-arg]
+    updated_pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(position=Point(x=1, y=0, z=0), orientation=Quaternion()),
+    )  # type: ignore[call-arg]
     assert world.update_obstacle_pose(
         "box",
         updated_pose,
     )
     np.testing.assert_allclose(
-        pose_to_matrix(world.get_obstacles()[0].pose),
-        pose_to_matrix(updated_pose),
+        pose_matrix(world.get_obstacles()[0].pose.pose),
+        pose_matrix(updated_pose.pose),
     )
-    np.testing.assert_allclose(world._scene.geometry["box"], pose_to_matrix(updated_pose))
+    np.testing.assert_allclose(world._scene.geometry["box"], pose_matrix(updated_pose.pose))
     assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("box")
     assert world.get_obstacles() == []
@@ -754,7 +765,9 @@ def test_octree_obstacle_reaches_the_scene_as_occupied_cells(
     obstacle = Obstacle(
         name="voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         points=((0.0, 0.0, 0.0), (0.05, 0.0, 0.0)),
         octree_resolution=0.05,
     )
@@ -782,7 +795,9 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     obstacle = Obstacle(
         name="voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         points=((0.0, 0.0, 0.0),),
         octree_resolution=0.05,
     )
@@ -804,7 +819,9 @@ def test_octree_obstacle_rejects_geometry_it_cannot_build(
         base: dict[str, object] = {
             "name": "voxel-map",
             "obstacle_type": ObstacleType.OCTREE,
-            "pose": PoseStamped(position=Vector3(), orientation=Quaternion()),
+            "pose": PoseStamped(
+                header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+            ),
             "points": ((0.0, 0.0, 0.0),),
             "octree_resolution": 0.05,
         }
@@ -833,7 +850,9 @@ def test_obstacle_operations_require_finalization(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
 
@@ -859,7 +878,9 @@ def test_failed_obstacle_add_rolls_back_and_can_be_retried(
     obstacle = Obstacle(
         name="retryable",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
     add_box = mocker.patch.object(
@@ -887,7 +908,9 @@ def test_concurrent_remove_waits_for_obstacle_add(
     obstacle = Obstacle(
         name="concurrent",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),
         dimensions=(0.1, 0.2, 0.3),
     )
     backend_add_started = threading.Event()
@@ -935,7 +958,9 @@ def test_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     unnamed = Obstacle(
         name="",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.1, 0.1),
     )
     named = replace(unnamed, name="world-owned")
@@ -955,7 +980,9 @@ def test_complete_update_rejects_invalid_obstacle_values(
     valid = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     invalid_obstacles = [
@@ -970,11 +997,14 @@ def test_complete_update_rejects_invalid_obstacle_values(
             replace(
                 valid,
                 pose=PoseStamped(
-                    position=[np.nan, 0.0, 0.0],
-                    orientation=[0.0, 0.0, 0.0, 1.0],
+                    header=Header(frame_id=""),
+                    pose=Pose(
+                        position=Point(x=np.nan, y=0.0, z=0.0),
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
                 ),
             ),
-            "finite values",
+            "Position components must be finite",
         ),
     ]
 
@@ -992,7 +1022,9 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
     original = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
         color=(1.0, 0.0, 0.0, 1.0),
     )
@@ -1003,7 +1035,10 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
     replacement = Obstacle(
         name="shape",
         obstacle_type=ObstacleType.SPHERE,
-        pose=PoseStamped(position=Vector3(1, 2, 3), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""),
+            pose=Pose(position=Point(x=1, y=2, z=3), orientation=Quaternion()),
+        ),  # type: ignore[call-arg]
         dimensions=(0.4,),
         color=(0.0, 1.0, 0.0, 0.5),
     )
@@ -1016,9 +1051,9 @@ def test_complete_replacement_and_defensive_obstacle_snapshots(
 
     replacement.dimensions = (2.0,)
     stored.dimensions = (3.0,)
-    stored.pose.position.x = 99.0
+    stored.pose.pose.position.x = 99.0
     assert world.get_obstacles()[0].dimensions == (0.4,)
-    assert world.get_obstacles()[0].pose.position.x == pytest.approx(1.0)
+    assert world.get_obstacles()[0].pose.pose.position.x == pytest.approx(1.0)
     assert world.update_obstacle(replace(replacement, name="missing")) is False
 
 
@@ -1031,7 +1066,9 @@ def test_collision_query_blocks_during_obstacle_replacement(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1076,7 +1113,9 @@ def test_obstacle_replacement_blocks_during_collision_query(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1121,7 +1160,9 @@ def test_native_update_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1150,7 +1191,9 @@ def test_native_pose_update_failure_invalidates_world(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1214,7 +1257,9 @@ def test_generic_planner_allows_update_between_collision_checks(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1253,7 +1298,7 @@ def test_fk_jacobian_and_explicit_min_distance_unsupported(
     world.set_joint_state(ctx, JointState(name=["joint1", "joint2"], position=[0.25, 0.5]))
 
     pose = world.get_ee_pose(ctx)
-    assert pose.position.x == pytest.approx(0.75)
+    assert pose.pose.position.x == pytest.approx(0.75)
     assert world.get_jacobian(ctx).shape == (6, 2)
     with pytest.raises(NotImplementedError, match="get_min_distance"):
         world.get_min_distance(ctx)
@@ -1301,14 +1346,14 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
     ctx = world.get_live_context()
     world.set_joint_state(
         ctx,
-        JointState({"name": ["joint1", "joint2", "joint3"], "position": [1.0, 2.0, 3.0]}),
+        JointState(name=["joint1", "joint2", "joint3"], position=[1.0, 2.0, 3.0]),
     )
 
     pose = world.get_group_ee_pose(ctx, "wrist")
     jacobian = world.get_group_jacobian(ctx, "wrist")
 
     assert fk_frames == ["tcp"]
-    assert pose.position.x == pytest.approx(6.0)
+    assert pose.pose.position.x == pytest.approx(6.0)
     np.testing.assert_allclose(jacobian, np.arange(18, dtype=np.float64).reshape(6, 3)[:, [2, 0]])
 
 
@@ -1616,7 +1661,9 @@ def test_native_planning_blocks_obstacle_replacement(
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
+        pose=PoseStamped(
+            header=Header(frame_id=""), pose=Pose(position=Point(), orientation=Quaternion())
+        ),  # type: ignore[call-arg]
         dimensions=(0.1, 0.2, 0.3),
     )
     world.add_obstacle(obstacle)
@@ -1720,8 +1767,8 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[0].position == pytest.approx(start.position)
-    assert observed_scene_start[:2] == pytest.approx(start.position)
+    assert list(result.path[0].position) == pytest.approx(list(start.position))
+    assert observed_scene_start[:2] == pytest.approx(list(start.position))
 
 
 def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
@@ -1747,7 +1794,7 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
 
     assert result.status == PlanningStatus.SUCCESS
     assert result.path[-1].name == ["joint1", "joint2"]
-    assert result.path[-1].position == pytest.approx([0.1, 0.1])
+    assert list(result.path[-1].position) == pytest.approx([0.1, 0.1])
 
 
 def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
@@ -1781,9 +1828,13 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         {
             "manipulator": _relative_target(
-                Transform(
-                    translation=Vector3(0.1, 0.0, 0.0),
-                    rotation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2.0)),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(
+                        translation=Vector3(x=0.1, y=0.0, z=0.0),
+                        rotation=quaternion_from_euler(0.0, 0.0, np.pi / 2.0),
+                    ),
+                    child_frame_id="",
                 )
             )
         },
@@ -1796,8 +1847,8 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     assert result.status == PlanningStatus.SUCCESS
     assert result.timestamps == [0.0, 0.02, 0.04]
     assert [state.name for state in result.path] == [list(selection.joint_names)] * 3
-    assert result.path[-1].position == pytest.approx([0.1, 0.1])
-    assert result.path[1].velocity == pytest.approx([0.5, 0.5])
+    assert list(result.path[-1].position) == pytest.approx([0.1, 0.1])
+    assert list(result.path[1].velocity) == pytest.approx([0.5, 0.5])
     planner = FakeCartesianPathPlanner.instances[-1]
     assert planner.options.speed_mode == FakeCartesianSpeedMode.TimeOptimal
     for field_name, expected in option_overrides.items():
@@ -1830,8 +1881,16 @@ def test_cartesian_zero_rotation_preserves_start_orientation(
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
         {
             "manipulator": _relative_target(
-                Transform(translation=Vector3(0.05, 0.02, 0.0)),
-                Transform(translation=Vector3(0.1, 0.0, 0.0)),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.05, y=0.02, z=0.0)),
+                    child_frame_id="",
+                ),
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    child_frame_id="",
+                ),
             )
         },
         RoboPlanCartesianPathConfig(),
@@ -1858,12 +1917,20 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
         world,
         selection,
         start,
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    child_frame_id="",
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert result.path[0].position == pytest.approx(start.position)
+    assert list(result.path[0].position) == pytest.approx(list(start.position))
     start_pose = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0][0]
     assert start_pose[0, 3] == pytest.approx(sum(start.position))
 
@@ -1886,7 +1953,15 @@ def test_cartesian_rejects_official_planner_failure(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.1, 0.0, 0.0)))},
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.1, y=0.0, z=0.0)),
+                    child_frame_id="",
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
@@ -1938,7 +2013,15 @@ def test_cartesian_postvalidation_checks_between_waypoints(
         world,
         selection,
         JointState(name=list(selection.joint_names), position=[0.0, 0.0]),
-        {"manipulator": _relative_target(Transform(translation=Vector3(0.05, 0.0, 0.0)))},
+        {
+            "manipulator": _relative_target(
+                TransformStamped(
+                    header=Header(frame_id="world"),
+                    transform=Transform(translation=Vector3(x=0.05, y=0.0, z=0.0)),
+                    child_frame_id="",
+                )
+            )
+        },
         RoboPlanCartesianPathConfig(),
     )
 
@@ -2062,8 +2145,9 @@ def test_composed_model_fills_only_missing_acceleration_limits(
 def test_base_pose_is_written_to_composed_model(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
-    robot_config.base_pose = PoseStamped(  # type: ignore[call-arg]
-        position=Vector3(1, 0, 0), orientation=Quaternion()
+    robot_config.base_pose = PoseStamped(
+        header=Header(frame_id=""),
+        pose=Pose(position=Point(x=1, y=0, z=0), orientation=Quaternion()),
     )
     world = _make_world(fake_roboplan, robot_config)
 
