@@ -274,6 +274,8 @@ jobs:
 
   message-alignment:
     name: Built-in message alignment
+    env:
+      DIMOS_MESSAGE_ALIGNMENT_REQUIRED: "1"
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:

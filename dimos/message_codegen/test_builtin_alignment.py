@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import ast
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,21 @@ import pytest
 
 @pytest.fixture(scope="module")
 def aligned_checkout(tmp_path_factory):
+    missing = None
+    if importlib.util.find_spec("ruff") is None:
+        missing = "Install the locked message-codegen dependency group for alignment tests"
+    elif shutil.which("rustup") is None:
+        missing = "Alignment tests require the explicitly installed Rust 1.92.0 formatter"
+    else:
+        formatter = subprocess.run(
+            ["rustup", "run", "1.92.0", "rustfmt", "--version"], capture_output=True, text=True
+        )
+        if formatter.returncode:
+            missing = "Alignment tests require rustup toolchain install 1.92.0 --component rustfmt"
+    if missing:
+        if os.environ.get("DIMOS_MESSAGE_ALIGNMENT_REQUIRED") == "1":
+            pytest.fail(missing)
+        pytest.skip(missing)
     root = Path(__file__).resolve().parents[2]
     checkout = tmp_path_factory.mktemp("aligned-source")
     ignore = shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", "target")

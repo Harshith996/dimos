@@ -72,6 +72,9 @@ Regression tests deliberately alter a field, schema text, add/remove a type,
 change generator output and package version, and remove Python/C++/Rust/schema
 outputs or add an untracked output. Each must fail before explicit regeneration
 and pass after repair. Version repair is checked in Python, CMake and Cargo.
+The dedicated CI job requires the pinned formatter and executes every case;
+ordinary runtime test environments without that toolchain report an explicit
+prerequisite skip. The mandatory drift command never skips missing tools.
 
 CI has read-only repository permissions for this check. It fails with the repair
 command; it does not commit generated changes, use a persistent write token, or
