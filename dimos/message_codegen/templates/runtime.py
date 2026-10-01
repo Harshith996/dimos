@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 import struct
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, TypeVar, cast
 import weakref
 
 import numpy as np
@@ -41,6 +41,7 @@ _DTYPES = {
 }
 # name, scalar type, array, size/bound, bounded sequence, string bound, default
 Field = tuple[str, str, bool, int | None, bool, int | None, Any]
+_MessageT = TypeVar("_MessageT", bound="Message")
 
 
 def _scalar(kind: str, value: Any, codec: Codec, bound: int | None = None) -> Any:
@@ -310,7 +311,7 @@ class Message:
         )
 
     @classmethod
-    def decode(cls, data: bytes) -> Message:
+    def decode(cls: type[_MessageT], data: bytes) -> _MessageT:
         if len(data) < 4 or data[:1] != b"\0" or data[1] not in (0, 1) or data[2:4] != b"\0\0":
             raise ValueError("Expected plain CDR/XCDR1 encapsulation")
         body = memoryview(data)[4:]
@@ -321,7 +322,7 @@ class Message:
             value, position = decoder(body, 0, cls, cls._codec.store)
             if position != len(body):
                 raise ValueError("Trailing bytes after CDR message")
-            return cast("Message", value)
+            return cast("_MessageT", value)
         except (struct.error, IndexError, OverflowError, AssertionError) as error:
             raise ValueError("Invalid or truncated CDR message") from error
 

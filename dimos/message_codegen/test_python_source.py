@@ -14,7 +14,11 @@
 
 """Malformed wire data is rejected before constructing generated Python values."""
 
+import os
+from pathlib import Path
 import struct
+import subprocess
+import sys
 
 import pytest
 
@@ -59,3 +63,19 @@ def test_invalid_encapsulation_bool_and_huge_sequence_are_rejected():
     encoded[-4:] = struct.pack("<I", 0xFFFFFFFF)
     with pytest.raises(ValueError, match="sequence"):
         UInt32MultiArray.decode(bytes(encoded))
+
+
+def test_decode_preserves_generated_class_type_for_python_consumers(tmp_path):
+    consumer = tmp_path / "consumer.py"
+    consumer.write_text(
+        "from dimos_generated.demo_msgs.msg import Telemetry\n"
+        "message: Telemetry = Telemetry.decode(Telemetry(sequence=7).encode())\n"
+        "sequence: int = message.sequence\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "--strict", "--follow-imports=silent", str(consumer)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "MYPYPATH": str(Path(generated.__file__).parent.parent)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
