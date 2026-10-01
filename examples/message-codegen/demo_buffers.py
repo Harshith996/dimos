@@ -14,6 +14,7 @@
 
 """Show safe native buffer borrowing and report a reproducible local baseline."""
 
+import argparse
 import gc
 from statistics import median
 from time import perf_counter_ns
@@ -23,6 +24,11 @@ import numpy as np
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--functional-only", action="store_true", help="Verify buffer safety without timing loops"
+    )
+    args = parser.parse_args()
     pixels = np.arange(640 * 480 * 3, dtype=np.uint8)
     points = np.arange(100_000 * 3, dtype=np.float32).view(np.uint8)
     fixtures = {
@@ -58,6 +64,9 @@ def main() -> None:
         del view
         durations = {"borrow": [], "copy": [], "encode": [], "decode": []}
         encoded = message.encode()
+        if args.functional_only:
+            assert type(message).decode(encoded).encode() == encoded
+            continue
         for _ in range(30):
             start = perf_counter_ns()
             borrowed = message.data.view()

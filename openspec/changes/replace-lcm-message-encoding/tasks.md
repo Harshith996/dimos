@@ -5,7 +5,7 @@
 - [x] 1.3 Pin and vendor the required Jazzy `.msg` dependency closure with immutable upstream revisions, licenses, and notices.
 - [x] 1.4 Implement standalone package resolution and parsing, including qualified names, transitive dependencies, defaults/bounds, conflict rejection, and source diagnostics for unsupported or invalid definitions.
 - [x] 1.5 Validate and pin the shared-definition C++ emitter/Fast CDR pipeline without ROS or DDS runtime requirements; generate buildable types and encapsulated XCDR1 codecs rather than handwritten message layouts.
-- [x] 1.6 Generate pybind11 bindings sharing the C++ codecs, with transport-neutral encode/decode, nested-field/sequence mutation semantics, and type/schema metadata.
+- [x] 1.6 Generate plain Python source values using a pure-Python CDR library, with transport-neutral encode/decode, nested-field/sequence mutation semantics, and type/schema metadata.
 - [x] 1.7 Validate and pin the native Rust generation/CDR backend, emit equivalent types/metadata/codecs, and document any rejected candidates with evidence in design.md.
 - [x] 1.8 Implement and verify read-only image/point-cloud buffer views, explicit mutable copies, owner lifetimes, and rejection of storage-invalidating mutations while views exist; capture representative buffer performance and copying behavior.
 - [x] 1.9 Add all nine language encoder/decoder conformance combinations, endian/alignment cases, defaults, bounds, fixed/dynamic arrays, nested standard/custom messages, malformed inputs, and independent ROS2 Jazzy reference checks in a separate CI job.

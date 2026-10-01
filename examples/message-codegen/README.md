@@ -5,6 +5,10 @@ reading, a position, defaults, fixed and variable arrays, and a bounded string.
 This example generates Python, C++, and Rust from that definition without ROS.
 The native processes print the fields they receive and each adds its own hop.
 
+Python messages are ordinary generated source. Python needs NumPy and rosbags;
+it does not compile or load a generated message extension. C++ and Rust compile
+their generated source together with the native application.
+
 ## Build dependencies
 
 Use Python 3.12+, a C++17 compiler, CMake 3.20+, and Rust 1.92+. Install Python
@@ -12,7 +16,7 @@ build/test dependencies into the checkout's virtual environment:
 
 ```bash
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python pybind11==3.0.1 rosbags==0.11.0 pytest pytest-asyncio pytest-env numpy lcm-dimos-fork
+uv pip install --python .venv/bin/python rosbags==0.11.0 pytest pytest-asyncio pytest-env numpy lcm-dimos-fork
 ```
 
 Install Fast CDR 2.4.0 into a local build prefix. This setup step downloads source;
@@ -41,11 +45,6 @@ Run from the repository root:
 .venv/bin/python -m dimos.message_codegen.generate \
   --package-root examples/message-codegen \
   --output build/message-codegen/demo
-cmake -S build/message-codegen/demo/cpp -B build/message-codegen/demo/cpp/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$PWD/build/message-codegen/install" \
-  -DPython_EXECUTABLE="$PWD/.venv/bin/python"
-cmake --build build/message-codegen/demo/cpp/build -j 2
 c++ -std=c++17 -Ibuild/message-codegen/install/include \
   -Ibuild/message-codegen/demo/cpp examples/message-codegen/relay.cpp \
   build/message-codegen/install/lib/libfastcdr.a \
@@ -61,9 +60,9 @@ to demonstrate that generation/builds do not fetch message definitions or ROS.
 ## Run and inspect
 
 ```bash
-PYTHONPATH=build/message-codegen/demo/cpp/build \
+PYTHONPATH=build/message-codegen/demo/python \
   .venv/bin/python examples/message-codegen/demo_relay.py --build build/message-codegen/demo
-PYTHONPATH=build/message-codegen/demo/cpp/build \
+PYTHONPATH=build/message-codegen/demo/python \
   .venv/bin/python examples/message-codegen/demo_conformance.py --build build/message-codegen/demo
 .venv/bin/pytest dimos/message_codegen/test_definitions.py --noconftest -o addopts='' -q
 ```
@@ -74,8 +73,8 @@ prints sequence `42`, label `start/cpp/rust`, and hops `[1, 2, 3]`. The terminal
 also shows the nested temperature, position, and fixed-array values in each native
 process. Binary artifacts remain under `build/message-codegen/demo/evidence/`.
 
-The conformance demo prints the nine native encoder/decoder combinations, checks
-both byte orders against an independent ROS2 codec, and exercises rejected
+The conformance demo prints the nine encoder/decoder combinations, checks
+both byte orders against rosbags and the independent C++/Rust codecs, and exercises rejected
 payloads. It is a local conformance check, not a replacement for the planned ROS2
 Jazzy CI reference job.
 
@@ -93,7 +92,7 @@ bash scripts/test_message_codegen.sh
 ```
 
 The second command builds every bundled and demo message, runs the tests and
-relay, prints image/point-cloud buffer timings, and exchanges raw LCM payloads
+relay, verifies image/point-cloud buffer safety, and exchanges raw LCM payloads
 between Python and Rust, including a fragmented 1 MiB payload. It requires local
 UDP multicast. Output and payloads are retained in the demo's `evidence/` folder.
 The independent Jazzy job builds the same demo definitions with ROS generators
@@ -110,7 +109,7 @@ change. This avoids dangling references when the sequence resizes.
 While any view exists, operations that replace nested storage or resize a sequence
 on that owner raise `BufferError`. Scalar and in-place element updates remain
 possible. `image.data.copy()` returns an independent, writable NumPy array.
-The terminal buffer demo reports local borrow/copy/encode/decode medians; these
+The optional timing mode reports local borrow/copy/encode/decode medians; these
 are reproducible measurements, not platform-independent performance guarantees.
 
 ## Current stage scope

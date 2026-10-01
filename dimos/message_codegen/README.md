@@ -17,7 +17,8 @@ before output is written. Repeat `--package-root` and `--type` for multiple inpu
 omitting `--type` generates all available definitions. The output belongs in an
 ignored build directory. Generation never downloads dependencies.
 
-Python and C++ use Fast CDR 2.4.0; Python bindings use pybind11 3.0.1. Rust uses
+Python emits plain source values and uses rosbags 0.11.0 for CDR; C++ uses
+Fast CDR 2.4.0. Python message use requires no native message compilation. Rust uses
 `re_cdr` 0.1.0 and `serde-big-array` 0.5.1. The current generator explicitly rejects
 `wstring` because the selected Rust backend has no matching wide-string Serde
 representation. No bundled definition uses it. Service/action generation is out

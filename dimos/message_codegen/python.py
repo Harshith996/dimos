@@ -12,119 +12,135 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate Python bindings to the same native types/codecs used by C++."""
+"""Generate ordinary Python source values using the shared pure-Python CDR runtime."""
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
+from typing import Any
 
-from dimos.message_codegen import cpp
 from dimos.message_codegen.definitions import Definitions, Message
 
+ABI = "dimos-cdr-source-rosbags-0.11.0-v1"
 
-def string_literal(value: str) -> str:
-    delimiter = "msg"
-    while f'){delimiter}"' in value:
-        delimiter += "_"
-    return f'R"{delimiter}({value}){delimiter}"'
+
+def literal(value: Any) -> str:
+    if isinstance(value, float) and not (-float("inf") < value < float("inf")):
+        return f"float({str(value)!r})"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(literal(item) for item in value) + "]"
+    return repr(value)
 
 
 def generate(
-    messages: tuple[Message, ...], definitions: Definitions, module: str
+    messages: tuple[Message, ...],
+    definitions: Definitions,
+    module: str,
+    *,
+    imports: tuple[str, ...] = (),
+    shared: bool = False,
+    version: str = "0.1.0",
+    imported: dict[str, str] | None = None,
+    dependency_versions: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    sources: dict[str, str] = {}
-    containers = sorted(
-        {
-            cpp.type_name(field.type)
-            for message in messages
-            for field in message.fields
-            if field.type.is_array
-        }
-    )
-    container_names = {native: f"_Sequence{index}" for index, native in enumerate(containers)}
-    functions = []
-    for offset in range(0, len(messages), 10):
-        function = f"bind_{offset // 10}"
-        functions.append(function)
-        lines = [
-            "// Generated from ROS2 .msg definitions. Do not edit.",
-            "#include <pybind11/pybind11.h>",
-            "#include <pybind11/stl.h>",
-            '#include "messages.hpp"',
-            '#include "dimos_python.hpp"',
-            "namespace py = pybind11;",
-            f"void {function}(py::module_& root) {{",
-        ]
-        for message in messages[offset : offset + 10]:
-            native = cpp.qualified(message.name)
-            lines.extend(
-                [
-                    "{",
-                    f'auto package = py::hasattr(root, "{message.package}") ? root.attr("{message.package}").cast<py::module_>() : root.def_submodule("{message.package}");',
-                    'auto module = py::hasattr(package, "msg") ? package.attr("msg").cast<py::module_>() : package.def_submodule("msg");',
-                    f'auto cls = py::class_<{native}>(module, "{message.short_name}", py::dynamic_attr(), py::module_local());',
-                    f"cls.def(py::init([](py::kwargs kwargs) {{ {native} value{{}};",
-                    "for (auto item : kwargs) { auto key = py::cast<std::string>(item.first);",
-                ]
-            )
-            for index, field in enumerate(message.fields):
-                condition = "if" if index == 0 else "else if"
-                cast = "dimos::python::sequence_from_python" if field.type.is_array else "py::cast"
-                lines.append(
-                    f'{condition} (key == "{field.name}") value.{cpp.identifier(field.name)} = {cast}<{cpp.type_name(field.type)}>(item.second);'
-                )
-            fallback = "else " if message.fields else ""
-            lines.append(f'{fallback}throw py::type_error("Unknown message field: " + key);')
-            lines.extend(["}", "value.validate(); return value; }));"])
-            for field in message.fields:
-                field_native = cpp.type_name(field.type)
-                member = f"self.cast<{native}&>().{cpp.identifier(field.name)}"
-                if field.type.is_array:
-                    lines.extend(
-                        [
-                            f'dimos::python::bind_sequence<{field_native}>(root, "{container_names[field_native]}");',
-                            f'cls.def_property("{field.name}", [](py::object self) {{ return dimos::python::Sequence<{field_native}>{{ &{member}, dimos::python::owner_root(self) }}; }},',
-                            f"[](py::object self, py::handle input) {{ dimos::python::require_unborrowed(self); {member} = dimos::python::sequence_from_python<{field_native}>(input); }});",
-                        ]
-                    )
-                elif field.type.nested:
-                    lines.extend(
-                        [
-                            f'cls.def_property("{field.name}", [](py::object self) {{ auto child = py::cast(&{member}, py::return_value_policy::reference_internal, self); child.attr("__dimos_owner") = dimos::python::owner_root(self); return child; }},',
-                            f"[](py::object self, const {field_native}& input) {{ dimos::python::require_unborrowed(self); {member} = input; }});",
-                        ]
-                    )
-                else:
-                    lines.append(
-                        f'cls.def_readwrite("{field.name}", &{native}::{cpp.identifier(field.name)});'
-                    )
-            for constant in message.constants:
-                lines.append(
-                    f'cls.attr("{constant.name}") = py::cast({native}::{cpp.identifier(constant.name)});'
-                )
-            lines.extend(
-                [
-                    f'cls.def("encode", [](const {native}& value, bool little_endian) {{ auto bytes = dimos::cdr::encode(value, little_endian); return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size()); }}, py::arg("little_endian") = true);',
-                    f'cls.def_static("decode", [](py::bytes input) {{ std::string bytes = input; return dimos::cdr::decode<{native}>(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()); }});',
-                    f"cls.def(py::pickle([](const {native}& value) {{ auto bytes = dimos::cdr::encode(value); return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size()); }}, [](py::bytes input) {{ std::string bytes = input; return dimos::cdr::decode<{native}>(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()); }}));",
-                    f'cls.attr("msg_name") = {json.dumps(message.name)};',
-                    f'cls.attr("schema") = {string_literal(definitions.schema(message.name))};',
-                    "}",
-                ]
-            )
-        lines.append("}")
-        sources[function + ".cpp"] = "\n".join(lines) + "\n"
-    sources["bindings.cpp"] = (
-        "\n".join(
+    """Emit importable packages; dependency messages retain their canonical class identity."""
+    imported = imported or {}
+    lines = [
+        "# Generated from ROS2 .msg definitions. Do not edit.",
+        "from __future__ import annotations",
+        "from ._runtime import Codec, Message, Sequence",
+    ]
+    lines.extend(f"import {name}" for name in imports)
+    for dependency, expected in sorted((dependency_versions or {}).items()):
+        lines.extend(
             [
-                "// Generated from ROS2 .msg definitions. Do not edit.",
-                "#include <pybind11/pybind11.h>",
-                *(f"void {function}(pybind11::module_&);" for function in functions),
-                f"PYBIND11_MODULE({module}, root) {{",
-                *(f"{function}(root);" for function in functions),
-                "}",
+                f"if {dependency}.__dimos_version__ != {expected!r} or {dependency}.__dimos_abi__ != {ABI!r}:",
+                f"    raise ImportError('Incompatible message dependency: {dependency}')",
             ]
         )
-        + "\n"
+    for name, owner in sorted(imported.items()):
+        symbol = name.replace("/", "__")
+        lines.append(f"{symbol} = {owner}.{name.replace('/', '.')}")
+        lines.extend(
+            [
+                f"if {symbol}.schema != {definitions.schema(name)!r}:",
+                f"    raise ImportError('Dependency schema mismatch: {name}')",
+            ]
+        )
+    for message in messages:
+        symbol = message.name.replace("/", "__")
+        lines.extend(
+            [
+                f"class {symbol}(Message):",
+                f"    msg_name = {message.name!r}",
+                f"    schema = {definitions.schema(message.name)!r}",
+                "    _fields = (",
+            ]
+        )
+        for field in message.fields:
+            kind = field.type
+            spec = (
+                field.name,
+                kind.name,
+                kind.is_array,
+                kind.array_size,
+                kind.array_bounded,
+                kind.string_bound,
+                field.default,
+            )
+            lines.append("        (" + ", ".join(literal(item) for item in spec) + "),")
+        lines.append("    )")
+        for field in message.fields:
+            kind = field.type
+            annotation = (
+                "Sequence"
+                if kind.is_array
+                else kind.name.replace("/", "__")
+                if kind.nested
+                else "str"
+                if kind.name == "string"
+                else "bool"
+                if kind.name == "bool"
+                else "float"
+                if kind.name.startswith("float")
+                else "int"
+            )
+            lines.append(f"    {field.name}: {annotation}")
+        for constant in message.constants:
+            lines.append(f"    {constant.name} = {literal(constant.value)}")
+        lines.append("")
+    names = [message.name for message in messages] + list(imported)
+    lines.append(
+        "_types = {" + ", ".join(f"{name!r}: {name.replace('/', '__')}" for name in names) + "}"
     )
-    return sources
+    lines.append(
+        "_codec = Codec({"
+        + ", ".join(f"{name!r}: {definitions.schema(name)!r}" for name in names)
+        + "}, _types)"
+    )
+    for message in messages:
+        symbol = message.name.replace("/", "__")
+        lines.extend(
+            [
+                f"{symbol}._codec = _codec",
+                f"{symbol}.__name__ = {message.short_name!r}",
+                f"{symbol}.__qualname__ = {message.short_name!r}",
+                f"{symbol}.__module__ = {module + '.' + message.package + '.msg'!r}",
+            ]
+        )
+    packages = sorted({message.package for message in messages})
+    result = {
+        "_types.py": "\n".join(lines) + "\n",
+        "_runtime.py": Path(__file__).with_name("templates").joinpath("runtime.py").read_text(),
+        "__init__.py": f"__dimos_version__ = {version!r}\n__dimos_abi__ = {ABI!r}\n"
+        + "".join(f"from . import {package}\n" for package in packages),
+        "py.typed": "",
+    }
+    for package in packages:
+        result[f"{package}/__init__.py"] = "from . import msg\n"
+        result[f"{package}/msg/__init__.py"] = "".join(
+            f"from ..._types import {message.name.replace('/', '__')} as {message.short_name}\n"
+            for message in messages
+            if message.package == package
+        )
+    return result
