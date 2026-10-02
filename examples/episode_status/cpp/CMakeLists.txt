@@ -1,5 +1,0 @@
-cmake_minimum_required(VERSION 3.20)
-project(episode_status_consumer LANGUAGES CXX)
-find_package(dimos_generated CONFIG REQUIRED)
-add_executable(episode-status relay.cpp)
-target_link_libraries(episode-status PRIVATE dimos_generated::messages)

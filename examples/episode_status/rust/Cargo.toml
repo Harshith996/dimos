@@ -1,8 +1,0 @@
-[package]
-name = "episode-status-consumer"
-version = "0.1.0"
-edition = "2024"
-publish = false
-[workspace]
-[dependencies]
-dimos-generated-messages = { path = "../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
