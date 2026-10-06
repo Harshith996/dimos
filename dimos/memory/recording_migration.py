@@ -66,7 +66,10 @@ def inspect_recording(source: Path, output_format: str) -> dict[str, Any]:
 def _candidates(root: Path) -> Iterator[Path]:
     # os.walk does not follow directory symlinks. Explicitly report them rather than
     # traversing data outside the requested root or silently declaring it converted.
-    for directory, subdirs, files in os.walk(root, followlinks=False):
+    def fail_walk(error: OSError) -> None:
+        raise error
+
+    for directory, subdirs, files in os.walk(root, followlinks=False, onerror=fail_walk):
         for name in sorted(subdirs):
             path = Path(directory) / name
             if path.is_symlink():

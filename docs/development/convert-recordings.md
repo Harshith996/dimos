@@ -112,7 +112,7 @@ python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_
 Tests cover both containers, LZ4/JSON/JPEG/LCM, independent rosbags decoding,
 Header/type mapping, timestamp/sequence retention, unsupported types, corrupt
 payloads, empty streams and exclusive output publication. Legacy-specific tests
-are skipped if the optional decoder is not installed; that is not a full
+are skipped if the historical decoder is missing; that is not a full
 converter acceptance run.
 
 ## Convert a directory explicitly

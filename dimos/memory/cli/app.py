@@ -62,7 +62,12 @@ def convert(
         if source.is_dir():
             result = migrate(source, destination, output_format=output_format, dry_run=dry_run)
         elif dry_run:
-            if destination.exists() or Path(str(destination) + ".conversion.jsonl").exists():
+            if (
+                destination.exists()
+                or destination.is_symlink()
+                or Path(str(destination) + ".conversion.jsonl").exists()
+                or Path(str(destination) + ".conversion.jsonl").is_symlink()
+            ):
                 raise FileExistsError("Refusing an existing output or report")
             result = inspect_recording(source, destination.suffix.lstrip("."))
         else:
