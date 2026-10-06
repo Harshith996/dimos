@@ -4,11 +4,11 @@ This offline tool is for reviewing historical DimOS recordings on the CDR propos
 It does not start a blueprint, router, robot, viewer or network connection.
 
 From this proposal checkout, use an environment containing DimOS, its matching
-`dimos-generated` package and the optional historical decoder:
+`dimos-generated` package and the retained historical decoder:
 
 ```sh
 pip install dimos-lcm==0.1.4
-python scripts/convert_recording.py old.mcap converted.mcap
+dimos mem convert old.mcap converted.mcap
 ```
 
 Open `converted.mcap` directly in Foxglove with **Open local file**. Select your
@@ -19,9 +19,9 @@ converter does not create an account or upload your recording.
 For an old memory SQLite recording, or for CDR SQLite output:
 
 ```sh
-python scripts/convert_recording.py old.db converted.mcap
-python scripts/convert_recording.py old.mcap converted.db
-python scripts/convert_recording.py old.db converted.db
+dimos mem convert old.db converted.mcap
+dimos mem convert old.mcap converted.db
+dimos mem convert old.db converted.db
 ```
 
 Choose a **new output filename**. The original file is opened read-only. Existing
@@ -32,12 +32,15 @@ any stream or payload fails. Output directories must already exist.
 Inspect either output through the current CDR memory reader:
 
 ```sh
-python -m dimos.cli.dimos mem summary converted.mcap
-python -m dimos.cli.dimos mem summary converted.db
+dimos mem summary converted.mcap
+dimos mem summary converted.db
 ```
 
-The optional `dimos-lcm` decoder is used only by this offline tool. It is not added
-to DimOS's normal runtime dependencies and no old-wire fallback is restored.
+The original `dimos.msgs` legacy classes and their `lcm_encode`/`lcm_decode`
+interfaces are temporarily retained with the existing `dimos-lcm` dependency for
+migration. This reuses the original implementation; it introduces no new codec.
+New runtime transports and recordings still use generated CDR types; there is
+no automatic old-wire fallback.
 For JSON-only input it is unnecessary. `mcap`/`lz4` and SQLite support come from
 the prepared DimOS environment. No dependencies are downloaded by conversion.
 
@@ -100,7 +103,7 @@ silently discarded. Keep the audit file with the converted recording.
 
 ## Validation
 
-With the optional historical decoder installed:
+With the historical decoder installed:
 
 ```sh
 python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py
@@ -111,3 +114,26 @@ Header/type mapping, timestamp/sequence retention, unsupported types, corrupt
 payloads, empty streams and exclusive output publication. Legacy-specific tests
 are skipped if the optional decoder is not installed; that is not a full
 converter acceptance run.
+
+## Convert a directory explicitly
+
+```sh
+dimos mem convert ./recordings ./recordings-cdr --dry-run
+dimos mem convert ./recordings ./recordings-cdr
+dimos mem convert ./recordings ./recordings-cdr-sqlite --format db
+```
+
+The destination must be new, with an existing parent, and must not overlap the
+source tree. Relative directories are preserved: `trip/run.db` becomes
+`trip/run.db.cdr.mcap`. No home-directory scan or automatic download occurs.
+Dry-run reads schema declarations and counts rows; it does not prove payload
+integrity. Both dry-run and conversion exit nonzero when candidates are blocked.
+Archives, LFS pointers, pickle, raw captures and symlinks are reported as blocked;
+unrelated non-recording files are ignored. Extract/materialize trusted archives
+separately before selecting an expanded source directory.
+
+All candidates pass metadata preflight before any conversion starts. Each output
+and its audit file are published exclusively. If a later payload fails, earlier
+successful files remain, later files are marked not attempted, and the command
+fails. `migration-summary.json` records every candidate and result. Retain the
+originals; a successful conversion is not authorization to delete them.

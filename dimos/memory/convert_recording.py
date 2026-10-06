@@ -20,7 +20,6 @@ stores are deliberately unsupported. Output publication is exclusive and atomic.
 
 from __future__ import annotations
 
-import argparse
 from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -483,18 +482,3 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                 report.unlink()
                 raise
     return summary
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", type=Path)
-    parser.add_argument("output", type=Path)
-    args = parser.parse_args()
-    try:
-        print(json.dumps(convert(args.input, args.output), indent=2))
-    except (ValueError, OSError, sqlite3.Error) as exc:
-        parser.exit(2, f"conversion failed: {exc}\n")
-
-
-if __name__ == "__main__":
-    main()
