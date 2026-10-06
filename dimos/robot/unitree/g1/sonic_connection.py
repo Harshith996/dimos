@@ -38,8 +38,8 @@ class G1SonicConnection(Module):
     """Walk through Twist commands and condition SONIC with arm references.
 
     SonicController owns the policy loop and activation lifecycle. Hardware
-    motor delivery remains in G1WholeBodyConnection. ControlCoordinator is
-    not required.
+    motor delivery remains in G1WholeBodyConnection. A ControlCoordinator can
+    arbitrate references upstream; this module also works independently.
     """
 
     config: G1SonicConnectionConfig

@@ -37,15 +37,23 @@ from typing import Any, cast
 
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
-from dimos.control.components import make_humanoid_joints
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    make_humanoid_joints,
+    make_twist_base_joints,
+)
+from dimos.control.coordinator import TaskConfig
 from dimos.control.sonic.models import sonic_model_directory
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.control.sonic.sonic_safety import COMMAND_TIMEOUT_SECONDS
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.costmapper import CostMapper
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -55,6 +63,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.robot.unitree.g1.sonic_connection import G1SonicConnection
+from dimos.robot.unitree.g1.sonic_coordinator import SonicCoordinator
 from dimos.simulation.scenes.catalog import resolve_scene_package
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -251,6 +260,44 @@ def _zenoh_latest_transport(topic: str, msg_type: type) -> ZenohTransport[Any]:
     )
 
 
+def _base_transport(topic: str, msg_type: type) -> ZenohTransport[Any]:
+    # Reuse localization's odometry; commands have a separate downstream topic.
+    return _zenoh_latest_transport("odom" if topic.endswith("/odom") else topic, msg_type)
+
+
+_base_joints = make_twist_base_joints("g1_base")
+_coordinator = SonicCoordinator.blueprint(
+    instance_name="ControlCoordinator",
+    tick_rate=_tick_rate,
+    auto_activated=_auto_arm,
+    hardware=[
+        HardwareComponent(
+            hardware_id="g1_base",
+            hardware_type=HardwareType.BASE,
+            joints=_base_joints,
+            adapter_type="transport_lcm",
+            adapter_kwargs={"transport_cls": _base_transport},
+        ),
+        HardwareComponent(
+            hardware_id="g1_arms",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=g1_joints[15:],
+            adapter_type="sonic_arm_references",
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="sonic_wbc",
+            type="velocity",
+            joint_names=_base_joints,
+            priority=50,
+            params={"timeout": 1.0, "zero_on_timeout": True},
+        ),
+        joint_trajectory_task(g1_joints[15:]),
+    ],
+)
+
+
 @cache
 def _g1_real_ground_z() -> float:
     """Use GR00T's rest-pose lidar offset and 0.74 m standing pelvis height."""
@@ -268,7 +315,9 @@ _costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _ren
 _remappings = [
     *_nav_remap,
     _imu_remap,
-    (G1SonicConnection, "base_command", "cmd_vel"),
+    (SonicCoordinator, "twist_command", "cmd_vel"),
+    (SonicCoordinator, "sonic_joint_state", "g1_joints"),
+    (G1SonicConnection, "base_command", "sonic_base_command"),
     (G1SonicConnection, "joint_state", "g1_joints"),
 ]
 
@@ -276,6 +325,7 @@ unitree_g1_sonic_wbc = (
     autoconnect(
         _backend,
         _connection,
+        _coordinator,
         _nav_stack,
         vis_module(
             viewer_backend=global_config.viewer,
@@ -298,6 +348,8 @@ unitree_g1_sonic_wbc = (
     .remappings(cast("Any", _remappings))
     .transports(
         {
+            ("sonic_base_command", Twist): _zenoh_latest_transport("/g1_base/cmd_vel", Twist),
+            ("joint_command", JointState): _zenoh_latest_transport("/g1/joint_command", JointState),
             ("position_command", JointState): _zenoh_latest_transport(
                 "/g1/position_command", JointState
             ),
