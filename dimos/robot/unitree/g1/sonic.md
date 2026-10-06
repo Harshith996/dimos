@@ -76,10 +76,12 @@ the earlier hardware instability remain open validation issues.
 
 ## Module interface
 
-The blueprint runs `G1SonicConnection` without ControlCoordinator. The module
-owns the 50 Hz policy loop, while `G1WholeBodyConnection` owns real motor IO
-and its independent 500 Hz publisher. MuJoCo uses the existing shared-memory
-whole-body adapter. SONIC sends no motor commands before its models load.
+The blueprint runs `G1SonicConnection` without ControlCoordinator. The connection
+exposes streams and RPCs and delegates to `SonicController` in
+`sonic_controller.py`. That controller owns the 50 Hz loop, pose ramp and fault
+latch; `SonicPipeline` handles model inference. `G1WholeBodyConnection` owns real
+motor IO and its independent 500 Hz publisher. MuJoCo uses the existing
+shared-memory whole-body adapter. SONIC sends no motor commands before its models load.
 
 - `base_command: In[Twist]`: `linear.x`, `linear.y`, and `angular.z`. The
   blueprint remaps this to `cmd_vel`, so navigation and teleop keep their
