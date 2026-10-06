@@ -17,8 +17,7 @@
 Lidar clouds are assumed to be in world frame and logged directly under
 their entity path (no parent transform). Entities written:
 
-- ``world/lidar``         — Go2 L1 per-frame point cloud
-- ``world/fastlio_lidar`` — fastlio_lidar raw cloud (if present)
+- ``world/lidar``         — the selected per-frame point cloud
 - ``world/<stream>_voxels`` — growing voxel map, one per PointCloud2 stream (``--map``)
 - ``world/<stream>_map``    — single static voxel map, one per PointCloud2 stream (``--map-final``)
 - ``world/fastlio``       — fastlio_odometry pose axis (if present)
@@ -37,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.mapping.cli.streams import select_stream
 from dimos.memory.utils.progress import progress
 
 if TYPE_CHECKING:
@@ -122,7 +122,13 @@ def _log_path(
 
 
 def main(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    dataset: str = typer.Argument(..., help="Dataset .db or .mcap: bare name or path"),
+    lidar_stream: str | None = typer.Option(
+        None, "--lidar", help="PointCloud2 stream; auto-select only a unique candidate"
+    ),
+    image_stream: str | None = typer.Option(
+        None, "--image", help="Image stream; auto-select a unique candidate, omit if absent"
+    ),
     out: Path | None = typer.Option(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
@@ -157,7 +163,7 @@ def main(
     map_source: list[str] = typer.Option(
         [],
         "--map-source",
-        help="PointCloud2 stream(s) to map; repeatable. Default: all PointCloud2 streams",
+        help="PointCloud2 stream(s) to map; repeatable. Default: the selected --lidar stream",
     ),
     map_carve_columns: bool = typer.Option(
         False,
@@ -203,10 +209,13 @@ def main(
     cam_info = front_camera_calibration()
 
     with store:
-        # Resolve which streams to voxelize: all PointCloud2 streams, or the
-        # explicit --map-source subset. Validate up front so typos fail fast.
-        pc_streams = [n for n, t in stream_payload_types(store).items() if t is PointCloud2]
-        map_sources = list(map_source) or pc_streams
+        # Resolve roles and the explicit --map-source subset before opening output.
+        types = stream_payload_types(store)
+        selected_lidar = select_stream(types, PointCloud2, lidar_stream, "--lidar")
+        selected_image = select_stream(types, Image, image_stream, "--image", required=False)
+        assert selected_lidar is not None
+        pc_streams = [n for n, t in types.items() if t is PointCloud2]
+        map_sources = list(map_source) or [selected_lidar]
         if (map or map_final) and (bad := [s for s in map_sources if s not in pc_streams]):
             raise typer.BadParameter(f"--map-source: not PointCloud2 stream(s): {', '.join(bad)}")
 
@@ -234,16 +243,10 @@ def main(
         def clipped(name: str, ptype: type[Any]) -> Stream[Any]:
             return store.stream(name, ptype).from_time(seek or None).to_time(duration)
 
-        lidar = clipped("lidar", PointCloud2)
-        color_image = clipped("color_image", Image)
-        has_livox = "fastlio_lidar" in store.streams
-        livox = clipped("fastlio_lidar", PointCloud2) if has_livox else None
+        lidar = clipped(selected_lidar, PointCloud2)
 
         # Per-frame raw clouds.
         _log_clouds("       lidar", lidar, "world/lidar", voxel, point_mode)
-        if livox is not None:
-            _log_clouds("fastlio_lidar", livox, "world/fastlio_lidar", voxel, point_mode)
-
         # Accumulated voxel maps over the selected PointCloud2 streams.
         # --map logs a growing map per stream; --map-final logs one static map
         # per stream. --map-carve-columns clears the Z column under each surface
@@ -336,25 +339,27 @@ def main(
                 color=(0, 200, 100),  # green
             )
 
-        # Pass 2: camera pose + image per color_image.
-        cam_pipeline = (
-            color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
-        )
-        n_img = cam_pipeline.count()
-        with progress(n_img, "  color_image") as bar:
-            for img_obs in cam_pipeline:
-                bar(img_obs)
-                rr.set_time(TIMELINE, timestamp=img_obs.ts)
-                if img_obs.pose_tuple is not None:
-                    x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
-                    rr.log(
-                        "world/camera",
-                        rr.Transform3D(
-                            translation=[x, y, z], quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw])
-                        ),
-                    )
-                rr.log("world/camera/image", image_archetype(img_obs.data))
-
+        if selected_image is not None:
+            color_image = clipped(selected_image, Image)
+            # Pass 2: camera pose + image per color_image.
+            cam_pipeline = (
+                color_image.transform(throttle(1.0 / camera_hz)) if camera_hz > 0 else color_image
+            )
+            n_img = cam_pipeline.count()
+            with progress(n_img, "  color_image") as bar:
+                for img_obs in cam_pipeline:
+                    bar(img_obs)
+                    rr.set_time(TIMELINE, timestamp=img_obs.ts)
+                    if img_obs.pose_tuple is not None:
+                        x, y, z, qx, qy, qz, qw = img_obs.pose_tuple
+                        rr.log(
+                            "world/camera",
+                            rr.Transform3D(
+                                translation=[x, y, z],
+                                quaternion=rr.Quaternion(xyzw=[qx, qy, qz, qw]),
+                            ),
+                        )
+                    rr.log("world/camera/image", image_archetype(img_obs.data))
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")

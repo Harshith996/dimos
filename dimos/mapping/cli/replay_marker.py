@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
+from dimos.mapping.cli.streams import select_stream
+
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
@@ -39,7 +41,13 @@ TIMELINE = "ts"
 
 
 def main(
-    dataset: str = typer.Argument(..., help="Dataset .db: bare name (cwd or data/) or path"),
+    dataset: str = typer.Argument(..., help="Dataset .db or .mcap: bare name or path"),
+    lidar_stream: str | None = typer.Option(
+        None, "--lidar", help="PointCloud2 stream; auto-select only a unique candidate"
+    ),
+    image_stream: str | None = typer.Option(
+        None, "--image", help="Image stream; auto-select only a unique candidate"
+    ),
     out: Path | None = typer.Option(
         None, "--out", help="Output .rrd path (default: ./<dataset>.rrd)"
     ),
@@ -66,7 +74,7 @@ def main(
     from dimos_generated.sensor_msgs.msg import Image, PointCloud2
     import rerun as rr
 
-    from dimos.memory.cli.dataset import open_store, resolve_dataset
+    from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
     from dimos.msgs.image import image_sharpness
@@ -76,6 +84,14 @@ def main(
 
     db_path = resolve_dataset(dataset)
     store = open_store(db_path)
+    try:
+        types = stream_payload_types(store)
+        selected_lidar = select_stream(types, PointCloud2, lidar_stream, "--lidar")
+        selected_image = select_stream(types, Image, image_stream, "--image")
+        assert selected_lidar is not None and selected_image is not None
+    except Exception:
+        store.stop()
+        raise
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
     cam_info = front_camera_calibration()
@@ -90,8 +106,8 @@ def main(
     rr.log("world/camera", pinhole, static=True)
 
     with store:
-        color_image = store.stream("color_image", Image).from_time(seek or None).to_time(duration)
-        lidar = store.stream("lidar", PointCloud2).from_time(seek or None).to_time(duration)
+        color_image = store.stream(selected_image, Image).from_time(seek or None).to_time(duration)
+        lidar = store.stream(selected_lidar, PointCloud2).from_time(seek or None).to_time(duration)
 
         # Pass 1: robot base pose over time (from lidar.pose).
         for lidar_obs in lidar:
