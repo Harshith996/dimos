@@ -15,10 +15,9 @@
 """Unitree G1 SONIC (GEAR-SONIC) whole-body-control blueprint.
 
 Unified 29-DOF policy: planner + encoder + decoder. Selectable GEAR locomotion
-modes are reachable through the coordinator RPC surface:
+modes are reachable directly on the connection module:
 
-    coordinator.task_invoke("sonic_wbc", "set_locomotion_mode",
-                            {"mode": "HAPPY_DANCE_WALK"})
+    app.G1SonicConnection.set_locomotion_mode("HAPPY_DANCE_WALK")
 
 Usage:
     dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
@@ -38,28 +37,24 @@ from typing import Any, cast
 
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
-from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
-from dimos.control.coordinator import TaskConfig
+from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
-from dimos.control.sonic.sonic_pipeline import (
-    DEFAULT_ANGLES_DDS,
-    SONIC_KD,
-    SONIC_KP,
-)
+from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.control.sonic.sonic_safety import COMMAND_TIMEOUT_SECONDS
-from dimos.control.tasks.g1_sonic_wbc_task.coordinator import SonicCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.whole_body.spec import WholeBodyConfig
-from dimos.hardware.whole_body.transport.adapter import zenoh_latest_transport
+from dimos.core.module import Module
+from dimos.core.transport import ZenohTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
+from dimos.robot.unitree.g1.sonic_connection import G1SonicConnection
 from dimos.simulation.scenes.catalog import resolve_scene_package
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -103,7 +98,8 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 g1_joints = make_humanoid_joints("g1")
 _G1_NUM_MOTORS = len(g1_joints)
 
-_adapter_address: str | Path
+_simulation_address: Path | None
+_imu_remap: tuple[type[Module], str, str]
 
 if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-sonic-wbc only supports --simulation mujoco")
@@ -165,8 +161,8 @@ if global_config.simulation == "mujoco":
         **_MUJOCO_LIDAR_KWARGS,
         **_scene_kwargs,
     )
-    _adapter_type = "sim_mujoco_g1"
-    _adapter_address = _MJCF_PATH
+    _simulation_address = _MJCF_PATH
+    _imu_remap = (MujocoSimModule, "imu", "low_level_imu")
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -189,8 +185,8 @@ else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     _backend = G1WholeBodyConnection.blueprint(command_timeout_seconds=COMMAND_TIMEOUT_SECONDS)
-    _adapter_type = "transport_zenoh"
-    _adapter_address = ""
+    _simulation_address = None
+    _imu_remap = (G1WholeBodyConnection, "imu", "low_level_imu")
     _tick_rate = 50.0
     _auto_arm = False
     _auto_dry_run = True
@@ -223,52 +219,17 @@ else:
     _nav_remap = []
 
 
-_coordinator = SonicCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    publish_robot_joint_states=True,
+_connection = G1SonicConnection.blueprint(
+    encoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx",
+    decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
+    planner_onnx=_SONIC_PLANNER_PATH,
+    simulation_address=_simulation_address,
+    joint_names=g1_joints,
     tick_rate=_tick_rate,
-    hardware=[
-        HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=g1_joints,
-            adapter_type=_adapter_type,
-            address=_adapter_address,
-            wb_config=WholeBodyConfig(kp=tuple(SONIC_KP), kd=tuple(SONIC_KD)),
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="sonic_wbc",
-            type="g1_sonic_wbc",
-            joint_names=g1_joints,
-            priority=50,
-            auto_start=True,
-            params={
-                "encoder_onnx": str(_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx"),
-                "decoder_onnx": str(_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx"),
-                "planner_onnx": str(_SONIC_PLANNER_PATH),
-                "hardware_id": "g1",
-                "auto_arm": _auto_arm,
-                "auto_dry_run": _auto_dry_run,
-                "default_ramp_seconds": _default_ramp_seconds,
-                "decimation": _decimation,
-            },
-        ),
-    ],
-)
-
-# A backlog of motor targets is not useful to a 50 Hz controller.
-_coordinator = _coordinator.transports(
-    {
-        ("joint_command", JointState): zenoh_latest_transport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): zenoh_latest_transport("/g1/joints", JointState),
-        ("motor_states", JointState): zenoh_latest_transport("/g1/motor_states", JointState),
-        ("imu", Imu): zenoh_latest_transport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): zenoh_latest_transport(
-            "/g1/motor_command", MotorCommandArray
-        ),
-    }
+    auto_arm=_auto_arm,
+    auto_dry_run=_auto_dry_run,
+    default_ramp_seconds=_default_ramp_seconds,
+    decimation=_decimation,
 )
 
 
@@ -276,6 +237,18 @@ def _require_zenoh() -> str | None:
     if global_config.transport == "zenoh":
         return None
     return "G1 SONIC requires --transport zenoh"
+
+
+def _zenoh_latest_transport(topic: str, msg_type: type) -> ZenohTransport[Any]:
+    """Keep only the newest command or feedback frame on each G1 topic."""
+    return ZenohTransport(
+        ZenohTopic(
+            f"dimos/{topic.lstrip('/')}",
+            msg_type,
+            queue_capacity=1,
+            qos=QOS_LATEST_WINS,
+        )
+    )
 
 
 @cache
@@ -292,12 +265,17 @@ def _render_real_costmap(grid: Any) -> Any:
 
 
 _costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _render_real_costmap
-_remappings = [*_nav_remap, (SonicCoordinator, "twist_command", "cmd_vel")]
+_remappings = [
+    *_nav_remap,
+    _imu_remap,
+    (G1SonicConnection, "base_command", "cmd_vel"),
+    (G1SonicConnection, "joint_state", "g1_joints"),
+]
 
 unitree_g1_sonic_wbc = (
     autoconnect(
         _backend,
-        _coordinator,
+        _connection,
         _nav_stack,
         vis_module(
             viewer_backend=global_config.viewer,
@@ -318,6 +296,19 @@ unitree_g1_sonic_wbc = (
         ),
     )
     .remappings(cast("Any", _remappings))
+    .transports(
+        {
+            ("position_command", JointState): _zenoh_latest_transport(
+                "/g1/position_command", JointState
+            ),
+            ("g1_joints", JointState): _zenoh_latest_transport("/g1/joints", JointState),
+            ("motor_states", JointState): _zenoh_latest_transport("/g1/motor_states", JointState),
+            ("low_level_imu", Imu): _zenoh_latest_transport("/g1/imu", Imu),
+            ("motor_command", MotorCommandArray): _zenoh_latest_transport(
+                "/g1/motor_command", MotorCommandArray
+            ),
+        }
+    )
     .requirements(_require_zenoh)
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )
