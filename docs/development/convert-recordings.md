@@ -137,3 +137,136 @@ and its audit file are published exclusively. If a later payload fails, earlier
 successful files remain, later files are marked not attempted, and the command
 fails. `migration-summary.json` records every candidate and result. Retain the
 originals; a successful conversion is not authorization to delete them.
+
+## Ivan's offline acceptance checklist
+
+Run from this proposal checkout with its prepared development environment activated
+(`source .venv/bin/activate`). It must contain matching `dimos-generated`, MCAP,
+NumPy, Open3D and Rerun packages. These commands do not build/install dependencies
+or start a robot. Use a fresh directory for each run:
+
+```sh
+export CDR_REVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dimos-cdr-review.XXXXXX")"
+```
+
+### Real point-cloud fixture
+
+Use `unitree_go2_detection_cdr`, five real Go2 captures with cloud, image and
+odometry payloads. Its approximately 5.8 MB project LFS archive is available in
+this proposal's data inventory. Unlike `alfred_fusion_short`, it contains point
+clouds. The manifest traces these captures to source LFS SHA-256
+`51a817f2b5664c9e2f2856293db242e030f0edce276e21da0edc2821d947aad2`.
+Set `CDR_FIXTURE_DIR` to an already extracted copy to avoid downloading anything.
+If unset, `get_data` uses the checkout's data cache and downloads/extracts that
+named project fixture if missing; it does not fetch the full 1.21 GB source.
+
+The following packages the existing CDR bytes, checking every payload hash. It
+is **not a legacy LCM conversion test** and never opens the original pickle files.
+
+```sh
+python - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_generated.sensor_msgs.msg import Image, PointCloud2
+from dimos.protocol.cdr_mcap import CdrMcapWriter
+from dimos.utils.data import get_data
+
+source = Path(os.environ["CDR_FIXTURE_DIR"]) if "CDR_FIXTURE_DIR" in os.environ else get_data("unitree_go2_detection_cdr")
+manifest = json.loads((source / "manifest.json").read_text())
+classes = {cls.msg_name: cls for cls in (PointCloud2, Image, PoseStamped)}
+output = Path(os.environ["CDR_REVIEW_DIR"]) / "source.mcap"
+assert not output.exists(), output
+with CdrMcapWriter(output) as writer:
+    for sequence, moment in enumerate(manifest["moments"]):
+        for topic, entry in moment["streams"].items():
+            payload = (source / entry["file"]).read_bytes()
+            assert hashlib.sha256(payload).hexdigest() == entry["cdr_sha256"]
+            cls = classes[entry["msg_name"]]
+            cls.decode(payload)
+            writer.write(topic, payload, schema_name=cls.msg_name, schema=cls.schema,
+                         log_time_ns=round(entry["recorded_ts"] * 1e9),
+                         publish_time_ns=entry["source_sec"] * 10**9 + entry["source_nanosec"],
+                         sequence=sequence)
+print(output)
+PY
+
+dimos mem convert "$CDR_REVIEW_DIR/source.mcap" "$CDR_REVIEW_DIR/converted.mcap"
+dimos mem summary "$CDR_REVIEW_DIR/converted.mcap"
+```
+
+Expect 15 messages: five each on `lidar`, `video` and `odom`. For **legacy**
+acceptance, separately supply a supported old `.db` or `.mcap` to `dimos mem
+convert`, keeping its original and conversion audit report. The automated
+converter tests below exercise old LCM encodings; packaging this CDR fixture does
+not replace them.
+
+### Memory rendering, mapping and replay
+
+```sh
+dimos mem rerun "$CDR_REVIEW_DIR/converted.mcap" --no-gui --out "$CDR_REVIEW_DIR/memory.rrd"
+dimos map global "$CDR_REVIEW_DIR/converted.mcap" --device CPU:0 --block-count 10000 --no-gui --out "$CDR_REVIEW_DIR/global.rrd"
+dimos map replay "$CDR_REVIEW_DIR/converted.mcap" --map-final --map-device CPU:0 --no-gui --out "$CDR_REVIEW_DIR/replay.rrd"
+```
+
+There is no `dimos mem replay` command. `mem rerun` renders recorded messages;
+`map replay` writes cloud/image/trajectory visualization. Neither is live
+blueprint transport replay. Expect global mapping to retain five clouds, and map
+replay to process five clouds, images and odometry samples. These world-frame
+clouds require no stored `obs.pose`. Spatial dedup defaults off (`--pgo-tol 0`);
+explicit dedup or PGO requires trajectory metadata. Separate recorded odometry
+is not automatically attached as `obs.pose`. Sensor-frame clouds need recorded
+TF registration. Missing required data is an error, not an invented pose.
+
+Stream roles are selected automatically only when there is one compatible
+candidate. For a recording with multiple clouds/images, select explicitly:
+
+```sh
+dimos map replay "$CDR_REVIEW_DIR/converted.mcap" --lidar lidar --image video --no-gui --out "$CDR_REVIEW_DIR/selected.rrd"
+```
+
+`map global --markers` and `map replay-marker` additionally need usable camera
+calibration and poses; this fixture/checklist does not claim marker acceptance.
+`map rename` and `map pose-fill` remain SQLite-only.
+
+### Independent validation and manual viewers
+
+If the separately installed official Foxglove MCAP CLI is on PATH:
+
+```sh
+mcap doctor "$CDR_REVIEW_DIR/converted.mcap"
+```
+
+The Python `mcap` package is not that executable. No installation is performed by
+these commands. Doctor has not been run for this acceptance; CRC/payload checks
+are not a substitute for it.
+
+Open the generated files locally (manual visual acceptance):
+
+```sh
+rerun "$CDR_REVIEW_DIR/global.rrd"
+rerun "$CDR_REVIEW_DIR/replay.rrd"
+```
+
+In Foxglove, **Open local file** `converted.mcap`; select `lidar` in a 3D panel
+with fixed frame `world`, `video` in an Image panel, and inspect `odom` in Raw
+Messages. The image header has no frame, and odometry uses `odom`; do not assume
+a camera/odometry-to-world TF exists or that all overlays align. Do not upload
+private recordings to obtain acceptance. Existing application/session access
+may be required. Successful RRD export does not constitute human visual review.
+
+### Focused regression entry
+
+```sh
+python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py dimos/memory/store/test_mcap.py dimos/mapping/cli/test_stream_selection.py dimos/mapping/cli/test_pgo_accumulate.py dimos/mapping/loop_closure/test_pgo.py
+```
+
+At `656efff71958e9c9c981d9e08ec95d1bebc4049d`, 40 focused mapping/reader/PGO tests
+passed separately from earlier converter tests. The local real-data audit also
+preserved all 15 payloads, schemas, timestamps and sequence numbers exactly,
+kept all five clouds in CPU global mapping and exported five clouds/images/odom
+in replay. This is bounded real sensor-payload acceptance using a repackaged CDR
+fixture, not a full legacy archive migration, live robot test, full-suite pass,
+or completed manual viewer/doctor gate.
