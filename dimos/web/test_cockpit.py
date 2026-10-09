@@ -29,6 +29,7 @@ from dimos_generated.std_msgs.msg import Bool
 from dimos_generated.tf2_msgs.msg import TFMessage
 from dimos_generated.trajectory_msgs.msg import JointTrajectory
 from dimos_generated.visualization_msgs.msg import MarkerArray
+from dimos_message_build.registry import schema as cdr_schema
 from langchain_core.messages import BaseMessage
 import pytest
 

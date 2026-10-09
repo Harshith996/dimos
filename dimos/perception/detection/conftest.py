@@ -23,6 +23,7 @@ from dimos_generated.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos_generated.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos_generated.vision_msgs.msg import Detection2DArray
 from dimos_generated.visualization_msgs.msg import MarkerArray
+from dimos_message_build.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport

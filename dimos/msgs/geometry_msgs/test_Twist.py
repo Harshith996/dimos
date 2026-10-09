@@ -16,6 +16,7 @@ from copy import deepcopy
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Quaternion, Twist, Vector3
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from rosbags.typesys import Stores, get_typestore
 

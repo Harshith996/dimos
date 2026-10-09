@@ -20,6 +20,7 @@ import base64
 import cv2
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.agents.mcp.mcp_client import _append_image_to_history

@@ -16,6 +16,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.std_msgs.msg import Header
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.time import time_from_seconds
 

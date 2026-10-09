@@ -30,6 +30,7 @@ from typing import Any
 from dimos_cdrgen.registry import decode as cdr_decode, schema as cdr_schema
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Bool, Header
+from dimos_message_build.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles

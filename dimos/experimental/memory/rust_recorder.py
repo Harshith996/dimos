@@ -23,6 +23,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from dimos_cdrgen.registry import schema as cdr_schema
 from dimos_generated.std_msgs.msg import String
 from dimos_generated.tf2_msgs.msg import TFMessage
+from dimos_message_build.registry import schema as cdr_schema
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT

@@ -16,6 +16,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection2D, Detection2DArray
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view

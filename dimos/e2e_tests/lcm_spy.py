@@ -21,6 +21,7 @@ from typing import Any
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import PoseStamped
+from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
