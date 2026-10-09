@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.grasp_verification import GripperSettle
+from dimos.manipulation.grasping.grasp_gen_spec import SceneGrasps
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -31,7 +32,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
-from dimos.manipulation.pick_and_place_module import TARGET_BOX, PickAndPlaceModule
+from dimos.manipulation.pick_and_place_module import TARGET_BOX, PickAndPlaceModule, _scene_near
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -627,3 +628,182 @@ def test_pick_and_place_work_without_a_box_filter(module: PickAndPlaceModule) ->
 
     assert module.pick_object("cup-1").message == "Pick complete"
     assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
+
+
+TOP_DOWN = Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0))
+
+
+def _grasp_at(x: float, y: float, score: float) -> GraspCandidate:
+    return GraspCandidate(Pose(Vector3(x, y, 0.2), TOP_DOWN), score)
+
+
+def _block_cloud() -> PointCloud2:
+    """A 6 cm by 4 cm block, 5 cm tall, centred on the cup."""
+    bounds = ((0.07, 0.13), (-0.02, 0.02), (0.175, 0.225))
+    axes = [np.arange(low, high + 1e-9, 0.005) for low, high in bounds]
+    points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
+
+
+def _points(*xyz: tuple[float, float, float]) -> PointCloud2:
+    return PointCloud2.from_numpy(
+        np.asarray(xyz, dtype=np.float32), frame_id="world", timestamp=2.0
+    )
+
+
+def _table() -> PointCloud2:
+    """Camera points of a table top at the block's base (z = 0.175), 2 cm apart, 1 m square."""
+    xs = np.arange(-0.4, 0.6, 0.02)
+    grid = np.stack(np.meshgrid(xs, xs, [0.175], indexing="ij"), axis=-1).reshape(-1, 3)
+    return PointCloud2.from_numpy(grid.astype(np.float32), frame_id="world", timestamp=2.0)
+
+
+def test_the_scene_near_the_target_keeps_the_table_and_drops_the_target_and_the_gripper() -> None:
+    tip = Vector3(0.1, 0.0, 0.36)
+    scene = _points(
+        (0.15, 0.0, 0.175),  # the table 2 cm beside the block: kept
+        (0.1, 0.0, 0.17),  # the table touching the block's base: dropped
+        (0.07, 0.0, 0.2),  # on the block's face, missed by its mask: dropped
+        (0.2, 0.0, 0.2),  # a neighbour: kept
+        (0.5, 0.0, 0.2),  # beyond the margin: dropped
+        (0.1, 0.05, 0.33),  # the robot's own finger, near its tool tip: dropped
+        (float("nan"), 0.0, 0.2),
+    )
+
+    near = _scene_near(scene, _block_cloud(), [tip])
+
+    np.testing.assert_allclose(near.points_f32(), [[0.15, 0.0, 0.175], [0.2, 0.0, 0.2]])
+    assert near.frame_id == "world"
+    assert near.ts == pytest.approx(2.0)
+
+
+def test_with_no_target_points_no_scene_is_kept() -> None:
+    no_points = PointCloud2.from_numpy(np.empty((0, 3), dtype=np.float32), frame_id="world")
+    near = _scene_near(_points((0.1, 0.0, 0.17)), no_points, [])
+
+    assert len(near.points_f32()) == 0
+
+
+@pytest.fixture
+def scene_filter(module: PickAndPlaceModule) -> PickAndPlaceModule:
+    """The module with a block to pick and GraspGenX able to check its grasps against
+    the camera's table; the check drops 37 grasps and keeps one."""
+    provider: Any = module._grasp_generator
+    provider.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]
+    )
+    module._scene_grasp_generator = provider
+    provider.propose_grasps_in_scene.return_value = SceneGrasps(
+        GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]), 37
+    )
+    scene: Any = module._scene
+    scene.get_object_pointcloud_by_object_id.return_value = _block_cloud()
+    scene.get_full_scene_pointcloud.return_value = _table()
+    return module
+
+
+def test_grasps_are_checked_against_the_scene_around_the_target(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    provider: Any = scene_filter._grasp_generator
+    scene: Any = scene_filter._scene
+
+    result = scene_filter.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    provider.propose_grasps.assert_not_called()
+    scene.get_full_scene_pointcloud.assert_called_once_with(exclude_object_id="cup-1")
+    target, nearby, threshold = provider.propose_grasps_in_scene.call_args.args
+    assert len(target.points_f32()) == len(_block_cloud().points_f32())
+    assert threshold == pytest.approx(0.01)
+    # The table within reach of the block, minus the part touching it.
+    table = nearby.points_f32()
+    assert 0 < len(table) < len(_table().points_f32())
+    assert np.all(np.abs(table[:, 0] - 0.1) <= 0.18 + 1e-6)
+    assert result.metadata["scene_filtered"] == 37
+
+
+def test_with_the_scene_filter_off_grasps_are_not_checked(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    scene_filter.config.grasp_scene_filter = False
+    provider: Any = scene_filter._grasp_generator
+
+    result = scene_filter.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    provider.propose_grasps.assert_called_once()
+    provider.propose_grasps_in_scene.assert_not_called()
+    scene: Any = scene_filter._scene
+    scene.get_full_scene_pointcloud.assert_not_called()
+    assert "scene_filtered" not in result.metadata
+    assert "scene_filter_skipped" not in result.metadata
+
+
+def test_a_provider_that_cannot_check_the_scene_is_asked_as_before(
+    module: PickAndPlaceModule,
+) -> None:
+    result = module.pick_object("cup-1")
+
+    scene: Any = module._scene
+    scene.get_full_scene_pointcloud.assert_not_called()
+    assert "scene_filtered" not in result.metadata
+
+
+def test_without_a_scene_cloud_grasps_are_not_checked_and_the_result_says_why(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    scene: Any = scene_filter._scene
+    scene.get_full_scene_pointcloud.return_value = None
+    provider: Any = scene_filter._grasp_generator
+
+    result = scene_filter.pick_object("cup-1")
+
+    provider.propose_grasps.assert_called_once()
+    provider.propose_grasps_in_scene.assert_not_called()
+    assert "scene_filtered" not in result.metadata
+    assert result.metadata["scene_filter_skipped"] == (
+        "the scene registration gave no scene point cloud"
+    )
+
+
+def test_a_failing_scene_cloud_does_not_stop_the_pick(scene_filter: PickAndPlaceModule) -> None:
+    scene: Any = scene_filter._scene
+    scene.get_full_scene_pointcloud.side_effect = RuntimeError("no depth frame")
+
+    result = scene_filter.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["scene_filter_skipped"] == (
+        "the scene point cloud failed: RuntimeError: no depth frame"
+    )
+
+
+def test_an_empty_scene_near_the_target_is_still_checked(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    scene: Any = scene_filter._scene
+    scene.get_full_scene_pointcloud.return_value = _points((2.0, 2.0, 2.0))
+    provider: Any = scene_filter._grasp_generator
+    provider.propose_grasps_in_scene.return_value = SceneGrasps(
+        GraspCandidateArray(Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]), 0
+    )
+
+    result = scene_filter.pick_object("cup-1")
+
+    assert len(provider.propose_grasps_in_scene.call_args.args[1].points_f32()) == 0
+    assert result.metadata["scene_filtered"] == 0
+
+
+def test_when_the_scene_check_drops_every_grasp_the_result_says_how_many(
+    scene_filter: PickAndPlaceModule,
+) -> None:
+    provider: Any = scene_filter._grasp_generator
+    provider.propose_grasps_in_scene.return_value = SceneGrasps(
+        GraspCandidateArray(Header(1.0, "world"), []), 40
+    )
+
+    result = scene_filter.pick_object("cup-1")
+
+    assert result.message == "Generated 0 grasp candidates for object cup-1."
+    assert result.metadata["scene_filtered"] == 40

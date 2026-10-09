@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
 from pydantic import Field
+from scipy.spatial import cKDTree
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
@@ -34,7 +36,7 @@ from dimos.manipulation.grasp_verification import (
     grasp_failure,
     open_failure,
 )
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, SceneGraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
@@ -48,6 +50,15 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 
 # The one box a pick leaves out of the planner's map.
 TARGET_BOX = "pick-and-place/target"
+# How far (metres) beyond the target's points the scene check looks: far enough
+# for the fingers, knuckles and most of the palm of the xArm gripper, which
+# reaches 0.18 m back from its tool tip.
+_SCENE_MARGIN = 0.15
+# Scene points this close (metres) to the target's own points are the target.
+_TARGET_POINT_RADIUS = 0.01
+# Scene points this close (metres) to a gripper's tool tip are that gripper: the
+# wrist camera sees its own fingers.
+_GRIPPER_SELF_RADIUS = 0.15
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -64,6 +75,16 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+    # Drop the grasp provider's grasps whose open gripper, at the grasp pose,
+    # would overlap the table or another object in the camera's view. Works with
+    # a provider that can check against a scene (GraspGenX). False tries every
+    # grasp the provider gives.
+    grasp_scene_filter: bool = True
+    # A gripper part closer than this (metres) to a scene point is a collision.
+    # The scene cloud has one point per 1 cm cell, so less than about 1 cm lets a
+    # finger slip between two table points unseen; much more turns down grasps
+    # on short objects, whose fingertips must come close to the table.
+    scene_collision_threshold: float = Field(default=0.01, gt=0.0)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -80,6 +101,23 @@ def _gripper_reading(settle: GripperSettle) -> str:
             f"Gripper position {settle.position:.2f} had not settled after {settle.elapsed:.1f} s."
         )
     return f"Final gripper position {settle.position:.2f}."
+
+
+@dataclass(frozen=True)
+class SceneCheck:
+    """How to drop the provider's grasps whose gripper would hit the scene.
+
+    Args:
+        provider: The grasp provider, able to check its grasps against a scene.
+        scene: Points around the object (table, other objects) without the
+            object's own points, in the object cloud's frame, metres.
+        collision_threshold: A gripper part closer than this (metres) to a scene
+            point counts as a collision.
+    """
+
+    provider: SceneGraspGenSpec
+    scene: PointCloud2
+    collision_threshold: float
 
 
 @dataclass(frozen=True)
@@ -105,6 +143,8 @@ class PickAndPlaceModule(Module):
     config: PickAndPlaceModuleConfig
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
+    # The grasp provider again when it can check its grasps against the scene.
+    _scene_grasp_generator: SceneGraspGenSpec | None = None
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
     _box_filter: PointCloudBoxFilterSpec | None = None
@@ -155,6 +195,9 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
+        ``scene_filtered`` in the result counts the grasps the scene check
+        dropped, and ``scene_filter_skipped`` says why a wanted check did not run.
+
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
@@ -176,7 +219,18 @@ class PickAndPlaceModule(Module):
             return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
-        candidates = self._grasp_generator.propose_grasps(pointcloud)
+        scene, scene_skipped = self._scene_check(object_id, pointcloud)
+        facts: dict[str, Any] = {}
+        if scene is None:
+            candidates = self._grasp_generator.propose_grasps(pointcloud)
+        else:
+            checked = scene.provider.propose_grasps_in_scene(
+                pointcloud, scene.scene, scene.collision_threshold
+            )
+            candidates = checked.grasps
+            facts["scene_filtered"] = checked.removed
+        if scene_skipped is not None:
+            facts["scene_filter_skipped"] = scene_skipped
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
@@ -185,7 +239,9 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
+            return SkillResult(
+                f"Generated 0 grasp candidates for object {object_id}.", metadata=facts
+            )
         group = self._gripper_group(planning_group)
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
@@ -193,10 +249,49 @@ class PickAndPlaceModule(Module):
         if box is not None:
             self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
         try:
-            return self._pick_from(candidates, object_id, box, group)
+            result = self._pick_from(candidates, object_id, box, group)
         finally:
             if not self._holding_object:
                 self._clear_target_box()
+        result.metadata = {**facts, **result.metadata}
+        return result
+
+    def _scene_check(
+        self, object_id: str, pointcloud: PointCloud2
+    ) -> tuple[SceneCheck | None, str | None]:
+        """How to check the provider's grasps against the scene around the target.
+
+        The scene is the latest scan's camera cloud with the target masked out,
+        cut to the target's surroundings (see ``_scene_near``).
+
+        Args:
+            object_id: The object to grasp, from the latest scan.
+            pointcloud: The target's points, planning frame, metres.
+
+        Returns the check, or None and why it cannot run. Both are None when the
+        check is off or the provider cannot check grasps against a scene.
+        """
+        provider = self._scene_grasp_generator
+        if not self.config.grasp_scene_filter or provider is None:
+            return None, None
+        try:
+            scene = self._scene.get_full_scene_pointcloud(exclude_object_id=object_id)
+        except Exception as exc:
+            return None, f"the scene point cloud failed: {type(exc).__name__}: {exc}"
+        if scene is None:
+            return None, "the scene registration gave no scene point cloud"
+        if scene.frame_id != pointcloud.frame_id:
+            return None, (
+                f"the scene point cloud is in frame {scene.frame_id!r}, "
+                f"the object's in {pointcloud.frame_id!r}"
+            )
+        tips = [
+            state.end_effector_pose.position
+            for state in self._manipulation.get_state().groups.values()
+            if state.end_effector_pose is not None
+        ]
+        nearby = _scene_near(scene, pointcloud, tips)
+        return SceneCheck(provider, nearby, self.config.scene_collision_threshold), None
 
     def _pick_from(
         self,
@@ -551,3 +646,33 @@ class PickAndPlaceModule(Module):
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
         state = self._manipulation.get_state().groups.get(planning_group)
         return state.gripper_position if state is not None else None
+
+
+def _scene_near(scene: PointCloud2, target: PointCloud2, tips: Sequence[Vector3]) -> PointCloud2:
+    """The scene points a grasp on the target could hit.
+
+    Keeps the points within ``_SCENE_MARGIN`` of the target's bounds, and drops
+    those within ``_TARGET_POINT_RADIUS`` of a target point (the target itself)
+    and within ``_GRIPPER_SELF_RADIUS`` of a tool tip (the robot's own gripper).
+
+    Args:
+        scene: Camera points, metres, in the target's frame.
+        target: The target's points, metres; with none, no scene point is kept.
+        tips: Where each gripper's tool tip is, metres, same frame.
+    """
+    points = np.asarray(scene.points_f32(), dtype=np.float64).reshape((-1, 3))
+    own = np.asarray(target.points_f32(), dtype=np.float64).reshape((-1, 3))
+    own = own[np.all(np.isfinite(own), axis=1)]
+    keep = np.zeros(len(points), dtype=bool)
+    if len(own):
+        low = own.min(axis=0) - _SCENE_MARGIN
+        high = own.max(axis=0) + _SCENE_MARGIN
+        keep = np.all((points >= low) & (points <= high), axis=1)
+    for tip in tips:
+        keep &= np.linalg.norm(points - tip.to_numpy(), axis=1) > _GRIPPER_SELF_RADIUS
+    if keep.any():
+        distance, _ = cKDTree(own).query(points[keep])
+        keep[np.flatnonzero(keep)[distance <= _TARGET_POINT_RADIUS]] = False
+    return PointCloud2.from_numpy(
+        points[keep].astype(np.float32), frame_id=scene.frame_id, timestamp=scene.ts
+    )
