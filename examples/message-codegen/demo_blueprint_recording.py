@@ -28,6 +28,7 @@ from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.dimos_msgs.msg import LineSegments3D
 from dimos_generated.geometry_msgs.msg import PoseStamped
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_message_build.registry import encode as cdr_encode
 from mcap.reader import make_reader
 import numpy as np
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
