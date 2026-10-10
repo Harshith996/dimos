@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs.Pose import Pose
