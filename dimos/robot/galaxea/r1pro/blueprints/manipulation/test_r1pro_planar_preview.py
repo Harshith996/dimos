@@ -17,6 +17,8 @@
 import os
 import platform
 
+from dimos_generated.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareType, make_twist_base_joints
