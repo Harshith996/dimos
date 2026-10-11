@@ -47,6 +47,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
@@ -167,6 +168,8 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         # What the grasp contact check did over the current pick (see drop_touching).
         self._contact: dict[str, Any] = {}
+        # Joint positions of each planning group when the latest scan_objects ran.
+        self._scan_joints: dict[PlanningGroupID, JointState] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -181,6 +184,11 @@ class PickAndPlaceModule(Module):
         if not self._holding_object:
             self._clear_selection()
         self._objects = {}
+        self._scan_joints = {
+            group_id: state.joints
+            for group_id, state in self._manipulation.get_state().groups.items()
+            if state.joints is not None
+        }
         detections = self._scene.scan_scene(text=prompts)
         objects = [
             {
@@ -318,7 +326,10 @@ class PickAndPlaceModule(Module):
         (see ``scan_view_distance``) is the reachable one farthest around the
         ring from the views taken; the planner checks every move against the
         scene. At each the target is detected again, and the scene registration
-        adds that view's points to the target's.
+        adds that view's points to the target's, which it keeps under the
+        target's id meanwhile. The arm then returns to the scan pose and looks
+        once more, so the scene the grasp checks use is seen from there, as
+        without the extra views.
 
         Args:
             object_id: The object to grasp, from the latest scan.
@@ -333,6 +344,8 @@ class PickAndPlaceModule(Module):
         state = self._manipulation.get_state().groups.get(group)
         if state is None or state.end_effector_pose is None:
             return {"skipped": "no tool tip pose"}
+        if not self._scene.keep_object(object_id):
+            return {"skipped": f"the scene registration has no object {object_id}"}
         before = self._scene.get_object_pointcloud_by_object_id(object_id)
         box = None if before is None else _target_box(before)
         if box is None:
@@ -372,11 +385,37 @@ class PickAndPlaceModule(Module):
             seen.append(bearing)
             facts["views"] += 1
             self._detect_after(name, time.time())
+        if facts["views"]:
+            returned = self._return_to_scan_pose(group)
+            if returned is not None:
+                facts["stopped"] = _status(returned)
+            else:
+                self._detect_after(name, time.time())
         after = self._scene.get_object_pointcloud_by_object_id(object_id)
         facts["points"] = [
             0 if cloud is None else len(cloud.points_f32()) for cloud in (before, after)
         ]
         return facts
+
+    def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
+        """Move the arm back to its joint positions from the latest scan_objects call.
+
+        The move is collision checked.
+
+        Args:
+            group: Planning group to move.
+
+        Returns the planner or execution result that stopped the move, or None
+        when the arm arrived or no scan pose was recorded for the group.
+        """
+        joints = self._scan_joints.get(group)
+        if joints is None:
+            return None
+        plan = self._manipulation.plan_to_joints({group: joints})
+        if not plan.succeeded:
+            return plan
+        execution = self._manipulation.execute(blocking=True)
+        return None if execution.succeeded else execution
 
     def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
         """Detect a label in a camera frame taken after a given time.
