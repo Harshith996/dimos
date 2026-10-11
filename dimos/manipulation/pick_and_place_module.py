@@ -324,16 +324,17 @@ class PickAndPlaceModule(Module):
             object_id: The object to grasp, from the latest scan.
             group: Planning group carrying the camera.
 
-        Returns ``views`` (viewpoints reached) and ``unreachable`` (viewpoints
-        the planner found no path to), or ``{"skipped": why}``.
+        Returns ``views`` (viewpoints reached), ``unreachable`` (viewpoints the
+        planner found no path to) and ``points`` (the target's cloud size
+        before and after), or ``{"skipped": why}``.
         """
         if self.config.camera_from_tip is None:
             return {"skipped": "no camera_from_tip in the config"}
         state = self._manipulation.get_state().groups.get(group)
         if state is None or state.end_effector_pose is None:
             return {"skipped": "no tool tip pose"}
-        cloud = self._scene.get_object_pointcloud_by_object_id(object_id)
-        box = None if cloud is None else _target_box(cloud)
+        before = self._scene.get_object_pointcloud_by_object_id(object_id)
+        box = None if before is None else _target_box(before)
         if box is None:
             return {"skipped": f"object {object_id} has no points to look at"}
         name = str(self._objects[object_id]["name"])
@@ -342,7 +343,7 @@ class PickAndPlaceModule(Module):
         camera = pose_to_matrix(state.end_effector_pose) @ camera_from_tip
         seen = [look_around.bearing_of(center, camera[:3, 3])]
         bearings = look_around.ring(seen[0], self.config.scan_view_bearings)[1:]
-        facts = {"views": 0, "unreachable": 0}
+        facts: dict[str, Any] = {"views": 0, "unreachable": 0}
         while facts["views"] < self.config.scan_views and bearings:
             bearing = look_around.farthest(bearings, seen)
             bearings.remove(bearing)
@@ -371,6 +372,10 @@ class PickAndPlaceModule(Module):
             seen.append(bearing)
             facts["views"] += 1
             self._detect_after(name, time.time())
+        after = self._scene.get_object_pointcloud_by_object_id(object_id)
+        facts["points"] = [
+            0 if cloud is None else len(cloud.points_f32()) for cloud in (before, after)
+        ]
         return facts
 
     def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
