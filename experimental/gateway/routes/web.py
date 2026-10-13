@@ -23,15 +23,15 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
-from experimental.gateway import msgs, responses, store
+from experimental.gateway import msgs, responses, store, web_view
 from experimental.gateway.routes.blueprints import blueprint_list, check_name
 from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
 
 ASSETS = Path(__file__).parents[1] / "assets"
-VIEW_DIR = ASSETS / "blueprint_view"
-VIEW_FILE = re.compile(r"[a-z_]+\.(js|css)")
+# vite's hashed bundle names, e.g. index-rD2X8j_J.js
+VIEW_FILE = re.compile(r"[A-Za-z0-9_-]+\.(js|css)")
 
 
 @router.get("/dimos/blueprint_view", response_class=HTMLResponse)
@@ -46,19 +46,22 @@ async def blueprint_view(
     listed = await blueprint_list(state)
     if not any(entry["name"] == name for entry in listed["blueprints"]):
         raise ApiError(404, f"no such blueprint: {name}")
-    return (VIEW_DIR / "index.html").read_text()
+    dist = await web_view.built_dist()
+    if dist is None:
+        raise ApiError(503, "the blueprint view isn't built (web/blueprint_view: deno task build)")
+    return (dist / "index.html").read_text()
 
 
 @router.get("/dimos/blueprint_view/{file}")
 async def blueprint_view_file(file: str) -> Response:
-    path = VIEW_DIR / file
+    path = web_view.app_dir() / "dist" / "blueprint_view" / file
     if not VIEW_FILE.fullmatch(file) or not path.is_file():
         raise ApiError(404, f"no such file: {file}")
     media = "text/css" if file.endswith(".css") else "text/javascript"
     return Response(
         path.read_bytes(),
         media_type=f"{media}; charset=utf-8",
-        headers={"cache-control": "no-cache"},
+        headers={"cache-control": "public, max-age=31536000, immutable"},
     )
 
 

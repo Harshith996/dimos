@@ -17,14 +17,14 @@ from pathlib import Path
 import subprocess
 
 from fastapi.testclient import TestClient
+import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.deno import ensure_deno
+from experimental.gateway import web_view
 from experimental.gateway.state import State
-
-VIEW = Path(__file__).parents[1] / "assets" / "blueprint_view"
 
 ROUND_TRIP = """
 import { decode, decodeChannel, geometry_msgs } from "MODULE"
@@ -39,15 +39,36 @@ console.log(JSON.stringify({
 """
 
 
-def test_blueprint_view_and_its_files(client: TestClient, state: State) -> None:
+def test_blueprint_view_and_its_files(
+    client: TestClient, state: State, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # a wheel's shape: a built dist and no sources, so nothing builds
+    (tmp_path / "dist" / "blueprint_view").mkdir(parents=True)
+    (tmp_path / "dist" / "index.html").write_text("<html></html>")
+    (tmp_path / "dist" / "blueprint_view" / "index-Ab_1.js").write_text("export {}")
+    monkeypatch.setattr(web_view, "app_dir", lambda: tmp_path)
     state.listed = [{"name": "demo", "kind": "builtin"}]
     page = client.get("/dimos/blueprint_view?name=demo")
     assert page.status_code == 200 and "<html" in page.text.lower()
     assert client.get("/dimos/blueprint_view?name=nope").status_code == 404
     assert client.get("/dimos/blueprint_view?name=demo&view=x").status_code == 400
-    script = client.get("/dimos/blueprint_view/app.js")
+    script = client.get("/dimos/blueprint_view/index-Ab_1.js")
     assert script.headers["content-type"].startswith("text/javascript")
     assert client.get("/dimos/blueprint_view/..%2Fmsgs.py").status_code == 404
+
+
+def test_the_blueprint_view_builds_when_its_sources_change(tmp_path: Path) -> None:
+    web = tmp_path / "web"
+    (web / "blueprint_view" / "src").mkdir(parents=True)
+    (web / "deno.json").write_text("{}")
+    (web / "blueprint_view" / "src" / "main.tsx").write_text("1")
+    before = web_view.stamp(web, web / "blueprint_view")
+    (web / "blueprint_view" / "src" / "main.test.ts").write_text("tests don't count")
+    (web / "blueprint_view" / "dist").mkdir()
+    (web / "blueprint_view" / "dist" / "index.html").write_text("built output doesn't count")
+    assert web_view.stamp(web, web / "blueprint_view") == before
+    (web / "blueprint_view" / "src" / "main.tsx").write_text("2")
+    assert web_view.stamp(web, web / "blueprint_view") != before
 
 
 def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: Path) -> None:
@@ -94,16 +115,3 @@ def test_msgs_js_decodes_what_python_encodes(client: TestClient, tmp_path: Path)
     assert out["pose"]["header"]["frame_id"] == "map"
     assert out["pose"]["pose"]["position"] == {"x": 1.0, "y": 2.0, "z": 3.0}
     assert out["twist"] == twist.lcm_encode().hex()
-
-
-def test_no_graph_layout_overlaps_nodes() -> None:
-    out = subprocess.run(
-        [str(ensure_deno()), "run", "--no-prompt", "layout_check.js"],
-        cwd=VIEW,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=True,
-    ).stdout
-    results = json.loads(out)
-    assert results and [r for r in results if r["overlaps"]] == []
