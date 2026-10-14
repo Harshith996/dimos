@@ -106,16 +106,38 @@ async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[
 
 
 @router.post("/runs/restart", response_model=responses.Launch)
-async def restart(state: GatewayState) -> dict[str, Any]:
-    """Stop the last launch if it still runs, and launch it again with the config saved now."""
+async def restart(state: GatewayState, request: StopRequest | None = None) -> dict[str, Any]:
+    """Stop the last launch if it still runs, and launch it again with the config saved now.
+
+    A run this gateway didn't launch (the one `runId` names, or else the newest live one) is
+    started again with the same command line, directory and environment.
+    """
+    run_id = request.runId if request else None
+    current = await asyncio.to_thread(launches.current_launch)
+    ours = current is not None and current["phase"] in launches.ACTIVE
+    # TODO: after gateway is on main, drop this fallback for runs the gateway didn't launch
+    try:
+        run = await asyncio.to_thread(launches.run_to_relaunch, run_id)
+    except launches.RunError as error:
+        raise ApiError(400, str(error))
+    if run is not None:
+        try:
+            command, cwd, env = await asyncio.to_thread(launches.snapshot, int(run["pid"]))
+            await launches.stop(str(run["run_id"]) if run["run_id"] else None)
+            started = await asyncio.to_thread(
+                launches.relaunch, str(run["blueprint"]), command, cwd, env
+            )
+        except launches.RunError as error:
+            raise ApiError(500, str(error))
+        state.bus.launch(started)
+        return started
     last = launches.last_launch_args()
     if last is None:
         raise ApiError(400, "the dimos gateway hasn't launched anything yet")
     blueprint, previous = last
     config = with_saved(blueprint, previous.one_off, previous.args)
-    current = await asyncio.to_thread(launches.current_launch)
     try:
-        if current and current["phase"] in launches.ACTIVE:
+        if ours:
             await launches.stop(None)
         started = await asyncio.to_thread(launches.start, state.dimos_dir, blueprint, config)
     except launches.RunError as error:

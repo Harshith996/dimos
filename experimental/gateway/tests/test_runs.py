@@ -16,10 +16,14 @@ from collections.abc import Callable
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import threading
 import time
 from typing import Any
 
 from fastapi.testclient import TestClient
+import psutil
 import pytest
 
 from dimos.core.run_registry import RunEntry
@@ -83,6 +87,31 @@ def test_restart_launches_the_last_blueprint_again(client: TestClient, launched:
     assert restarted.status_code == 200, restarted.text
     assert restarted.json()["pid"] != first
     assert restarted.json()["oneOff"]["global"] == {"n_workers": 2}
+
+
+def test_restart_copies_a_run_the_gateway_did_not_launch(
+    client: TestClient, launched: None, tmp_path: Path
+) -> None:
+    command = [sys.executable, "-c", "import time; time.sleep(60)", "outside"]
+    env = {**os.environ, "OUTSIDE_RUN": "yes"}
+    outside = subprocess.Popen(command, cwd=tmp_path, env=env, start_new_session=True)
+    threading.Thread(target=outside.wait, daemon=True).start()
+    RunEntry(
+        run_id="20260101-120000-outside",
+        pid=outside.pid,
+        blueprint="outside",
+        started_at="2026-01-01T12:00:00+00:00",
+        log_dir=str(tmp_path),
+    ).save()
+    assert client.post("/runs/restart", json={"runId": "nope"}).status_code == 400
+    restarted = client.post("/runs/restart")
+    assert restarted.status_code == 200, restarted.text
+    assert outside.poll() is not None
+    again = psutil.Process(restarted.json()["pid"])
+    assert again.cmdline()[-1] == "outside" and again.cwd() == str(tmp_path.resolve())
+    assert again.environ()["OUTSIDE_RUN"] == "yes"
+    assert restarted.json()["blueprint"] == "outside"
+    assert client.post("/runs/stop").status_code == 200
 
 
 def test_runs_lists_the_registry(client: TestClient) -> None:

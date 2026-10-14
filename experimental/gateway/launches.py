@@ -29,6 +29,8 @@ import threading
 import time
 from typing import Any
 
+import psutil
+
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.core.run_registry import list_runs
@@ -307,6 +309,62 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             **({"args": ov.shown_args(launch.args)} if launch.args else {}),
         }
         _save(record)
+        started = current_launch()
+        assert started is not None
+        return started
+
+
+def snapshot(pid: int) -> tuple[list[str], str, dict[str, str]]:
+    """The command line, working directory and environment that started `pid`."""
+    # TODO: after gateway is on main, restart from what the run registry records instead of psutil
+    try:
+        process = psutil.Process(pid)
+        with process.oneshot():
+            return process.cmdline(), process.cwd(), process.environ()
+    except psutil.Error as error:
+        raise RunError(f"can't read how pid {pid} was started: {error}")
+
+
+def run_to_relaunch(run_id: str | None) -> dict[str, Any] | None:
+    """The live run `restart` copies instead of relaunching from saved config, if any."""
+    launch = current_launch()
+    if launch is not None and launch["phase"] in ACTIVE and run_id in (None, launch["runId"]):
+        if not (_record() or {}).get("relaunched"):
+            return None
+        return {"run_id": launch["runId"], "pid": launch["pid"], "blueprint": launch["blueprint"]}
+    runs = registry_runs()
+    run = next((r for r in runs if run_id in (None, r["run_id"])), None)
+    if run is None and run_id:
+        raise RunError(f"no live run {run_id}")
+    return run
+
+
+def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) -> dict[str, Any]:
+    """Start `command` again as this gateway's launch, for a run the gateway didn't start."""
+    with _lock:
+        launch_log().parent.mkdir(parents=True, exist_ok=True)
+        launch_log().write_text(f"$ {shlex.join(ov.shown_args(command))}\n")
+        with launch_log().open("a") as log:
+            child = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+        threading.Thread(target=child.wait, daemon=True).start()
+        started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _save(
+            {
+                "blueprint": blueprint,
+                "started_at": started_at,
+                "pid": child.pid,
+                "ever_ran": False,
+                "relaunched": True,
+            }
+        )
         started = current_launch()
         assert started is not None
         return started
