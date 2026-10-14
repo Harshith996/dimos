@@ -21,7 +21,6 @@ a suite module maps them onto :class:`~dimos.evals.types.EvalCase` values.
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Sequence
 import json
 from pathlib import Path
@@ -98,37 +97,3 @@ def memory_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Ro
 
 def write_rows(path: Path, rows: Sequence[Row]) -> None:
     path.write_text(json.dumps(list(rows), indent=2) + "\n", encoding="utf-8")
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Emit odom memory eval rows as JSON.")
-    parser.add_argument("dataset", help="Recording name or path (e.g. go2_short)")
-    parser.add_argument("-o", "--output", type=Path, required=True, help="Output JSON path")
-    parser.add_argument(
-        "--window",
-        action="append",
-        required=True,
-        metavar="START:STOP",
-        help="Relative-second window; repeat for multiple windows",
-    )
-    args = parser.parse_args(argv)
-    windows: list[tuple[float, float]] = []
-    for item in args.window:
-        start_text, sep, stop_text = item.partition(":")
-        if not sep:
-            parser.error(f"window must be START:STOP, got {item!r}")
-        try:
-            start, stop = float(start_text), float(stop_text)
-        except ValueError:
-            parser.error(f"window bounds must be numbers, got {item!r}")
-        if stop <= start:
-            parser.error(f"window stop must be greater than start, got {item!r}")
-        windows.append((start, stop))
-    rows = memory_rows(args.dataset, windows)
-    write_rows(args.output, rows)
-    print(f"wrote {len(rows)} rows to {args.output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
