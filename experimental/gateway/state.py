@@ -85,7 +85,10 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
     uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
-    return State(dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir))
+    jobs = Jobs()
+    return State(
+        dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir, jobs), jobs=jobs
+    )
 
 
 def gateway_state(request: Request) -> State:

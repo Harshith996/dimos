@@ -65,19 +65,38 @@ def scanned(state: State, tmp_path: Path) -> State:
     return state
 
 
-def test_discovery_scans_on_demand_and_survives_a_crash(client: TestClient, scanned: State) -> None:
+def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
+    client: TestClient, scanned: State
+) -> None:
     (scanned.dimos_dir / "pyproject.toml").write_text(
         '[project]\nname = "dimos"\n[project.optional-dependencies]\nunitree-dds = ["unitree-sdk2py"]\n'
     )
+    scanned.listed = [
+        {"name": n, "kind": "builtin"} for n in ("good", "crashes", "missing", "other")
+    ]
     assert scanned.scanner.task is None
-    client.get("/discovery")
-    until(lambda: client.get("/discovery").json()["state"] == "done")
-    status = client.get("/discovery").json()
-    assert (status["blueprints_done"], status["importable"]) == (3, 1)
-    found = {b["name"]: b for b in client.get("/discovery/blueprints").json()["blueprints"]}
-    assert found["good"]["robot"] == "go2"
+    first = client.get("/blueprints").json()
+    assert first["scan"]["state"] == "scanning" and "importable" not in first["blueprints"][0]
+    response = client.post("/blueprints/scan")
+    assert response.status_code == 202 and response.json()["job"] == first["scan"]["job"]
+    job = first["scan"]["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    status = client.get(f"/jobs/{job}").json()
+    assert status["ok"] and status["kind"] == "scan"
+    assert status["progress"] == {"done": 3, "total": 3, "current": None}
+    assert any("crashed" in line for line in client.get(f"/jobs/{job}/log").json()["lines"])
+    answer = client.get("/blueprints").json()
+    assert answer["scan"] == {
+        "job": job,
+        "state": "done",
+        "stale": False,
+        "finished_at": status["finished_at"],
+    }
+    found = {b["name"]: b for b in answer["blueprints"]}
+    assert found["good"]["robot"] == "go2" and found["good"]["modules"][0]["class"] == "x.Cam"
     assert "crashed" in found["crashes"]["import_error"]
     assert found["missing"]["suggested_extras"] == ["unitree-dds"]
+    assert found["other"] == {"name": "other", "kind": "builtin"}
     catalog = client.get("/catalog").json()
     assert [b["name"] for b in catalog["blueprints"]] == ["good"]
     assert catalog["modules"][0]["skills"] == ["snap"] and catalog["modules"][0]["robots"] == [
@@ -85,6 +104,8 @@ def test_discovery_scans_on_demand_and_survives_a_crash(client: TestClient, scan
     ]
     assert catalog["skills"][0]["module"] == "cam"
     assert any(e.startswith("blueprint missing: ") for e in catalog["errors"])
+    again = client.post("/blueprints/scan").json()["job"]
+    assert again != job and client.get("/blueprints").json()["scan"]["stale"]
 
 
 def test_a_blueprint_change_invalidates_the_scan(
@@ -93,17 +114,11 @@ def test_a_blueprint_change_invalidates_the_scan(
     client.get("/catalog")
     scanned.blueprints_changed(["new"], [])
     assert scanned.scanner.task is None
+    assert client.get("/blueprints").json()["scan"]["stale"]
     assert (
         "ns/dimos/events/blueprints",
         {"type": "blueprints", "added": ["new"], "removed": []},
     ) in sent
-
-
-def test_blueprint_list_carries_import_status(client: TestClient, scanned: State) -> None:
-    scanned.listed = [{"name": "good", "kind": "builtin"}, {"name": "other", "kind": "builtin"}]
-    client.get("/catalog")
-    listed = client.get("/blueprints").json()["blueprints"]
-    assert listed[0]["importable"] is True and listed[1]["importable"] is None
 
 
 def test_extras_status_from_pyproject(tmp_path: Path) -> None:
@@ -136,10 +151,13 @@ def test_extras_install_runs_as_a_job(
     monkeypatch.setattr(state, "introspected", packages)
     monkeypatch.setattr(state.scanner, "refresh", lambda reason="": None)
     assert client.post("/extras/install", json={"extras": ["nope"]}).status_code == 400
-    job = client.post("/extras/install", json={"extras": ["sim"]}).json()["job"]
+    started = client.post("/extras/install", json={"extras": ["sim"]})
+    assert started.status_code == 202
+    job = started.json()["job"]
     until(lambda: client.get(f"/jobs/{job}/log").json()["done"])
     log = client.get(f"/jobs/{job}/log").json()
     assert log["ok"] and any("--extra sim" in line for line in log["lines"])
+    assert client.get(f"/jobs/{job}").json()["progress"] is None
     assert client.get("/jobs/none/log").status_code == 404
 
 

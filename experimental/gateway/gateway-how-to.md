@@ -14,7 +14,16 @@ uses:
 ## How do I list blueprints?
 
 ```js
-const { blueprints } = await (await fetch("../../dimos-gateway/blueprints")).json() // [{ name, kind, importable }]
+const { blueprints, scan } = await (await fetch("../../dimos-gateway/blueprints")).json()
+// blueprints: [{ name, kind, ...once a scan finished: importable, import_error, suggested_extras, robot, modules }]
+// scan: { job, state, stale, finished_at }; the first call starts the scan in the background
+```
+
+To scan again (after installing packages yourself) and follow it:
+
+```js
+const { job } = await (await fetch("../../dimos-gateway/blueprints/scan", { method: "POST" })).json() // 202
+const { done, ok, progress } = await (await fetch(`../../dimos-gateway/jobs/${job}`)).json() // progress: { done, total, current }
 ```
 
 ## How do I launch a blueprint?

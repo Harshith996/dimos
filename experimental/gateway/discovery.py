@@ -18,7 +18,6 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-import hashlib
 import itertools
 import json
 import os
@@ -64,53 +63,69 @@ IMPORT_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+SCANNED = (
+    "ref",
+    "robot",
+    "importable",
+    "import_error",
+    "missing_module",
+    "optional_dependency",
+    "suggested_extras",
+    "modules",
+)
+
+
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 class Scanner:
-    def __init__(self, dimos_dir: Path, command: list[str] | None = None) -> None:
+    def __init__(self, dimos_dir: Path, jobs: Jobs, command: list[str] | None = None) -> None:
         self.dimos_dir = dimos_dir
+        self.jobs = jobs
         self.command = command or child_command(dimos_dir)
         self.blueprints: dict[str, dict[str, Any]] = {}
+        self.results: dict[str, dict[str, Any]] = {}
         self.modules: dict[str, dict[str, Any]] = {}
         self.errors: list[str] = []
         self.names: dict[str, list[str]] = {"blueprints": [], "modules": []}
         self.finished_modules: set[str] = set()
         self.task: asyncio.Task[None] | None = None
-        self.status: dict[str, Any] = {
-            "state": "idle",
-            "reason": None,
-            "key": None,
-            "stale": False,
-            "started_at": None,
-            "finished_at": None,
-            "current": None,
-        }
+        self.job: Job | None = None
+        self.state = "idle"
+        self.current: str | None = None
+        self.finished_at: str | None = None
 
     def snapshot(self) -> dict[str, Any]:
-        importable = sum(1 for r in self.blueprints.values() if r["importable"])
+        stale = self.finished_at is not None and self.state != "done"
         return {
-            **self.status,
-            "blueprints_total": len(self.names["blueprints"]) or len(self.blueprints),
-            "blueprints_done": len(self.blueprints),
-            "importable": importable,
-            "errors": self.errors[-MAX_ERRORS:],
+            "job": self.job and self.job.id,
+            "state": self.state,
+            "stale": stale,
+            "finished_at": self.finished_at,
         }
 
     def ensure(self, reason: str = "requested") -> None:
         if self.task is None:
             self.refresh(reason)
 
+    def start(self, reason: str = "requested") -> Job:
+        """The running scan's job, or a new scan's."""
+        if self.task is None or self.task.done():
+            self.refresh(reason)
+        assert self.job is not None
+        return self.job
+
     def refresh(self, reason: str = "requested") -> None:
         self.invalidate()
-        self.status.update(state="scanning", reason=reason)
-        self.task = asyncio.get_running_loop().create_task(self.scan())
+        self.state = "scanning"
+        self.job = self.jobs.add(f"Scan blueprints ({reason})", "scan", [*self.command, "scan"])
+        self.task = asyncio.get_running_loop().create_task(self.scan(self.job))
 
     def invalidate(self) -> None:
         if self.task is not None:
             self.task.cancel()
-            self.status["state"] = "idle"
+            self.state = "idle"
         self.task = None
 
     async def wait(self) -> None:
@@ -128,16 +143,29 @@ class Scanner:
             [n for n in self.names["modules"] if n not in self.finished_modules],
         )
 
-    async def scan(self) -> None:
+    def error(self, text: str) -> None:
+        self.errors.append(text)
+        if self.job is not None:
+            self.job.lines.append(text)
+
+    def tick(self) -> None:
+        if self.job is not None:
+            total = len(self.names["blueprints"]) or len(self.blueprints)
+            self.job.progress = {
+                "done": len(self.blueprints),
+                "total": total,
+                "current": self.current,
+            }
+
+    async def scan(self, job: Job) -> None:
         self.blueprints, self.modules, self.errors = {}, {}, []
         self.names, self.finished_modules = {"blueprints": [], "modules": []}, set()
-        key = await asyncio.to_thread(packages_key)
-        self.status.update(key=key, started_at=now_iso(), finished_at=None, current=None)
+        self.current = None
         try:
             problem = await self.child(None)
             while problem is not None and any(self.pending()):
-                current = self.status["current"]
-                self.errors.append(f"{current}: {problem}")
+                current = self.current or ""
+                self.error(f"{current}: {problem}")
                 if current in self.pending()[0]:
                     self.blueprints[current] = {
                         "name": current,
@@ -160,13 +188,22 @@ class Scanner:
                     "known": list(self.modules),
                 }
                 problem = await self.child(request)
-            self.status.update(state="done")
+            self.current = None
+            self.tick()
+            self.results = await asyncio.to_thread(self.finish)
+            self.state = "done"
         except Exception as error:
-            logger.exception("the discovery scan failed")
-            self.errors.append(f"scan: {type(error).__name__}: {error}")
-            self.status.update(state="failed")
+            logger.exception("the blueprint scan failed")
+            self.error(f"scan: {type(error).__name__}: {error}")
+            self.state = "failed"
         finally:
-            self.status.update(finished_at=now_iso(), current=None)
+            ok = job is self.job and self.state == "done"
+            failed = (
+                "the scan was cancelled" if job is not self.job or self.state == "idle" else None
+            )
+            job.finish(ok, None if ok else failed or (self.errors or ["the scan failed"])[-1])
+            if job is self.job:
+                self.finished_at = job.finished_at
 
     async def child(self, request: dict[str, Any] | None) -> str | None:
         child = await asyncio.create_subprocess_exec(
@@ -214,47 +251,41 @@ class Scanner:
         if kind == "names":
             self.names = {"blueprints": message["blueprints"], "modules": message["modules"]}
         elif kind == "start":
-            self.status["current"] = message["name"]
+            self.current = message["name"]
         elif kind == "blueprint":
             self.blueprints[message["name"]] = message
         elif kind == "module":
             self.modules[message["class"]] = message
             self.finished_modules.add(message["name"])
         elif kind == "error" or "error" in message:
-            self.errors.append(str(message.get("error")))
-            current = str(self.status["current"] or "")
+            self.error(str(message.get("error")))
+            current = str(self.current or "")
             if current.startswith("module:"):
                 self.finished_modules.add(current[7:])
+        self.tick()
         return kind == "end" or (kind is None and "error" in message)
 
-    def records(self) -> list[dict[str, Any]]:
-        doc = robots.load()
+    def finish(self) -> dict[str, dict[str, Any]]:
+        """The scan's records by name, in its order, with each one's robot and the extras that would fix it."""
+        doc, providers = robots.load(), providing_extras(self.dimos_dir)
         order = {name: index for index, name in enumerate(self.names["blueprints"])}
         found = sorted(self.blueprints.values(), key=lambda r: order.get(r["name"], len(order)))
-        return [{**r, "robot": robots.robot_of(doc, r["name"], r["ref"])} for r in found]
-
-    def import_status(self, entry: dict[str, Any]) -> dict[str, Any]:
-        record = self.blueprints.get(entry["name"]) or {}
         return {
-            **entry,
-            "importable": record.get("importable"),
-            "import_error": record.get("import_error"),
-            "missing_module": record.get("missing_module"),
+            r["name"]: {
+                **r,
+                "robot": robots.robot_of(doc, r["name"], r["ref"]),
+                "suggested_extras": providers(r.get("missing_module")),
+            }
+            for r in found
         }
 
-    def discovered(self) -> dict[str, Any]:
-        providers = providing_extras(self.dimos_dir)
-        blueprints = [
-            {
-                **{k: v for k, v in record.items() if k != "doc"},
-                "suggested_extras": providers(record.get("missing_module")),
-            }
-            for record in self.records()
-        ]
-        return {"stale": False, "blueprints": blueprints}
+    def scanned(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """A /blueprints entry with what the last finished scan found for it."""
+        record = self.results.get(entry["name"])
+        return {**entry, **{k: record.get(k) for k in SCANNED}} if record else entry
 
     def catalog(self) -> dict[str, Any]:
-        records = self.records()
+        records = list(self.results.values())
         used_by: dict[str, set[str]] = {}
         for record in records:
             for module in record["modules"]:
@@ -289,13 +320,6 @@ class Scanner:
         if len(errors) > MAX_ERRORS:
             errors = [*errors[:MAX_ERRORS], f"... and {len(errors) - MAX_ERRORS} more"]
         return {"blueprints": blueprints, "modules": modules, "skills": skills, "errors": errors}
-
-
-def packages_key() -> str:
-    from importlib.metadata import distributions
-
-    names = sorted(f"{d.metadata['Name']}=={d.version}" for d in distributions())
-    return hashlib.sha256("\n".join(names).encode()).hexdigest()[:16]
 
 
 def is_checkout(dimos_dir: Path) -> bool:
@@ -476,20 +500,31 @@ class Job:
     finished_at: str | None = None
     ended: float | None = None
     code: str | None = None
+    progress: dict[str, Any] | None = None
 
-    def log(self, after: int = 0) -> dict[str, Any]:
+    def finish(self, ok: bool, error: str | None = None) -> None:
+        self.ok, self.error = ok, error
+        self.done, self.finished_at, self.ended = True, now_iso(), time.monotonic()
+
+    def status(self) -> dict[str, Any]:
         return {
             "job": self.id,
             "title": self.title,
             "kind": self.kind,
             "done": self.done,
             "ok": self.ok,
+            "progress": self.progress,
+            "error": self.error,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+        }
+
+    def log(self, after: int = 0) -> dict[str, Any]:
+        return {
+            **self.status(),
             "command": self.command,
             "lines": self.lines[max(after, 0) :],
             "next": len(self.lines),
-            "error": self.error,
             "failure": self.failure,
             "code": self.code,
         }
@@ -518,6 +553,12 @@ class Jobs:
     def running(self, kind: str) -> Job | None:
         return next((j for j in self.jobs.values() if j.kind == kind and not j.done), None)
 
+    def add(self, title: str, kind: str, command: list[str]) -> Job:
+        self.prune()
+        job = Job(f"{kind}-{next(self.ids)}-{int(time.time())}", title, kind, command)
+        self.jobs[job.id] = job
+        return job
+
     def start(
         self,
         title: str,
@@ -528,9 +569,7 @@ class Jobs:
         then: Callable[[], None],
         prepare: Prepare | None = None,
     ) -> Job:
-        self.prune()
-        job = Job(f"{kind}-{next(self.ids)}-{int(time.time())}", title, kind, command)
-        self.jobs[job.id] = job
+        job = self.add(title, kind, command)
 
         async def run() -> None:
             try:
@@ -550,7 +589,7 @@ class Jobs:
                 job.ok = False
                 job.error = f"{title} couldn't start: {type(error).__name__}: {error}"
                 job.failure = [job.error]
-            job.done, job.finished_at, job.ended = True, now_iso(), time.monotonic()
+            job.finish(bool(job.ok), job.error)
             then()
 
         asyncio.get_running_loop().create_task(run())

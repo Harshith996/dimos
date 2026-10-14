@@ -91,6 +91,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
     assert {"/runs", "/skills", "/catalog"} <= set(routes)
+    slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
+    assert slow == {"/catalog", "/blueprints/{name}", "/blueprints/{name}/config"}
+    assert not any(path.startswith("/discovery") for path in routes)
 
 
 def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:

@@ -69,20 +69,6 @@ class Python(Body):
     python: str
 
 
-class BlueprintEntry(Body):
-    name: str
-    kind: Literal["builtin", "external"]
-    importable: bool | None
-    import_error: str | None
-    missing_module: str | None
-
-
-class BlueprintList(Body):
-    """Every blueprint dimos can run, and whether the discovery scan could import it."""
-
-    blueprints: list[BlueprintEntry]
-
-
 class Param(Body):
     name: str
     type: str | None
@@ -202,40 +188,41 @@ ScannedModule = TypedDict(
 with_config(CONFIG)(ScannedModule)
 
 
-class DiscoveredBlueprint(Body):
+class BlueprintEntry(Body):
+    """A blueprint, and (once a scan finished) what the last scan found: whether it imports, and if not why."""
+
     name: str
-    ref: str | None
-    builtin: bool | None
-    importable: bool
-    optional_dependency: bool
-    import_error: str | None
-    missing_module: str | None
-    modules: list[ScannedModule]
-    robot: str | None
-    suggested_extras: list[str]
+    kind: Literal["builtin", "external"]
+    ref: NotRequired[str | None]
+    robot: NotRequired[str | None]
+    importable: NotRequired[bool]
+    import_error: NotRequired[str | None]
+    missing_module: NotRequired[str | None]
+    optional_dependency: NotRequired[bool]
+    suggested_extras: NotRequired[list[str]]
+    modules: NotRequired[list[ScannedModule]]
 
 
-class Discovered(Body):
-    """What the discovery scan found for each blueprint, and the extras that would fix one that won't import."""
+class ScanStatus(Body):
+    """The blueprint scan: its job, and whether the results are from before a change (stale)."""
 
-    stale: bool
-    blueprints: list[DiscoveredBlueprint]
-
-
-class DiscoveryStatus(Body):
-    """The discovery scan's progress."""
-
+    job: str | None
     state: Literal["idle", "scanning", "done", "failed"]
-    reason: str | None
-    key: str | None
     stale: bool
-    started_at: str | None
     finished_at: str | None
-    current: str | None
-    blueprints_total: int
-    blueprints_done: int
-    importable: int
-    errors: list[str]
+
+
+class BlueprintList(Body):
+    """Every blueprint dimos can run, and what the last scan found for each."""
+
+    blueprints: list[BlueprintEntry]
+    scan: ScanStatus
+
+
+class ScanStarted(Body):
+    """The scan's job: follow it at /jobs/{job}."""
+
+    job: str
 
 
 class CatalogBlueprint(Body):
@@ -309,20 +296,32 @@ class JobStarted(Body):
     command: list[str]
 
 
-class JobLog(Body):
-    """A job's output from line `after` on, and whether it finished."""
+class JobProgress(Body):
+    done: int
+    total: int
+    current: str | None
+
+
+class JobStatus(Body):
+    """A job, whether it finished and how it went, and its progress when it has one."""
 
     job: str
     title: str
     kind: str
     done: bool
     ok: bool | None
+    progress: JobProgress | None
+    error: str | None
     started_at: str
     finished_at: str | None
+
+
+class JobLog(JobStatus):
+    """A job's output from line `after` on, and whether it finished."""
+
     command: list[str]
     lines: list[str]
     next: int
-    error: str | None
     failure: list[str]
     code: str | None
 

@@ -26,6 +26,8 @@ from experimental.gateway import introspect, overrides as ov, responses, robots,
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState, State
 
 router = APIRouter()
+# imports dimos in a child process: seconds, or minutes for the first /catalog
+SLOW = {"x-slow": True}
 
 
 class ConfigUpdate(BaseModel):
@@ -45,7 +47,9 @@ async def blueprint_list(state: State, fresh: bool = False) -> dict[str, Any]:
     if fresh:
         await state.relist()
     listed = state.listed or (await asyncio.to_thread(introspect.blueprint_list))["blueprints"]
-    return {"blueprints": [state.scanner.import_status(entry) for entry in listed]}
+    state.scanner.ensure("startup")
+    scanned = [state.scanner.scanned(entry) for entry in listed]
+    return {"blueprints": scanned, "scan": state.scanner.snapshot()}
 
 
 async def global_config() -> dict[str, Any]:
@@ -96,13 +100,21 @@ async def list_blueprints(state: GatewayState, fresh: FreshQuery = False) -> dic
     return await blueprint_list(state, fresh)
 
 
-@router.get("/blueprints/{name}", response_model=responses.Blueprint)
+@router.post("/blueprints/scan", status_code=202, response_model=responses.ScanStarted)
+async def scan(state: GatewayState) -> dict[str, Any]:
+    """Scan which blueprints import again (the running scan, if there is one): follow it at /jobs/{job}."""
+    return {"job": state.scanner.start("requested").id}
+
+
+@router.get("/blueprints/{name}", response_model=responses.Blueprint, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str) -> Any:
     check_name(name)
     return await state.introspected(["blueprint", name])
 
 
-@router.get("/blueprints/{name}/config", response_model=responses.BlueprintConfig)
+@router.get(
+    "/blueprints/{name}/config", response_model=responses.BlueprintConfig, openapi_extra=SLOW
+)
 async def blueprint_config(state: GatewayState, name: str) -> dict[str, Any]:
     check_name(name)
     return shown_config(name, await state.introspected(["config", name]))
@@ -123,7 +135,7 @@ async def put_blueprint_config(
     return shown_config(name, value)
 
 
-@router.get("/catalog", response_model=responses.Catalog)
+@router.get("/catalog", response_model=responses.Catalog, openapi_extra=SLOW)
 async def catalog(state: GatewayState) -> dict[str, Any]:
     await state.scanner.wait()
     return state.scanner.catalog()
