@@ -1,14 +1,14 @@
 # macOS installation
 
-Use the official installer on macOS 15 or newer:
+Use the official installer on macOS 14 or newer:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-macOS 15 is the supported minimum for the installer. Its default Python 3.14 environment pulls Drake 1.47 or newer, whose Apple Silicon wheels require macOS 15. On macOS 14, follow the manual steps below with Python 3.13 in place of 3.14; that keeps Drake 1.45.0, the last release with macOS 14 wheels. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
+Developer mode installs Python 3.14 and needs macOS 15, because Drake 1.47 and newer only ship Apple Silicon wheels for macOS 15. On macOS 14, follow the manual developer steps below with Python 3.13 in place of 3.14; that keeps Drake 1.45.0, the last release with macOS 14 wheels. Library mode installs the published release on Python 3.12 and runs on macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
 
-The installer sets up Homebrew dependencies, uv, Python 3.14, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
+The installer sets up Homebrew dependencies, uv, Python, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
 
 Apple Silicon is the target macOS configuration. macOS CI is paused because runner capacity is exhausted; the current installer needs local validation. Package and hardware support can differ from Linux.
 
@@ -37,7 +37,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
-uv venv --python 3.14
+# The published release supports Python 3.10 to 3.12 until the next release.
+uv venv --python 3.12
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
 uv run dimos --help

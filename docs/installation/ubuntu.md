@@ -6,7 +6,7 @@ Use the official installer on Ubuntu 22.04/24.04, on x86_64 or ARM64:
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-Choose system packages for the CI-tested path. The installer sets up apt dependencies, uv, Python 3.14, and dimOS, then verifies the CLI and native libraries.
+Choose system packages for the CI-tested path. The installer sets up apt dependencies, uv, Python, and dimOS, then verifies the CLI and native libraries.
 
 Choose **library** for the published package or **dev** for a source checkout. For example:
 
@@ -37,7 +37,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
-uv venv --python 3.14
+# The published release supports Python 3.10 to 3.12 until the next release.
+uv venv --python 3.12
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
 uv run dimos --help

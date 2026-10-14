@@ -358,10 +358,11 @@ jobs:
         with:
           enable-cache: true
           prune-cache: true
-      - name: Install dependency for pyaudio
+      - name: Install dependencies for pyaudio and open3d
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libegl1
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
@@ -501,7 +502,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libturbojpeg portaudio19-dev
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y libturbojpeg portaudio19-dev libegl1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -627,7 +629,8 @@ jobs:
       - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
@@ -711,7 +714,8 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio ffmpeg
@@ -1251,7 +1255,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          # open3d>=0.20 links libEGL at import.
+          sudo apt-get install -y portaudio19-dev libturbojpeg libegl1
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.
       - name: Raise UDP receive buffers for LCM

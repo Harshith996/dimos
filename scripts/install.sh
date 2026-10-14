@@ -40,6 +40,10 @@ HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
 INSTALL_PYTHON="3.14"
+# Library mode installs the published release: dimos 0.0.14 caps requires-python
+# below 3.13 and ships cp310–cp312 wheels. Bump with the first release built
+# from a 3.14 tree.
+LIBRARY_PYTHON="3.12"
 GUM=""
 INSTALL_DEPS=1
 DEV_TOOLS=0
@@ -400,7 +404,7 @@ print_sysinfo() {
         apple-silicon) gpu_display="Apple Silicon (Metal/MPS)" ;;
         none)          gpu_display="CPU only" ;;
     esac
-    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install 3.14)${RESET}"
+    [[ -n "$DETECTED_PYTHON_VER" ]] && python_display="$DETECTED_PYTHON_VER" || python_display="${YELLOW}not found (uv will install it)${RESET}"
     [[ "$HAS_NIX" == "1" ]] && nix_display="${GREEN}$(nix --version 2>/dev/null | head -1)${RESET}" || nix_display="not installed"
 
     printf "  %sOS:%s       %s\n" "$DIM" "$RESET" "$os_display"
@@ -727,11 +731,12 @@ do_install_library() {
     local dir="${PROJECT_DIR:-}"
     if [[ -z "$dir" ]]; then dir=$(prompt_install_dir "$PWD/dimensional-applications" library) || die "cancelled"; fi
     INSTALL_DIR="$dir"
+    [[ "$USE_NIX" == 1 ]] || INSTALL_PYTHON="$LIBRARY_PYTHON"
     info "library install → $dir"
     run_cmd mkdir -p "$dir"
     if ! prompt_confirm "Install dependencies now?" yes; then
         INSTALL_DEPS=0
-        dim "to install later: uv venv --python 3.14 && uv pip install 'dimos[$EXTRAS]'"
+        dim "to install later: uv venv --python $INSTALL_PYTHON && uv pip install 'dimos[$EXTRAS]'"
         return
     fi
     if [[ "$USE_NIX" == 1 ]]; then
@@ -979,7 +984,7 @@ main() {
 
     if [[ -z "$DETECTED_PYTHON" ]]; then
         detect_python
-        [[ -z "$DETECTED_PYTHON" ]] && info "python 3.14 will be installed by uv automatically"
+        [[ -z "$DETECTED_PYTHON" ]] && info "python will be installed by uv automatically"
     fi
 
     prompt_install_mode
