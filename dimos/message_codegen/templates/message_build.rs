@@ -29,7 +29,13 @@ impl ParseCallbacks for Serde {
         } else { vec![] }
     }
 }
+const HAS_OWNED_MESSAGES: bool = true;
 fn main() {
+    let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    if !HAS_OWNED_MESSAGES {
+        fs::write(output.join("mod.rs"), "").expect("write empty message module");
+        return;
+    }
     println!("cargo:rerun-if-changed=interfaces");
     let mut paths = Vec::new();
     for package in fs::read_dir("interfaces").expect("missing message sources") {
@@ -46,6 +52,6 @@ fn main() {
     // native constructors explicit until the upstream Default acceptance passes.
     Generator::new().derive_debug(true).derive_clone(true).derive_default(false)
         .parse_callbacks(Box::new(Serde)).includes(paths)
-        .output_dir(PathBuf::from(env::var_os("OUT_DIR").unwrap()))
+        .output_dir(output)
         .generate().expect("ros2msg generation failed");
 }

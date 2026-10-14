@@ -38,11 +38,18 @@ def write_crate(
         raise ValueError("Native Rust cannot split a ROS package across dependency crates")
     if (crate / "interfaces").exists():
         shutil.rmtree(crate / "interfaces")
+    (crate / "interfaces").mkdir(parents=True)
     for message in messages:
         source = crate / "interfaces" / (message.name + ".msg")
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text(message.text)
-    shutil.copyfile(Path(__file__).with_name("templates") / "message_build.rs", crate / "build.rs")
+    template = (Path(__file__).with_name("templates") / "message_build.rs").read_text()
+    (crate / "build.rs").write_text(
+        template.replace(
+            "const HAS_OWNED_MESSAGES: bool = true;",
+            f"const HAS_OWNED_MESSAGES: bool = {str(bool(messages)).lower()};",
+        )
+    )
     (crate / "src").mkdir(parents=True, exist_ok=True)
     (crate / "src/lib.rs").write_text(
         "".join(f"pub use {owner}::{package};\n" for package, owner in sorted(namespaces.items()))
