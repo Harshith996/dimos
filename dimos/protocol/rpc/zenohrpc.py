@@ -64,7 +64,13 @@ class ZenohRPC(RPCSpec, ZenohService):
         these survive the trip; the far side rebuilds them on first use.
         """
         state = super().__getstate__()  # type: ignore[no-untyped-call]
-        for key in ("_call_thread_pool", "_call_thread_pool_lock", "_queryables", "_pending"):
+        for key in (
+            "_call_thread_pool",
+            "_call_thread_pool_lock",
+            "_queryables",
+            "_pending",
+            "_call_counter",  # itertools objects stopped pickling in 3.14
+        ):
             state.pop(key, None)
         return state
 
@@ -74,6 +80,7 @@ class ZenohRPC(RPCSpec, ZenohService):
         self._call_thread_pool_lock = threading.RLock()
         self._queryables = []
         self._pending = {}
+        self._call_counter = count(1)
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         """Get or create the thread pool for RPC handler execution (lazy initialization)."""

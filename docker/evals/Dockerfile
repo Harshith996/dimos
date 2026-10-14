@@ -6,7 +6,7 @@ FROM ubuntu:24.04
 # dimos/simulation/dimsim/deno_utils.py (playwright version).
 ARG DENO_VERSION=v2.6.10
 ARG PLAYWRIGHT_VERSION=1.58.2
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.14
 
 ENV DEBIAN_FRONTEND=noninteractive
 
