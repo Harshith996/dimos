@@ -990,6 +990,14 @@ jobs:
       - name: Build rust native modules
         if: contains(matrix.markers, 'self_hosted')
         run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+      - name: Kill processes left over from earlier jobs (macOS)
+        # Not needed on Linux, as it uses a fresh container on every run.
+        if: matrix.os == 'macOS'
+        run: |
+          pgrep -fl "$GITHUB_WORKSPACE/" || exit 0
+          pkill -f "$GITHUB_WORKSPACE/" || true
+          sleep 3
+          pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
