@@ -1,7 +1,6 @@
 {
   "imports": {
-    "dimos-react": "jsr:@robotics/dimos-react@^0.2.0",
-    "graph-view": "jsr:@robotics/graph-view@^0.1.0"
+    "dimos-react": "jsr:@robotics/dimos-react@^0.2.0"
   },
   "compilerOptions": {
     "lib": [

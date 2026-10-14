@@ -1,6 +1,6 @@
-// The module graph: modules and the topics they write and read, laid out by graph-view, lit around what's
+// The module graph: modules and the topics they write and read, laid out by dimos-react/graph, lit around what's
 // hovered or picked, and showing each topic's rate while the blueprint runs.
-import { GraphView, type GraphViewHandle, type LayoutId, textWidth } from "graph-view";
+import { GraphView, type GraphViewHandle, type LayoutId, textWidth } from "dimos-react/graph";
 import { useTheme } from "dimos-react";
 import { type CSSProperties, forwardRef, type ReactNode, useMemo } from "react";
 import { className, type Module, topicOf, typeVar } from "./model.ts";

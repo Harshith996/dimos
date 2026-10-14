@@ -1232,8 +1232,7 @@
     "members": {
       "blueprint_view": {
         "dependencies": [
-          "jsr:@robotics/dimos-react@0.2",
-          "jsr:@robotics/graph-view@0.1"
+          "jsr:@robotics/dimos-react@0.2"
         ],
         "packageJson": {
           "dependencies": [

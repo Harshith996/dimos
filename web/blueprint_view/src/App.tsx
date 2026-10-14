@@ -1,7 +1,7 @@
 // The blueprint view: ?name=<blueprint> (&run=<run id>, &view=logs). The top bar runs it, the side lists its
 // modules and topic rates, the graph shows how they connect.
 import { Badge, Button, ButtonGroup, Checkbox, Segmented, Spinner, useEscape } from "dimos-react";
-import { type GraphViewHandle, type LayoutId, LAYOUTS } from "graph-view";
+import { type GraphViewHandle, type LayoutId, LAYOUTS } from "dimos-react/graph";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, FRAMED, getJson, send, toDesktop } from "./api.ts";
 import { CodePane } from "./code.tsx";

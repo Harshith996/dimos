@@ -5,7 +5,7 @@ import { defineConfig } from "vite";
 
 // The gateway serves index.html at /dimos/blueprint_view and the rest under
 // /dimos/blueprint_view/, so assets are relative and live in blueprint_view/.
-// deno() resolves the jsr packages (dimos-react, graph-view in deno.json); dedupe
+// deno() resolves the jsr packages (dimos-react in deno.json); dedupe
 // keeps them on the app's one React.
 export default defineConfig({
   plugins: [deno(), react()],
