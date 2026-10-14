@@ -1,6 +1,7 @@
 {
   "version": "5",
   "specifiers": {
+    "jsr:@robotics/dimos-react@0.2": "0.2.0",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/cli@1": "1.0.28",
     "jsr:@std/crypto@1": "1.1.0",
@@ -30,6 +31,15 @@
     "npm:vitest@^3.2.4": "3.2.7_@types+node@24.12.2_happy-dom@20.11.1_vite@7.3.2__@types+node@24.12.2__picomatch@4.0.5"
   },
   "jsr": {
+    "@robotics/dimos-react@0.2.0": {
+      "integrity": "a41e9fa89170d0983e99773a60e0947f9a195dc0d72b950c379482fdcb1fa554",
+      "dependencies": [
+        "npm:@types/react",
+        "npm:react",
+        "npm:react-dom",
+        "npm:three@0.180"
+      ]
+    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
