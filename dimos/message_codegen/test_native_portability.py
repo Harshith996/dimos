@@ -88,3 +88,70 @@ def test_nested_cmake_projects_receive_target_and_platform_rpath(tmp_path, apple
     assert f"origin={origin}" in result.stderr
     assert "-DCMAKE_OSX_ARCHITECTURES=arm64|x86_64" in result.stderr
     assert "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0" in result.stderr
+
+
+def test_export_uses_saved_target_and_original_toolchain(tmp_path, monkeypatch):
+    prefix = tmp_path / "install"
+    prefix.mkdir()
+    (prefix / "native-prefixes.json").write_text("[]")
+    original = tmp_path / "original.cmake"
+    original.write_text('set(CMAKE_CXX_FLAGS_INIT "-DREQUIRED_TARGET=42")\n')
+    native_build.save_target_settings(prefix, [f"-DCMAKE_TOOLCHAIN_FILE={original}"])
+    monkeypatch.setenv("CMAKE_TOOLCHAIN_FILE", "/wrong/current/toolchain")
+    exported = native_build.write_cmake_toolchain(prefix, tmp_path / "exported.cmake")
+    source = tmp_path / "consumer"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.16)\nproject(consumer LANGUAGES CXX)\n"
+        "add_executable(consumer main.cpp)\n"
+    )
+    (source / "main.cpp").write_text("static_assert(REQUIRED_TARGET == 42); int main() {}\n")
+    subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(source),
+            "-B",
+            str(source / "build"),
+            f"-DCMAKE_TOOLCHAIN_FILE={exported}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["cmake", "--build", str(source / "build")], check=True, capture_output=True)
+    subprocess.run([str(source / "build/consumer")], check=True)
+    with pytest.raises(ValueError, match="must not replace"):
+        native_build.write_cmake_toolchain(prefix, original)
+    original.write_text("# changed\n")
+    with pytest.raises(ValueError, match="changed or is missing"):
+        native_build.write_cmake_toolchain(prefix, exported)
+
+
+def test_export_preserves_saved_macos_target_without_current_environment(tmp_path, monkeypatch):
+    (tmp_path / "native-prefixes.json").write_text("[]")
+    native_build.save_target_settings(
+        tmp_path,
+        [
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
+            "-DCMAKE_OSX_SYSROOT=/SDKs/Original.sdk",
+        ],
+    )
+    monkeypatch.setenv("CMAKE_OSX_ARCHITECTURES", "wrong")
+    exported = native_build.write_cmake_toolchain(tmp_path, tmp_path / "exported.cmake")
+    probe = tmp_path / "probe.cmake"
+    probe.write_text(
+        f'include("{exported}")\n'
+        + 'message("target=${CMAKE_OSX_ARCHITECTURES}|${CMAKE_OSX_DEPLOYMENT_TARGET}|${CMAKE_OSX_SYSROOT}")\n'
+    )
+    result = subprocess.run(["cmake", "-P", str(probe)], check=True, capture_output=True, text=True)
+    assert "target=arm64;x86_64|13.0|/SDKs/Original.sdk" in result.stderr
+
+
+def test_custom_toolchain_content_invalidates_cache(darwin_tools, monkeypatch, tmp_path):
+    custom = tmp_path / "custom.cmake"
+    custom.write_text("set(TARGET_CHOICE one)\n")
+    monkeypatch.setenv("CMAKE_TOOLCHAIN_FILE", str(custom))
+    first = native_build._toolchain_key()
+    custom.write_text("set(TARGET_CHOICE two)\n")
+    assert native_build._toolchain_key() != first

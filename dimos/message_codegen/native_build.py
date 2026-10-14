@@ -97,6 +97,10 @@ def _toolchain_key() -> str:
             "CMAKE_OSX_ARCHITECTURES",
         ]
     }
+    custom_toolchain = flags["CMAKE_TOOLCHAIN_FILE"]
+    if custom_toolchain:
+        flags["CMAKE_TOOLCHAIN_FILE"] = str(Path(custom_toolchain).resolve())
+        flags["toolchain_sha256"] = sha256(Path(custom_toolchain).read_bytes()).hexdigest()
     versions = {
         name: metadata.version(name)
         for name in ["pip", "empy", "lark", "catkin-pkg", "PyYAML", "setuptools", "wheel"]
@@ -118,6 +122,8 @@ def _toolchain_key() -> str:
 def _cmake_toolchain_args() -> list[str]:
     """Forward one target configuration to support and message CMake builds."""
     values = {"CMAKE_TOOLCHAIN_FILE": os.environ.get("CMAKE_TOOLCHAIN_FILE", "")}
+    if values["CMAKE_TOOLCHAIN_FILE"]:
+        values["CMAKE_TOOLCHAIN_FILE"] = str(Path(values["CMAKE_TOOLCHAIN_FILE"]).resolve())
     if sys.platform == "darwin":
         sdk = os.environ.get("CMAKE_OSX_SYSROOT") or os.environ.get("SDKROOT")
         if not sdk:
@@ -162,6 +168,7 @@ def prepare_support(
     lock = (TOOLKIT / "native_sources.json").read_bytes()
     recipe = (TOOLKIT / "templates/native-support.cmake").read_bytes()
     toolchain = (TOOLKIT / "templates/native-toolchain.cmake").read_bytes()
+    target_args = _cmake_toolchain_args()
     snapshots = {name: source_digest(path) for name, path in sorted((source_dirs or {}).items())}
     digest = sha256(
         key.encode()
@@ -206,7 +213,7 @@ def prepare_support(
                 "-B",
                 str(directory / "build"),
                 "-DPython3_EXECUTABLE=" + sys.executable,
-                *_cmake_toolchain_args(),
+                *target_args,
                 "-DFETCHCONTENT_BASE_DIR=" + str(directory / "upstream"),
                 "-DDIMOS_SUPPORT_PREFIX=" + str(prefix),
                 "-DFETCHCONTENT_FULLY_DISCONNECTED=" + ("ON" if offline else "OFF"),
@@ -218,6 +225,7 @@ def prepare_support(
             env,
         )
         _run(["cmake", "--build", str(directory / "build"), "--parallel", "2"], env)
+        save_target_settings(prefix, target_args)
         save_complete(prefix, marker)
     return prefix
 
@@ -283,6 +291,8 @@ def prepare_cpp(
     ).resolve()
     validate_cpp_closure(root.resolve())
     support = prepare_support(cache, offline=offline, source_dirs=source_dirs)
+    target_settings = json.loads((support / "native-target.json").read_text())
+    target_args = [f"-D{key}={value}" for key, value in target_settings["values"].items()]
     completed: dict[str, tuple[str, Path]] = {}
     active: set[str] = set()
 
@@ -354,7 +364,7 @@ def prepare_cpp(
                         "-B",
                         str(directory / "build"),
                         "-DPython3_EXECUTABLE=" + sys.executable,
-                        *_cmake_toolchain_args(),
+                        *target_args,
                         "-DCMAKE_INSTALL_PREFIX=" + str(prefix),
                         "-DCMAKE_PREFIX_PATH=" + ";".join(map(str, prefixes)),
                         "-DDIMOS_RUNTIME_PATHS=" + ";".join(str(p / "lib") for p in prefixes),
@@ -366,6 +376,7 @@ def prepare_cpp(
                 (prefix / "native-prefixes.json").write_text(
                     json.dumps([str(prefix), str(support), *map(str, dependencies)]) + "\n"
                 )
+                shutil.copyfile(support / "native-target.json", prefix / "native-target.json")
                 save_complete(prefix, directory / "complete.json")
         active.remove(name)
         completed[name] = (package.version, prefix)
@@ -447,6 +458,20 @@ def installed_prefixes(prefix: Path) -> list[str]:
     return result
 
 
+def save_target_settings(prefix: Path, arguments: list[str]) -> None:
+    """Persist the preparation target, including the custom toolchain identity."""
+    values = dict(argument[2:].split("=", 1) for argument in arguments)
+    custom = values.get("CMAKE_TOOLCHAIN_FILE")
+    digest = None
+    if custom:
+        path = Path(custom).resolve()
+        values["CMAKE_TOOLCHAIN_FILE"] = str(path)
+        digest = sha256(path.read_bytes()).hexdigest()
+    (prefix / "native-target.json").write_text(
+        json.dumps({"values": values, "toolchain_sha256": digest}, sort_keys=True) + "\n"
+    )
+
+
 def write_cmake_toolchain(prefix: Path, destination: Path) -> Path:
     """Export an ordinary CMake toolchain file for this local prepared source build."""
     prefixes = [Path(value) for value in installed_prefixes(prefix)]
@@ -458,8 +483,28 @@ def write_cmake_toolchain(prefix: Path, destination: Path) -> Path:
                 prefixes.append(sdk)
                 break
     environment = build_environment(prefixes)
+    metadata_path = prefix / "native-target.json"
+    if not metadata_path.is_file():
+        raise ValueError("Missing native target metadata; prepare the native package again")
+    target = json.loads(metadata_path.read_text())
+    values = dict(target["values"])
+    custom = values.pop("CMAKE_TOOLCHAIN_FILE", None)
+    settings = ""
+    if custom:
+        original = Path(custom)
+        if original.resolve() == destination.resolve():
+            raise ValueError("Exported toolchain must not replace the original toolchain")
+        if (
+            not original.is_file()
+            or sha256(original.read_bytes()).hexdigest() != target["toolchain_sha256"]
+        ):
+            raise ValueError("Original native toolchain changed or is missing; prepare again")
+        settings += "include(" + json.dumps(str(original)) + ")\n"
+    for name, value in values.items():
+        settings += f'set({name} {json.dumps(value)} CACHE STRING "Prepared native target" FORCE)\n'
     destination.write_text(
-        "# Local build paths; regenerate with dimos build after moving the environment.\n"
+        "# Local build paths; regenerate after moving the environment.\n"
+        + settings
         + "list(PREPEND CMAKE_PREFIX_PATH "
         + " ".join(json.dumps(str(path)) for path in prefixes)
         + ")\n"
