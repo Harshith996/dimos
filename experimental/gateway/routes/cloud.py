@@ -31,38 +31,38 @@ class UploadRequest(BaseModel):
     kind: str | None = None
 
 
-@router.get("/dimos/cloud/account", response_model=responses.Account)
+@router.get("/cloud/account", response_model=responses.Account)
 async def account(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
     return await state.uploads.account(fresh)
 
 
-@router.get("/dimos/cloud/login", response_model=responses.Login)
+@router.get("/cloud/login", response_model=responses.Login)
 async def login(state: GatewayState) -> dict[str, Any]:
     return state.uploads.login_state()
 
 
-@router.post("/dimos/cloud/login", response_model=responses.Login)
+@router.post("/cloud/login", response_model=responses.Login)
 async def start_login(state: GatewayState) -> dict[str, Any]:
     """Start a device login: open the answer's url and enter its code."""
     return await state.uploads.start_login()
 
 
-@router.delete("/dimos/cloud/login", response_model=responses.Login)
+@router.delete("/cloud/login", response_model=responses.Login)
 async def cancel_login(state: GatewayState) -> dict[str, Any]:
     return state.uploads.cancel_login()
 
 
-@router.post("/dimos/cloud/logout", response_model=responses.Account)
+@router.post("/cloud/logout", response_model=responses.Account)
 async def logout(state: GatewayState) -> dict[str, Any]:
     return await state.uploads.logout()
 
 
-@router.get("/dimos/uploads", response_model=responses.Uploads)
+@router.get("/uploads", response_model=responses.Uploads)
 async def upload_list(state: GatewayState) -> dict[str, Any]:
     return state.uploads.listing()
 
 
-@router.post("/dimos/uploads", response_model=responses.Upload)
+@router.post("/uploads", response_model=responses.Upload)
 async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
     try:
         return state.uploads.enqueue(request.path, request.robotId, request.kind)
@@ -70,20 +70,20 @@ async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]
         raise ApiError(400, str(error))
 
 
-@router.delete("/dimos/uploads", response_model=responses.Uploads)
+@router.delete("/uploads", response_model=responses.Uploads)
 async def clear_finished(state: GatewayState) -> dict[str, Any]:
     return state.uploads.clear_finished()
 
 
 @router.get(
-    "/dimos/uploads/uploaded", response_model=responses.UploadedByPath | responses.Uploaded | None
+    "/uploads/uploaded", response_model=responses.UploadedByPath | responses.Uploaded | None
 )
 async def uploaded(state: GatewayState, path: str | None = None) -> Any:
     """Every file uploaded before, or with `path` that one file (null if it never was)."""
     return state.uploads.uploaded() if path is None else state.uploads.uploaded_one(path)
 
 
-@router.delete("/dimos/uploads/{id}", response_model=responses.Ok)
+@router.delete("/uploads/{id}", response_model=responses.Ok)
 async def cancel(state: GatewayState, id: str) -> dict[str, Any]:
     try:
         state.uploads.cancel(id)
@@ -92,7 +92,7 @@ async def cancel(state: GatewayState, id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
-@router.post("/dimos/uploads/{id}/retry", response_model=responses.Upload)
+@router.post("/uploads/{id}/retry", response_model=responses.Upload)
 async def retry(state: GatewayState, id: str) -> dict[str, Any]:
     """Queue a finished upload again."""
     try:

@@ -31,26 +31,26 @@ class ExtrasInstall(BaseModel):
     app: str | None = None
 
 
-@router.get("/dimos/discovery", response_model=responses.DiscoveryStatus)
+@router.get("/discovery", response_model=responses.DiscoveryStatus)
 async def status(state: GatewayState) -> dict[str, Any]:
     state.scanner.ensure("startup")
     return state.scanner.snapshot()
 
 
-@router.post("/dimos/discovery/refresh", response_model=responses.DiscoveryStatus)
+@router.post("/discovery/refresh", response_model=responses.DiscoveryStatus)
 async def refresh(state: GatewayState) -> dict[str, Any]:
     """Scan the blueprints and modules again."""
     state.scanner.refresh("requested")
     return state.scanner.snapshot()
 
 
-@router.get("/dimos/discovery/blueprints", response_model=responses.Discovered)
+@router.get("/discovery/blueprints", response_model=responses.Discovered)
 async def discovered(state: GatewayState) -> dict[str, Any]:
     state.scanner.ensure("startup")
     return await asyncio.to_thread(state.scanner.discovered)
 
 
-@router.get("/dimos/extras", response_model=responses.Extras)
+@router.get("/extras", response_model=responses.Extras)
 async def extras(state: GatewayState) -> dict[str, Any]:
     found = await state.introspected(["packages"])
     listed = await asyncio.to_thread(discovery.extras_status, state.dimos_dir, found)
@@ -58,7 +58,7 @@ async def extras(state: GatewayState) -> dict[str, Any]:
     return {"mode": mode, "python": found["python"], "extras": listed}
 
 
-@router.post("/dimos/extras/install", response_model=responses.JobStarted)
+@router.post("/extras/install", response_model=responses.JobStarted)
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
     """Install dimos extras with uv, as a job."""
     probed = await state.introspected(["packages"])
@@ -93,7 +93,7 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
     return {"shell": None, "job": job.id, "command": command}
 
 
-@router.get("/dimos/jobs/{job}/log", response_model=responses.JobLog)
+@router.get("/jobs/{job}/log", response_model=responses.JobLog)
 async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
     found = state.jobs.get(job)
     if found is None:
@@ -101,7 +101,7 @@ async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, An
     return found.log(after)
 
 
-@router.get("/dimos/docs/custom-robot", response_model=responses.CustomRobotGuide)
+@router.get("/docs/custom-robot", response_model=responses.CustomRobotGuide)
 async def custom_robot(state: GatewayState) -> dict[str, Any]:
     answer = await asyncio.to_thread(discovery.custom_robot, state.dimos_dir)
     if answer is None:

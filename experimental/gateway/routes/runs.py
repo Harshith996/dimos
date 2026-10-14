@@ -68,7 +68,7 @@ async def launch_config(state: State, request: LaunchRequest) -> LaunchConfig:
     return with_saved(request.blueprint, one_off, args)
 
 
-@router.get("/dimos/runs", response_model=responses.Runs)
+@router.get("/runs", response_model=responses.Runs)
 async def run_list() -> dict[str, Any]:
     return {
         "runs": await asyncio.to_thread(launches.registry_runs),
@@ -76,7 +76,7 @@ async def run_list() -> dict[str, Any]:
     }
 
 
-@router.post("/dimos/runs", response_model=responses.Launch)
+@router.post("/runs", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     """Launch a blueprint with Desktop's saved config plus this launch's overrides and args."""
     if not request.blueprint or request.blueprint.startswith("-"):
@@ -94,7 +94,7 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     return started
 
 
-@router.post("/dimos/runs/stop", response_model=responses.Stopped)
+@router.post("/runs/stop", response_model=responses.Stopped)
 async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[str, Any]:
     """Stop the blueprint this gateway launched, or the run `runId`."""
     try:
@@ -105,7 +105,7 @@ async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[
         state.bus.launch(await asyncio.to_thread(launches.current_launch))
 
 
-@router.post("/dimos/runs/restart", response_model=responses.Launch)
+@router.post("/runs/restart", response_model=responses.Launch)
 async def restart(state: GatewayState) -> dict[str, Any]:
     """Stop the last launch if it still runs, and launch it again with the config saved now."""
     last = launches.last_launch_args()
@@ -124,7 +124,7 @@ async def restart(state: GatewayState) -> dict[str, Any]:
     return started
 
 
-@router.get("/dimos/runs/{runId}/log", response_model=responses.RunLog)
+@router.get("/runs/{runId}/log", response_model=responses.RunLog)
 async def run_log(
     state: GatewayState,
     run_id: Annotated[str, PathParam(alias="runId")],

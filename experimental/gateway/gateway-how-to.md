@@ -1,7 +1,7 @@
 # Dimos gateway: how do I...?
 
-Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway. An app's
-`dimos.yaml` lists each route it calls, relative to `/dimos`:
+Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway (Desktop serves
+it under `/dimos`; the gateway's own routes have no prefix). An app's `dimos.yaml` lists each gateway route it calls:
 
 ```yaml
 uses:
