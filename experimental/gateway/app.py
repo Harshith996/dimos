@@ -49,7 +49,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
         title="dimos gateway",
         version=API_VERSION,
         lifespan=lifespan,
-        openapi_url="/dimos/openapi.json",
+        openapi_url="/openapi.json",
         docs_url=None,
         redoc_url=None,
     )

@@ -47,13 +47,13 @@ def test_blueprint_view_and_its_files(
     (tmp_path / "dist" / "blueprint_view" / "index-Ab_1.js").write_text("export {}")
     monkeypatch.setattr(web_view, "app_dir", lambda: tmp_path)
     state.listed = [{"name": "demo", "kind": "builtin"}]
-    page = client.get("/dimos/blueprint_view?name=demo")
+    page = client.get("/blueprint_view?name=demo")
     assert page.status_code == 200 and "<html" in page.text.lower()
-    assert client.get("/dimos/blueprint_view?name=nope").status_code == 404
-    assert client.get("/dimos/blueprint_view?name=demo&view=x").status_code == 400
-    script = client.get("/dimos/blueprint_view/index-Ab_1.js")
+    assert client.get("/blueprint_view?name=nope").status_code == 404
+    assert client.get("/blueprint_view?name=demo&view=x").status_code == 400
+    script = client.get("/blueprint_view/index-Ab_1.js")
     assert script.headers["content-type"].startswith("text/javascript")
-    assert client.get("/dimos/blueprint_view/..%2Fmsgs.py").status_code == 404
+    assert client.get("/blueprint_view/..%2Fmsgs.py").status_code == 404
 
 
 def test_the_blueprint_view_builds_when_its_sources_change(tmp_path: Path) -> None:
@@ -72,23 +72,23 @@ def test_the_blueprint_view_builds_when_its_sources_change(tmp_path: Path) -> No
 
 def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: Path) -> None:
     (checkout / "mod.py").write_text("x = 1\n")
-    assert client.get("/dimos/source?file=mod.py").json() == {"file": "mod.py", "text": "x = 1\n"}
-    assert client.get("/dimos/source?file=pyproject.toml").status_code == 400
-    assert client.get("/dimos/source?file=../outside.py").status_code == 400
-    assert client.get("/dimos/source?file=gone.py").status_code == 404
+    assert client.get("/source?file=mod.py").json() == {"file": "mod.py", "text": "x = 1\n"}
+    assert client.get("/source?file=pyproject.toml").status_code == 400
+    assert client.get("/source?file=../outside.py").status_code == 400
+    assert client.get("/source?file=gone.py").status_code == 404
 
 
 def test_login_page(client: TestClient) -> None:
-    assert "<html" in client.get("/dimos/cloud/login/page").text.lower()
+    assert "<html" in client.get("/cloud/login/page").text.lower()
 
 
 def test_msgs_js_is_cached_and_decodes_what_python_encodes(
     client: TestClient, home: Path, tmp_path: Path
 ) -> None:
-    answer = client.get("/dimos/msgs.js")
+    answer = client.get("/msgs.js")
     (built,) = (home / "state" / "gateway" / "msgs").glob("msgs-*.js")
     assert answer.status_code == 200 and answer.content == built.read_bytes()
-    again = client.get("/dimos/msgs.js", headers={"if-none-match": answer.headers["etag"]})
+    again = client.get("/msgs.js", headers={"if-none-match": answer.headers["etag"]})
     assert again.status_code == 304
     assert list(built.parent.iterdir()) == [built], "a second ask reuses the build"
     pose = PoseStamped(

@@ -35,12 +35,12 @@ class SkillCallRequest(BaseModel):
     runId: str | None = None
 
 
-@router.get("/dimos/skills", response_model=responses.Skills)
+@router.get("/skills", response_model=responses.Skills)
 async def skill_list(state: GatewayState) -> dict[str, Any]:
     return await asyncio.to_thread(state.skills.listed)
 
 
-@router.post("/dimos/skills/call", response_model=responses.SkillResult)
+@router.post("/skills/call", response_model=responses.SkillResult)
 async def skill_call(state: GatewayState, request: SkillCallRequest) -> dict[str, Any]:
     """Call one of the running blueprint's skills, through its MCP server or over RPC."""
     try:
@@ -51,7 +51,7 @@ async def skill_call(state: GatewayState, request: SkillCallRequest) -> dict[str
         raise ApiError(error.status, str(error))
 
 
-@router.post("/dimos/mcp")
+@router.post("/mcp")
 async def mcp(state: GatewayState, body: Any = Body(default=None)) -> Response:
     if not isinstance(body, dict) or not isinstance(body.get("method"), str):
         raise ApiError(400, "a JSON-RPC 2.0 request object, with a method")

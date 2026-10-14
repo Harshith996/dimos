@@ -1,4 +1,4 @@
-// The run this blueprint is in (GET /dimos/runs' launch), and whether the saved config moved on since it started.
+// The run this blueprint is in (GET /runs' launch), and whether the saved config moved on since it started.
 import { sameValue } from "dimos-react";
 import type { Saved } from "./config.tsx";
 

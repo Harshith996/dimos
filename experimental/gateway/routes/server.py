@@ -33,12 +33,12 @@ async def healthz() -> str:
     return "ok"
 
 
-@router.get("/dimos/info", response_model=responses.Info)
+@router.get("/info", response_model=responses.Info)
 async def info(state: GatewayState) -> dict[str, Any]:
     return store.info(state.dimos_dir)
 
 
-@router.get("/dimos/paths", response_model=responses.Paths)
+@router.get("/paths", response_model=responses.Paths)
 async def paths(state: GatewayState) -> dict[str, Any]:
     from dimos.core.run_registry import REGISTRY_DIR
 
@@ -61,7 +61,7 @@ async def paths(state: GatewayState) -> dict[str, Any]:
     }
 
 
-@router.post("/dimos/server/stop", response_model=responses.Stopping)
+@router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
     """Stop this gateway (a running blueprint keeps running)."""
     state.uploads.shutdown()
@@ -69,7 +69,7 @@ async def stop_server(state: GatewayState) -> dict[str, Any]:
     return {"stopping": True}
 
 
-@router.get("/dimos/python", response_model=responses.Python)
+@router.get("/python", response_model=responses.Python)
 async def python(state: GatewayState) -> dict[str, Any]:
     """The python that runs this dimos checkout (the one the gateway introspects with)."""
     return {"python": store.python_for(state.dimos_dir)}

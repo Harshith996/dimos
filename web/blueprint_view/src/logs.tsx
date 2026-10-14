@@ -1,4 +1,4 @@
-// A run's structured log (GET /dimos/runs/{id}/log), followed live; the server filters by level and search.
+// A run's structured log (GET /runs/{id}/log), followed live; the server filters by level and search.
 import { EditorNote, type LogRecord, Modal, StructuredLog, useDesktopEditor } from "dimos-react";
 import { useEffect, useState } from "react";
 import { errorText, getJson } from "./api.ts";

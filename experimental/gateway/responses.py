@@ -302,7 +302,7 @@ class Extras(Body):
 
 
 class JobStarted(Body):
-    """The job running the install: follow it at /dimos/jobs/{job}/log."""
+    """The job running the install: follow it at /jobs/{job}/log."""
 
     shell: None
     job: str

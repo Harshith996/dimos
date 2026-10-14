@@ -33,7 +33,7 @@ ASSETS = Path(__file__).parents[1] / "assets"
 VIEW_FILE = re.compile(r"[A-Za-z0-9_-]+\.(js|css)")
 
 
-@router.get("/dimos/blueprint_view", response_class=HTMLResponse)
+@router.get("/blueprint_view", response_class=HTMLResponse)
 async def blueprint_view(
     state: GatewayState, name: str, view: str | None = None, run: str | None = None
 ) -> str:
@@ -51,7 +51,7 @@ async def blueprint_view(
     return (dist / "index.html").read_text()
 
 
-@router.get("/dimos/blueprint_view/{file}")
+@router.get("/blueprint_view/{file}")
 async def blueprint_view_file(file: str) -> Response:
     path = web_view.app_dir() / "dist" / "blueprint_view" / file
     if not VIEW_FILE.fullmatch(file) or not path.is_file():
@@ -64,7 +64,7 @@ async def blueprint_view_file(file: str) -> Response:
     )
 
 
-@router.get("/dimos/source", response_model=responses.SourceFile)
+@router.get("/source", response_model=responses.SourceFile)
 async def source(state: GatewayState, file: str) -> dict[str, Any]:
     root = state.dimos_dir.resolve()
     path = (root / file).resolve()
@@ -75,7 +75,7 @@ async def source(state: GatewayState, file: str) -> dict[str, Any]:
     return {"file": file, "text": await asyncio.to_thread(path.read_text, "utf-8", "replace")}
 
 
-@router.get("/dimos/msgs.js")
+@router.get("/msgs.js")
 async def msgs_js(request: Request) -> Response:
     try:
         path = await msgs.built_js(store.gateway_dir() / "msgs")
@@ -88,6 +88,6 @@ async def msgs_js(request: Request) -> Response:
     return Response(path.read_bytes(), media_type="text/javascript; charset=utf-8", headers=headers)
 
 
-@router.get("/dimos/cloud/login/page", response_class=HTMLResponse)
+@router.get("/cloud/login/page", response_class=HTMLResponse)
 async def cloud_login_page() -> str:
     return (ASSETS / "login_page.html").read_text()

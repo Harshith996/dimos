@@ -62,17 +62,15 @@ def bus(state: State, monkeypatch: pytest.MonkeyPatch) -> FakeBus:
 
 
 def test_skills_are_listed_and_called(client: TestClient, bus: FakeBus) -> None:
-    listed = client.get("/dimos/skills").json()
+    listed = client.get("/skills").json()
     assert listed["run"] == {"runId": "run-1", "blueprint": "demo"}
     assert [
         (s["name"], s["module"], s["description"], s["required"]) for s in listed["skills"]
     ] == [("speak", "Speaker", "Say something.", ["text"])]
-    called = client.post(
-        "/dimos/skills/call", json={"skill": "speak", "args": {"text": "hi"}}
-    ).json()
+    called = client.post("/skills/call", json={"skill": "speak", "args": {"text": "hi"}}).json()
     assert called["ok"] and called["text"] == "said hi" and called["via"] == "rpc"
     failed = client.post(
-        "/dimos/skills/call", json={"skill": "speak", "args": {"text": "explode"}}
+        "/skills/call", json={"skill": "speak", "args": {"text": "explode"}}
     ).json()
     assert not failed["ok"] and "speaker on fire" in failed["text"]
 
@@ -80,22 +78,22 @@ def test_skills_are_listed_and_called(client: TestClient, bus: FakeBus) -> None:
 def test_bad_skill_calls_are_refused_before_reaching_the_robot(
     client: TestClient, bus: FakeBus
 ) -> None:
-    assert client.post("/dimos/skills/call", json={"skill": "fly"}).status_code == 404
-    missing = client.post("/dimos/skills/call", json={"skill": "speak", "args": {}})
+    assert client.post("/skills/call", json={"skill": "fly"}).status_code == 404
+    missing = client.post("/skills/call", json={"skill": "speak", "args": {}})
     assert missing.status_code == 400 and "missing text" in missing.json()["error"]
     assert not [name for name, _ in bus.calls if name == "Speaker/speak"]
 
 
 def test_nothing_running_means_no_skills(client: TestClient, bus: FakeBus) -> None:
     bus.running = False
-    assert client.get("/dimos/skills").json() == {"skills": [], "run": None, "errors": []}
-    assert client.post("/dimos/skills/call", json={"skill": "speak"}).status_code == 409
+    assert client.get("/skills").json() == {"skills": [], "run": None, "errors": []}
+    assert client.post("/skills/call", json={"skill": "speak"}).status_code == 409
 
 
 def test_mcp_speaks_json_rpc(client: TestClient, bus: FakeBus) -> None:
     def rpc(method: str, params: Any = None) -> Any:
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-        return client.post("/dimos/mcp", json=body).json()
+        return client.post("/mcp", json=body).json()
 
     assert rpc("initialize")["result"]["serverInfo"]["name"] == "dimos-skills"
     tools = rpc("tools/list")["result"]["tools"]
@@ -109,4 +107,4 @@ def test_mcp_speaks_json_rpc(client: TestClient, bus: FakeBus) -> None:
     assert called["result"] == {"content": [{"type": "text", "text": "said yo"}], "isError": False}
     assert rpc("nope")["error"]["code"] == -32601
     notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-    assert client.post("/dimos/mcp", json=notification).status_code == 202
+    assert client.post("/mcp", json=notification).status_code == 202

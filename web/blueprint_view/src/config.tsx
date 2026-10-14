@@ -1,5 +1,5 @@
 // The config dialog: the blueprint's recommended settings, its modules' args and dimos's global config, each saved
-// for every launch of this blueprint (PUT /dimos/blueprints/{name}/config, PUT /dimos/global-config).
+// for every launch of this blueprint (PUT /blueprints/{name}/config, PUT /global-config).
 import {
   Alert,
   Button,

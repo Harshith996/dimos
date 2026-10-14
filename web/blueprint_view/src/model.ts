@@ -1,4 +1,4 @@
-// A blueprint as GET /dimos/blueprints/{name} describes it, and how the view names its parts.
+// A blueprint as GET /blueprints/{name} describes it, and how the view names its parts.
 
 export interface Stream {
   name: string;
@@ -43,7 +43,7 @@ export const topicOf = (stream: Stream): string =>
 export const aliasOf = (module: Module): string | null =>
   module.name !== className(module).toLowerCase() ? module.name : null;
 
-/** A path inside the dimos checkout, from the repo root (what the editor and /dimos/source take). */
+/** A path inside the dimos checkout, from the repo root (what the editor and the gateway's /source take). */
 export function projectPath(file: string): string {
   const at = file.lastIndexOf("/dimos/");
   return at >= 0 ? file.slice(at + 1) : file;

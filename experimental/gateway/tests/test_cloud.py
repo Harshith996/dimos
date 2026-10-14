@@ -66,46 +66,44 @@ def work(client: TestClient) -> None:
 
 
 def state_of(client: TestClient, id: str) -> str:
-    return next(u["state"] for u in client.get("/dimos/uploads").json()["uploads"] if u["id"] == id)
+    return next(u["state"] for u in client.get("/uploads").json()["uploads"] if u["id"] == id)
 
 
 def test_an_upload_goes_through_the_queue(
     client: TestClient, recording: Path, transfer: threading.Event, sent: list[Any]
 ) -> None:
     work(client)
-    upload = client.post("/dimos/uploads", json={"path": str(recording)}).json()
-    assert client.post("/dimos/uploads", json={"path": str(recording)}).json()["id"] == upload["id"]
-    until(lambda: client.get("/dimos/uploads").json()["uploads"][0]["bytesDone"] == 50)
+    upload = client.post("/uploads", json={"path": str(recording)}).json()
+    assert client.post("/uploads", json={"path": str(recording)}).json()["id"] == upload["id"]
+    until(lambda: client.get("/uploads").json()["uploads"][0]["bytesDone"] == 50)
     transfer.set()
     until(lambda: state_of(client, upload["id"]) == "done")
-    done = client.get("/dimos/uploads").json()["uploads"][0]
+    done = client.get("/uploads").json()["uploads"][0]
     assert done["uploadId"] == "cloud-1" and done["bytesDone"] == 100
-    assert client.get(f"/dimos/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
+    assert client.get(f"/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
     assert any(key == "ns/dimos/events/upload" for key, _ in sent)
     assert client.app.state.gateway.uploads.rates == {}  # type: ignore[attr-defined]
-    assert client.delete("/dimos/uploads").json()["uploads"] == []
+    assert client.delete("/uploads").json()["uploads"] == []
 
 
 def test_a_running_upload_can_be_cancelled_and_retried(
     client: TestClient, recording: Path, transfer: threading.Event
 ) -> None:
     work(client)
-    upload = client.post("/dimos/uploads", json={"path": str(recording)}).json()
+    upload = client.post("/uploads", json={"path": str(recording)}).json()
     until(lambda: state_of(client, upload["id"]) == "uploading")
-    assert client.post(f"/dimos/uploads/{upload['id']}/retry").status_code == 409
-    assert client.delete(f"/dimos/uploads/{upload['id']}").json() == {"ok": True}
+    assert client.post(f"/uploads/{upload['id']}/retry").status_code == 409
+    assert client.delete(f"/uploads/{upload['id']}").json() == {"ok": True}
     until(lambda: state_of(client, upload["id"]) == "cancelled")
     transfer.set()
-    assert client.post(f"/dimos/uploads/{upload['id']}/retry").json()["state"] == "queued"
+    assert client.post(f"/uploads/{upload['id']}/retry").json()["state"] == "queued"
     until(lambda: state_of(client, upload["id"]) == "done")
-    assert client.delete("/dimos/uploads/u99").status_code == 404
+    assert client.delete("/uploads/u99").status_code == 404
 
 
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
-    assert client.post("/dimos/uploads", json={"path": "relative.mcap"}).status_code == 400
-    assert (
-        client.post("/dimos/uploads", json={"path": str(tmp_path / "gone.mcap")}).status_code == 400
-    )
+    assert client.post("/uploads", json={"path": "relative.mcap"}).status_code == 400
+    assert client.post("/uploads", json={"path": str(tmp_path / "gone.mcap")}).status_code == 400
 
 
 def test_without_a_login_the_queue_waits(
@@ -114,8 +112,8 @@ def test_without_a_login_the_queue_waits(
     path = recording.rename(recording.with_name("nologin.mcap"))
     work(client)
     transfer.set()
-    upload = client.post("/dimos/uploads", json={"path": str(path)}).json()
-    until(lambda: client.get("/dimos/uploads").json()["waitingForLogin"])
+    upload = client.post("/uploads", json={"path": str(path)}).json()
+    until(lambda: client.get("/uploads").json()["waitingForLogin"])
     assert state_of(client, upload["id"]) == "queued"
 
 
@@ -140,12 +138,12 @@ def test_device_login(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(cloud, "_post", post)
     monkeypatch.setattr(cloud, "_store", stored.append)
-    pending = client.post("/dimos/cloud/login").json()
+    pending = client.post("/cloud/login").json()
     assert pending["state"] == "pending" and pending["code"] == "ABCD"
     approved.set()
-    until(lambda: client.get("/dimos/cloud/login").json()["state"] == "approved")
+    until(lambda: client.get("/cloud/login").json()["state"] == "approved")
     assert stored == ["key"]
-    assert client.delete("/dimos/cloud/login").json()["state"] == "approved"
+    assert client.delete("/cloud/login").json()["state"] == "approved"
 
 
 def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,9 +161,9 @@ def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
         }
 
     monkeypatch.setattr(uploads, "account", account)
-    assert client.get("/dimos/cloud/account").json()["email"] == "a@b.c"
-    client.get("/dimos/cloud/account")
-    client.get("/dimos/cloud/account?fresh")
+    assert client.get("/cloud/account").json()["email"] == "a@b.c"
+    client.get("/cloud/account")
+    client.get("/cloud/account?fresh")
     assert len(calls) == 2
 
 

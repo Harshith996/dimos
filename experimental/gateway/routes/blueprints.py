@@ -91,24 +91,24 @@ async def refused_args(state: State, name: str, args: list[str]) -> list[str]:
     return [f"{' '.join(a['tokens'])}: {a['error']}" for a in checked["args"] if a["error"]]
 
 
-@router.get("/dimos/blueprints", response_model=responses.BlueprintList)
+@router.get("/blueprints", response_model=responses.BlueprintList)
 async def list_blueprints(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
     return await blueprint_list(state, fresh)
 
 
-@router.get("/dimos/blueprints/{name}", response_model=responses.Blueprint)
+@router.get("/blueprints/{name}", response_model=responses.Blueprint)
 async def blueprint(state: GatewayState, name: str) -> Any:
     check_name(name)
     return await state.introspected(["blueprint", name])
 
 
-@router.get("/dimos/blueprints/{name}/config", response_model=responses.BlueprintConfig)
+@router.get("/blueprints/{name}/config", response_model=responses.BlueprintConfig)
 async def blueprint_config(state: GatewayState, name: str) -> dict[str, Any]:
     check_name(name)
     return shown_config(name, await state.introspected(["config", name]))
 
 
-@router.put("/dimos/blueprints/{name}/config", response_model=responses.BlueprintConfig)
+@router.put("/blueprints/{name}/config", response_model=responses.BlueprintConfig)
 async def put_blueprint_config(
     state: GatewayState, name: str, update: ModuleConfigUpdate
 ) -> dict[str, Any]:
@@ -123,13 +123,13 @@ async def put_blueprint_config(
     return shown_config(name, value)
 
 
-@router.get("/dimos/catalog", response_model=responses.Catalog)
+@router.get("/catalog", response_model=responses.Catalog)
 async def catalog(state: GatewayState) -> dict[str, Any]:
     await state.scanner.wait()
     return state.scanner.catalog()
 
 
-@router.get("/dimos/robots", response_model=responses.Robots)
+@router.get("/robots", response_model=responses.Robots)
 async def robot_list(state: GatewayState) -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_blueprints
 
@@ -139,12 +139,12 @@ async def robot_list(state: GatewayState) -> dict[str, Any]:
     return await asyncio.to_thread(lambda: robots.resolved(robots.load(source), names))
 
 
-@router.get("/dimos/global-config", response_model=responses.GlobalConfig)
+@router.get("/global-config", response_model=responses.GlobalConfig)
 async def get_global_config() -> dict[str, Any]:
     return await global_config()
 
 
-@router.put("/dimos/global-config", response_model=responses.GlobalConfig)
+@router.put("/global-config", response_model=responses.GlobalConfig)
 async def put_global_config(update: ConfigUpdate) -> dict[str, Any]:
     for key in update.overrides:
         if not re.fullmatch("[A-Za-z0-9_]+", key):

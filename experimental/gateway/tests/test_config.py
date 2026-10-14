@@ -64,7 +64,7 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.get("/healthz").text == "ok"
     monkeypatch.delenv("DESKTOP_DIMOS_RANGE", raising=False)
-    assert client.get("/dimos/info").json() == {
+    assert client.get("/info").json() == {
         "dir": str(checkout),
         "found": True,
         "installed": True,
@@ -73,9 +73,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "inRange": True,
     }
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.0.14b1 <0.1")
-    assert client.get("/dimos/info").json()["inRange"] is True
+    assert client.get("/info").json()["inRange"] is True
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
-    assert client.get("/dimos/info").json() | {"dir": ""} == {
+    assert client.get("/info").json() | {"dir": ""} == {
         "dir": "",
         "found": True,
         "installed": True,
@@ -83,67 +83,65 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "range": ">=0.1 <0.2",
         "inRange": False,
     }
-    paths = client.get("/dimos/paths").json()
+    paths = client.get("/paths").json()
     assert paths["dimosDir"] == str(checkout)
     assert paths["server"]["zenohNamespace"] == "ns"
 
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
-    routes = client.get("/dimos/openapi.json").json()["paths"]
-    assert {"/dimos/runs", "/dimos/skills", "/dimos/catalog"} <= set(routes)
+    routes = client.get("/openapi.json").json()["paths"]
+    assert {"/runs", "/skills", "/catalog"} <= set(routes)
 
 
 def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:
-    answer = client.put("/dimos/global-config", json={"overrides": {"robot_ip": "10.0.0.2"}})
+    answer = client.put("/global-config", json={"overrides": {"robot_ip": "10.0.0.2"}})
     assert answer.status_code == 200
     assert answer.json()["overrides"] == {"robot_ip": "10.0.0.2"}
     saved = json.loads((home / "state" / "gateway" / "settings.json").read_text())
     assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
-    shown = client.get("/dimos/global-config").json()
+    shown = client.get("/global-config").json()
     assert "robot_ip" in shown["schema"]["properties"]
     assert shown["defaults"]["rerun_open"] == "none"
 
 
 def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
-    unknown = client.put("/dimos/global-config", json={"overrides": {"robot_iq": "x"}})
+    unknown = client.put("/global-config", json={"overrides": {"robot_iq": "x"}})
     assert unknown.status_code == 400
     assert "robot_iq" in unknown.json()["error"]
-    wrong = client.put("/dimos/global-config", json={"overrides": {"n_workers": "many"}})
+    wrong = client.put("/global-config", json={"overrides": {"n_workers": "many"}})
     assert wrong.status_code == 400
 
 
 def test_a_secret_is_hidden_and_kept_when_sent_back(client: TestClient) -> None:
-    client.put("/dimos/global-config", json={"overrides": {"typesafe_api_key": "s3cret"}})
-    assert client.get("/dimos/global-config").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
+    client.put("/global-config", json={"overrides": {"typesafe_api_key": "s3cret"}})
+    assert client.get("/global-config").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
     client.put(
-        "/dimos/global-config", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
+        "/global-config", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
     )
     assert store.global_config_overrides() == {"typesafe_api_key": "s3cret", "n_workers": 2}
 
 
 def test_module_config_round_trip(client: TestClient, introspected: list[Any]) -> None:
     put = client.put(
-        "/dimos/blueprints/demo/config", json={"overrides": {"camera": {"fps": 5, "api_key": "k"}}}
+        "/blueprints/demo/config", json={"overrides": {"camera": {"fps": 5, "api_key": "k"}}}
     )
     assert put.status_code == 200
     assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
-    shown = client.get("/dimos/blueprints/demo/config").json()
+    shown = client.get("/blueprints/demo/config").json()
     assert shown["overrides"] == {"camera": {"api_key": ov.HIDDEN, "fps": 5}}
     args = {a["name"]: a for a in shown["modules"][0]["args"]}
     assert args["api_key"]["secret"] and args["api_key"]["value"] == ov.HIDDEN
-    refused = client.put(
-        "/dimos/blueprints/demo/config", json={"overrides": {"camera": {"fps": "fast"}}}
-    )
+    refused = client.put("/blueprints/demo/config", json={"overrides": {"camera": {"fps": "fast"}}})
     assert refused.status_code == 400
     assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
-    assert client.get("/dimos/blueprints/-x/config").status_code == 400
+    assert client.get("/blueprints/-x/config").status_code == 400
 
 
 def test_robots_come_from_the_yaml_with_global_config_reflected(client: TestClient) -> None:
-    answer = client.get("/dimos/robots").json()
+    answer = client.get("/robots").json()
     go2 = answer["robots"]["go2"]
     assert go2["blueprints"]["unitree-go2"]["registered"]
     settings = go2["blueprints"]["unitree-go2"]["recommended_config"]
