@@ -2,7 +2,7 @@
 
 This first CDR layer defines the final generation/build contract. It does not
 change the running dimOS message catalog, transports or recording formats.
-Later layers provide built-in packages, project/CLI frontends and runtime integration.
+Later layers provide built-in packages and runtime integration.
 
 - Python: unmodified rosbags 0.11.0 dataclasses and codecs in one frozen registry.
 - C++: full pinned ROSIDL/FastRTPS generators and Fast CDR 2.4.0, built with CMake.
@@ -38,8 +38,9 @@ python -m dimos.message_codegen.generate --package-root interfaces \
 pip install ./build/reading/python
 ```
 
-The next authoring layer supplies project discovery and `dimos build`; those
-frontends are not prerequisites for this generator or its tests.
+For project configuration, use the [source-package walkthrough](../../docs/development/message-source-packages.md).
+The explicit `dimos-message-generate` command and package builds read the same
+`tool.dimos.messages` configuration. A separate `dimos build` command is not required.
 
 ```python skip
 from demo_messages.demo_msgs.msg import Reading
@@ -142,7 +143,7 @@ CI acceptance, not something proven by Linux configuration tests.
 ## Generic source-package builds
 
 The [source-package walkthrough](../../docs/development/message-source-packages.md)
-shows explicit local inputs, ordinary setuptools PEP 517/660 builds, offline
+shows explicit local inputs, shared PEP 517/660 build integration, offline
 wheel/sdist installation, dependency-owned types and explicit upstream source
 preparation. These mechanisms have no built-in catalog or repository-path convention.
 
