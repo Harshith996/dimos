@@ -1,17 +1,32 @@
 // The blueprint view: ?name=<blueprint> (&run=<run id>, &view=logs). The top bar runs it, the side lists its
 // modules and topic rates, the graph shows how they connect.
-import { Badge, Button, ButtonGroup, Checkbox, Segmented, Spinner, useEscape } from "dimos-react";
-import { type GraphViewHandle, type LayoutId, LAYOUTS } from "dimos-react/graph";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  framedByDesktop,
+  IconButton,
+  Label,
+  Spinner,
+  Text,
+  toDesktop,
+  TopBar,
+  type TopicRate,
+  useDesktopChrome,
+  useEscape,
+} from "dimos-react";
+import { GraphControls, type GraphViewHandle, type LayoutId } from "dimos-react/graph";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { errorText, FRAMED, getJson, send, toDesktop } from "./api.ts";
-import { CodePane } from "./code.tsx";
+import { errorText, getJson, send } from "./api.ts";
+import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
 import { BlueprintGraph, type Spot } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import { type Launch, launchedWithOther, type Relaunching, relaunchLabel } from "./run.ts";
-import { CodeButton, ModuleList, ModuleView, type RateRow, type Where } from "./side.tsx";
+import { CodeButton, ModuleList, ModuleView } from "./side.tsx";
 
+const FRAMED = framedByDesktop();
 const PARAMS = new URLSearchParams(location.search);
 const NAME = PARAMS.get("name") ?? "";
 const RUN = PARAMS.get("run") || null;
@@ -20,7 +35,7 @@ const VIEW = PARAMS.get("view");
 interface RatesAnswer {
   up?: boolean;
   error?: string;
-  topics?: RateRow[];
+  topics?: TopicRate[];
 }
 
 async function loadSaved(): Promise<Saved | null> {
@@ -55,11 +70,11 @@ export function App() {
   const [relaunching, setRelaunching] = useState<Relaunching>(false);
   const [relaunchedPid, setRelaunchedPid] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [rateRowsHeard, setRateRowsHeard] = useState<RateRow[]>([]);
+  const [rateRowsHeard, setRateRowsHeard] = useState<TopicRate[]>([]);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [showExtras, setShowExtras] = useState(false);
   const [dialog, setDialog] = useState<"config" | "logs" | null>(null);
-  const [chrome, setChrome] = useState(false);
+  const chrome = useDesktopChrome();
   const graph = useRef<GraphViewHandle>(null);
 
   const running = !!launch && (launch.phase === "running" || launch.phase === "starting");
@@ -158,23 +173,6 @@ export function App() {
     }));
   }, [running, modules, rates, rateRowsHeard]);
 
-  useEffect(() => {
-    if (!FRAMED) {
-      return;
-    }
-    const listen = (event: MessageEvent) => {
-      if (
-        event.origin === location.origin && event.source === parent &&
-        event.data?.type === "dimos:chrome-ok"
-      ) {
-        setChrome(true);
-      }
-    };
-    addEventListener("message", listen);
-    toDesktop({ type: "dimos:chrome" });
-    return () => removeEventListener("message", listen);
-  }, []);
-
   const open = (name: string | null) => {
     setSelected(name);
     setCode(null);
@@ -236,65 +234,85 @@ export function App() {
 
   return (
     <>
-      <header id="bar" hidden={FRAMED && !chrome}>
-        <strong className="name">{NAME}</strong>
-        <span className={`phase ${phase.replace(/ /g, "-")}`}>{phase}</span>
-        {actionError && <span className="failed" title={actionError}>{actionError}</span>}
-        <span className="spacer" />
-        {launch && (
-          <Button
-            size="sm"
-            variant={busy || launch.phase === "running" || running ? "default" : "primary"}
-            className={`relaunch${launch.phase === "running" && !busy ? " live" : ""}${
-              stale && !busy ? " stale" : ""
-            }`}
-            disabled={busy}
-            data-bp-relaunch
-            title={stale
-              ? "the saved config changed since this run started"
-              : running
-              ? "stops this live run, then starts it again"
-              : undefined}
-            onClick={relaunch}
-          >
-            {busy ? <Spinner size={12} /> : <span aria-hidden="true">↻</span>}
-            {relaunchLabel(launch, relaunching, relaunchedPid, stale)}
-          </Button>
-        )}
-        {running && (
-          <Button
-            size="sm"
-            data-bp-stop
-            onClick={() =>
-              act(() => send("POST", "runs/stop", launch?.runId ? { runId: launch.runId } : {}))}
-          >
-            Stop
-          </Button>
-        )}
-        <Button size="sm" data-bp-configure onClick={() => setDialog("config")}>Configure</Button>
-        {source && (
-          <CodeButton where={source} shown={code} onToggle={setCode} data-bp-blueprint-code />
-        )}
-        <Button
-          size="sm"
-          disabled={!logsRun}
-          title={logsRun ? `${NAME}'s log` : "no log yet"}
-          data-bp-logs
-          onClick={() => setDialog("logs")}
-        >
-          Logs
-        </Button>
-        {FRAMED && (
-          <Button
-            size="sm"
-            variant="ghost"
-            aria-label="Close"
-            onClick={() => toDesktop({ type: "dimos:close" })}
-          >
-            ✕
-          </Button>
-        )}
-      </header>
+      <TopBar
+        hidden={!chrome}
+        title={NAME}
+        left={
+          <>
+            <Text
+              small
+              muted
+              tone={phase === "running" ? "ok" : phase === "failed" ? "warn" : undefined}
+            >
+              {phase}
+            </Text>
+            {actionError && (
+              <Text small tone="warn" className="failed" title={actionError}>
+                {actionError}
+              </Text>
+            )}
+          </>
+        }
+        right={
+          <>
+            {launch && (
+              <Button
+                size="sm"
+                variant={busy || launch.phase === "running" || running ? "default" : "primary"}
+                className={`relaunch${launch.phase === "running" && !busy ? " live" : ""}${
+                  stale && !busy ? " stale" : ""
+                }`}
+                disabled={busy}
+                data-bp-relaunch
+                title={stale
+                  ? "the saved config changed since this run started"
+                  : running
+                  ? "stops this live run, then starts it again"
+                  : undefined}
+                onClick={relaunch}
+              >
+                {busy ? <Spinner size={12} /> : <span aria-hidden="true">↻</span>}
+                {relaunchLabel(launch, relaunching, relaunchedPid, stale)}
+              </Button>
+            )}
+            {running && (
+              <Button
+                size="sm"
+                data-bp-stop
+                onClick={() =>
+                  act(() =>
+                    send("POST", "runs/stop", launch?.runId ? { runId: launch.runId } : {})
+                  )}
+              >
+                Stop
+              </Button>
+            )}
+            <Button size="sm" data-bp-configure onClick={() => setDialog("config")}>
+              Configure
+            </Button>
+            {source && (
+              <CodeButton where={source} shown={code} onToggle={setCode} data-bp-blueprint-code />
+            )}
+            <Button
+              size="sm"
+              disabled={!logsRun}
+              title={logsRun ? `${NAME}'s log` : "no log yet"}
+              data-bp-logs
+              onClick={() => setDialog("logs")}
+            >
+              Logs
+            </Button>
+            {FRAMED && (
+              <IconButton
+                icon="close"
+                label="Close"
+                size="sm"
+                onClick={() => toDesktop({ type: "dimos:close" })}
+              />
+            )}
+          </>
+        }
+      />
       <div id="app">
         <aside id="side" aria-label="Modules">
           {selectedModule
@@ -332,7 +350,7 @@ export function App() {
             onHover={setGraphHover}
           >
             <div className="graph-head">
-              <span className="label">Module graph</span>
+              <Label>Module graph</Label>
               {running && <Badge tone="ok">live</Badge>}
             </div>
             {extras.length > 0 && (
@@ -349,27 +367,7 @@ export function App() {
                 </ul>
               </details>
             )}
-            <ButtonGroup className="zoom">
-              <Button size="sm" aria-label="Zoom in" onClick={() => graph.current?.zoom(1.25)}>
-                +
-              </Button>
-              <Button size="sm" aria-label="Zoom out" onClick={() => graph.current?.zoom(0.8)}>
-                −
-              </Button>
-              <Button size="sm" onClick={() => graph.current?.fit()}>Fit</Button>
-            </ButtonGroup>
-            <Segmented
-              className="layouts"
-              size="sm"
-              label="Layout"
-              items={LAYOUTS.map(({ id, label }) => ({
-                value: id,
-                label,
-                props: { "data-layout": id },
-              }))}
-              value={layout}
-              onChange={setLayout}
-            />
+            <GraphControls graph={graph} layout={layout} onLayoutChange={setLayout} />
             {code && <CodePane where={code} onClose={() => setCode(null)} />}
           </BlueprintGraph>
         </main>

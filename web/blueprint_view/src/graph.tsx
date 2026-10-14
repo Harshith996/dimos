@@ -1,9 +1,9 @@
 // The module graph: modules and the topics they write and read, laid out by dimos-react/graph, lit around what's
 // hovered or picked, and showing each topic's rate while the blueprint runs.
 import { GraphView, type GraphViewHandle, type LayoutId, textWidth } from "dimos-react/graph";
-import { useTheme } from "dimos-react";
+import { formatRate, messageTypeColor, useTheme } from "dimos-react";
 import { type CSSProperties, forwardRef, type ReactNode, useMemo } from "react";
-import { className, type Module, topicOf, typeVar } from "./model.ts";
+import { className, type Module, topicOf } from "./model.ts";
 
 const MODULE_H = 46;
 const MODULE_BAR = 4;
@@ -117,8 +117,6 @@ function buildGraph(modules: Module[], extras: { topic: string; type: string }[]
   return { nodes, edges };
 }
 
-const rateText = (hz: number) => `${hz >= 100 ? hz.toFixed(0) : hz.toFixed(1)} Hz`;
-
 export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
   function BlueprintGraph(props, ref) {
     const { modules, extras, layout, spot, rates, onModule, onTopic, onHover } = props;
@@ -131,25 +129,16 @@ export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
       [nodes],
     );
     const focus = spot && "module" in spot ? `m:${spot.module}` : spot ? `t:${spot.topic}` : null;
-    const lit = useMemo(() => {
-      const ids = new Set(focus ? [focus] : []);
-      for (const edge of focus ? edges : []) {
-        if (edge.from === focus || edge.to === focus) {
-          ids.add(edge.from === focus ? edge.to : edge.from);
-        }
-      }
-      return ids;
-    }, [edges, focus]);
     const hz = (topic: string) => rates?.get(topic) ?? 0;
-    const classes = ["bv-graph", lit.size > 0 && "spot", rates && "running"].filter(Boolean);
     return (
       <GraphView<Node, Edge>
         ref={ref}
-        className={classes.join(" ")}
+        className={rates ? "bv-graph running" : "bv-graph"}
         aria-label="Module graph"
         nodes={nodes}
         edges={edges}
         layout={layout}
+        focus={focus}
         port={PORT}
         focusable={(node) => node.kind === "module"}
         nodeClassName={(node) =>
@@ -158,21 +147,19 @@ export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
             node.kind === "topic" && node.extra && "extra",
             node.kind === "topic" && node.loose && "loose",
             node.kind === "topic" && hz(node.topic) > 0 && "live",
-            lit.has(node.id) && "lit",
           ].filter(Boolean).join(" ")}
         nodeTitle={(node) =>
           node.kind === "module"
             ? node.name
             : `/${node.topic}\n${node.type}${node.extra ? "\n(not wired in this blueprint)" : ""}` +
               (node.loose ? "\n(only written or only read here)" : "")}
-        edgeClassName={(edge) =>
-          [
-            (edge.from === focus || edge.to === focus) && "lit",
-            rates && hz(edge.topic) > 0 && "live",
-          ].filter(Boolean).join(" ")}
+        edgeClassName={(edge) => hz(edge.topic) > 0 ? "flow" : undefined}
         nodeStyle={(node) =>
-          node.kind === "topic" ? ({ "--type": typeVar(node.type) }) as CSSProperties : undefined}
-        edgeStyle={(edge) => ({ "--type": typeVar(types.get(edge.topic)) }) as CSSProperties}
+          node.kind === "topic"
+            ? ({ "--type": messageTypeColor(node.type) }) as CSSProperties
+            : undefined}
+        edgeStyle={(edge) =>
+          ({ "--dr-graph-edge": messageTypeColor(types.get(edge.topic)) }) as CSSProperties}
         onNodeClick={(node) => node.kind === "module" ? onModule(node.name) : onTopic(node.topic)}
         onBackgroundClick={() => onTopic(null)}
         onHover={(node) =>
@@ -202,8 +189,8 @@ export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
                   <text x={PAD_X} y={hz(node.topic) ? 11 : node.h / 2} className="name">
                     {node.topic}
                   </text>
-                  <text x={PAD_X} y={22} className="sub">
-                    {hz(node.topic) ? rateText(hz(node.topic)) : ""}
+                  <text x={PAD_X} y={22} className="rate">
+                    {hz(node.topic) ? formatRate(hz(node.topic)) : ""}
                   </text>
                 </>
               )}

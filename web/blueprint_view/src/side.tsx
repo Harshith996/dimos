@@ -1,6 +1,16 @@
 // The side panel: the blueprint's topic rates and its modules, or one module's streams, skills and RPCs.
-import { Button, Tooltip, usePersistentState } from "dimos-react";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import {
+  Badge,
+  Button,
+  Disclosure,
+  messageTypeColor,
+  messageTypeName,
+  Tooltip,
+  type TopicRate,
+  TopicRates,
+} from "dimos-react";
+import { type CSSProperties, useState } from "react";
+import type { Where } from "./code.tsx";
 import {
   aliasOf,
   className,
@@ -9,73 +19,17 @@ import {
   reads,
   type Stream,
   topicOf,
-  typeName,
-  typeVar,
   writes,
 } from "./model.ts";
 
-export interface RateRow {
-  topic: string;
-  type?: string;
-  hz?: number;
-  bps?: number;
-}
-
-export interface Where {
-  file: string;
-  line: number;
-}
-
-function Section(
-  { storageKey, title, className: name, children }: {
-    storageKey: string;
-    title: ReactNode;
-    className?: string;
-    children: ReactNode;
-  },
-) {
-  const [open, setOpen] = usePersistentState(storageKey, true);
-  return (
-    <details
-      className={name}
-      open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
-    >
-      <summary className="label">{title}</summary>
-      {children}
-    </details>
-  );
-}
-
-function heat(value: number, max: number): CSSProperties | undefined {
-  if (!(value > 0) || !(max > 0)) {
-    return undefined;
-  }
-  const t = Math.log1p(value) / Math.log1p(max);
-  const hue = t < 0.65 ? 215 + (145 * t) / 0.65 : 360 - (35 * (t - 0.65)) / 0.35;
-  return {
-    background: `hsl(${hue.toFixed(0)} 78% ${(42 + 14 * t).toFixed(0)}% / ${
-      (0.22 + 0.5 * t).toFixed(2)
-    })`,
-  };
-}
-
-function bandwidth(bytesPerSecond: number): string {
-  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-  let value = bytesPerSecond;
-  let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  return `${value.toFixed(value < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
-}
+const typeStyle = (type: string | null | undefined) =>
+  ({ "--type": messageTypeColor(type) }) as CSSProperties;
 
 /** The bus's rates, then this blueprint's topics no one has heard yet. */
-export function rateRows(heardRows: RateRow[], modules: Module[] | null): RateRow[] {
+export function rateRows(heardRows: TopicRate[], modules: Module[] | null): TopicRate[] {
   const heard = new Set(heardRows.map((row) => `${row.topic} ${row.type}`));
   const known = new Set(heardRows.map((row) => row.topic));
-  const unheard: RateRow[] = [];
+  const unheard: TopicRate[] = [];
   for (const module of modules ?? []) {
     for (const stream of module.streams) {
       const topic = `/${topicOf(stream)}`;
@@ -89,64 +43,13 @@ export function rateRows(heardRows: RateRow[], modules: Module[] | null): RateRo
   return [...heardRows, ...unheard.sort((a, b) => a.topic.localeCompare(b.topic))];
 }
 
-function Rates({ rows, error }: { rows: RateRow[]; error: string | null }) {
-  const top = (key: "hz" | "bps") => Math.max(...rows.map((row) => row[key] ?? 0), 0);
-  const [maxHz, maxBps] = [top("hz"), top("bps")];
-  const live = rows.filter((row) => (row.hz ?? 0) > 0).length;
-  return (
-    <Section
-      storageKey="bp.ratesOpen"
-      className="rates"
-      title={
-        <>
-          Topic rates{rows.length
-            ? <span className="count">· {live}/{rows.length} live</span>
-            : null}
-        </>
-      }
-    >
-      <div className="rates-scroll">
-        <table>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td className="empty" colSpan={3}>{error ?? "no topics on the bus"}</td>
-              </tr>
-            )}
-            {rows.map((row) => {
-              const type = String(row.type ?? "").replace(/\//g, ".");
-              return (
-                <tr key={`${row.topic} ${type}`} className={(row.hz ?? 0) > 0 ? "" : "quiet"}>
-                  <td
-                    className="topic"
-                    title={`${row.topic}\n${type || "unknown type"}`}
-                    style={{ "--type": typeVar(type) } as CSSProperties}
-                  >
-                    {row.topic}
-                  </td>
-                  <td className="num" style={heat(row.hz ?? 0, maxHz)}>
-                    {(row.hz ?? 0).toFixed(1)} Hz
-                  </td>
-                  <td className="num" style={heat(row.bps ?? 0, maxBps)}>
-                    {bandwidth(row.bps ?? 0)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Section>
-  );
-}
-
 function StreamPills({ label, list }: { label: string; list: Stream[] }) {
   return (
-    <div className="sec">
-      <div className="lab">
+    <section>
+      <h4 className="dr-label">
         {label}
-        <span className="n">{list.length}</span>
-      </div>
+        <span className="count">{list.length}</span>
+      </h4>
       <div className="pills">
         {list.length
           ? list.map((stream) => (
@@ -154,15 +57,15 @@ function StreamPills({ label, list }: { label: string; list: Stream[] }) {
               key={stream.name}
               className="pill"
               title={stream.type}
-              style={{ "--type": typeVar(stream.type) } as CSSProperties}
+              style={typeStyle(stream.type)}
             >
               {stream.name}
-              <span className="stype">{typeName(stream.type)}</span>
+              <span className="stype">{messageTypeName(stream.type)}</span>
             </span>
           ))
-          : <span className="none">none</span>}
+          : <span className="note">none</span>}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -170,20 +73,25 @@ export function ModuleList(
   { modules, error, rates, ratesError, onOpen, onHover }: {
     modules: Module[] | null;
     error: string | null;
-    rates: RateRow[];
+    rates: TopicRate[];
     ratesError: string | null;
     onOpen: (name: string) => void;
     onHover: (name: string | null) => void;
   },
 ) {
+  const rows = rateRows(rates, modules);
   return (
     <div className="list">
-      <Rates rows={rateRows(rates, modules)} error={ratesError} />
-      <Section
-        storageKey="bp.modulesOpen"
-        className="modules"
-        title={<>Modules{modules && <span className="count">· {modules.length}</span>}</>}
+      <Disclosure
+        persistKey="bp.ratesOpen"
+        title="Topic rates"
+        count={rows.length
+          ? `${rows.filter((row) => (row.hz ?? 0) > 0).length}/${rows.length} live`
+          : null}
       >
+        <TopicRates rows={rows} empty={ratesError} />
+      </Disclosure>
+      <Disclosure persistKey="bp.modulesOpen" title="Modules" count={modules?.length}>
         {error && <div className="note">{error}</div>}
         {!modules && !error && <div className="note">loading…</div>}
         <ul onMouseLeave={() => onHover(null)}>
@@ -219,8 +127,8 @@ export function ModuleList(
                     </span>
                     {module.summary && <span className="summary">{module.summary}</span>}
                     <span className="io">
-                      <span className="io-in">Inputs {inputs.length}</span>
-                      <span className="io-out">Outputs {outputs.length}</span>
+                      <Badge tone="ok">Inputs {inputs.length}</Badge>
+                      <Badge tone="info">Outputs {outputs.length}</Badge>
                     </span>
                     <span className="chev" aria-hidden="true">›</span>
                   </button>
@@ -229,7 +137,7 @@ export function ModuleList(
             );
           })}
         </ul>
-      </Section>
+      </Disclosure>
     </div>
   );
 }
@@ -261,7 +169,7 @@ function Ends(
   return (
     <div className="end">
       <span className="k">{label}</span>
-      {list.length === 0 && <span className="none">nothing</span>}
+      {list.length === 0 && <span className="note">nothing</span>}
       {list.map((m) =>
         m.name === self
           ? <span key={m.name} className="self">{className(m)}</span>
@@ -293,7 +201,7 @@ function StreamRow(
   const sameTopic = (s: Stream) => topicOf(s) === topic;
   const sameType = (s: Stream) => s.type === stream.type;
   return (
-    <div className="stream" style={{ "--type": typeVar(stream.type) } as CSSProperties}>
+    <div className="stream" style={typeStyle(stream.type)}>
       <div className="row">
         <i className="dot" />
         <button
@@ -311,7 +219,7 @@ function StreamRow(
           title={`${stream.type}: every module with one`}
           onClick={() => onExpand(expanded === typeKey ? null : typeKey, null)}
         >
-          {typeName(stream.type)}
+          {messageTypeName(stream.type)}
         </button>
       </div>
       {expanded === topicKey && (
@@ -361,8 +269,8 @@ function MethodCard(
       {doc && (
         <span className="d">{open ? doc : doc.split(/\n\s*\n/)[0].replace(/\s*\n\s*/g, " ")}</span>
       )}
-      <span className="r" style={{ "--type": typeVar(returns) } as CSSProperties}>
-        → {typeName(returns)}
+      <span className="r" style={typeStyle(returns)}>
+        → {messageTypeName(returns)}
       </span>
     </button>
   );
@@ -372,9 +280,9 @@ function Methods({ title, list, skill }: { title: string; list: Method[]; skill:
   const [open, setOpen] = useState<string | null>(null);
   return (
     <section className={skill ? "skills" : "rpcs"}>
-      <h4>
+      <h4 className="dr-label">
         {title}
-        <span className="n">{list.length}</span>
+        <span className="count">{list.length}</span>
       </h4>
       <div className="cards">
         {list.map((method) => (
@@ -410,8 +318,8 @@ export function ModuleView(
   };
   const streams = (title: string, list: Stream[]) => (
     <section>
-      <h4>{title}</h4>
-      {list.length === 0 && <div className="none">none</div>}
+      <h4 className="dr-label">{title}</h4>
+      {list.length === 0 && <div className="note">none</div>}
       {list.map((stream) => (
         <StreamRow
           key={`${stream.direction}:${stream.name}`}
@@ -447,7 +355,7 @@ export function ModuleView(
         )}
       </div>
       {module.doc ? <div className="doc">{module.doc}</div> : (
-        <div className="none">
+        <div className="note">
           {known ? "No docstring." : "This dimos is too old to describe its modules."}
         </div>
       )}
@@ -459,8 +367,8 @@ export function ModuleView(
       {rpcs.length > 0 && <Methods title="RPC methods" list={rpcs} skill={false} />}
       {known && skills.length + rpcs.length === 0 && (
         <section>
-          <h4>RPC methods</h4>
-          <div className="none">none of its own</div>
+          <h4 className="dr-label">RPC methods</h4>
+          <div className="note">none of its own</div>
         </section>
       )}
     </div>

@@ -1,22 +1,18 @@
 // The settings the config dialog edits: GlobalConfig's fields (from its JSON schema) and each module's config args,
 // each with the kind of input it takes and the value it falls back to.
+import {
+  type JsonSchema,
+  pythonTypeKind,
+  resolveSchema,
+  schemaKind,
+  schemaNullable,
+  type SettingField,
+} from "dimos-react";
 
-/** What the gateway sends in place of a saved secret. */
-export const HIDDEN = "•••";
-
-export const same = (a: unknown, b: unknown): boolean =>
-  JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-
-export type Kind = "bool" | "enum" | "integer" | "number" | "string" | "path" | "json";
-
-export interface FieldSpec {
+export interface FieldSpec extends SettingField {
   id: string;
   scope: "global" | "module";
   module?: string;
-  name: string;
-  kind: Kind;
-  options?: unknown[];
-  optionLabels?: string[];
   nullable: boolean;
   description: string | null;
   base: unknown;
@@ -24,15 +20,11 @@ export interface FieldSpec {
   groupLabel?: string;
   secret: boolean;
   label?: string;
-  placeholder?: string;
   docs?: string;
 }
 
-// deno-lint-ignore no-explicit-any
-type Schema = Record<string, any>;
-
 export interface GlobalConfig {
-  schema?: Schema;
+  schema?: JsonSchema;
   defaults?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
   secrets?: string[];
@@ -47,7 +39,7 @@ export interface ConfigArg {
   json_compatible?: boolean;
   secret?: boolean;
   choices?: unknown[];
-  schema?: Schema;
+  schema?: JsonSchema;
   value?: unknown;
 }
 
@@ -57,77 +49,12 @@ export interface BlueprintConfig {
   overrides?: Record<string, Record<string, unknown>>;
 }
 
-function resolveSchema(schema: Schema, root: Schema): Schema {
-  if (schema.$ref) {
-    const key = String(schema.$ref).split("/").pop()!;
-    const target = root.$defs?.[key] ?? root.definitions?.[key];
-    if (target) {
-      return resolveSchema({ ...target, ...schema, $ref: undefined }, root);
-    }
-  }
-  const variants: Schema[] | undefined = schema.anyOf ?? schema.oneOf;
-  if (variants && !schema.type) {
-    const nonNull = variants.filter((variant) => variant.type !== "null");
-    if (nonNull.length === 1) {
-      return {
-        ...resolveSchema(nonNull[0], root),
-        description: schema.description,
-        default: schema.default,
-      };
-    }
-  }
-  return schema;
-}
-
-const nullableSchema = (schema: Schema): boolean =>
-  ((schema.anyOf ?? schema.oneOf ?? []) as Schema[]).some((variant) => variant.type === "null") ||
-  (Array.isArray(schema.type) && schema.type.includes("null"));
-
-function kindOfSchema(schema: Schema): Kind {
-  if (schema.enum) {
-    return "enum";
-  }
-  const type = Array.isArray(schema.type)
-    ? schema.type.find((name) => name !== "null")
-    : schema.type;
-  if (type === "boolean") {
-    return "bool";
-  }
-  if (type === "integer" || type === "number") {
-    return type;
-  }
-  if (type === "string") {
-    return schema.format === "path" ? "path" : "string";
-  }
-  return "json";
-}
-
-function kindOfAnnotation(type: string | null | undefined): { kind: Kind; nullable: boolean } {
-  const parts = (type ?? "").split("|").map((part) => part.trim()).filter(Boolean);
-  const nullable = parts.includes("None") || /^Optional\[/.test(type ?? "");
-  const main = parts.filter((part) => part !== "None");
-  if (main.length !== 1) {
-    return { kind: "json", nullable };
-  }
-  const one = main[0].replace(/^Optional\[(.*)\]$/, "$1");
-  const kinds: Record<string, Kind> = {
-    bool: "bool",
-    int: "integer",
-    float: "number",
-    str: "string",
-  };
-  if (kinds[one]) {
-    return { kind: kinds[one], nullable };
-  }
-  return { kind: /(^|\.)Path$/.test(one) ? "path" : "json", nullable };
-}
-
 function settable(arg: ConfigArg): boolean {
   if (arg.json_compatible !== undefined) {
     return arg.json_compatible;
   }
   const type = arg.type ?? "";
-  return kindOfAnnotation(type).kind !== "json" || !!arg.choices ||
+  return pythonTypeKind(type).kind !== "json" || !!arg.choices ||
     /^(list|dict|tuple)\[(str|int|float|bool|,|\s)*\]$/.test(type);
 }
 
@@ -142,7 +69,7 @@ function globalGroups(keys: string[]): Map<string, string> {
 }
 
 export function globalFields(config: GlobalConfig): FieldSpec[] {
-  const properties: Schema = config.schema?.properties ?? {};
+  const properties: JsonSchema = config.schema?.properties ?? {};
   const keys = [...new Set([...Object.keys(properties), ...Object.keys(config.defaults ?? {})])];
   const groups = globalGroups(keys);
   const order = (key: string) =>
@@ -151,7 +78,7 @@ export function globalFields(config: GlobalConfig): FieldSpec[] {
   return keys.flatMap((key): FieldSpec[] => {
     const raw = properties[key] ?? {};
     const schema = resolveSchema(raw, config.schema ?? {});
-    const kind = kindOfSchema(schema);
+    const kind = schemaKind(schema);
     if (kind === "json") {
       return [];
     }
@@ -161,7 +88,7 @@ export function globalFields(config: GlobalConfig): FieldSpec[] {
       name: key,
       kind,
       options: schema.enum,
-      nullable: nullableSchema(raw),
+      nullable: schemaNullable(raw),
       description: schema.description ?? null,
       base: config.defaults?.[key] ?? schema.default ?? null,
       group: groups.get(key) ?? "general",
@@ -173,8 +100,8 @@ export function globalFields(config: GlobalConfig): FieldSpec[] {
 export function moduleFields(config: BlueprintConfig): FieldSpec[] {
   return config.modules.flatMap((module) =>
     module.args.filter((arg) => !arg.base && settable(arg)).map((arg): FieldSpec => {
-      const fromSchema = arg.schema ? kindOfSchema(resolveSchema(arg.schema, arg.schema)) : null;
-      const annotation = kindOfAnnotation(arg.type);
+      const fromSchema = arg.schema ? schemaKind(resolveSchema(arg.schema)) : null;
+      const annotation = pythonTypeKind(arg.type);
       return {
         id: `${module.module}.${arg.name}`,
         scope: "module",
@@ -182,7 +109,7 @@ export function moduleFields(config: BlueprintConfig): FieldSpec[] {
         name: arg.name,
         kind: arg.choices ? "enum" : fromSchema ?? annotation.kind,
         options: arg.choices,
-        nullable: arg.schema ? nullableSchema(arg.schema) : annotation.nullable,
+        nullable: arg.schema ? schemaNullable(arg.schema) : annotation.nullable,
         description: arg.description ?? null,
         base: "value" in arg ? arg.value : arg.default,
         group: module.module,
@@ -191,46 +118,4 @@ export function moduleFields(config: BlueprintConfig): FieldSpec[] {
       };
     })
   );
-}
-
-export const asText = (value: unknown): string =>
-  value === null || value === undefined
-    ? ""
-    : typeof value === "string"
-    ? value
-    : JSON.stringify(value);
-
-export const valueText = (value: unknown): string =>
-  value === null || value === undefined
-    ? "—"
-    : value === ""
-    ? '""'
-    : typeof value === "string"
-    ? value
-    : JSON.stringify(value);
-
-/** The value typed text means for this field, or what it should have been. */
-export function parseText(spec: FieldSpec, text: string): { value: unknown } | { error: string } {
-  const trimmed = text.trim();
-  if (trimmed === "" && spec.nullable) {
-    return { value: null };
-  }
-  if (spec.kind === "integer" || spec.kind === "number") {
-    const number = Number(trimmed);
-    if (trimmed === "" || !Number.isFinite(number)) {
-      return { error: "a number" };
-    }
-    if (spec.kind === "integer" && !Number.isInteger(number)) {
-      return { error: "a whole number" };
-    }
-    return { value: number };
-  }
-  if (spec.kind === "json") {
-    try {
-      return { value: JSON.parse(text) };
-    } catch {
-      return { error: "JSON" };
-    }
-  }
-  return { value: text };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { byRarity, moduleUsage, topicOf, typeColor } from "./model.ts";
+import { byRarity, moduleUsage, projectPath, topicOf } from "./model.ts";
 
 describe("model", () => {
   it("names topics without their leading slash, preferring the wired name", () => {
@@ -8,9 +8,8 @@ describe("model", () => {
     expect(topicOf({ name: "image", type: "", direction: "out" })).toBe("image");
   });
 
-  it("colors by type, then package", () => {
-    expect(typeColor("sensor_msgs.Image")).toBe("warn");
-    expect(typeColor("geometry_msgs.Wrench")).toBe("info");
+  it("reads paths from the dimos checkout's root", () => {
+    expect(projectPath("/home/me/dimos/dimos/core/module.py")).toBe("dimos/core/module.py");
   });
 
   it("lists the rarest modules first", () => {

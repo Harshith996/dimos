@@ -1,5 +1,5 @@
 // The run this blueprint is in (GET /dimos/runs' launch), and whether the saved config moved on since it started.
-import { same } from "./config_fields.ts";
+import { sameValue } from "dimos-react";
 import type { Saved } from "./config.tsx";
 
 export interface Launch {
@@ -46,7 +46,7 @@ export function launchedWithOther(launch: Launch | null, saved: Saved | null): b
     base: Record<string, unknown> = {},
   ) =>
     [...new Set([...Object.keys(a), ...Object.keys(b)])].some((key) =>
-      !same(key in a ? a[key] : base[key], key in b ? b[key] : base[key])
+      !sameValue(key in a ? a[key] : base[key], key in b ? b[key] : base[key])
     );
   const oneOff = launch.oneOff ?? {};
   if (differs(merge(saved.global, oneOff.global), launch.overrides, saved.defaults)) {

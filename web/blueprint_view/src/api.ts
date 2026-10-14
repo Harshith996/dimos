@@ -26,9 +26,3 @@ export const send = <T = unknown>(method: string, path: string, body?: unknown):
 
 export const errorText = (error: unknown): string =>
   String((error as Error | null)?.message ?? error);
-
-/** Framed by Desktop (its Details modal): it answers dimos:* messages and owns the close button. */
-export const FRAMED = globalThis.parent !== undefined && globalThis.parent !== globalThis.window;
-
-export const toDesktop = (message: Record<string, unknown>): void =>
-  parent.postMessage(message, location.origin);
