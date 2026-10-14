@@ -86,10 +86,10 @@ def _xarm7_sim_twist_task(base_pose: PoseStamped | None = None) -> TaskConfig:
         robot_model=make_xarm7_sim_robot_config(base_pose=base_pose),
         target_frame="link_tcp",
         max_joint_velocity_rad_s=0.5,
-        # The MJCF leaves joints 1/3/5/7 unbounded while the IK model stops them at +-3.11 rad;
-        # a wrist pushed a millirad past that by contact or overshoot would otherwise make the
-        # task drop every command and freeze the arm for good.
-        feedback_limit_tolerance=0.02,
+        # The MJCF's ranges are wider than the IK model's (joints 1/3/5/7 unbounded, joint4 to
+        # 3.927 vs 3.11), so contact or overshoot can carry a joint past an IK limit. Within
+        # this tolerance the task steers it back inside; beyond it, it drops every command.
+        feedback_limit_tolerance=0.2,
     )
 
 
