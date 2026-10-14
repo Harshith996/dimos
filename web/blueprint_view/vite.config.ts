@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // The gateway serves index.html at /blueprint_view and the rest under /blueprint_view/ (Desktop puts both
-// under /dimos), so assets are relative and live in blueprint_view/. The dev proxy strips /dimos like Desktop.
+// under /dimos-gateway), so assets are relative and live in blueprint_view/. The dev proxy strips /dimos-gateway like Desktop.
 // deno() resolves the jsr packages (dimos-react in deno.json); dedupe
 // keeps them on the app's one React.
 export default defineConfig({
@@ -13,9 +13,9 @@ export default defineConfig({
   resolve: { dedupe: ["react", "react-dom"] },
   server: {
     proxy: {
-      "/dimos": {
+      "/dimos-gateway": {
         target: "http://127.0.0.1:5555",
-        rewrite: (path) => path.replace(/^\/dimos/, ""),
+        rewrite: (path) => path.replace(/^\/dimos-gateway/, ""),
       },
       "/api": "http://127.0.0.1:5555",
     },

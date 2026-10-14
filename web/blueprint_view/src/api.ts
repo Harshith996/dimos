@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
-// The gateway's API, relative to the page: the view is at <base>/blueprint_view (Desktop's /dimos, or nothing
-// on the gateway's own port), so "runs" is <base>/runs. vite's dev server proxies /dimos/ to the gateway, as Desktop does.
-const BASE = import.meta.env.DEV ? "/dimos/" : "";
+// The gateway's API, relative to the page: the view is at <base>/blueprint_view (Desktop's /dimos-gateway, or nothing
+// on the gateway's own port), so "runs" is <base>/runs. vite's dev server proxies /dimos-gateway/ to the gateway, as Desktop does.
+const BASE = import.meta.env.DEV ? "/dimos-gateway/" : "";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
