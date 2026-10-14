@@ -223,7 +223,7 @@ class NavigationSkillContainer(Module):
             try:
                 msg = statuses.get(timeout=wait)
             except queue.Empty:
-                logger.warning(f"Navigation to '{query}' ended with no goal reached")
+                logger.warning("Tracked navigation ended with no goal reached", query=query)
                 return None
             wait = max(deadline - time.monotonic(), 0.0)
             if holds_goal(msg.status):
@@ -231,9 +231,9 @@ class NavigationSkillContainer(Module):
             if msg.status == GoalStatus.PREEMPTED and msg.text == PREEMPT_REPLACED:
                 continue
             if msg.status == GoalStatus.SUCCEEDED:
-                logger.info(f"Reached '{query}'")
+                logger.info("Reached tracked object", query=query)
                 return f"Successfully arrived at '{query}'"
-            logger.info(f"Goal ended without arriving, tracking '{query}' failed: {msg.text}")
+            logger.info("Tracked goal ended without arriving", query=query, reason=msg.text)
             return None
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
