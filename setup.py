@@ -77,6 +77,7 @@ RELAY_DIST_SOURCES = (
     "sdk/deno.json",
     "sdk/package.json",
     "sdk/dist",
+    "sdk/src/decoders",  # the gateway's msgs.js bundles its LCM decoder
     "blueprint_view/deno.json",
     "blueprint_view/package.json",
     "blueprint_view/dist",
