@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import functools
 import threading
 import time
 from typing import Any, ClassVar
@@ -159,11 +160,17 @@ class ConnectionModule(Module, ABC):
     both: the deadman cannot fire and no later command is handled until it
     returns.
 
+    Frames: an ``imu`` reading is stamped with the module's ``frame_id`` (from
+    its config, class name by default), an ``odom`` pose with
+    ``odom_frame_id``; both take the config's ``frame_id_prefix``.
+
     To close the hardware connection when the module stops, override ``stop``
     and close it after calling ``super().stop()``, which halts the robot first.
     """
 
     dedicated_worker: ClassVar[bool] = True
+    odom_frame_id: ClassVar[str] = "odom"
+    """The frame an ``odom`` pose is given in. Override on the driver."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -411,7 +418,8 @@ class ConnectionModule(Module, ABC):
         if "odom" in outputs:
             odom = self._only([b for b, _, st in bases if set(POSE_INTERFACES) <= st], "odom")
             published |= _keys([odom], POSE_INTERFACES)
-            self._outputs.append((_source(odom), outputs["odom"], pose_from_values, odom))
+            pose = functools.partial(pose_from_values, frame_id=self._odom_frame())
+            self._outputs.append((_source(odom), outputs["odom"], pose, odom))
         if "base_velocity" in outputs:
             speed = self._only(
                 [b for b, _, st in bases if set(TWIST_INTERFACES) <= st], "base_velocity"
@@ -422,7 +430,8 @@ class ConnectionModule(Module, ABC):
             sensors = _parts(descriptions, ResourceKind.SENSOR)
             imu = self._only([s for s, _, st in sensors if set(IMU_INTERFACES) <= st], "imu")
             published |= _keys([imu], IMU_INTERFACES)
-            self._outputs.append((_source(imu), outputs["imu"], imu_from_values, imu))
+            imu_msg = functools.partial(imu_from_values, frame_id=self.frame_id)
+            self._outputs.append((_source(imu), outputs["imu"], imu_msg, imu))
         self._check_covered({k for d in descriptions for k in d.state_keys()} - published, "output")
         return listeners
 
@@ -525,6 +534,10 @@ class ConnectionModule(Module, ABC):
             # After falling behind, carry on from now rather than catching up.
             next_at = max(next_at + period, time.monotonic())
             self._stop_event.wait(next_at - time.monotonic())
+
+    def _odom_frame(self) -> str:
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{self.odom_frame_id}" if prefix else self.odom_frame_id
 
     def _only(self, names: list[str], port: str) -> str:
         """The one robot part a port carries, for a message with no names."""

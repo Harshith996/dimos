@@ -345,6 +345,27 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     [imu] = r.sent("imu")
     assert isinstance(imu, Imu)
     assert (imu.orientation.w, imu.angular_velocity.z, imu.linear_acceleration.z) == (1.0, 0.3, 9.8)
+    # Frames: the module's own for the IMU, the odometry frame for the pose.
+    assert imu.frame_id == "PushedBodyAndBase"
+    assert odom.frame_id == "odom"
+
+
+def test_reading_frames_follow_the_module_config(rig: Callable[..., Rig]) -> None:
+    r = rig(PushedBodyAndBase, frame_id="pelvis", frame_id_prefix="r1")
+    r.module.publish_state(
+        {
+            **{f"g1/imu/{i}": 0.0 for i in ("qx", "qy", "qz", "gx", "gy", "gz", "ax", "ay", "az")},
+            "g1/imu/qw": 1.0,
+            **{
+                f"g1/{j}/{i}": 0.0 for j in ("j1", "j2") for i in ("position", "velocity", "effort")
+            },
+            **{f"base/base/{i}": 0.0 for i in ("x", "y", "yaw", "vx", "vy", "wz")},
+        }
+    )
+    [imu] = r.sent("imu")
+    [odom] = r.sent("odom")
+    assert imu.frame_id == "r1/pelvis"
+    assert odom.frame_id == "r1/odom"
 
 
 def test_a_base_described_with_the_preset_defaults_reports_its_speed(
