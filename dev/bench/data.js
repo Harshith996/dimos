@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1791958610314,
+  "lastUpdate": 1791961501665,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime (arm64)": [
@@ -4050,6 +4050,60 @@ window.BENCHMARK_DATA = {
             "value": 115.035,
             "unit": "G",
             "extra": "cpu: Neoverse-N2; delivered: odom 1117/1122, lidar 461/461, color_image 851/855; perf counted 100.0%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bogwi@tutamail.com",
+            "name": "Dan Vi",
+            "username": "bogwi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a694d6dcbcbce868b14eccbe5be60c4c623c4c9",
+          "message": "refactor perception stack to modular design (#4552)",
+          "timestamp": "2026-10-14T16:02:28+09:00",
+          "tree_id": "0b75da272bbecf11f3551ae344972eddb6dca9cc",
+          "url": "https://github.com/dimensionalOS/dimos/commit/5a694d6dcbcbce868b14eccbe5be60c4c623c4c9"
+        },
+        "date": 1791961500995,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "peak memory",
+            "value": 1570.531,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-V3; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "peak threads",
+            "value": 351,
+            "unit": "threads",
+            "extra": "cpu: Neoverse-V3; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "network (transport)",
+            "value": 2724.212,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-V3; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "disk write",
+            "value": 1.477,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-V3; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "instructions",
+            "value": 115.491,
+            "unit": "G",
+            "extra": "cpu: Neoverse-V3; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
           }
         ]
       }
