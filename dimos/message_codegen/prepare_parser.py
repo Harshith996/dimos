@@ -27,8 +27,8 @@ from typing import Any
 
 import requests
 
-ROOT = Path(__file__).resolve().parents[1]
-TOOLKIT = ROOT / "dimos/message_codegen"
+TOOLKIT = Path(__file__).resolve().parent
+ROOT = TOOLKIT.parents[1]
 
 
 def prepare(

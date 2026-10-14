@@ -19,7 +19,7 @@ from pathlib import Path
 
 from dimos.message_codegen.source_inputs import prepare_sources
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 OUTPUT = ROOT / "build/message-codegen/test-inputs"
 
 
@@ -29,7 +29,7 @@ def main() -> None:
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     prepare_sources(
-        Path(__file__).with_name("message-test-sources.json"),
+        Path(__file__).with_name("test-sources.json"),
         OUTPUT,
         args.cache,
         offline=args.offline,

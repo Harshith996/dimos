@@ -308,8 +308,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --only-group lint --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Mypy
@@ -370,8 +370,8 @@ jobs:
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           source .venv/bin/activate
@@ -519,8 +519,8 @@ jobs:
           node-version: 'lts/*'
       - name: Install Python dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Restore Hugging Face model cache
@@ -647,8 +647,8 @@ jobs:
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests --group browser-tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install Playwright browsers  # the e2e runs in both engines
@@ -767,8 +767,8 @@ jobs:
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Run tests
@@ -906,16 +906,16 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests-self-hosted --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
           brew install ffmpeg libjpeg-turbo
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           uv run python -c "from dimos.utils.turbojpeg import get_turbojpeg; get_turbojpeg()"
@@ -1174,8 +1174,8 @@ jobs:
             libxkbcommon-x11-0
       - name: Install dependencies
         run: |
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
+          uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
           uv sync --group tests-self-hosted --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Build C++ extensions in-place

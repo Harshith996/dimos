@@ -25,7 +25,7 @@ import pytest
 from dimos.message_codegen import native_build, registry
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.native_build import complete, save_complete, source_digest, stage_module
-from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
+from dimos.message_codegen.prepare_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 from dimos.message_codegen.generate import generate
-from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
+from dimos.message_codegen.prepare_test_inputs import OUTPUT as TEST_INPUTS
 
 
 def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(

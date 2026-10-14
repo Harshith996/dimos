@@ -6,9 +6,6 @@ on:
       - dimos/message_codegen/**
       - examples/message-codegen/**
       - scripts/*message*codegen*
-      - scripts/prepare_message_parser.py
-      - scripts/prepare_message_test_inputs.py
-      - scripts/message-test-sources.json
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
       - Cargo.toml
@@ -38,7 +35,7 @@ jobs:
         run: |
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
-          uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
           uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" requests types-setuptools types-requests numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Prepare the offline source-package dependency wheelhouse

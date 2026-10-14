@@ -22,7 +22,7 @@ from setuptools import setup
 
 if not Path(__file__).with_name(".upstream").joinpath("rosidl_adapter/parser.py").is_file():
     raise RuntimeError(
-        "Upstream parser is not prepared. Run python scripts/prepare_message_parser.py "
+        "Upstream parser is not prepared. Run python dimos/message_codegen/prepare_parser.py "
         "from the repository root (use --offline for a populated cache), then build/install. "
         "Published backend wheels and sdists already contain the verified source."
     )

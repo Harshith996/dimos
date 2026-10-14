@@ -24,7 +24,7 @@ import pytest
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos.message_codegen.ownership import Dependency
-from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
+from dimos.message_codegen.prepare_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture(autouse=True)

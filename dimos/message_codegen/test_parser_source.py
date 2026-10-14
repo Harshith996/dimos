@@ -19,7 +19,7 @@ import tarfile
 
 import pytest
 
-from scripts import prepare_message_parser as preparation
+from dimos.message_codegen import prepare_parser as preparation
 
 
 @pytest.fixture

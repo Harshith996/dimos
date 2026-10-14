@@ -17,7 +17,7 @@ not a replacement parser. Bulk standard message packages belong to the next laye
 Install the lightweight core from this proposal checkout:
 
 ```sh skip
-python scripts/prepare_message_parser.py
+python dimos/message_codegen/prepare_parser.py
 pip install './dimos/message_codegen[native]'
 ```
 
@@ -31,7 +31,7 @@ float64 value
 For this low-level example, explicitly prepare its pinned standard-message inputs:
 
 ```sh skip
-python -m scripts.prepare_message_test_inputs
+python -m dimos.message_codegen.prepare_test_inputs
 python -m dimos.message_codegen.generate --package-root interfaces \
   --package-root build/message-codegen/test-inputs \
   --type demo_msgs/msg/Reading --python-module demo_messages --output build/reading
@@ -113,7 +113,7 @@ rejects invalid names before upstream's backtracking regex runs.
 Prepare once before building this backend from a repository checkout:
 
 ```sh
-python scripts/prepare_message_parser.py
+python dimos/message_codegen/prepare_parser.py
 pip wheel ./dimos/message_codegen --no-deps --wheel-dir dist
 ```
 
@@ -121,9 +121,9 @@ Preparation needs `requests`; install it explicitly in the preparation environme
 It downloads only the pinned project archive. Reuse the cache without network:
 
 ```sh
-python scripts/prepare_message_parser.py --offline
+python dimos/message_codegen/prepare_parser.py --offline
 # Or seed a new cache with the same hash-verified archive:
-python scripts/prepare_message_parser.py --offline --archive /path/to/rosidl.tar.gz
+python dimos/message_codegen/prepare_parser.py --offline --archive /path/to/rosidl.tar.gz
 ```
 
 The backend wheel **and sdist contain these already-prepared upstream files**.
@@ -153,9 +153,9 @@ The backend does not include standard message definitions. Pass local schema roo
 Prepare the pinned ROS conformance inputs before running standalone tests:
 
 ```sh
-python -m scripts.prepare_message_test_inputs
+python -m dimos.message_codegen.prepare_test_inputs
 # Reuse verified archives without network access:
-python -m scripts.prepare_message_test_inputs --offline
+python -m dimos.message_codegen.prepare_test_inputs --offline
 ```
 
 The inputs live under ignored `build/message-codegen/test-inputs/`. Tests pass that directory explicitly.

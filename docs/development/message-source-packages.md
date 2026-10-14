@@ -11,7 +11,7 @@ The backend is a small, separate Python distribution so external projects do not
 From this PR checkout, in an environment with pip, setuptools, wheel, and requests:
 
 ```sh
-python scripts/prepare_message_parser.py
+python dimos/message_codegen/prepare_parser.py
 python -m pip wheel --wheel-dir /tmp/message-wheels ./dimos/message_codegen
 python -m pip wheel --wheel-dir /tmp/message-wheels /path/to/native-package-checkout/packages/dimos-build-config
 ```

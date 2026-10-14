@@ -23,7 +23,7 @@ import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 from dimos.message_codegen.definitions import Definitions, Message
-from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
+from dimos.message_codegen.prepare_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture(autouse=True)
