@@ -599,7 +599,8 @@ install_system_deps() {
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
-            run_cmd brew install "${needed[@]}"
+            # brew >= 7 asks before installing unless told not to; we already asked above
+            HOMEBREW_NO_ASK=1 run_cmd brew install "${needed[@]}"
             ;;
         nixos)
             info "NixOS detected — system deps managed via nix develop"
