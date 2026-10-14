@@ -37,9 +37,9 @@ from typing import Any
 if sys.platform in {"linux", "darwin"}:
     import fcntl
 
-from . import cpp
-from .definitions import Definitions
-from .ownership import Dependency
+from dimos_message_build import cpp
+from dimos_message_build.definitions import Definitions
+from dimos_message_build.ownership import Dependency
 
 TOOLKIT = Path(__file__).parent
 

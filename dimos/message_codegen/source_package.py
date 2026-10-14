@@ -20,6 +20,7 @@ installs tools, or invokes CMake/Cargo. The source distribution carries inputs.
 
 from __future__ import annotations
 
+import argparse
 from importlib.util import find_spec
 import json
 from pathlib import Path
@@ -36,9 +37,9 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-from .definitions import parse_message
-from .generate import generate
-from .ownership import Dependency
+from dimos_message_build.definitions import Message
+from dimos_message_build.generate import generate
+from dimos_message_build.ownership import Dependency
 
 
 def _local(project: Path, value: str) -> Path:
@@ -51,6 +52,18 @@ def _local(project: Path, value: str) -> Path:
 def configuration(project: Path) -> dict[str, Any]:
     data = tomllib.loads((project / "pyproject.toml").read_text())
     settings = data["tool"]["dimos"]["messages"]
+    if not isinstance(settings, dict):
+        raise ValueError("tool.dimos.messages must be a table")
+    unknown = settings.keys() - {
+        "source",
+        "module",
+        "resources",
+        "roots",
+        "catalog",
+        "dependencies",
+    }
+    if unknown:
+        raise ValueError(f"Unknown tool.dimos.messages fields: {sorted(unknown)}")
     source = _local(project, settings.get("source", "interfaces"))
     if not source.is_dir():
         raise ValueError(
@@ -74,7 +87,7 @@ def configuration(project: Path) -> dict[str, Any]:
         names = list(catalog["roots"])
         resources.append(catalog_path)
     if names is None:
-        names = [parse_message(path).name for path in sorted(source.rglob("*.msg"))]
+        names = [Message.from_file(path).name for path in sorted(source.rglob("*.msg"))]
     if not names:
         raise ValueError("A message package requires at least one root")
     dependencies = []
@@ -154,3 +167,37 @@ def setup_arguments(project: Path) -> dict[str, Any]:
         "entry_points": {"dimos.messages": [module + "=" + module + "_schemas.provider"]},
         "cmdclass": {"sdist": SourceDistribution},
     }
+
+
+def package_settings(project: Path) -> dict[str, Any]:
+    """Generate once through the shared core and return source-only build settings."""
+    project = project.resolve()
+    config = configuration(project)
+    source = prepare(project)
+    module = config["module"]
+    return {
+        "wheel": {
+            "packages": {
+                name: str((source / name).relative_to(project))
+                for name in (module, module + "_schemas")
+            },
+        },
+        "sdist": {
+            "include": [
+                str(config["source"].relative_to(project)) + "/**",
+                *[str(path.relative_to(project)) for path in config["resources"]],
+            ],
+        },
+    }
+
+
+def main() -> None:
+    """Generate messages using the same project configuration as package builds."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("project", nargs="?", type=Path, default=Path.cwd())
+    arguments = parser.parse_args()
+    prepare(arguments.project.resolve())
+
+
+if __name__ == "__main__":
+    main()

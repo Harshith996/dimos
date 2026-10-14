@@ -25,10 +25,9 @@ import re
 import shutil
 from tempfile import TemporaryDirectory
 
-from . import cpp, python, rust
-from .definitions import Definitions
-from .distribution import write_distribution
-from .ownership import ABI, Dependency, resolve_owners, schema_hash
+from dimos_message_build import cpp, python, rust
+from dimos_message_build.definitions import Definitions
+from dimos_message_build.ownership import ABI, Dependency, resolve_owners, schema_hash
 
 TEMPLATES = Path(__file__).with_name("templates")
 
@@ -198,7 +197,7 @@ def _generate(
             + '[build-dependencies]\nros2msg = "=0.5.3"\n'
         )
     if "python" in languages:
-        write_distribution(
+        python.write_distribution(
             output, module, tuple(msg.name for msg in owned), version, dependencies=dependencies
         )
     return tuple(msg.name for msg in messages)
@@ -227,7 +226,7 @@ def main() -> None:
             version=args.version,
         )
         if args.package:
-            write_distribution(args.output, args.python_module, names, args.version)
+            python.write_distribution(args.output, args.python_module, names, args.version)
     except ValueError as exc:
         parser.error(str(exc))
     print(f"Generated {len(names)} message types for Python, C++, and Rust in {args.output}")

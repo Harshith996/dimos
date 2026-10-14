@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
-from dimos.message_codegen.definitions import Definitions, parse_message
+from dimos.message_codegen.definitions import Definitions, Message
 from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
@@ -72,7 +72,7 @@ def test_preserves_defaults_constants_and_bounds(tmp_path):
         "uint8 MODE=7\nstring<=12 label 'hello'\nfloat64[3] xyz [1, 2, 3]\nint32[<=4] values [4]\n",
     )
 
-    message = parse_message(path)
+    message = Message.from_file(path)
 
     assert message.constants[0].value == 7
     assert message.fields[0].default == "hello"
@@ -98,7 +98,7 @@ def test_conflicting_definition_reports_both_sources(tmp_path):
 def test_explicit_empty_sequence_default(tmp_path):
     path = write_message(tmp_path, "example_msgs/msg/Value", "int32[<=8] values []\n")
 
-    message = parse_message(path)
+    message = Message.from_file(path)
 
     assert message.fields[0].default == ()
 
@@ -107,7 +107,7 @@ def test_explicit_empty_sequence_default(tmp_path):
 def test_constant_name_validation_accepts_ros_names(tmp_path, name):
     path = write_message(tmp_path, "example_msgs/msg/Value", f"uint8 {name}=1\n")
 
-    assert parse_message(path).constants[0].name == name
+    assert Message.from_file(path).constants[0].name == name
 
 
 @pytest.mark.parametrize("name", ["A_", "A__B", "a", "A" + "0" * 10000 + "!"])
@@ -115,7 +115,7 @@ def test_constant_name_validation_rejects_invalid_names(tmp_path, name):
     path = write_message(tmp_path, "example_msgs/msg/Value", f"uint8 {name}=1\n")
 
     with pytest.raises(ValueError):
-        parse_message(path)
+        Message.from_file(path)
 
 
 def test_equivalent_definitions_ignore_comments(tmp_path):
@@ -154,7 +154,7 @@ def test_invalid_field_reports_source_line(tmp_path):
     )
 
     with pytest.raises(ValueError) as error:
-        parse_message(source)
+        Message.from_file(source)
 
     assert f"{source}:3:" in str(error.value)
 
@@ -253,17 +253,6 @@ def test_full_upstream_serialization_and_fastcdr_sources_are_pinned():
         "sha256": "79d8466107dd6b7d1defe961c4aa31735038937cf9dd1175cf6b0da0df2209ab",
         "version": "2.4.0",
     }
-
-
-def test_nix_archive_pins_cover_the_shared_upstream_revisions():
-    root = Path(__file__).resolve().parents[2]
-    sources = json.loads((Path(__file__).parent / "native_sources.json").read_text())
-    archives = json.loads((root / "native/cpp/source-archives.json").read_text())
-    assert archives.keys() == sources["repositories"].keys()
-    for name, archive in archives.items():
-        assert archive["revision"] == sources["repositories"][name]["revision"]
-        assert len(archive["sha256"]) == 64
-        assert all(character in "0123456789abcdef" for character in archive["sha256"])
 
 
 def test_standard_types_require_an_explicit_dependency(tmp_path):

@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
-from .definitions import Definitions, Message
+from dimos_message_build.definitions import Definitions, Message
 
 
 def write_crate(

@@ -24,13 +24,12 @@ from pathlib import Path
 import re
 from typing import Any
 
+from dimos_message_build.registry import schema_roots
 from rosidl_adapter.parser import (  # type: ignore[import-untyped]
     InvalidSpecification,
     InvalidValue,
     parse_message_string,
 )
-
-from .providers import schema_roots
 
 
 @dataclass(frozen=True)
@@ -86,64 +85,64 @@ class Message:
     def dependencies(self) -> tuple[str, ...]:
         return tuple(sorted({field.type.name for field in self.fields if field.type.nested}))
 
-
-def parse_message(path: Path) -> Message:
-    """Read a package/msg/Type.msg, retaining its original text for viewers."""
-    if path.parent.name != "msg" or path.suffix != ".msg":
-        raise ValueError(f"{path}: expected package/msg/Type.msg")
-    package = path.parent.parent.name
-    text = path.read_text(encoding="utf-8")
-    # Validate constant names before upstream's backtracking regex sees untrusted
-    # names. Keep upstream source unchanged; this guard has linear-time matching.
-    for line_number, line in enumerate(text.splitlines(), 1):
-        constant = re.match(r"^\s*\S+\s+([^\s=]+)\s*=", line.split("#", 1)[0])
-        if constant and not re.fullmatch(r"[A-Z](?:[A-Z0-9]|_[A-Z0-9])*", constant[1]):
-            raise ValueError(f"{path}:{line_number}: invalid constant name {constant[1]!r}")
-    try:
-        with redirect_stderr(StringIO()):
-            parsed = parse_message_string(package, path.stem, text)
-    except (ValueError, TypeError, NameError, InvalidSpecification, InvalidValue) as exc:
-        # The upstream parser reports the bad declaration, but not its line.
-        # Re-parse declarations only on failure to provide source diagnostics.
+    @classmethod
+    def from_file(cls, path: Path) -> Message:
+        """Read a package/msg/Type.msg, retaining its original text for viewers."""
+        if path.parent.name != "msg" or path.suffix != ".msg":
+            raise ValueError(f"{path}: expected package/msg/Type.msg")
+        package = path.parent.parent.name
+        text = path.read_text(encoding="utf-8")
+        # Validate constant names before upstream's backtracking regex sees untrusted
+        # names. Keep upstream source unchanged; this guard has linear-time matching.
         for line_number, line in enumerate(text.splitlines(), 1):
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            try:
-                with redirect_stderr(StringIO()):
-                    parse_message_string(package, path.stem, line)
-            except (ValueError, TypeError, NameError, InvalidSpecification, InvalidValue):
-                raise ValueError(f"{path}:{line_number}: {exc}") from exc
-        raise ValueError(f"{path}: {exc}") from exc
+            constant = re.match(r"^\s*\S+\s+([^\s=]+)\s*=", line.split("#", 1)[0])
+            if constant and not re.fullmatch(r"[A-Z](?:[A-Z0-9]|_[A-Z0-9])*", constant[1]):
+                raise ValueError(f"{path}:{line_number}: invalid constant name {constant[1]!r}")
+        try:
+            with redirect_stderr(StringIO()):
+                parsed = parse_message_string(package, path.stem, text)
+        except (ValueError, TypeError, NameError, InvalidSpecification, InvalidValue) as exc:
+            # The upstream parser reports the bad declaration, but not its line.
+            # Re-parse declarations only on failure to provide source diagnostics.
+            for line_number, line in enumerate(text.splitlines(), 1):
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                try:
+                    with redirect_stderr(StringIO()):
+                        parse_message_string(package, path.stem, line)
+                except (ValueError, TypeError, NameError, InvalidSpecification, InvalidValue):
+                    raise ValueError(f"{path}:{line_number}: {exc}") from exc
+            raise ValueError(f"{path}: {exc}") from exc
 
-    fields = []
-    for field in parsed.fields:
-        type_ = field.type
-        if type_.type in {"time", "duration"} and type_.pkg_name is None:
-            raise ValueError(
-                f"{path}: use builtin_interfaces/{type_.type.title()}, not ROS1 {type_.type}"
+        fields = []
+        for field in parsed.fields:
+            type_ = field.type
+            if type_.type in {"time", "duration"} and type_.pkg_name is None:
+                raise ValueError(
+                    f"{path}: use builtin_interfaces/{type_.type.title()}, not ROS1 {type_.type}"
+                )
+            name = f"{type_.pkg_name}/msg/{type_.type}" if type_.pkg_name else type_.type
+            default = field.default_value
+            fields.append(
+                Field(
+                    field.name,
+                    FieldType(
+                        name,
+                        type_.is_array,
+                        type_.array_size,
+                        type_.is_upper_bound,
+                        type_.string_upper_bound,
+                    ),
+                    tuple(default) if isinstance(default, list) else default,
+                )
             )
-        name = f"{type_.pkg_name}/msg/{type_.type}" if type_.pkg_name else type_.type
-        default = field.default_value
-        fields.append(
-            Field(
-                field.name,
-                FieldType(
-                    name,
-                    type_.is_array,
-                    type_.array_size,
-                    type_.is_upper_bound,
-                    type_.string_upper_bound,
-                ),
-                tuple(default) if isinstance(default, list) else default,
-            )
+        return cls(
+            f"{package}/msg/{path.stem}",
+            tuple(fields),
+            tuple(Constant(value.name, value.type, value.value) for value in parsed.constants),
+            path,
+            text,
         )
-    return Message(
-        f"{package}/msg/{path.stem}",
-        tuple(fields),
-        tuple(Constant(value.name, value.type, value.value) for value in parsed.constants),
-        path,
-        text,
-    )
 
 
 class Definitions:
@@ -155,7 +154,7 @@ class Definitions:
             if not root.is_dir():
                 raise ValueError(f"Schema root does not exist: {root}")
             for path in sorted(root.rglob("*.msg")):
-                message = parse_message(path)
+                message = Message.from_file(path)
                 previous = self._messages.get(message.name)
                 if previous is not None:
                     if (previous.fields, previous.constants) != (message.fields, message.constants):

@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 import shutil
 
-from .definitions import Message
+from dimos_message_build.definitions import Message
 
 
 def write_project(output: Path, messages: tuple[Message, ...], module: str, version: str) -> None:

@@ -21,18 +21,18 @@ reads schemas only; it must never import the generated value modules recursively
 from __future__ import annotations
 
 from hashlib import sha256
+from importlib.metadata import entry_points
 from importlib.util import find_spec
 import json
 from pathlib import Path
 import struct
 from threading import RLock
+from types import ModuleType
 from typing import Any, TypeVar, cast, overload
 
 from rosbags.serde.errors import SerdeError
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 from rosbags.typesys.store import Typestore
-
-from .providers import providers
 
 MessageT = TypeVar("MessageT")
 
@@ -160,3 +160,14 @@ def schema(name: str) -> str:
     if _store is None:
         initialize()
     return _schemas[name]
+
+
+def providers() -> tuple[ModuleType, ...]:
+    return tuple(
+        entry.load()
+        for entry in sorted(entry_points(group="dimos.messages"), key=lambda item: item.name)
+    )
+
+
+def schema_roots() -> tuple[Path, ...]:
+    return tuple(Path(provider.schema_root()) for provider in providers())

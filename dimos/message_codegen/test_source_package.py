@@ -27,7 +27,7 @@ import pytest
 from dimos.message_codegen.source_package import configuration
 
 
-def project(root, name, package, definition, dependency=False):
+def project(root, name, package, definition, dependency=False, backend="setuptools"):
     root.mkdir()
     source = root / "interfaces" / package / "msg" / ("Reading.msg" if dependency else "Stamp.msg")
     source.parent.mkdir(parents=True)
@@ -51,6 +51,20 @@ def project(root, name, package, definition, dependency=False):
         "setup(**setup_arguments(Path(__file__).resolve().parent))\n"
     )
     (root / "MANIFEST.in").write_text("include pyproject.toml setup.py\nprune build\n")
+    if backend == "scikit":
+        path = root / "pyproject.toml"
+        text = (
+            path.read_text()
+            .replace(
+                '"setuptools>=70", "wheel",',
+                '"scikit-build-core>=1.0,<2", "dimos-build-config==0.1.0",',
+            )
+            .replace('"setuptools.build_meta"', '"scikit_build_core.build"')
+        )
+        text = text.replace('version = "0.1.0"', 'version = "0.1.0"\ndynamic = ["entry-points"]', 1)
+        path.write_text(text + '\n[[tool.dynamic-metadata]]\nprovider = "dimos"\n')
+        (root / "setup.py").unlink()
+        (root / "MANIFEST.in").unlink()
 
 
 def test_unprepared_inputs_and_paths_outside_project_fail(tmp_path):
@@ -67,7 +81,8 @@ def test_unprepared_inputs_and_paths_outside_project_fail(tmp_path):
         configuration(root)
 
 
-def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_path):
+@pytest.mark.parametrize("backend", ["setuptools", "scikit"])
+def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_path, backend):
     available = os.environ.get("DIMOS_MESSAGE_WHEELHOUSE")
     if not available:
         if os.environ.get("DIMOS_MESSAGE_INSTALL_REQUIRED") == "1":
@@ -107,11 +122,43 @@ def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_pa
     backend = next(wheels.glob("dimos_message_build-*.whl"))
     with zipfile.ZipFile(backend) as archive:
         assert not any(name.endswith(".msg") for name in archive.namelist())
+    if backend == "scikit":
+        provider_source = os.environ.get("DIMOS_BUILD_CONFIG_SOURCE")
+        if not provider_source:
+            pytest.skip("Joint integration requires DIMOS_BUILD_CONFIG_SOURCE from PR #4461")
+        run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "--no-build-isolation",
+                "--wheel-dir",
+                str(wheels),
+                provider_source,
+            ]
+        )
     base, application = tmp_path / "base", tmp_path / "application"
-    project(base, "base-messages", "shared_msgs", "int32 tick\nstring frame\n")
+    project(base, "base-messages", "shared_msgs", "int32 tick\nstring frame\n", backend=backend)
     project(
-        application, "app-messages", "app_msgs", "shared_msgs/Stamp stamp\nfloat64 value\n", True
+        application,
+        "app-messages",
+        "app_msgs",
+        "shared_msgs/Stamp stamp\nfloat64 value\n",
+        True,
+        backend=backend,
     )
+    if backend == "scikit":
+        runtime = application / "src/app_runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "__init__.py").write_text("raise AssertionError('build imported application')")
+        (runtime / "native.rs").write_text("fn main() {}")
+        metadata = application / "pyproject.toml"
+        metadata.write_text(
+            metadata.read_text() + '\n[tool.dimos]\npackage = "src/app_runtime"\n'
+            '[tool.dimos.blueprints]\nreader = "app_runtime:Reader"\n'
+        )
     blocked = tmp_path / "blocked"
     blocked.mkdir()
     for tool in ["cc", "c++", "cmake", "cargo", "rustc", "rustup"]:
@@ -142,8 +189,28 @@ assert type(pickle.loads(pickle.dumps(m)).stamp) is Stamp
 assert 'MSG: shared_msgs/Stamp' in schema(m.__msgtype__)
 assert (Path(package_root())/'pins.json').is_file()
 """
+    if backend == "scikit":
+        check += """
+from importlib.metadata import distribution
+package = distribution('app-messages')
+assert package.read_text('entry_points.txt').count('app_runtime:Reader') == 1
+assert package.locate_file('app_runtime/native.rs').read_text() == 'fn main() {}'
+"""
     run([python, "-I", "-c", check])
-    run([python, "setup.py", "sdist", "--dist-dir", str(tmp_path / "sdists")], cwd=application)
+    if backend == "setuptools":
+        run([python, "setup.py", "sdist", "--dist-dir", str(tmp_path / "sdists")], cwd=application)
+    else:
+        run(
+            [
+                sys.executable,
+                "-m",
+                "build",
+                "--sdist",
+                "--outdir",
+                str(tmp_path / "sdists"),
+                str(application),
+            ]
+        )
     archive = next((tmp_path / "sdists").glob("*.tar.gz"))
     with tarfile.open(archive) as bundle:
         names = bundle.getnames()
@@ -181,3 +248,16 @@ assert (Path(package_root())/'pins.json').is_file()
     source.write_text("shared_msgs/Stamp stamp\nfloat32 value\n")
     run([python, "-m", "pip", "install", "-e", str(application)])
     run([python, "-I", "-c", check + "\nassert 'float32 value' in schema(m.__msgtype__)\n"])
+
+
+def test_explicit_generation_uses_project_config_and_removes_renamed_messages(tmp_path):
+    root = tmp_path / "message-project"
+    project(root, "base-messages", "shared_msgs", "int32 tick\n")
+    command = [sys.executable, "-m", "dimos_message_build.source_package", str(root)]
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    source = root / "interfaces/shared_msgs/msg/Stamp.msg"
+    source.rename(source.with_name("Clock.msg"))
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    generated = root / "build/message-source/python/base_messages/shared_msgs/msg/__init__.py"
+    assert "Clock" in generated.read_text()
+    assert "Stamp" not in generated.read_text()

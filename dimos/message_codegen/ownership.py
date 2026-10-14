@@ -22,8 +22,8 @@ import json
 from pathlib import Path
 import re
 
-from .definitions import Definitions, Message
-from .registry import ABI as ABI
+from dimos_message_build.definitions import Definitions, Message
+from dimos_message_build.registry import ABI as ABI
 
 
 @dataclass(frozen=True)
