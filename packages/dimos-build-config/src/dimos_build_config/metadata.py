@@ -28,4 +28,11 @@ def dynamic_metadata(settings: Mapping[str, Any], project: Mapping[str, Any]) ->
         raise ValueError("The dimos metadata provider requires tool.dimos.package")
     if "dimos.blueprints" in project.get("entry-points", {}):
         raise ValueError("Another declaration already supplies dimos.blueprints")
-    return {"entry-points": {"dimos.blueprints": table.get("blueprints", {})}}
+    entries = {"dimos.blueprints": table.get("blueprints", {})}
+    if "messages" in table:
+        document, _ = read_project()
+        module = table["messages"].get("module", document["project"]["name"].replace("-", "_"))
+        if "dimos.messages" in project.get("entry-points", {}):
+            raise ValueError("Another declaration already supplies dimos.messages")
+        entries["dimos.messages"] = {module: module + "_schemas.provider"}
+    return {"entry-points": entries}

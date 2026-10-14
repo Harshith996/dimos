@@ -239,3 +239,24 @@ def test_resource_only_package_and_environment_conflict(project):
     (project / "src/acme_probe/link").symlink_to(project / "pyproject.toml")
     with pytest.raises(ValueError, match="symlinks"):
         config(env={})
+
+
+def test_message_metadata_coexists_with_blueprints_without_loading_generator(project):
+    path = project / "pyproject.toml"
+    path.write_text(path.read_text() + '\n[tool.dimos.messages]\nmodule = "acme_messages"\n')
+    assert dynamic_metadata({}, {}) == {
+        "entry-points": {
+            "dimos.blueprints": {"probe": "acme_probe.module:Probe"},
+            "dimos.messages": {"acme_messages": "acme_messages_schemas.provider"},
+        }
+    }
+
+
+def test_message_settings_reject_duplicate_entry_points(project):
+    path = project / "pyproject.toml"
+    path.write_text(
+        path.read_text() + "\n[tool.dimos.messages]\n"
+        '[project.entry-points."dimos.messages"]\nother = "other.provider"\n'
+    )
+    with pytest.raises(ValueError, match="Declare dimos.messages only"):
+        config(env={})

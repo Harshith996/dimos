@@ -49,6 +49,54 @@ dimos list
 dimos --transport zenoh --viewer none run acme-probe.probe
 ```
 
+## Optional message definitions
+
+With the matching CDR proposal's `dimos-message-build` wheel available, the same
+package can own messages. Add `dimos-message-build==0.1.0` to
+`build-system.requires`, keep the scikit-build-core backend above, and add:
+
+```toml
+[tool.dimos.messages]
+source = "interfaces"
+module = "acme_messages"
+```
+
+For example, `interfaces/acme_msgs/msg/Reading.msg` contains:
+
+```text
+int32 sequence
+float64 value
+```
+
+Declare `dimos-message-build==0.1.0`, `rosbags==0.11.0`, and `numpy>=1.26.4`
+as project dependencies for these generated Python types. The generated module
+must differ from the application package name. No `setup.py` is required.
+Message-only distributions may omit `tool.dimos.package` and blueprints; keep
+`dynamic = ["entry-points"]` and the `dimos` metadata provider.
+
+```sh
+# Optional inspection step; run in an environment containing the generator.
+dimos-message-generate
+# Builds from .msg inputs automatically; no prerequisite generation step.
+python -m pip install .
+# After editing .msg inputs, regenerate through editable installation:
+python -m pip install -e .
+```
+
+```python
+from acme_messages.acme_msgs.msg import Reading
+reading = Reading(sequence=1, value=21.5)
+```
+
+The explicit command and packaging invoke the same generator and configuration.
+Generated Python values, schemas and native source resources are included in the
+wheel; installing a wheel does not generate or compile. Message generation does
+not compile native modules and never runs at import. Restart Python after schema
+changes. The generator is optional: ordinary source packages retain their thin
+build dependencies and do not require CDR tooling. These proposal tools are not
+published; provision matching local wheels as above. The CDR layer supplies the
+generator; this layer supplies its packaging integration.
+
 ## Native source layout and runtime API
 
 Place all local native inputs under the importable package, for example
@@ -90,7 +138,9 @@ never compile native modules. Compilation belongs to selected-module preparation
 ## Build settings and boundaries
 
 The config provider uses `scikit-build-core.config.default`; the separate metadata
-provider generates the standard entry-point table. Both only read TOML. The defaults
+provider generates the standard entry-point table without importing application code.
+The config provider also invokes the optional message generator when `messages` is
+declared. The defaults
 set `wheel.cmake=false`, `sdist.cmake=false`, `wheel.platlib=false`, `wheel.py-api="py3"`
 and `editable.rebuild=false`. Source files and resources are included in wheel and
 sdist; common build outputs, virtualenvs, `.env*`, private-key files and VCS metadata
