@@ -65,8 +65,8 @@ from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
 from dimos.cli.hardware_cli import app as hardware_app
-from dimos.cli.shell import shell
 from dimos.cli.memory_rows import memory_rows_cmd
+from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
 from dimos.core.global_config import ENV_FILE
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
