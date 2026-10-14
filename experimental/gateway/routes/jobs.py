@@ -21,7 +21,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from experimental.gateway import discovery, responses, store
-from experimental.gateway.state import ApiError, GatewayState
+from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter()
 
@@ -29,25 +29,6 @@ router = APIRouter()
 class ExtrasInstall(BaseModel):
     extras: list[str] = Field(min_length=1)
     app: str | None = None
-
-
-@router.get("/discovery", response_model=responses.DiscoveryStatus)
-async def status(state: GatewayState) -> dict[str, Any]:
-    state.scanner.ensure("startup")
-    return state.scanner.snapshot()
-
-
-@router.post("/discovery/refresh", response_model=responses.DiscoveryStatus)
-async def refresh(state: GatewayState) -> dict[str, Any]:
-    """Scan the blueprints and modules again."""
-    state.scanner.refresh("requested")
-    return state.scanner.snapshot()
-
-
-@router.get("/discovery/blueprints", response_model=responses.Discovered)
-async def discovered(state: GatewayState) -> dict[str, Any]:
-    state.scanner.ensure("startup")
-    return await asyncio.to_thread(state.scanner.discovered)
 
 
 @router.get("/extras", response_model=responses.Extras)
@@ -58,7 +39,7 @@ async def extras(state: GatewayState) -> dict[str, Any]:
     return {"mode": mode, "python": found["python"], "extras": listed}
 
 
-@router.post("/extras/install", response_model=responses.JobStarted)
+@router.post("/extras/install", status_code=202, response_model=responses.JobStarted)
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
     """Install dimos extras with uv, as a job."""
     probed = await state.introspected(["packages"])
@@ -93,12 +74,22 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
     return {"shell": None, "job": job.id, "command": command}
 
 
+def found(state: State, job: str) -> discovery.Job:
+    answer = state.jobs.get(job)
+    if answer is None:
+        raise ApiError(404, f"no job {job}")
+    return answer
+
+
+@router.get("/jobs/{job}", response_model=responses.JobStatus)
+async def job_status(state: GatewayState, job: str) -> dict[str, Any]:
+    """A job (an extras install, a blueprint scan): whether it finished, and its progress."""
+    return found(state, job).status()
+
+
 @router.get("/jobs/{job}/log", response_model=responses.JobLog)
 async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
-    found = state.jobs.get(job)
-    if found is None:
-        raise ApiError(404, f"no job {job}")
-    return found.log(after)
+    return found(state, job).log(after)
 
 
 @router.get("/docs/custom-robot", response_model=responses.CustomRobotGuide)
