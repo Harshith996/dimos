@@ -3,7 +3,7 @@
 `python -m experimental.gateway --socket <path> --dimos-dir <checkout>` serves the HTTP API that dimOS Desktop,
 apps and agents use: blueprints, config, runs and their logs, skills, Dimensional cloud uploads and the first-run
 discovery. `--port 8123` also serves it on `127.0.0.1:8123`; `--detach` starts it in the background. Routes have no
-prefix: Desktop puts them under `/dimos`, so `/runs` here is `/dimos/runs` through Desktop.
+prefix: Desktop puts them under `/dimos-gateway`, so `/runs` here is `/dimos-gateway/runs` through Desktop.
 
 - `GET /openapi.json` lists every route (FastAPI's own document).
 - Events go on zenoh at `<ns>/dimos/events/<type>` (`launch`, `blueprints`, `upload`, `uploads`, `upload-removed`,

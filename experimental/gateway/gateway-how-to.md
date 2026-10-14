@@ -1,7 +1,8 @@
 # Dimos gateway: how do I...?
 
-Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway (Desktop serves
-it under `/dimos`; the gateway's own routes have no prefix). An app's `dimos.yaml` lists each gateway route it calls:
+Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos-gateway/` is the gateway
+(Desktop serves it under `/dimos-gateway`; the gateway's own routes have no prefix). An app's `dimos.yaml` lists
+each gateway route it calls:
 
 ```yaml
 uses:
@@ -13,13 +14,13 @@ uses:
 ## How do I list blueprints?
 
 ```js
-const { blueprints } = await (await fetch("../../dimos/blueprints")).json() // [{ name, kind, importable }]
+const { blueprints } = await (await fetch("../../dimos-gateway/blueprints")).json() // [{ name, kind, importable }]
 ```
 
 ## How do I launch a blueprint?
 
 ```js
-await fetch("../../dimos/runs", {
+await fetch("../../dimos-gateway/runs", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ blueprint: "unitree-go2", replay: true, overrides: { global: { n_workers: 4 } } }),
@@ -29,52 +30,52 @@ await fetch("../../dimos/runs", {
 ## How do I see what's running?
 
 ```js
-const { runs, launch } = await (await fetch("../../dimos/runs")).json() // runs: [{ run_id, blueprint, pid }], launch.phase
+const { runs, launch } = await (await fetch("../../dimos-gateway/runs")).json() // runs: [{ run_id, blueprint, pid }], launch.phase
 getZenoh().subscribeDimos("launch", (launch) => show(launch.phase)) // live phase changes; getZenoh from ./dim-app/mod.js
 ```
 
 ## How do I stop a blueprint?
 
 ```js
-await fetch("../../dimos/runs/stop", { method: "POST" }) // or body { runId } for a specific run
+await fetch("../../dimos-gateway/runs/stop", { method: "POST" }) // or body { runId } for a specific run
 ```
 
 ## How do I relaunch?
 
 ```js
-await fetch("../../dimos/runs/restart", { method: "POST" }) // the last launch again, with the config saved now
+await fetch("../../dimos-gateway/runs/restart", { method: "POST" }) // the last launch again, with the config saved now
 ```
 
 ## How do I read a run's logs?
 
 ```js
-const page = await (await fetch("../../dimos/runs/latest/log?level=warning&limit=200")).json() // { records, offset }
-const newer = await (await fetch(`../../dimos/runs/latest/log?after=${page.offset}`)).json() // tail
+const page = await (await fetch("../../dimos-gateway/runs/latest/log?level=warning&limit=200")).json() // { records, offset }
+const newer = await (await fetch(`../../dimos-gateway/runs/latest/log?after=${page.offset}`)).json() // tail
 ```
 
 ## How do I list a blueprint's modules, their streams and RPCs?
 
 ```js
-const { modules } = await (await fetch("../../dimos/blueprints/unitree-go2")).json()
+const { modules } = await (await fetch("../../dimos-gateway/blueprints/unitree-go2")).json()
 // modules[i]: { name, rpcs, skills, streams: [{ name, type, direction, topic }] }
 ```
 
 ## How do I list every module's inputs and outputs?
 
 ```js
-const { modules } = await (await fetch("../../dimos/catalog")).json() // [{ name, inputs, outputs, skills }]; slow the first time
+const { modules } = await (await fetch("../../dimos-gateway/catalog")).json() // [{ name, inputs, outputs, skills }]; slow the first time
 ```
 
 ## How do I list skills?
 
 ```js
-const { skills } = await (await fetch("../../dimos/skills")).json() // the running blueprint's: [{ name, module, params }]
+const { skills } = await (await fetch("../../dimos-gateway/skills")).json() // the running blueprint's: [{ name, module, params }]
 ```
 
 ## How do I call a skill?
 
 ```js
-const result = await (await fetch("../../dimos/skills/call", {
+const result = await (await fetch("../../dimos-gateway/skills/call", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ skill: "execute_sport_command", args: { command_name: "FrontJump" } }),
@@ -84,7 +85,7 @@ const result = await (await fetch("../../dimos/skills/call", {
 ## How do I list robots and their recommended blueprints?
 
 ```js
-const { robots } = await (await fetch("../../dimos/robots")).json()
+const { robots } = await (await fetch("../../dimos-gateway/robots")).json()
 robots.go2.recommended // ["unitree-go2-basic", ...]
 robots.go2.blueprints["unitree-go2"] // { title, description, starter, recommended_config }
 ```
@@ -92,20 +93,20 @@ robots.go2.blueprints["unitree-go2"] // { title, description, starter, recommend
 ## How do I get dimos's python?
 
 ```js
-const { python } = await (await fetch("../../dimos/python")).json() // run `${python} -c 'import dimos'`
+const { python } = await (await fetch("../../dimos-gateway/python")).json() // run `${python} -c 'import dimos'`
 ```
 
 ## How do I read a blueprint's config?
 
 ```js
-const { modules } = await (await fetch("../../dimos/blueprints/unitree-go2/config")).json()
+const { modules } = await (await fetch("../../dimos-gateway/blueprints/unitree-go2/config")).json()
 // modules[i]: { module, args: [{ name, type, default, value }] }
 ```
 
 ## How do I save a blueprint's config?
 
 ```js
-await fetch("../../dimos/blueprints/unitree-go2/config", {
+await fetch("../../dimos-gateway/blueprints/unitree-go2/config", {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ overrides: { go2connection: { lidar: false } } }), // replaces the saved config; null drops a field
