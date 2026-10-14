@@ -275,7 +275,16 @@ pub fn truncate_to_safe(
     // Hold the standoff only when blocked. A clean run to the goal has nothing
     // to stand off from.
     if blocked {
-        return back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
+        let held = back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
+        // A robot already at the standoff has nothing left to follow.
+        return match held.last() {
+            Some(end)
+                if (end.0 - start_pose.0).hypot(end.1 - start_pose.1) >= config.goal_tolerance =>
+            {
+                held
+            }
+            _ => Vec::new(),
+        };
     }
     waypoints
 }
@@ -1009,6 +1018,26 @@ mod tests {
             truncate_to_safe(&surface_graph(&near), &cached, robot, &cfg).is_empty(),
             "inside the standoff -> stop"
         );
+    }
+
+    #[test]
+    fn truncate_stops_a_robot_parked_at_the_standoff() {
+        let cfg = truncate_config();
+        let cached: Vec<VoxelKey> = (0..40).map(|x| (x, 0, 0)).collect();
+        let blocked: Vec<VoxelKey> = (0..40).filter(|&x| x != 35).map(|x| (x, 0, 0)).collect();
+        let standoff_x = surface_point_xyz(34, 0, 0, VOXEL).0 - BEST_EFFORT_DISTANCE_M;
+        let z = surface_point_xyz(0, 0, 0, VOXEL).2;
+
+        // Parked short of the standoff, inside the arrival tolerance: nothing left to follow.
+        for short in [0.0, 0.1, 0.2, 0.29] {
+            let robot = (standoff_x - short, 0.0, z);
+            let wp = truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg);
+            assert!(wp.is_empty(), "{short} m short of the standoff: {wp:?}");
+        }
+
+        // Further back, the standoff is still ahead to drive to.
+        let robot = (standoff_x - 0.5, 0.0, z);
+        assert!(!truncate_to_safe(&surface_graph(&blocked), &cached, robot, &cfg).is_empty());
     }
 
     #[test]
