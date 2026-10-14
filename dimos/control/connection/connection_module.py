@@ -103,8 +103,9 @@ class ConnectionStatus:
             or ``None`` if never.
         last_command_time: When a command was last accepted, in Unix seconds,
             or ``None`` if never.
-        deadman_fired: Commands stopped arriving, the robot was halted, and no
-            command has been accepted since.
+        deadman_fired: The robots whose commands stopped arriving. Each one's
+            silence halted the whole module, and no command for it has been
+            accepted since. Empty when none is quiet.
         last_rejection: Why the last refused command was refused, or ``None``.
         last_error: The last failure in the driver (``write``, ``read_state``,
             ``halt``, or a reading that does not match the description), or
@@ -114,7 +115,7 @@ class ConnectionStatus:
     connected: bool
     last_state_time: float | None
     last_command_time: float | None
-    deadman_fired: bool
+    deadman_fired: tuple[str, ...]
     last_rejection: str | None
     last_error: str | None
 
@@ -147,9 +148,11 @@ class ConnectionModule(Module, ABC):
     ones in between are skipped. Values are checked with ``validate_command``
     (unknown keys, limits) before ``write`` sees them.
 
-    Deadman: once a command has been accepted, if no other is accepted within
-    the shortest ``deadman_timeout_s`` among the descriptions, ``halt`` is
-    called once. The next accepted command starts it again.
+    Deadman: each robot has its own. Once a command for a robot has been
+    accepted, if no other command for that robot is accepted within its
+    ``deadman_timeout_s``, ``halt`` is called once, for the whole module. The
+    next accepted command for that robot starts its deadman again. Commands
+    for one robot never keep another robot's deadman alive.
 
     ``write`` and ``halt`` never run at the same time. Commands and the
     deadman share the module's event loop, so a ``write`` that hangs stops
@@ -166,7 +169,6 @@ class ConnectionModule(Module, ABC):
         super().__init__(**kwargs)
         self._session_id = ""
         self._descriptions: dict[str, ControlDescription] = {}
-        self._deadman_s = 0.0
         # Guards the status fields and the stop flag.
         self._lock = threading.Lock()
         # Held around every write() and halt(), so they never overlap, and
@@ -181,10 +183,10 @@ class ConnectionModule(Module, ABC):
         self._outputs: list[tuple[str, Out[Any], Callable[[Values, Any, float], Any], Any]] = []
         self._state_thread: threading.Thread | None = None
         # Only touched on the module's event loop, where commands are handled.
-        self._deadman_timer: asyncio.TimerHandle | None = None
+        self._deadman_timers: dict[str, asyncio.TimerHandle] = {}
         self._last_state_time: float | None = None
         self._last_command_time: float | None = None
-        self._deadman_fired = False
+        self._deadman_fired: set[str] = set()
         self._last_rejection: str | None = None
         self._last_error: str | None = None
         # When a rejection (True) or an error (False) was last logged.
@@ -250,7 +252,6 @@ class ConnectionModule(Module, ABC):
         if not sources or len(set(sources)) != len(sources):
             raise ValueError(f"{self._label}: robot names must be present and unique: {sources}")
         self._descriptions = {description.source: description for description in descriptions}
-        self._deadman_s = min(description.deadman_timeout_s for description in descriptions)
         listeners = self._plan_ports()
 
         self.connect()
@@ -292,7 +293,7 @@ class ConnectionModule(Module, ABC):
                 connected=self._connected,
                 last_state_time=self._last_state_time,
                 last_command_time=self._last_command_time,
-                deadman_fired=self._deadman_fired,
+                deadman_fired=tuple(sorted(self._deadman_fired)),
                 last_rejection=self._last_rejection,
                 last_error=self._last_error,
             )
@@ -469,8 +470,8 @@ class ConnectionModule(Module, ABC):
             return
         with self._lock:
             self._last_command_time = time.time()
-            self._deadman_fired = False
-        self._start_deadman()
+            self._deadman_fired.discard(source)
+        self._start_deadman(source)
         try:
             with self._hardware_lock:
                 if not self._connected:
@@ -478,24 +479,26 @@ class ConnectionModule(Module, ABC):
                 self.write(result.values)
         except Exception as error:
             self._report(f"write for {source!r} failed: {type(error).__name__}: {error}")
-            self._cancel_deadman()
+            self._cancel_deadman(source)
             self._halt()
 
-    def _start_deadman(self) -> None:
-        self._cancel_deadman()
+    def _start_deadman(self, source: str) -> None:
+        self._cancel_deadman(source)
         loop = asyncio.get_running_loop()
-        self._deadman_timer = loop.call_later(self._deadman_s, self._deadman_expired)
+        timeout_s = self._descriptions[source].deadman_timeout_s
+        self._deadman_timers[source] = loop.call_later(timeout_s, self._deadman_expired, source)
 
-    def _cancel_deadman(self) -> None:
-        if self._deadman_timer is not None:
-            self._deadman_timer.cancel()
-            self._deadman_timer = None
+    def _cancel_deadman(self, source: str) -> None:
+        timer = self._deadman_timers.pop(source, None)
+        if timer is not None:
+            timer.cancel()
 
-    def _deadman_expired(self) -> None:
-        self._deadman_timer = None
+    def _deadman_expired(self, source: str) -> None:
+        self._deadman_timers.pop(source, None)
         with self._lock:
-            self._deadman_fired = True
-        logger.warning(f"{self._label}: no command for {self._deadman_s} s, halting")
+            self._deadman_fired.add(source)
+        timeout_s = self._descriptions[source].deadman_timeout_s
+        logger.warning(f"{self._label}: no command for {source!r} in {timeout_s} s, halting")
         self._halt()
 
     def _halt(self) -> None:

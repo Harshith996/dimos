@@ -433,7 +433,7 @@ def test_the_deadman_halts_once_then_starts_again_on_the_next_command(
     r = rig()
     r.move(joint1=0.1)
     assert wait_until(lambda: r.module.halts == 1)
-    assert r.module.status().deadman_fired
+    assert r.module.status().deadman_fired == ("mock",)
     time.sleep(4 * DEADMAN_S)
     assert r.module.halts == 1
 
@@ -451,6 +451,28 @@ def test_commands_for_other_robots_do_not_feed_the_deadman(rig: Callable[..., Ri
         r.send("position_command", JointState())
         time.sleep(DEADMAN_S / 5)
     assert r.module.halts == 1
+
+
+def test_each_robot_has_its_own_deadman(rig: Callable[..., Rig]) -> None:
+    """Base commands keep flowing after the body's stop; the body still halts."""
+    r = rig(BodyAndBase)
+    body = MotorCommandArray(q=[0.1, 0.2], dq=[0, 0], kp=[1, 1], kd=[1, 1], tau=[0, 0])
+    forward = Twist(Vector3(0.1, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
+    r.send("motor_command", body)
+    deadline = time.monotonic() + 0.3  # body deadman is 0.05 s, base's is 0.1 s
+    while time.monotonic() < deadline:
+        r.send("base_command", forward)
+        time.sleep(0.01)
+    assert r.module.halts == 1
+    assert r.module.status().deadman_fired == ("g1",)
+
+    # With base commands gone too, the base halts on its own deadman.
+    assert wait_until(lambda: r.module.status().deadman_fired == ("base", "g1"))
+    assert r.module.halts == 2
+
+    # A new body command clears only the body.
+    r.send("motor_command", body)
+    assert wait_until(lambda: r.module.status().deadman_fired == ("base",))
 
 
 def test_a_failing_write_halts_shows_the_error_and_carries_on(
@@ -513,7 +535,7 @@ def test_describe_control_and_status_are_rpcs_that_cross_processes(
     assert pickle.loads(pickle.dumps(status)) == status
     assert status.connected
     assert status.last_command_time is None
-    assert not status.deadman_fired
+    assert status.deadman_fired == ()
     assert status.last_rejection is None
     assert status.last_error is None
 
