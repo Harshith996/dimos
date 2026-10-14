@@ -24,7 +24,6 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -53,7 +52,6 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
     odometry: In[Odometry]
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
-    clicked_point: In[PointStamped]
     target: In[PoseStamped]
     stop_movement: In[Bool]
 
@@ -102,10 +100,6 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         )
         self.register_disposable(Disposable(self.goal_request.subscribe(self._on_goal)))
         self.register_disposable(Disposable(self.target.subscribe(self._on_goal)))
-
-        self.register_disposable(
-            Disposable(self.clicked_point.subscribe(lambda pt: self._on_goal(pt.to_pose_stamped())))
-        )
 
         if self.stop_movement.transport is not None:
             self.register_disposable(
