@@ -414,6 +414,55 @@ fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> b
     }
 }
 
+/// The worker's record of the active goal between passes.
+#[derive(Default)]
+struct GoalProgress {
+    blocked: Option<Blocked>,
+    followed: Option<GoalId>,
+    last_path_at: Option<Instant>,
+}
+
+impl GoalProgress {
+    /// Time left before the blocked goal is aborted.
+    fn blocked_remaining(&self, timeout: Duration) -> Option<Duration> {
+        self.blocked
+            .map(|blocked| blocked.remaining(timeout, Instant::now()))
+    }
+
+    /// Take the blocked goal once it has run out the timeout.
+    fn take_timed_out(&mut self, timeout: Duration) -> Option<Blocked> {
+        let timed_out = self
+            .blocked
+            .filter(|b| b.remaining(timeout, Instant::now()).is_zero())?;
+        self.blocked = None;
+        Some(timed_out)
+    }
+
+    /// Mark the goal blocked, keeping when its block began.
+    fn block(&mut self, goal: Goal, reason: &'static str) {
+        self.blocked = Some(Blocked::of(goal, reason, self.blocked, Instant::now()));
+    }
+
+    /// Whether an arrival stops the follower, which then follows nothing.
+    fn arrive(&mut self, goal: GoalId) -> bool {
+        let stop = stop_on_arrival(self.followed, goal);
+        if stop {
+            self.followed = None;
+        }
+        stop
+    }
+
+    /// Follow the goal's new path. Milliseconds since the last path, or -1.
+    fn follow(&mut self, goal: GoalId, produced: Instant) -> f64 {
+        let since_last_ms = self
+            .last_path_at
+            .map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
+        self.last_path_at = Some(produced);
+        self.followed = Some(goal);
+        since_last_ms
+    }
+}
+
 /// Owns the planner graph and does map mutation, publishing, and replanning
 /// off the handle loop. Woken by the handlers.
 struct Worker {
@@ -434,7 +483,6 @@ struct Worker {
 impl Worker {
     async fn run(self) {
         let mut planner = Planner::new(self.config.worker_threads);
-        let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         let mut viz = RegionViz::new(
             (self.config.viz_region_m / self.config.voxel_size).round() as i32,
@@ -442,14 +490,13 @@ impl Worker {
             self.config.viz_sweep_regions as usize,
         );
         let mut seed_progress = SeedProgress::default();
-        let mut blocked: Option<Blocked> = None;
-        let mut followed: Option<GoalId> = None;
+        let mut progress = GoalProgress::default();
         let blocked_timeout = Duration::from_secs_f32(self.config.blocked_timeout_s);
         loop {
             let seeding = seed_progress.in_flight();
             let wait = [
                 seeding.then_some(SEED_SETTLE),
-                blocked.map(|blocked| blocked.remaining(blocked_timeout, Instant::now())),
+                progress.blocked_remaining(blocked_timeout),
             ]
             .into_iter()
             .flatten()
@@ -467,7 +514,8 @@ impl Worker {
                 seed_progress.finish();
             }
             if !woke {
-                self.abort_if_timed_out(&mut blocked, blocked_timeout).await;
+                self.abort_if_timed_out(&mut progress, blocked_timeout)
+                    .await;
                 continue;
             }
             loop {
@@ -488,10 +536,10 @@ impl Worker {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 }
                 if replan_due(goal_changed, live_update) {
-                    self.maybe_replan(&mut planner, &mut last_path_at, &mut blocked, &mut followed)
-                        .await;
+                    self.maybe_replan(&mut planner, &mut progress).await;
                 }
-                self.abort_if_timed_out(&mut blocked, blocked_timeout).await;
+                self.abort_if_timed_out(&mut progress, blocked_timeout)
+                    .await;
                 // Live updates apply first, then one seed region per pass.
                 let (seed, queued) = {
                     let mut queue = self.seed_regions.lock().expect("seed mutex");
@@ -679,12 +727,10 @@ impl Worker {
     }
 
     /// Abort a goal that could not be planned for the whole timeout.
-    async fn abort_if_timed_out(&self, blocked: &mut Option<Blocked>, timeout: Duration) {
-        let Some(timed_out) = blocked.filter(|b| b.remaining(timeout, Instant::now()).is_zero())
-        else {
+    async fn abort_if_timed_out(&self, progress: &mut GoalProgress, timeout: Duration) {
+        let Some(timed_out) = progress.take_timed_out(timeout) else {
             return;
         };
-        *blocked = None;
         if self.clear_goal(timed_out.goal) {
             self.status
                 .report(Report::new(
@@ -697,19 +743,13 @@ impl Worker {
     }
 
     /// Gate and publish a replan. The planning itself lives in Planner::plan.
-    async fn maybe_replan(
-        &self,
-        planner: &mut Planner,
-        last_path_at: &mut Option<Instant>,
-        blocked: &mut Option<Blocked>,
-        followed: &mut Option<GoalId>,
-    ) {
+    async fn maybe_replan(&self, planner: &mut Planner, progress: &mut GoalProgress) {
         let Some(goal) = *self.active_goal.lock().expect("goal mutex") else {
-            *blocked = None;
+            progress.blocked = None;
             return;
         };
         let Some(start) = self.base_position() else {
-            *blocked = Some(Blocked::of(goal, NO_POSE, *blocked, Instant::now()));
+            progress.block(goal, NO_POSE);
             return;
         };
         let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
@@ -720,24 +760,21 @@ impl Worker {
         let (status, reason) = outcome.status();
         let report =
             Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
-        *blocked = match outcome {
-            Replan::Planned(Plan::Blocked) => {
-                Some(Blocked::of(goal, NO_SAFE_PATH, *blocked, Instant::now()))
-            }
-            _ => None,
-        };
+        match outcome {
+            Replan::Planned(Plan::Blocked) => progress.block(goal, NO_SAFE_PATH),
+            _ => progress.blocked = None,
+        }
         let waypoints = match outcome {
             Replan::Reached => {
-                if stop_on_arrival(*followed, goal.id) {
+                if progress.arrive(goal.id) {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
-                    *followed = None;
                 }
                 self.clear_goal(goal);
                 self.status.report(report).await;
                 return;
             }
             Replan::Planned(Plan::Blocked) => {
-                *followed = None;
+                progress.followed = None;
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 self.status.report(report).await;
                 return;
@@ -745,9 +782,7 @@ impl Worker {
             Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
         };
         let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
-        let produced = Instant::now();
-        let since_last_ms = last_path_at.map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
-        *last_path_at = Some(produced);
+        let since_last_ms = progress.follow(goal.id, Instant::now());
 
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
@@ -759,7 +794,6 @@ impl Worker {
             "path planned"
         );
         publish_path(&self.path, &path_msg).await;
-        *followed = Some(goal.id);
         self.status.report(report).await;
     }
 
