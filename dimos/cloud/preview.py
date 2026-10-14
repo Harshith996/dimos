@@ -268,7 +268,7 @@ def build(store: Store) -> dict[str, Any] | None:
         if odom_meta is not None:
             doc["streams"]["odom"] = odom_meta
         trim_timing(doc)
-    except Exception as exc:  # optional report must not break a preview
+    except Exception as exc:
         logger.warning("Preview timing unavailable", error=str(exc))
     return doc
 

@@ -195,7 +195,7 @@ def test_timing_respects_full_wire_json_budget(
     assert doc is not None and "timing" in doc
     # Match HttpCloudRequest's JSON encoding, including whitespace.
     size = len(json.dumps(doc, allow_nan=False).encode())
-    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size, raising=False)
+    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size)
     assert preview.build(recording) == doc  # exact boundary fits
     monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size - 1)
     doc.pop("timing")
