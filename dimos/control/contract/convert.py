@@ -46,29 +46,15 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
-#: The command inputs a robot driver may declare, by port name, and the
-#: message each carries. Each JointState input reads one field: the one it is
-#: named after.
-COMMAND_PORTS: Mapping[str, type] = {
-    "position_command": JointState,
-    "velocity_command": JointState,
-    "motor_command": MotorCommandArray,
-    "base_command": Twist,
-}
-#: The reading outputs a robot driver may declare, by port name, and the
-#: message each carries.
-STATE_PORTS: Mapping[str, type] = {
-    "joint_state": JointState,
-    "odom": PoseStamped,
-    "base_velocity": Twist,
-    "imu": Imu,
-}
-
 #: The JointState fields, each named after the interface it carries.
-JOINT_STATE_FIELDS: tuple[str, ...] = (Interface.POSITION, Interface.VELOCITY, Interface.EFFORT)
+JOINT_STATE_FIELDS: tuple[Interface, ...] = (
+    Interface.POSITION,
+    Interface.VELOCITY,
+    Interface.EFFORT,
+)
 #: What a MotorCommandArray carries for each joint, in its field order
 #: q, dq, tau, kp, kd.
-MOTOR_INTERFACES: tuple[str, ...] = (
+MOTOR_INTERFACES: tuple[Interface, ...] = (
     Interface.POSITION,
     Interface.VELOCITY,
     Interface.EFFORT,
@@ -76,11 +62,11 @@ MOTOR_INTERFACES: tuple[str, ...] = (
     Interface.KD,
 )
 #: What a Twist carries for a base: forwards, leftwards, turning.
-TWIST_INTERFACES: tuple[str, ...] = (Interface.VX, Interface.VY, Interface.WZ)
+TWIST_INTERFACES: tuple[Interface, ...] = (Interface.VX, Interface.VY, Interface.WZ)
 #: What a PoseStamped carries for a base: where it is and which way it faces.
-POSE_INTERFACES: tuple[str, ...] = (Interface.X, Interface.Y, Interface.YAW)
+POSE_INTERFACES: tuple[Interface, ...] = (Interface.X, Interface.Y, Interface.YAW)
 #: What an Imu carries: orientation, turn rates, accelerations.
-IMU_INTERFACES: tuple[str, ...] = (
+IMU_INTERFACES: tuple[Interface, ...] = (
     Interface.QX,
     Interface.QY,
     Interface.QZ,
@@ -102,8 +88,7 @@ def motor_joints(descriptions: Sequence[ControlDescription]) -> list[str]:
     and the driver must both build the order with this.
 
     Args:
-        descriptions: Everything one driver module runs, in the order its
-            ``describe_control`` returns them.
+        descriptions: The robots whose joints the message carries, in order.
     """
     return [
         f"{d.source}{SEPARATOR}{r.name}"

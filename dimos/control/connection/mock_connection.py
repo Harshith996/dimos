@@ -15,7 +15,8 @@
 """A pretend robot arm, for running and testing without hardware.
 
 It takes joint positions on ``position_command`` and reports them on
-``joint_state``. Its joints are wherever they were last told to be, at once.
+``joint_state``. Its joints are wherever they were last told to be, at once,
+and it reports every other reading as the last value it was told, or zero.
 It keeps the latest commands passed to ``write`` and counts calls to
 ``halt``, so a test can see what reached the "hardware".
 """
@@ -23,40 +24,33 @@ It keeps the latest commands passed to ``write`` and counts calls to
 from __future__ import annotations
 
 from collections import deque
-import math
+from pathlib import Path
 from typing import Any
 
-from dimos.control.connection.connection_module import ConnectionModule
-from dimos.control.contract.description import (
-    ControlDescription,
-    Limits,
-    Resource,
-    ResourceKind,
-)
-from dimos.control.contract.keys import Interface, Key, Unit
-from dimos.core.module import ModuleConfig
+from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
+from dimos.control.contract.ports import JointPort
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
+
+#: Seven turning joints, joint1 to joint7, each allowed one turn either way.
+MOCK_ARM_MODEL = RobotModel.from_file(Path(__file__).with_name("mock_arm.urdf"))
 
 
-class MockConnectionConfig(ModuleConfig):
+class MockConnectionConfig(ConnectionConfig):
     """Settings for ``MockConnectionModule``.
 
     Attributes:
-        source: The arm's name, the first part of every key, e.g. "mock".
-        joints: How many joints, named joint1, joint2, ...
-        position_limit: How far each joint may be told to go either side of
-            0, in radians. A command past it is refused.
-        state_rate_hz: How many times a second it reports its joints.
-        deadman_timeout_s: How long it waits for a command, in seconds,
-            before halting.
+        source: The arm's name, the first part of every key.
+        model: The arm's model; the seven-joint ``MOCK_ARM_MODEL`` unless
+            replaced.
+        position_command: What the position port drives: every joint in the
+            model unless told otherwise.
     """
 
     source: str = "mock"
-    joints: int = 7
-    position_limit: float = math.pi
-    state_rate_hz: float = 100.0
-    deadman_timeout_s: float = 0.1
+    model: RobotModel | None = MOCK_ARM_MODEL
+    position_command: JointPort = JointPort()
 
 
 class MockConnectionModule(ConnectionModule):
@@ -75,32 +69,10 @@ class MockConnectionModule(ConnectionModule):
         self.halts = 0
         self._readings: dict[str, float] = {}
 
-    def describe(self) -> ControlDescription | list[ControlDescription]:
-        source = self.config.source
-        joints = [f"joint{i}" for i in range(1, self.config.joints + 1)]
-        limit = Limits(-self.config.position_limit, self.config.position_limit)
-        return ControlDescription(
-            source=source,
-            resources=tuple(
-                Resource(
-                    name=joint,
-                    kind=ResourceKind.JOINT,
-                    state_interfaces=(Interface.POSITION,),
-                    command_interfaces=(Interface.POSITION,),
-                    units={Interface.POSITION: Unit.RAD},
-                )
-                for joint in joints
-            ),
-            limits={Key.of(source, joint, Interface.POSITION): limit for joint in joints},
-            state_rate_hz=self.config.state_rate_hz,
-            deadman_timeout_s=self.config.deadman_timeout_s,
-        )
-
     def connect(self) -> None:
-        descriptions = self.describe_control().descriptions
-        self._readings = {key: 0.0 for d in descriptions for key in d.state_keys()}
+        self._readings = dict.fromkeys(self.description.state_keys(), 0.0)
 
-    def read_state(self) -> dict[str, float] | None:
+    def read_state(self) -> dict[str, float]:
         return dict(self._readings)
 
     def write(self, values: dict[str, float]) -> None:

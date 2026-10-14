@@ -21,7 +21,6 @@ in-process transport, so nothing touches the network.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from dataclasses import replace
 import math
 import pickle
 import threading
@@ -30,13 +29,13 @@ from typing import Any
 
 import pytest
 
-from dimos.control._control_test_helpers import turning_joints
-from dimos.control.connection.connection_module import ConnectionDescription, ConnectionStatus
-from dimos.control.connection.mock_connection import MockConnectionModule
-from dimos.control.contract.description import ControlDescription, Limits
-from dimos.control.contract.keys import Interface, Key
-from dimos.control.contract.presets import imu_resource, twist_base_description
+from dimos.control.connection.connection_module import ConnectionStatus
+from dimos.control.connection.mock_connection import MockConnectionConfig, MockConnectionModule
+from dimos.control.contract.description import Limits
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.ports import JointPort, MotorPort, TwistPort
 from dimos.control.contract.validate import DescriptionError
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -47,6 +46,14 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
 JOINT1 = "mock/joint1/position"
 DEADMAN_S = 0.05
+JOINTS = ["joint1", "joint2"]
+#: Every reading a ``BodyAndBase`` reports, all zero but a level IMU.
+BODY_AND_BASE_READINGS = {
+    **{f"g1/{j}/{i}": 0.0 for j in JOINTS for i in ("position", "velocity", "effort")},
+    **{f"g1/imu/{i}": 0.0 for i in ("qx", "qy", "qz", "gx", "gy", "gz", "ax", "ay", "az")},
+    "g1/imu/qw": 1.0,
+    **{f"g1/base/{i}": 0.0 for i in ("x", "y", "yaw", "vx", "vy", "wz")},
+}
 
 
 class LocalTransport:
@@ -89,7 +96,7 @@ class Rig:
 
     def move(self, **positions: float) -> None:
         """Send joint positions on ``position_command``, e.g. ``move(joint1=0.5)``."""
-        names = [f"mock/{joint}" for joint in positions]
+        names = [f"{self.module.config.source}/{joint}" for joint in positions]
         self.send("position_command", JointState(name=names, position=list(positions.values())))
 
     def sent(self, port: str) -> list[Any]:
@@ -125,8 +132,19 @@ def writes(r: Rig) -> list[dict[str, float]]:
     return list(r.module.writes)
 
 
+class BodyAndBaseConfig(MockConnectionConfig):
+    """A two-joint body held by stiffness and damping, on a base, with an IMU."""
+
+    source: str = "g1"
+    position_command: JointPort = JointPort(joints=JOINTS)
+    motor_command: MotorPort = MotorPort(joints=JOINTS)
+    base_command: TwistPort = TwistPort(
+        range=Twist(linear=Vector3(1.0, 1.0, 0.0), angular=Vector3(0.0, 0.0, 1.0))
+    )
+
+
 class BodyAndBase(MockConnectionModule):
-    """Two robots: a two-joint PD body "g1" with an IMU, and a base "base"."""
+    config: BodyAndBaseConfig
 
     motor_command: In[MotorCommandArray]
     base_command: In[Twist]
@@ -134,49 +152,23 @@ class BodyAndBase(MockConnectionModule):
     base_velocity: Out[Twist]
     imu: Out[Imu]
 
-    def describe(self) -> list[ControlDescription]:
-        limits = {
-            Key.of("base", "base", axis): Limits(-1.0, 1.0)
-            for axis in (Interface.VX, Interface.VY, Interface.WZ)
-        }
-        return [
-            turning_joints(
-                "g1",
-                ["j1", "j2"],
-                state=(Interface.POSITION, Interface.VELOCITY, Interface.EFFORT),
-                command=(
-                    Interface.POSITION,
-                    Interface.VELOCITY,
-                    Interface.EFFORT,
-                    Interface.KP,
-                    Interface.KD,
-                ),
-                others=[imu_resource()],
-                state_rate_hz=500.0,
-                deadman_timeout_s=0.05,
-            ),
-            # The preset's defaults: it reports where it is and how fast.
-            twist_base_description("base", limits=limits),
-        ]
-
 
 class PushedBodyAndBase(BodyAndBase):
     """Never polled: readings only go out when the test publishes them."""
 
-    def read_state(self) -> dict[str, float] | None:
-        return None
+    def read_state(self) -> dict[str, float]:
+        return {}
+
+
+class PositionAndVelocityConfig(MockConnectionConfig):
+    position_command: JointPort = JointPort(joints=["joint1"])
+    velocity_command: JointPort = JointPort(interface=Interface.VELOCITY, joints=["joint1"])
 
 
 class PositionAndVelocity(MockConnectionModule):
-    velocity_command: In[JointState]
+    config: PositionAndVelocityConfig
 
-    def describe(self) -> ControlDescription:
-        return turning_joints(
-            "mock",
-            ["joint1"],
-            state=(Interface.POSITION,),
-            command=(Interface.POSITION, Interface.VELOCITY),
-        )
+    velocity_command: In[JointState]
 
 
 class SlowWrite(MockConnectionModule):
@@ -208,57 +200,80 @@ class Watched(MockConnectionModule):
         super().connect()
 
 
-class BadDescription(Watched):
-    def describe(self) -> ControlDescription:
-        arm = super().describe()
-        assert isinstance(arm, ControlDescription)
-        return replace(arm, state_rate_hz=0.0)
-
-
-class NoVelocityInput(Watched):
-    def describe(self) -> ControlDescription:
-        return turning_joints(
-            "mock",
-            ["joint1"],
-            state=(Interface.POSITION,),
-            command=(Interface.POSITION, Interface.VELOCITY),
-        )
-
-
-class NoImuOutput(Watched):
-    def describe(self) -> ControlDescription:
-        return turning_joints(
-            "mock",
-            ["joint1"],
-            state=(Interface.POSITION,),
-            command=(Interface.POSITION,),
-            others=[imu_resource()],
-        )
+class NoVelocityPort(Watched):
+    config: PositionAndVelocityConfig  # type: ignore[assignment]
 
 
 class WrongPortType(Watched):
     position_command: In[Twist]  # type: ignore[assignment]
 
 
+class TwoJointStateOutputs(Watched):
+    joint_state_too: Out[JointState]
+
+
+class TwoBasesConfig(BodyAndBaseConfig):
+    cmd_vel: TwistPort = TwistPort(range=Twist())
+
+
+class TwoBases(BodyAndBase):
+    config: TwoBasesConfig  # type: ignore[assignment]
+    cmd_vel: In[Twist]
+
+    connected = False
+
+    def connect(self) -> None:
+        self.connected = True
+        super().connect()
+
+
 @pytest.mark.parametrize(
-    ("cls", "error", "match"),
+    ("cls", "config", "error", "match"),
     [
-        (BadDescription, DescriptionError, "state_rate_hz"),
-        (NoVelocityInput, ValueError, r"no declared input port carries \['mock/joint1/velocity'\]"),
-        (NoImuOutput, ValueError, "no declared output port carries"),
-        (WrongPortType, TypeError, "position_command must carry JointState"),
+        (Watched, {"state_rate_hz": 0.0}, DescriptionError, "state_rate_hz"),
+        (Watched, {"model": None}, ValueError, "'position_command' is a JointPort, which needs"),
+        (NoVelocityPort, {}, ValueError, "no input port called 'velocity_command'"),
+        (WrongPortType, {}, ValueError, "'position_command' must carry JointState"),
+        (TwoJointStateOutputs, {}, ValueError, "both report JointState"),
+        (TwoBases, {}, ValueError, "'base_command' and 'cmd_vel' both drive the base"),
     ],
 )
-def test_start_fails_before_connecting_on_a_bad_description_or_ports(
-    cls: type[Watched], error: type[Exception], match: str
+def test_start_fails_before_connecting_on_a_bad_config_or_ports(
+    cls: type[Watched | TwoBases], config: dict[str, Any], error: type[Exception], match: str
 ) -> None:
-    module = cls()
+    module = cls(**config)
     try:
         with pytest.raises(error, match=match):
             module.start()
         assert not module.connected
     finally:
         module.stop()
+
+
+def test_the_description_comes_from_the_config_and_the_ports() -> None:
+    module = MockConnectionModule()
+    try:
+        described = module.description
+        assert "description" not in MockConnectionModule.rpcs
+        assert described.source == "mock"
+        assert described.joint_names() == tuple(f"mock/joint{i}" for i in range(1, 8))
+        joint = described.resource("joint1")
+        assert joint is not None
+        # Told its position; reports what an Out[JointState] carries.
+        assert joint.command_interfaces == (Interface.POSITION,)
+        assert joint.state_interfaces == (
+            Interface.POSITION,
+            Interface.VELOCITY,
+            Interface.EFFORT,
+        )
+        assert described.limits[JOINT1] == Limits(-math.pi, math.pi)
+        assert module.description is described
+    finally:
+        module.stop()
+
+
+def test_the_mock_blueprint_needs_no_arguments() -> None:
+    assert isinstance(MockConnectionModule.blueprint(), Blueprint)
 
 
 def test_readings_go_out_as_joint_states_at_about_the_state_rate(
@@ -272,8 +287,7 @@ def test_readings_go_out_as_joint_states_at_about_the_state_rate(
     msg = r.sent("joint_state")[0]
     assert isinstance(msg, JointState)
     assert msg.name == [f"mock/joint{i}" for i in range(1, 8)]
-    assert msg.position == [0.0] * 7
-    assert msg.velocity == [] and msg.effort == []
+    assert msg.position == msg.velocity == msg.effort == [0.0] * 7
 
 
 def test_a_position_command_is_written_and_the_readings_follow(rig: Callable[..., Rig]) -> None:
@@ -292,48 +306,56 @@ def test_motor_base_and_position_commands_become_named_values(rig: Callable[...,
     )
     assert wait_until(lambda: len(writes(r)) == 1)
     assert writes(r)[0] == {
-        "g1/j1/position": 0.1,
-        "g1/j1/velocity": 0.3,
-        "g1/j1/effort": 5.0,
-        "g1/j1/kp": 30.0,
-        "g1/j1/kd": 1.0,
-        "g1/j2/position": 0.2,
-        "g1/j2/velocity": 0.4,
-        "g1/j2/effort": 6.0,
-        "g1/j2/kp": 31.0,
-        "g1/j2/kd": 2.0,
+        "g1/joint1/position": 0.1,
+        "g1/joint1/velocity": 0.3,
+        "g1/joint1/effort": 5.0,
+        "g1/joint1/kp": 30.0,
+        "g1/joint1/kd": 1.0,
+        "g1/joint2/position": 0.2,
+        "g1/joint2/velocity": 0.4,
+        "g1/joint2/effort": 6.0,
+        "g1/joint2/kp": 31.0,
+        "g1/joint2/kd": 2.0,
     }
     r.send("base_command", Twist(linear=Vector3(0.5, 0.1, 0.0), angular=Vector3(0.0, 0.0, 0.2)))
     assert wait_until(lambda: len(writes(r)) == 2)
-    assert writes(r)[1] == {"base/base/vx": 0.5, "base/base/vy": 0.1, "base/base/wz": 0.2}
-    r.send("position_command", JointState(name=["g1/j2"], position=[0.7]))
-    assert wait_until(lambda: writes(r)[-1] == {"g1/j2/position": 0.7})
+    assert writes(r)[1] == {"g1/base/vx": 0.5, "g1/base/vy": 0.1, "g1/base/wz": 0.2}
+    r.send("position_command", JointState(name=["g1/joint2"], position=[0.7]))
+    assert wait_until(lambda: writes(r)[-1] == {"g1/joint2/position": 0.7})
 
 
-def test_a_velocity_command_reads_only_the_velocity_field(rig: Callable[..., Rig]) -> None:
+def test_the_same_joint_on_a_position_and_a_velocity_port_takes_both(
+    rig: Callable[..., Rig],
+) -> None:
     r = rig(PositionAndVelocity)
+    joint = r.module.description.resource("joint1")
+    assert joint is not None
+    assert joint.command_interfaces == (Interface.POSITION, Interface.VELOCITY)
+    assert r.module.description.limits["mock/joint1/velocity"] == Limits(-2.0, 2.0)
+    # The velocity port reads only the velocity field.
     r.send("velocity_command", JointState(name=["mock/joint1"], position=[9.0], velocity=[0.5]))
     assert wait_until(lambda: writes(r) == [{"mock/joint1/velocity": 0.5}])
+    r.move(joint1=0.3)
+    assert wait_until(lambda: writes(r)[-1] == {JOINT1: 0.3})
 
 
 def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
     r = rig(PushedBodyAndBase)
     readings = {
-        **{f"g1/{j}/{i}": 0.1 for j in ("j1", "j2") for i in ("position", "velocity", "effort")},
-        **{f"g1/imu/{i}": 0.0 for i in ("qx", "qy", "qz", "gx", "gy", "ax", "ay")},
-        "g1/imu/qw": 1.0,
+        **BODY_AND_BASE_READINGS,
+        **{f"g1/{j}/{i}": 0.1 for j in JOINTS for i in ("position", "velocity", "effort")},
         "g1/imu/gz": 0.3,
         "g1/imu/az": 9.8,
-        "base/base/x": 1.0,
-        "base/base/y": 2.0,
-        "base/base/yaw": 0.5,
-        "base/base/vx": 0.4,
-        "base/base/vy": -0.1,
-        "base/base/wz": 0.2,
+        "g1/base/x": 1.0,
+        "g1/base/y": 2.0,
+        "g1/base/yaw": 0.5,
+        "g1/base/vx": 0.4,
+        "g1/base/vy": -0.1,
+        "g1/base/wz": 0.2,
     }
     r.module.publish_state(readings)
     [joints] = r.sent("joint_state")
-    assert joints.name == ["g1/j1", "g1/j2"]
+    assert joints.name == ["g1/joint1", "g1/joint2"]
     assert joints.position == joints.velocity == joints.effort == [0.1, 0.1]
     [odom] = r.sent("odom")
     assert isinstance(odom, PoseStamped)
@@ -352,28 +374,16 @@ def test_readings_go_out_typed(rig: Callable[..., Rig]) -> None:
 
 def test_reading_frames_follow_the_module_config(rig: Callable[..., Rig]) -> None:
     r = rig(PushedBodyAndBase, frame_id="pelvis", frame_id_prefix="r1")
-    r.module.publish_state(
-        {
-            **{f"g1/imu/{i}": 0.0 for i in ("qx", "qy", "qz", "gx", "gy", "gz", "ax", "ay", "az")},
-            "g1/imu/qw": 1.0,
-            **{
-                f"g1/{j}/{i}": 0.0 for j in ("j1", "j2") for i in ("position", "velocity", "effort")
-            },
-            **{f"base/base/{i}": 0.0 for i in ("x", "y", "yaw", "vx", "vy", "wz")},
-        }
-    )
+    r.module.publish_state(BODY_AND_BASE_READINGS)
     [imu] = r.sent("imu")
     [odom] = r.sent("odom")
     assert imu.frame_id == "r1/pelvis"
     assert odom.frame_id == "r1/odom"
 
 
-def test_a_base_described_with_the_preset_defaults_reports_its_speed(
-    rig: Callable[..., Rig],
-) -> None:
+def test_the_mock_base_reports_the_speed_it_was_last_told(rig: Callable[..., Rig]) -> None:
     r = rig(BodyAndBase)
     r.send("base_command", Twist(linear=Vector3(0.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.2)))
-    # The mock's base reports the speed it was last told.
     assert wait_until(
         lambda: any(t.linear.x == 0.5 and t.angular.z == 0.2 for t in r.sent("base_velocity"))
     )
@@ -409,11 +419,11 @@ def test_a_base_command_past_its_limit_is_pulled_back_to_it(rig: Callable[..., R
     r = rig(BodyAndBase)
     r.send("base_command", Twist(linear=Vector3(5.0, 0.0, 0.0)))
     assert wait_until(lambda: len(writes(r)) == 1)
-    assert writes(r)[0]["base/base/vx"] == 1.0
+    assert writes(r)[0]["g1/base/vx"] == 1.0
 
 
 def test_an_arm_command_past_its_limit_is_refused_and_shown(rig: Callable[..., Rig]) -> None:
-    r = rig(position_limit=1.0)
+    r = rig(position_command=JointPort(limit_overrides={"joint1": Limits(-1.0, 1.0)}))
     r.move(joint1=1.5)
     assert wait_until(lambda: r.module.status().last_rejection is not None)
     assert "limit" in str(r.module.status().last_rejection)
@@ -454,12 +464,13 @@ def test_the_deadman_halts_once_then_starts_again_on_the_next_command(
     r = rig()
     r.move(joint1=0.1)
     assert wait_until(lambda: r.module.halts == 1)
-    assert r.module.status().deadman_fired == ("mock",)
+    assert r.module.status().deadman_fired
     time.sleep(4 * DEADMAN_S)
     assert r.module.halts == 1
 
     r.move(joint1=0.2)
     assert wait_until(lambda: len(writes(r)) == 2)
+    assert not r.module.status().deadman_fired
     assert wait_until(lambda: r.module.halts == 2)
 
 
@@ -474,26 +485,19 @@ def test_commands_for_other_robots_do_not_feed_the_deadman(rig: Callable[..., Ri
     assert r.module.halts == 1
 
 
-def test_each_robot_has_its_own_deadman(rig: Callable[..., Rig]) -> None:
-    """Base commands keep flowing after the body's stop; the body still halts."""
+def test_any_accepted_command_feeds_the_one_deadman(rig: Callable[..., Rig]) -> None:
+    """Base commands keep the module alive after the body's stop."""
     r = rig(BodyAndBase)
     body = MotorCommandArray(q=[0.1, 0.2], dq=[0, 0], kp=[1, 1], kd=[1, 1], tau=[0, 0])
     forward = Twist(Vector3(0.1, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
     r.send("motor_command", body)
-    deadline = time.monotonic() + 0.3  # body deadman is 0.05 s, base's is 0.1 s
+    deadline = time.monotonic() + 4 * DEADMAN_S
     while time.monotonic() < deadline:
         r.send("base_command", forward)
-        time.sleep(0.01)
+        time.sleep(DEADMAN_S / 5)
+    assert r.module.halts == 0
+    assert wait_until(lambda: r.module.status().deadman_fired)
     assert r.module.halts == 1
-    assert r.module.status().deadman_fired == ("g1",)
-
-    # With base commands gone too, the base halts on its own deadman.
-    assert wait_until(lambda: r.module.status().deadman_fired == ("base", "g1"))
-    assert r.module.halts == 2
-
-    # A new body command clears only the body.
-    r.send("motor_command", body)
-    assert wait_until(lambda: r.module.status().deadman_fired == ("base",))
 
 
 def test_a_failing_write_halts_shows_the_error_and_carries_on(
@@ -516,16 +520,16 @@ def test_published_readings_are_checked_against_the_description(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig(PushedBodyAndBase)
-    r.module.publish_state({f"base/base/{i}": 0.0 for i in ("x", "y", "yaw", "vx", "vy", "wz")})
+    r.module.publish_state(BODY_AND_BASE_READINGS)
     assert len(r.sent("odom")) == 1
 
-    r.module.publish_state({"base/base/x": 0.0})
+    r.module.publish_state({"g1/base/x": 0.0})
     assert len(r.sent("odom")) == 1
     assert "missing_key" in str(r.module.status().last_error)
 
-    r.module.publish_state({"other/joint1/position": 0.0})
-    assert "other" in str(r.module.status().last_error)
-    assert r.sent("joint_state") == [] and r.sent("imu") == []
+    r.module.publish_state({**BODY_AND_BASE_READINGS, "other/joint1/position": 0.0})
+    assert len(r.sent("odom")) == 1
+    assert "other/joint1/position" in str(r.module.status().last_error)
 
 
 def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Rig]) -> None:
@@ -539,24 +543,18 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
     assert writes(r) == []
 
 
-def test_describe_control_and_status_are_rpcs_that_cross_processes(
-    rig: Callable[..., Rig],
-) -> None:
-    assert {"describe_control", "status"} <= set(MockConnectionModule.rpcs)
+def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
+    assert "status" in MockConnectionModule.rpcs
+    assert "describe_control" not in MockConnectionModule.rpcs
     r = rig()
-    described = r.module.describe_control()
-    assert isinstance(described, ConnectionDescription)
-    assert described.descriptions == (r.module.describe(),)
-    assert len(described.session_id) == 32
-    assert pickle.loads(pickle.dumps(described)) == described
-
     assert wait_until(lambda: r.module.status().last_state_time is not None)
     status = r.module.status()
     assert isinstance(status, ConnectionStatus)
     assert pickle.loads(pickle.dumps(status)) == status
+    assert len(status.session_id) == 32
     assert status.connected
     assert status.last_command_time is None
-    assert status.deadman_fired == ()
+    assert status.deadman_fired is False
     assert status.last_rejection is None
     assert status.last_error is None
 
@@ -565,7 +563,7 @@ def test_the_session_id_is_new_each_start_and_steady_in_between(
     rig: Callable[..., Rig],
 ) -> None:
     first = rig().module
-    session = first.describe_control().session_id
-    assert first.describe_control().session_id == session
+    session = first.status().session_id
+    assert first.status().session_id == session
     first.stop()
-    assert rig().module.describe_control().session_id != session
+    assert rig().module.status().session_id != session

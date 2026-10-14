@@ -14,12 +14,12 @@
 
 """The base every robot driver is built on: one module per robot.
 
-A driver subclasses ``ConnectionModule``, declares the standard ports it
-uses, and fills in five methods for its hardware. The base turns incoming
-messages into checked named values for ``write``, publishes the driver's
-readings as messages, and halts the robot when commands stop coming. Anything
-that publishes the standard messages can drive it; it does not need a
-coordinator.
+A driver subclasses ``ConnectionModule``, gives it a config that says what
+each command port drives, declares its ports, and fills in four methods for
+its hardware. The base turns incoming messages into checked named values for
+``write``, publishes the driver's readings as messages, and halts the robot
+when commands stop coming. Anything that publishes the standard messages can
+drive it; it does not need a coordinator.
 """
 
 from __future__ import annotations
@@ -39,13 +39,7 @@ from reactivex.abc import DisposableBase
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.contract.convert import (
-    COMMAND_PORTS,
-    IMU_INTERFACES,
     JOINT_STATE_FIELDS,
-    MOTOR_INTERFACES,
-    POSE_INTERFACES,
-    STATE_PORTS,
-    TWIST_INTERFACES,
     imu_from_values,
     joint_state_from_values,
     joint_state_to_values,
@@ -56,42 +50,64 @@ from dimos.control.contract.convert import (
     twist_to_values,
 )
 from dimos.control.contract.description import ControlDescription, ResourceKind
-from dimos.control.contract.keys import SEPARATOR, Interface
+from dimos.control.contract.keys import SEPARATOR
+from dimos.control.contract.ports import (
+    JointPort,
+    MotorPort,
+    TwistPort,
+    control_description,
+    port_specs,
+    reading_ports,
+)
 from dimos.control.contract.validate import (
     FrameRejectedError,
     Rejected,
     validate_command,
-    validate_description,
     validate_state,
 )
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.control_msgs.ControlValues import ControlValues
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 Values = dict[str, float]
 #: One subscription to make: the input port, its converter and the
-#: converter's second argument, and the robot whose values to keep.
-_Listener = tuple[In[Any], Callable[[Any, Any], Values], Any, str]
+#: converter's second argument.
+_Listener = tuple[In[Any], Callable[[Any, Any], Values], Any]
+#: One output to publish: the port, and how to build its message from the
+#: checked readings, called as ``build(values, ts=unix_time)``.
+_Output = tuple[Out[Any], Callable[..., Any]]
 
 
-@dataclass(frozen=True, slots=True)
-class ConnectionDescription:
-    """What ``ConnectionModule.describe_control`` returns.
+class ConnectionConfig(ModuleConfig):
+    """Settings every robot driver has.
+
+    A driver's config subclasses it and adds one field per command input
+    port, named like the port and typed with a port spec from
+    ``dimos.control.contract.ports``.
 
     Attributes:
-        session_id: New each time the module starts, so a restarted driver
-            can be told apart from one that kept running. Empty before start.
-        descriptions: One per robot the module runs.
+        source: The robot's name, and the first part of every key, e.g. "go2".
+        model: The robot's model (its URDF), which gives a joint port its
+            joints, their units and their limits. ``None`` for a robot that
+            has no joint ports.
+        state_rate_hz: How many times a second ``read_state`` is called.
+        deadman_timeout_s: How long the robot goes without a command, in
+            seconds, before it is halted.
     """
 
-    session_id: str
-    descriptions: tuple[ControlDescription, ...]
+    source: str
+    model: RobotModel | None = None
+    state_rate_hz: float = 100.0
+    deadman_timeout_s: float = 0.1
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,83 +115,90 @@ class ConnectionStatus:
     """A snapshot of one connection, returned by ``ConnectionModule.status``.
 
     Attributes:
+        session_id: New each time the module starts, so a reader can tell a
+            restarted driver from one that kept running. Empty before start.
         connected: ``connect`` succeeded and the module has not stopped.
         last_state_time: When readings were last published, in Unix seconds,
             or ``None`` if never.
         last_command_time: When a command was last accepted, in Unix seconds,
             or ``None`` if never.
-        deadman_fired: The robots whose commands stopped arriving. Each one's
-            silence halted the whole module, and no command for it has been
-            accepted since. Empty when none is quiet.
+        deadman_fired: Commands stopped arriving, the robot was halted for
+            it, and none has been accepted since.
         last_rejection: Why the last refused command was refused, or ``None``.
         last_error: The last failure in the driver (``write``, ``read_state``,
             ``halt``, or a reading that does not match the description), or
             ``None``.
     """
 
+    session_id: str
     connected: bool
     last_state_time: float | None
     last_command_time: float | None
-    deadman_fired: tuple[str, ...]
+    deadman_fired: bool
     last_rejection: str | None
     last_error: str | None
 
 
 class ConnectionModule(Module, ABC):
-    """A robot driver. Subclass it, declare its ports, fill in five methods.
+    """A robot driver. Subclass it, give it a config, declare its ports, fill in four methods.
 
-    Ports: a driver declares the standard ports it uses, as on any module::
+    The config says what each command input drives, with one field per
+    input port, named like the port::
 
-        position_command: In[JointState]
-        joint_state: Out[JointState]
+        class ArmConfig(ConnectionConfig):
+            source: str = "arm"
+            model: RobotModel | None = ARM_MODEL
+            position_command: JointPort = JointPort()
 
-    The base finds them by name (``COMMAND_PORTS`` and ``STATE_PORTS`` in
-    ``dimos.control.contract.convert``) and ignores every other port. A
-    JointState names its joints in full ("arm/joint1"). A Twist, PoseStamped
-    or Imu has no names, so it is for the one base or IMU the descriptions
-    have; a MotorCommandArray lists the joints ``motor_joints`` gives, in that
-    order. Start fails if a description names a command no declared input
-    carries, or a reading no declared output carries.
+        class ArmConnection(ConnectionModule):
+            config: ArmConfig
+            position_command: In[JointState]
+            joint_state: Out[JointState]
 
-    Starting it calls ``describe``, checks each description (raising on the
-    first bad one, before touching the hardware), then calls ``connect``.
+    Each such field needs an input port of the same name carrying its
+    message (``TwistPort``: Twist, ``JointPort``: JointState, ``MotorPort``:
+    MotorCommandArray). Output ports need no config: what each reports is set
+    by its message type (see ``dimos.control.contract.ports``), under any
+    name. Ports of other messages are the driver's own and left alone.
 
-    Readings: a thread calls ``read_state`` at the fastest ``state_rate_hz``
-    among the descriptions and publishes the result on the output ports.
+    Starting it builds ``description`` from the config and the ports, raising
+    on anything wrong before touching the hardware, then calls ``connect``.
 
-    Commands: each message is turned into named values, and values for robots
-    this module does not run are ignored. Each input keeps just its newest
-    message per robot, so if ``write`` is slower than commands arrive, the
-    ones in between are skipped. Values are checked with ``validate_command``
-    (unknown keys, limits) before ``write`` sees them.
+    Readings: a thread calls ``read_state`` ``state_rate_hz`` times a second
+    and publishes what it returns on the output ports.
 
-    Deadman: each robot has its own. Once a command for a robot has been
-    accepted, if no other command for that robot is accepted within its
-    ``deadman_timeout_s``, ``halt`` is called once, for the whole module. The
-    next accepted command for that robot starts its deadman again. Commands
-    for one robot never keep another robot's deadman alive.
+    Commands: each message is turned into named values, which are checked
+    against ``description`` (unknown keys, limits) before ``write`` sees
+    them. Each input keeps just its newest message, so if ``write`` is slower
+    than commands arrive, the ones in between are skipped.
+
+    Deadman: once a command has been accepted, if no other is accepted within
+    ``deadman_timeout_s``, ``halt`` is called once. The next accepted command
+    starts the deadman again.
 
     ``write`` and ``halt`` never run at the same time. Commands and the
     deadman share the module's event loop, so a ``write`` that hangs stops
     both: the deadman cannot fire and no later command is handled until it
     returns.
 
-    Frames: an ``imu`` reading is stamped with the module's ``frame_id`` (from
-    its config, class name by default), an ``odom`` pose with
-    ``odom_frame_id``; both take the config's ``frame_id_prefix``.
+    Frames: an Imu reading is stamped with the module's ``frame_id`` (from
+    its config, class name by default), a PoseStamped with ``odom_frame_id``;
+    both take the config's ``frame_id_prefix``.
 
     To close the hardware connection when the module stops, override ``stop``
     and close it after calling ``super().stop()``, which halts the robot first.
     """
 
+    config: ConnectionConfig
+
     dedicated_worker: ClassVar[bool] = True
     odom_frame_id: ClassVar[str] = "odom"
-    """The frame an ``odom`` pose is given in. Override on the driver."""
+    """The frame a PoseStamped reading is given in. Override on the driver."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._session_id = ""
-        self._descriptions: dict[str, ControlDescription] = {}
+        self._description: ControlDescription | None = None
         # Guards the status fields and the stop flag.
         self._lock = threading.Lock()
         # Held around every write() and halt(), so they never overlap, and
@@ -185,42 +208,53 @@ class ConnectionModule(Module, ABC):
         self._stopping = False
         self._connected = False
         self._subscriptions: list[DisposableBase] = []
-        # Per output: the robot it reports on, the port, and how to build a
-        # message: build(values, target, unix_time) for target joints or part.
-        self._outputs: list[tuple[str, Out[Any], Callable[[Values, Any, float], Any], Any]] = []
+        self._outputs: list[_Output] = []
         self._state_thread: threading.Thread | None = None
         # Only touched on the module's event loop, where commands are handled.
-        self._deadman_timers: dict[str, asyncio.TimerHandle] = {}
+        self._deadman: asyncio.TimerHandle | None = None
         self._last_state_time: float | None = None
         self._last_command_time: float | None = None
-        self._deadman_fired: set[str] = set()
+        self._deadman_fired = False
         self._last_rejection: str | None = None
         self._last_error: str | None = None
         # When a rejection (True) or an error (False) was last logged.
         self._last_logged: dict[bool, float] = {}
+        # How often the state loop has run late since it last said so, and when.
+        self._late = 0
+        self._late_logged_at = float("-inf")
 
-    @abstractmethod
-    def describe(self) -> ControlDescription | list[ControlDescription]:
-        """Say what the robot is, usually with one preset from
-        ``dimos.control.contract.presets`` built from ``self.config``.
+    @property
+    def description(self) -> ControlDescription:
+        """What this robot is, built once from the config and the ports.
 
-        Runs before ``connect``, so it must not touch the hardware. Return a
-        list when this module runs several robots, such as an arm and the base
-        under it, each with its own ``source`` name.
+        Raises ``ValueError`` or ``DescriptionError`` if they do not add up;
+        see ``control_description``.
         """
+        if self._description is None:
+            self._description = control_description(
+                self.config,
+                {name: port.type for name, port in self.inputs.items()},
+                {name: port.type for name, port in self.outputs.items()},
+            )
+        return self._description
 
     @abstractmethod
     def connect(self) -> None:
-        """Open the connection to the hardware. Must not make anything move."""
+        """Open the connection to the hardware.
+
+        It should not make anything move. Whether the SDK keeps to that is
+        the driver's responsibility: if opening it can move the robot, the
+        driver must stop that here.
+        """
 
     @abstractmethod
-    def read_state(self) -> Values | None:
-        """The robot's latest readings, or ``None`` if nothing new has arrived.
+    def read_state(self) -> Values:
+        """The robot's latest readings, or an empty dict if nothing new has arrived.
 
         Keys are full keys such as ``"arm/joint1/position"``, each value in
-        its key's unit, and every key a description lists must be present. A
-        driver whose SDK delivers readings in a callback returns ``None`` here
-        and calls ``publish_state`` from the callback instead.
+        its key's unit, and every key the description lists must be present.
+        A driver whose SDK delivers readings in a callback returns an empty
+        dict here and calls ``publish_state`` from the callback instead.
         """
 
     @abstractmethod
@@ -234,8 +268,8 @@ class ConnectionModule(Module, ABC):
         refuses: the module then logs it, calls ``halt`` and carries on.
 
         Args:
-            values: The keys of one robot only, e.g.
-                ``{"arm/joint1/position": 0.3}``, already within its limits.
+            values: Named values from one message, e.g.
+                ``{"arm/joint1/position": 0.3}``, already within their limits.
         """
 
     @abstractmethod
@@ -251,15 +285,9 @@ class ConnectionModule(Module, ABC):
     def start(self) -> None:
         super().start()
         self._session_id = uuid.uuid4().hex
-        described = self.describe()
-        descriptions = described if isinstance(described, list) else [described]
-        for description in descriptions:
-            validate_description(description)
-        sources = [description.source for description in descriptions]
-        if not sources or len(set(sources)) != len(sources):
-            raise ValueError(f"{self._label}: robot names must be present and unique: {sources}")
-        self._descriptions = {description.source: description for description in descriptions}
-        listeners = self._plan_ports()
+        description = self.description
+        listeners = self._plan_inputs(description)
+        self._outputs = self._plan_outputs(description)
 
         self.connect()
         self._connected = True
@@ -288,19 +316,15 @@ class ConnectionModule(Module, ABC):
         super().stop()
 
     @rpc
-    def describe_control(self) -> ConnectionDescription:
-        """This run's session ID, and one description per robot it runs."""
-        return ConnectionDescription(self._session_id, tuple(self._descriptions.values()))
-
-    @rpc
     def status(self) -> ConnectionStatus:
         """A snapshot of the connection. See ``ConnectionStatus``."""
         with self._lock:
             return ConnectionStatus(
+                session_id=self._session_id,
                 connected=self._connected,
                 last_state_time=self._last_state_time,
                 last_command_time=self._last_command_time,
-                deadman_fired=tuple(sorted(self._deadman_fired)),
+                deadman_fired=self._deadman_fired,
                 last_rejection=self._last_rejection,
                 last_error=self._last_error,
             )
@@ -308,146 +332,92 @@ class ConnectionModule(Module, ABC):
     def publish_state(self, values: Mapping[str, float]) -> None:
         """Publish one set of readings on the output ports.
 
-        Each robot's readings must carry exactly the keys its description
-        lists; a robot whose readings do not is left out and shows up in
-        ``status().last_error``. Does nothing once the module is stopping.
+        The readings must carry exactly the keys the description lists; a set
+        that does not is dropped and shows up in ``status().last_error``.
+        Does nothing once the module is stopping.
 
         Args:
             values: Readings by full key, e.g. ``{"arm/joint1/position": 0.3}``,
-                each in its key's unit. Keys of several robots may be mixed.
+                each in its key's unit.
         """
         if self._stop_event.is_set():
             return
         now = time.time()
-        by_source: dict[str, Values] = {}
-        for key, value in values.items():
-            by_source.setdefault(_source(key), {})[key] = value
-        checked: Values = {}
-        for source, readings in by_source.items():
-            description = self._descriptions.get(source)
-            if description is None:
-                self._report(f"readings for {source!r}, which this module does not run")
-                continue
-            try:
-                # validate_state takes a ControlValues; this one never leaves
-                # the process.
-                frame = ControlValues(source, now, 0, 0, list(readings), list(readings.values()))
-                validate_state(description, frame)
-            except (ValueError, FrameRejectedError) as error:
-                self._report(f"bad readings for {source!r}: {error}")
-                continue
-            checked.update(readings)
-        published = {_source(key) for key in checked}
-        for source, port, build, target in self._outputs:
-            if source in published:
-                port.publish(build(checked, target, now))
-        if checked:
-            with self._lock:
-                self._last_state_time = now
-
-    def _plan_ports(self) -> list[_Listener]:
-        """Match the declared ports to the descriptions.
-
-        Fills in ``self._outputs`` and returns one subscription to make per
-        input and robot.
-
-        Raises:
-            TypeError: If a standard port carries the wrong message.
-            ValueError: If a description names a command no declared input
-                carries or a reading no declared output carries, or a port
-                for a message with no names has several parts to choose from.
-        """
-        descriptions = list(self._descriptions.values())
-        inputs = {n: p for n, p in self.inputs.items() if n in COMMAND_PORTS}
-        outputs = {n: p for n, p in self.outputs.items() if n in STATE_PORTS}
-        for name, port in {**inputs, **outputs}.items():
-            expected = {**COMMAND_PORTS, **STATE_PORTS}[name]
-            if port.type is not expected:
-                raise TypeError(f"{self._label}.{name} must carry {expected.__name__}")
-        joints = _parts(descriptions, ResourceKind.JOINT)
-        bases = _parts(descriptions, ResourceKind.BASE)
-        motor = motor_joints(descriptions)
-
-        # Per input: how to turn its message into values, the second argument
-        # that takes, and every key it can carry.
-        readers: dict[str, tuple[Callable[[Any, Any], Values], Any, set[str]]] = {
-            "position_command": (
-                joint_state_to_values,
-                (Interface.POSITION,),
-                _keys(
-                    [j for j, cmd, _ in joints if Interface.POSITION in cmd], (Interface.POSITION,)
-                ),
-            ),
-            "velocity_command": (
-                joint_state_to_values,
-                (Interface.VELOCITY,),
-                _keys(
-                    [j for j, cmd, _ in joints if Interface.VELOCITY in cmd], (Interface.VELOCITY,)
-                ),
-            ),
-            "motor_command": (motor_command_to_values, motor, _keys(motor, MOTOR_INTERFACES)),
-        }
-        if "base_command" in inputs:
-            base = self._only(
-                [b for b, cmd, _ in bases if set(TWIST_INTERFACES) <= cmd], "base_command"
+        description = self.description
+        try:
+            # validate_state takes a ControlValues; this one never leaves the
+            # process.
+            frame = ControlValues(
+                description.source, now, 0, 0, list(values), list(values.values())
             )
-            readers["base_command"] = (twist_to_values, base, _keys([base], TWIST_INTERFACES))
-        carried = set().union(*(readers[name][2] for name in inputs))
-        self._check_covered({k for d in descriptions for k in d.command_keys()} - carried, "input")
-        listeners = [
-            (port, readers[name][0], readers[name][1], source)
-            for name, port in inputs.items()
-            for source in self._descriptions
-            if any(_source(key) == source for key in readers[name][2])
-        ]
+            checked = validate_state(description, frame)
+        except (ValueError, FrameRejectedError) as error:
+            self._report(f"bad readings: {error}")
+            return
+        for port, build in self._outputs:
+            port.publish(build(checked, ts=now))
+        with self._lock:
+            self._last_state_time = now
 
-        published: set[str] = set()
-        if "joint_state" in outputs:
-            # One message per robot and set of fields: a JointState fills a
-            # field for every joint it names or for none.
-            groups: dict[tuple[str, tuple[str, ...]], list[str]] = {}
-            for joint, _, state in joints:
-                fields = tuple(f for f in JOINT_STATE_FIELDS if f in state)
-                if fields:
-                    groups.setdefault((_source(joint), fields), []).append(joint)
-            for (source, fields), names in groups.items():
-                published |= _keys(names, fields)
-                self._outputs.append(
-                    (source, outputs["joint_state"], joint_state_from_values, names)
-                )
-        if "odom" in outputs:
-            odom = self._only([b for b, _, st in bases if set(POSE_INTERFACES) <= st], "odom")
-            published |= _keys([odom], POSE_INTERFACES)
-            pose = functools.partial(pose_from_values, frame_id=self._odom_frame())
-            self._outputs.append((_source(odom), outputs["odom"], pose, odom))
-        if "base_velocity" in outputs:
-            speed = self._only(
-                [b for b, _, st in bases if set(TWIST_INTERFACES) <= st], "base_velocity"
-            )
-            published |= _keys([speed], TWIST_INTERFACES)
-            self._outputs.append((_source(speed), outputs["base_velocity"], _measured_twist, speed))
-        if "imu" in outputs:
-            sensors = _parts(descriptions, ResourceKind.SENSOR)
-            imu = self._only([s for s, _, st in sensors if set(IMU_INTERFACES) <= st], "imu")
-            published |= _keys([imu], IMU_INTERFACES)
-            imu_msg = functools.partial(imu_from_values, frame_id=self.frame_id)
-            self._outputs.append((_source(imu), outputs["imu"], imu_msg, imu))
-        self._check_covered({k for d in descriptions for k in d.state_keys()} - published, "output")
+    def _plan_inputs(self, description: ControlDescription) -> list[_Listener]:
+        """One subscription per port spec in the config."""
+        listeners: list[_Listener] = []
+        for name, spec in port_specs(self.config).items():
+            port = self.inputs[name]
+            if isinstance(spec, TwistPort):
+                base = self._part(description, ResourceKind.BASE)
+                listeners.append((port, twist_to_values, base))
+            elif isinstance(spec, JointPort):
+                listeners.append((port, joint_state_to_values, (spec.interface,)))
+            elif isinstance(spec, MotorPort):
+                listeners.append((port, motor_command_to_values, motor_joints([description])))
         return listeners
 
+    def _plan_outputs(self, description: ControlDescription) -> list[_Output]:
+        """How to build each output port's message from the readings."""
+        outputs: list[_Output] = []
+        reported = reading_ports({name: port.type for name, port in self.outputs.items()})
+        if JointState in reported:
+            # One message per set of fields: a JointState fills a field for
+            # every joint it names or for none.
+            groups: dict[tuple[str, ...], list[str]] = {}
+            for resource in description.resources:
+                if resource.kind is not ResourceKind.JOINT:
+                    continue
+                fields = tuple(f for f in JOINT_STATE_FIELDS if f in resource.state_interfaces)
+                if fields:
+                    name = f"{description.source}{SEPARATOR}{resource.name}"
+                    groups.setdefault(fields, []).append(name)
+            port = self.outputs[reported[JointState]]
+            for joints in groups.values():
+                outputs.append((port, functools.partial(joint_state_from_values, joints=joints)))
+        if PoseStamped in reported:
+            base = self._part(description, ResourceKind.BASE)
+            pose = functools.partial(pose_from_values, base=base, frame_id=self._odom_frame())
+            outputs.append((self.outputs[reported[PoseStamped]], pose))
+        if Twist in reported:
+            base = self._part(description, ResourceKind.BASE)
+            speed = functools.partial(_measured_twist, base)
+            outputs.append((self.outputs[reported[Twist]], speed))
+        if Imu in reported:
+            imu = self._part(description, ResourceKind.SENSOR)
+            imu_msg = functools.partial(imu_from_values, sensor=imu, frame_id=self.frame_id)
+            outputs.append((self.outputs[reported[Imu]], imu_msg))
+        return outputs
+
     def _listen(
-        self, port: In[Any], convert: Callable[[Any, Any], Values], argument: Any, source: str
+        self, port: In[Any], convert: Callable[[Any, Any], Values], argument: Any
     ) -> DisposableBase:
-        """Pass ``source``'s values from each message on ``port`` to ``_apply``,
+        """Pass this robot's values from each message on ``port`` to ``_apply``,
         newest message only. ``convert(message, argument)`` gives the values.
 
-        A JointState names its joints, so one naming none of ``source``'s is
+        A JointState names its joints, so one naming none of this robot's is
         dropped before it can displace one that does. Handling runs on the
         module's event loop.
         """
-        prefix = f"{source}{SEPARATOR}"
+        prefix = f"{self.config.source}{SEPARATOR}"
 
-        def carries_source(msg: Any) -> bool:
+        def carries_mine(msg: Any) -> bool:
             return not isinstance(msg, JointState) or any(n.startswith(prefix) for n in msg.name)
 
         async def handle(msg: Any) -> None:
@@ -458,56 +428,57 @@ class ConnectionModule(Module, ABC):
                 return
             mine = {key: value for key, value in values.items() if key.startswith(prefix)}
             if mine:
-                self._apply(source, mine)
+                self._apply(mine)
 
         return self.process_observable(
-            port.pure_observable().pipe(ops.filter(carries_source)), handle
+            port.pure_observable().pipe(ops.filter(carries_mine)), handle
         )
 
-    def _apply(self, source: str, values: Values) -> None:
+    def _apply(self, values: Values) -> None:
+        description = self.description
         try:
             # validate_command takes a ControlValues; this one never leaves the
             # process. Typed messages carry no sequence number, so order is
             # not checked.
-            frame = ControlValues(source, None, 0, 0, list(values), list(values.values()))
+            frame = ControlValues(
+                description.source, None, 0, 0, list(values), list(values.values())
+            )
         except ValueError as error:
-            self._report(f"{source}: {error}", rejection=True)
+            self._report(str(error), rejection=True)
             return
-        result = validate_command(self._descriptions[source], frame, last_sequence=None)
+        result = validate_command(description, frame, last_sequence=None)
         if isinstance(result, Rejected):
-            self._report(f"{source}: {result.reason}: {result.detail}", rejection=True)
+            self._report(f"{result.reason}: {result.detail}", rejection=True)
             return
         with self._lock:
             self._last_command_time = time.time()
-            self._deadman_fired.discard(source)
-        self._start_deadman(source)
+            self._deadman_fired = False
+        self._start_deadman()
         try:
             with self._hardware_lock:
                 if not self._connected:
                     return
                 self.write(result.values)
         except Exception as error:
-            self._report(f"write for {source!r} failed: {type(error).__name__}: {error}")
-            self._cancel_deadman(source)
+            self._report(f"write failed: {type(error).__name__}: {error}")
+            self._cancel_deadman()
             self._halt()
 
-    def _start_deadman(self, source: str) -> None:
-        self._cancel_deadman(source)
+    def _start_deadman(self) -> None:
+        self._cancel_deadman()
         loop = asyncio.get_running_loop()
-        timeout_s = self._descriptions[source].deadman_timeout_s
-        self._deadman_timers[source] = loop.call_later(timeout_s, self._deadman_expired, source)
+        self._deadman = loop.call_later(self.config.deadman_timeout_s, self._deadman_expired)
 
-    def _cancel_deadman(self, source: str) -> None:
-        timer = self._deadman_timers.pop(source, None)
-        if timer is not None:
-            timer.cancel()
+    def _cancel_deadman(self) -> None:
+        if self._deadman is not None:
+            self._deadman.cancel()
+            self._deadman = None
 
-    def _deadman_expired(self, source: str) -> None:
-        self._deadman_timers.pop(source, None)
+    def _deadman_expired(self) -> None:
+        self._deadman = None
         with self._lock:
-            self._deadman_fired.add(source)
-        timeout_s = self._descriptions[source].deadman_timeout_s
-        logger.warning(f"{self._label}: no command for {source!r} in {timeout_s} s, halting")
+            self._deadman_fired = True
+        logger.warning(f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting")
         self._halt()
 
     def _halt(self) -> None:
@@ -522,35 +493,47 @@ class ConnectionModule(Module, ABC):
             self._report(f"halt failed: {type(error).__name__}: {error}")
 
     def _state_loop(self) -> None:
-        period = 1.0 / max(d.state_rate_hz for d in self._descriptions.values())
+        period = 1.0 / self.config.state_rate_hz
         next_at = time.monotonic()
         while not self._stop_event.is_set():
             try:
                 values = self.read_state()
-                if values is not None:
+                if values:
                     self.publish_state(values)
             except Exception as error:
                 self._report(f"read_state failed: {type(error).__name__}: {error}")
-            # After falling behind, carry on from now rather than catching up.
-            next_at = max(next_at + period, time.monotonic())
-            self._stop_event.wait(next_at - time.monotonic())
+            next_at += period
+            now = time.monotonic()
+            if now > next_at:
+                # A whole period behind: carry on from now rather than
+                # catching up, and say so.
+                self._note_late(now - next_at, period)
+                next_at = now
+            self._stop_event.wait(next_at - now)
+
+    def _note_late(self, late_s: float, period_s: float) -> None:
+        """Warn that readings ran late, at most once a second."""
+        now = time.monotonic()
+        self._late += 1
+        if now - self._late_logged_at < 1.0:
+            return
+        logger.warning(
+            f"{self._label}: readings ran late {self._late} time(s), the last by "
+            f"{late_s * 1000:.1f} ms against a {period_s * 1000:.1f} ms period"
+        )
+        self._late = 0
+        self._late_logged_at = now
 
     def _odom_frame(self) -> str:
         prefix = self.config.frame_id_prefix
         return f"{prefix}/{self.odom_frame_id}" if prefix else self.odom_frame_id
 
-    def _only(self, names: list[str], port: str) -> str:
-        """The one robot part a port carries, for a message with no names."""
-        if len(names) != 1:
-            raise ValueError(f"{self._label}.{port} needs exactly one part to carry, found {names}")
-        return names[0]
-
-    def _check_covered(self, uncovered: set[str], direction: str) -> None:
-        if uncovered:
-            raise ValueError(
-                f"{self._label}: no declared {direction} port carries {sorted(uncovered)}; "
-                f"declare the port, or leave them out of the description"
-            )
+    def _part(self, description: ControlDescription, kind: ResourceKind) -> str:
+        """The full name of the robot's one part of a kind, e.g. "go2/base"."""
+        for resource in description.resources:
+            if resource.kind is kind:
+                return f"{description.source}{SEPARATOR}{resource.name}"
+        raise ValueError(f"{self._label}: the description has no {kind.value}")
 
     def _report(self, message: str, *, rejection: bool = False) -> None:
         """Record a problem for ``status``, and log it unless it repeats the
@@ -575,31 +558,6 @@ class ConnectionModule(Module, ABC):
         return type(self).__name__
 
 
-def _source(key: str) -> str:
-    """The robot a key or part name belongs to: "arm" for "arm/joint1"."""
-    return key.split(SEPARATOR, 1)[0]
-
-
-def _measured_twist(values: Values, base: str, ts: float) -> Twist:
+def _measured_twist(base: str, values: Values, ts: float | None = None) -> Twist:
     """A base's measured speed as a Twist, which carries no time."""
     return twist_from_values(values, base)
-
-
-def _keys(parts: list[str], interfaces: tuple[str, ...]) -> set[str]:
-    return {f"{part}{SEPARATOR}{interface}" for part in parts for interface in interfaces}
-
-
-def _parts(
-    descriptions: list[ControlDescription], kind: ResourceKind
-) -> list[tuple[str, frozenset[str], frozenset[str]]]:
-    """Each part of a kind, as its full name, what it accepts, what it reports."""
-    return [
-        (
-            f"{d.source}{SEPARATOR}{r.name}",
-            frozenset(r.command_interfaces),
-            frozenset(r.state_interfaces),
-        )
-        for d in descriptions
-        for r in d.resources
-        if r.kind is kind
-    ]
