@@ -107,8 +107,17 @@ class MovementManager(Module):
         )
         self.way_point.publish(cancel)
         if self._navigation is not None:
-            self._navigation.cancel_goal()
+            # Off the teleop thread, so a planner that does not answer cannot hold up cmd_vel.
+            threading.Thread(
+                target=self._cancel_navigation, args=(self._navigation,), daemon=True
+            ).start()
         logger.debug("Navigation cancelled — waiting for new goal")
+
+    def _cancel_navigation(self, navigation: NavigationInterfaceSpec) -> None:
+        try:
+            navigation.cancel_goal()
+        except Exception:
+            logger.exception("Failed to cancel the navigation goal")
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
@@ -122,10 +131,10 @@ class MovementManager(Module):
 
     def _on_teleop(self, msg: Twist) -> None:
         with self._lock:
+            now = time.monotonic()
+            starting = now - self._last_teleop_time >= self.config.tele_cooldown_sec
             self._teleop_active = True
-            self._last_teleop_time = time.monotonic()
-
-        self._cancel_goal()
+            self._last_teleop_time = now
 
         scale = self.config.tele_cmd_vel_scaling
         scaled = Twist(
@@ -141,3 +150,5 @@ class MovementManager(Module):
             ),
         )
         self.cmd_vel.publish(scaled)
+        if starting:
+            self._cancel_goal()

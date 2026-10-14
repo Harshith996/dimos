@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from dataclasses import dataclass, field
 import math
+import threading
 import time
 from unittest.mock import Mock
 
@@ -76,7 +77,7 @@ def _click(x=1.0, y=2.0, z=0.0):
     return PointStamped(ts=time.time(), frame_id="map", x=x, y=y, z=z)
 
 
-def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
+def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured, wait_until):
     """Teleop arriving should suppress nav, publish stop_movement, and cancel the goal."""
     manager, captured, navigation = manager_and_captured
     manager.config.tele_cooldown_sec = 10.0
@@ -90,8 +91,37 @@ def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
     # stop_movement fired
     assert len(captured.stop_movement) == 1
 
+    wait_until(lambda: navigation.cancel_goal.called, timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
     navigation.cancel_goal.assert_called_once_with()
     assert math.isnan(captured.way_point[0].x)
+
+
+def test_teleop_cancels_once_per_episode(manager_and_captured, wait_until):
+    """Twists within the cooldown continue one teleop episode, which cancels the goal once."""
+    manager, captured, navigation = manager_and_captured
+    manager.config.tele_cooldown_sec = 10.0
+    for _ in range(5):
+        manager._on_teleop(_twist(lx=0.3))
+
+    wait_until(lambda: navigation.cancel_goal.called, timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    navigation.cancel_goal.assert_called_once_with()
+    assert len(captured.stop_movement) == 1
+    assert len(captured.cmd_vel) == 5
+
+
+def test_teleop_does_not_wait_for_the_planner(manager_and_captured):
+    """A planner that does not answer cancel_goal cannot hold up teleop cmd_vel."""
+    manager, captured, navigation = manager_and_captured
+    release = threading.Event()
+    navigation.cancel_goal.side_effect = lambda: release.wait(timeout=10.0)
+    try:
+        start = time.monotonic()
+        manager._on_teleop(_twist(lx=0.3))
+        manager._on_teleop(_twist(lx=0.3))
+        assert time.monotonic() - start < 1.0
+        assert len(captured.cmd_vel) == 2
+    finally:
+        release.set()
 
 
 def test_nav_resumes_after_cooldown(manager_and_captured):
