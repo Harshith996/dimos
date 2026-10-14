@@ -49,6 +49,7 @@ exclude = [
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
+    "robot/galaxea/r1pro/vendor_setup.sh",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -276,7 +277,6 @@ unitree-dds = [
 control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
-    "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "can-motor-control>=0.0.8",
     "python-can>=4",
     "pygame>=2.6.1",
@@ -288,7 +288,7 @@ planning = [
     "dimos[control]",
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-    "roboplan>=0.6.0,<0.7.0",
+    "roboplan>=0.7.0,<0.8.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
@@ -310,6 +310,8 @@ cpu = [
 cuda = [
     "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.21; platform_machine == 'x86_64'",  # >=1.21 for onnxruntime.preload_dlls()
+    # MeshModule's marching cubes
+    "warp-lang>=1.13",
 ]
 
 sim = [
@@ -445,6 +447,10 @@ tests = [
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
+    # RoboPlan 0.7 splits its bindings into packages. The roboplan meta-package
+    # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
+    # Tests-only installs need core for native point-cloud Narrowphase queries.
+    "roboplan-core>=0.7.0,<0.8.0",
     "mujoco>=3.3.4",
     "pygame>=2.6.1",
     "python-can>=4",
@@ -473,7 +479,7 @@ lint = [
     "pytest==8.3.5",
     "python-can>=4",
     "python-socketio>=5.16.1",
-    "roboplan>=0.6.0,<0.7.0",
+    "roboplan>=0.7.0,<0.8.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",
     "watchdog>=3.0.0",
@@ -586,7 +592,7 @@ exclude = [
 line-ending = "lf"
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "TID252"]
 ignore = [
     # TODO: All of these should be fixed, but it's easier commit autofixes first
     "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
@@ -609,6 +615,9 @@ ignore = [
 known-first-party = ["dimos"]
 combine-as-imports = true
 force-sort-within-sections = true
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-type-checking]
 runtime-evaluated-base-classes = ["dimos.core.module.Module"]
@@ -686,6 +695,8 @@ module = [
     "unitree_sdk2py.*",
     "viser",
     "viser.*",
+    "warp",
+    "warp.*",
     "unitree_webrtc_connect.*",
     "websocket",
     "xarm.*",
