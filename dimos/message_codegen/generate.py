@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+from tempfile import TemporaryDirectory
 
 from . import cpp, python, rust
 from .definitions import Definitions
@@ -43,6 +44,49 @@ def generate(
     dependencies: tuple[Dependency, ...] = (),
     shared: bool = False,
     languages: tuple[str, ...] = ("python", "cpp", "rust"),
+) -> tuple[str, ...]:
+    output = output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".message-generation-", dir=output.parent) as temporary:
+        stage = Path(temporary) / "output"
+        if output.exists():
+            shutil.copytree(output, stage)
+        result = _generate(
+            roots,
+            stage,
+            names,
+            module,
+            installed=installed,
+            version=version,
+            dependencies=dependencies,
+            shared=shared,
+            languages=languages,
+            final_output=output,
+        )
+        backup = Path(temporary) / "previous"
+        if output.exists():
+            output.rename(backup)
+        try:
+            stage.rename(output)
+        except OSError:
+            if backup.exists():
+                backup.rename(output)
+            raise
+        return result
+
+
+def _generate(
+    roots: list[Path],
+    output: Path,
+    names: list[str] | None,
+    module: str,
+    *,
+    installed: bool,
+    version: str,
+    dependencies: tuple[Dependency, ...],
+    shared: bool,
+    languages: tuple[str, ...],
+    final_output: Path,
 ) -> tuple[str, ...]:
     if not re.fullmatch(r"[a-z][a-z0-9_]*", module) or keyword.iskeyword(module):
         raise ValueError(f"Invalid Python package module name: {module}")
@@ -148,7 +192,7 @@ def generate(
             'serde = {version = "1", features = ["derive"]}\nserde-big-array = "=0.5.1"\n'
             're_cdr = "=0.1.0"\nheapless = {version = "=0.8.0", features = ["serde"]}\n'
             + "".join(
-                f'{dep.module.replace("_", "-")}-messages = {{version = "={dep.version}", path = {json.dumps(os.path.relpath(dep.root / "rust", crate))}}}\n'
+                f'{dep.module.replace("_", "-")}-messages = {{version = "={dep.version}", path = {json.dumps(os.path.relpath(dep.root / "rust", final_output / "rust"))}}}\n'
                 for dep in dependencies
             )
             + '[build-dependencies]\nros2msg = "=0.5.3"\n'
