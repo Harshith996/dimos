@@ -23,23 +23,13 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.protocol.tf.static_tf_publisher import (
-    FrameSpec,
-    StaticTfPublisher,
-    StaticTfPublisherConfig,
-    frames_to_edge_transforms,
-)
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
-
-
-@cache
-def lidar_mount_xyz() -> tuple[float, float, float]:
-    """The chassis lidar's mount from the URDF, loaded on first use so importing a blueprint needs no robot assets."""
-    joint = R1PRO_MODEL.load().get_joint("lidar_chassis_left_joint")
-    assert joint is not None
-    return joint.origin_xyz
 
 
 class R1ProLioConfig(StaticTfPublisherConfig):
@@ -50,17 +40,30 @@ class R1ProLioConfig(StaticTfPublisherConfig):
     chassis_lidar_frame: str = "lidar_chassis_left_link"
 
 
+@cache
+def lio_model(lidar_frame: str, chassis_lidar_frame: str) -> LoadedRobotModel:
+    """The R1 URDF with Point-LIO's frame added at the chassis lidar, loaded on first use so importing a blueprint needs no robot assets."""
+    return R1PRO_MODEL.with_fixed_frame(lidar_frame, chassis_lidar_frame).load()
+
+
+def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
+    """The fixed joint that places ``child_link`` under its parent."""
+    joint = next(j for j in model.joints if j.child_link == child_link)
+    return Transform(
+        translation=Vector3(*joint.origin_xyz),
+        rotation=Quaternion.from_euler(Vector3(*joint.origin_rpy)),
+        frame_id=joint.parent_link,
+        child_frame_id=joint.child_link,
+    )
+
+
 def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
-    mount_xyz = lidar_mount_xyz()
-    frames: list[FrameSpec] = [
-        (config.base_frame, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-        # Same spot as the URDF's lidar frame; only the parent differs.
-        (config.lidar_frame, config.base_frame, mount_xyz, (0.0, 0.0, 0.0)),
-        (config.chassis_lidar_frame, config.base_frame, mount_xyz, (0.0, 0.0, 0.0)),
-    ]
-    edges = {t.child_frame_id: t for t in frames_to_edge_transforms(frames)}
-    return [-edges[config.lidar_frame], edges[config.chassis_lidar_frame]]
+    model = lio_model(config.lidar_frame, config.chassis_lidar_frame)
+    base_to_chassis_lidar = joint_transform(model, config.chassis_lidar_frame)
+    assert base_to_chassis_lidar.frame_id == config.base_frame
+    base_to_lidar = base_to_chassis_lidar + joint_transform(model, config.lidar_frame)
+    return [-base_to_lidar, base_to_chassis_lidar]
 
 
 def base_pose(odometry: Odometry, lidar_to_base: Transform) -> PoseStamped:
