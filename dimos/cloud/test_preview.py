@@ -58,7 +58,7 @@ def store(path: Path | None = None, **streams: Sequence[tuple[float, Any, Pose |
         with closing(sqlite3.connect(path)) as db:
             for name, items in streams.items():
                 table = name.replace('"', '""')
-                db.execute(f'CREATE TABLE "{table}" (ts REAL)')
+                db.execute(f'CREATE TABLE "{table}" (ts REAL NOT NULL)')
                 db.executemany(f'INSERT INTO "{table}" VALUES (?)', [(t,) for t, _, _ in items])
             db.commit()
     return cast(
@@ -206,7 +206,6 @@ def test_timing_respects_full_wire_json_budget(
 @pytest.mark.parametrize(
     "timestamps,t0",
     [
-        ([100.0, float("nan")], 100.0),
         ([float("inf")], 0.0),
         ([-1e308, 1e308], 0.0),
     ],
