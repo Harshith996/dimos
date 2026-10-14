@@ -82,8 +82,8 @@ class PointNavSkillContainer(Module):
         which can be short of it. Call stop_navigation before sending another go_to.
 
         Args:
-            x: target x in metres, world frame.
-            y: target y in metres, world frame.
+            x: target x in meters, world frame.
+            y: target y in meters, world frame.
         """
         # Opened before any return so the movement claim always has a stream to release it.
         self.start_tool("go_to")

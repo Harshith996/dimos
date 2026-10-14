@@ -39,8 +39,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# How long the tracker has to produce its first goal, and to reach the object.
-_TRACKED_GOAL_WAIT_S = 2.0
+# How long the tracker has to reach the object.
 _TRACKED_ARRIVAL_TIMEOUT_S = 30.0
 
 
@@ -208,7 +207,6 @@ class NavigationSkillContainer(Module):
 
         unsubscribe = self.nav_status.subscribe(on_status)
         try:
-            # Start tracking - BBoxNavigationModule automatically generates goals
             self._object_tracking.track(bbox)  # type: ignore[arg-type]
             return self._wait_for_tracked_goal(query, statuses)
         finally:
@@ -218,14 +216,12 @@ class NavigationSkillContainer(Module):
     def _wait_for_tracked_goal(self, query: str, statuses: queue.Queue[GoalStatus]) -> str | None:
         """Wait for the tracker's goals to end. Each new one replaces the last."""
         deadline = time.monotonic() + _TRACKED_ARRIVAL_TIMEOUT_S
-        wait = _TRACKED_GOAL_WAIT_S
         while True:
             try:
-                msg = statuses.get(timeout=wait)
+                msg = statuses.get(timeout=max(deadline - time.monotonic(), 0.0))
             except queue.Empty:
                 logger.warning("Tracked navigation ended with no goal reached", query=query)
                 return None
-            wait = max(deadline - time.monotonic(), 0.0)
             if holds_goal(msg.status):
                 continue
             if msg.status == GoalStatus.PREEMPTED and msg.text == PREEMPT_REPLACED:
