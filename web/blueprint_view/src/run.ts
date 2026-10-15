@@ -7,7 +7,7 @@ export interface Launch {
   phase: "starting" | "running" | "stopping" | "stopped" | "failed";
   pid: number;
   output?: string;
-  runId: string | null;
+  runId: string;
   overrides?: Record<string, unknown>;
   modules?: Record<string, Record<string, unknown>>;
   oneOff?: { global?: Record<string, unknown>; modules?: Record<string, Record<string, unknown>> };
@@ -99,14 +99,4 @@ export function relaunchLabel(
     return `${startingStep(launch, relaunching, relaunchedPid)}…`;
   }
   return stale ? "Relaunch to apply" : "Relaunch";
-}
-
-/** The body POST runs/stop and runs/restart take: the launch's runId, or its pid until dimos gives it one. */
-export function whichRun(
-  launch: Launch | null,
-): { runId: string } | { pid: number } | Record<string, never> {
-  if (launch?.runId) {
-    return { runId: launch.runId };
-  }
-  return launch ? { pid: launch.pid } : {};
 }
