@@ -42,17 +42,18 @@ class RunRequest(BaseModel):
     pid: int | None = None
 
 
-async def chosen_run(request: RunRequest) -> str | None:
-    """The runId the request names; None for the gateway's own launch still starting under `pid`."""
+async def chosen_run(request: RunRequest) -> tuple[str | None, bool]:
+    """The runId the request names, and whether it's the gateway's own launch (which a pid names before dimos gives
+    it a runId)."""
     if (request.runId is None) == (request.pid is None):
         raise ApiError(400, "name the run: runId (or pid, for a launch that has no runId yet)")
-    if request.runId is not None:
-        return request.runId
     launch = await asyncio.to_thread(launches.current_launch)
-    if launch is None or launch["pid"] != request.pid or launch["phase"] not in launches.ACTIVE:
-        raise ApiError(400, f"no launch still starting with pid {request.pid}")
+    if request.runId is not None:
+        return request.runId, launch is not None and launch["runId"] == request.runId
+    if launch is None or launch["pid"] != request.pid:
+        raise ApiError(400, f"the gateway's launch isn't pid {request.pid}")
     run_id: str | None = launch["runId"]
-    return run_id
+    return run_id, True
 
 
 def with_saved(blueprint: str, one_off: ov.LaunchOverrides, args: list[str]) -> LaunchConfig:
@@ -113,7 +114,7 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
 @router.post("/runs/stop", response_model=responses.Stopped)
 async def stop(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     """Stop the run `runId` (or the launch still starting as `pid`)."""
-    run_id = await chosen_run(request)
+    run_id, _ = await chosen_run(request)
     try:
         return {"output": await launches.stop(run_id)}
     except launches.RunError as error:
@@ -129,14 +130,16 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     The gateway's own launch starts again with the config saved now; a run it didn't launch starts again with the
     same command line, directory and environment.
     """
-    run_id = await chosen_run(request)
+    run_id, ours = await chosen_run(request)
     current = await asyncio.to_thread(launches.current_launch)
-    ours = (
-        current is not None and current["phase"] in launches.ACTIVE and current["runId"] == run_id
-    )
+    active = ours and current is not None and current["phase"] in launches.ACTIVE
     # TODO: after gateway is on main, drop this fallback for runs the gateway didn't launch
     try:
-        run = await asyncio.to_thread(launches.run_to_relaunch, run_id)
+        run = (
+            None
+            if ours and not active
+            else await asyncio.to_thread(launches.run_to_relaunch, run_id)
+        )
     except launches.RunError as error:
         raise ApiError(400, str(error))
     if run is not None:
@@ -156,7 +159,7 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     blueprint, previous = last
     config = with_saved(blueprint, previous.one_off, previous.args)
     try:
-        if ours:
+        if active:
             await launches.stop(None)
         started = await asyncio.to_thread(launches.start, state.dimos_dir, blueprint, config)
     except launches.RunError as error:

@@ -93,6 +93,12 @@ def test_restart_launches_the_last_blueprint_again(client: TestClient, launched:
     assert restarted.status_code == 200, restarted.text
     assert restarted.json()["pid"] != first
     assert restarted.json()["oneOff"]["global"] == {"n_workers": 2}
+    second = restarted.json()["pid"]
+    assert client.post("/runs/stop", json={"pid": second}).status_code == 200
+    until(lambda: client.get("/runs").json()["launch"]["phase"] == "stopped")
+    again = client.post("/runs/restart", json={"pid": second})
+    assert again.status_code == 200, again.text
+    assert again.json()["pid"] not in (first, second)
 
 
 def test_restart_copies_a_run_the_gateway_did_not_launch(
