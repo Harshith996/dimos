@@ -37,7 +37,6 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.resource_monitor.logger import RESOURCE_STATS_TOPIC
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
@@ -66,6 +65,11 @@ class SystemLogConfig(NativeModuleConfig):
     memory_alert_percent: float = 95.0
     weak_signal_dbm: float = -80.0
     hot_celsius: float = 90.0
+    # where the resource monitor (`--dtop`) publishes; read here in Python, so not sent to the binary
+    resource_stats_topic: str = "/resource_stats"
+
+    def to_config_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in super().to_config_dict().items() if k != "resource_stats_topic"}
 
 
 class SystemLog(NativeModule):
@@ -83,7 +87,9 @@ class SystemLog(NativeModule):
     def start(self) -> None:
         super().start()
         # The resource monitor publishes pickled dicts the binary can't read, so per-module usage is forwarded here.
-        resource_stats: PubSubTransport[dict[str, Any]] = make_transport(RESOURCE_STATS_TOPIC)
+        resource_stats: PubSubTransport[dict[str, Any]] = make_transport(
+            self.config.resource_stats_topic
+        )
         resource_stats.subscribe(self._on_resource_stats)
         resource_stats.start()
         self._resource_stats = resource_stats
