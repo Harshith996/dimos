@@ -22,7 +22,7 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
-from experimental.gateway.state import State
+from experimental.gateway.state import API_VERSION, State
 
 ARG = {
     "default": None,
@@ -71,6 +71,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "version": "0.0.14",
         "range": "",
         "inRange": True,
+        "api": API_VERSION,
+        "commit": None,
+        "tag": None,
     }
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.0.14b1 <0.1")
     assert client.get("/info").json()["inRange"] is True
@@ -82,6 +85,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "version": "0.0.14",
         "range": ">=0.1 <0.2",
         "inRange": False,
+        "api": API_VERSION,
+        "commit": None,
+        "tag": None,
     }
     paths = client.get("/paths").json()
     assert paths["dimosDir"] == str(checkout)

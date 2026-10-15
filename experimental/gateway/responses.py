@@ -39,6 +39,9 @@ class Info(Body):
     version: str | None
     range: str
     inRange: bool
+    api: str
+    commit: str | None
+    tag: str | None
 
 
 class ServerInfo(Body):

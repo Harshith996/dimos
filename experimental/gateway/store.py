@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -141,7 +142,19 @@ def satisfies(version: str, range_text: str) -> bool:
         return False
 
 
+def git(dimos_dir: Path, *args: str) -> str | None:
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(dimos_dir), *args], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() or None if done.returncode == 0 else None
+
+
 def info(dimos_dir: Path) -> dict[str, Any]:
+    from experimental.gateway.state import API_VERSION
+
     found, version = checkout_version(dimos_dir)
     # the dimos range Desktop supports (its DESKTOP_DIMOS_RANGE); Desktop's installer requires both keys
     range_text = os.environ.get("DESKTOP_DIMOS_RANGE", "")
@@ -152,4 +165,9 @@ def info(dimos_dir: Path) -> dict[str, Any]:
         "version": version,
         "range": range_text,
         "inRange": version is not None and (not range_text or satisfies(version, range_text)),
+        "api": API_VERSION,
+        "commit": git(dimos_dir, "rev-parse", "--short=10", "HEAD"),
+        "tag": git(
+            dimos_dir, "describe", "--tags", "--exact-match", "--match", "desktop-gateway-v*"
+        ),
     }
