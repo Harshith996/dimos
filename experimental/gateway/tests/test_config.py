@@ -23,6 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
+from experimental.gateway.events import EVENT_TYPES
 from experimental.gateway.state import API_VERSION, State
 
 ARG = {
@@ -164,3 +165,6 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
     }
     declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
     assert declared == served
+    zenoh = {rule["id"]: rule for rule in manifest["provides"]["zenoh"]}
+    events = [key.rsplit("/", 1)[1] for key in zenoh["gateway-events"]["key_exprs"]]
+    assert events == list(EVENT_TYPES)

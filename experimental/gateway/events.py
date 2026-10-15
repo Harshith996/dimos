@@ -59,6 +59,10 @@ def zenoh_put(connect: list[str]) -> Callable[[str, bytes], None]:
     return put
 
 
+# Every event this gateway publishes, at <namespace>/dimos/events/<type> (dimos.yaml provides: zenoh: lists them).
+EVENT_TYPES = ("launch", "blueprints", "upload", "uploads", "upload-removed", "cloud-login")
+
+
 class Bus:
     def __init__(
         self, namespace: str | None = None, put: Callable[[str, bytes], None] | None = None
@@ -68,6 +72,9 @@ class Bus:
         self.launch_key: tuple[Any, ...] | None = None
 
     def send(self, event: dict[str, Any]) -> None:
+        assert event["type"] in EVENT_TYPES, (
+            f"{event['type']} isn't in EVENT_TYPES (and dimos.yaml)"
+        )
         if self.put is None or self.namespace is None:
             return
         try:
