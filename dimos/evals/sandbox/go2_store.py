@@ -118,9 +118,11 @@ def evaluate(o: SandboxOutcome) -> float:
     """
     command = o.done["command"]
     started = time.time()
-    o.exec(f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/grading-run.log 2>&1 &")
+    o.exec(
+        f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/work/grading-run.log 2>&1 &"
+    )
     time.sleep(GRADE_RUN_S)
-    log_tail = o.exec("tail -c 4000 /root/grading-run.log").stdout
+    log_tail = o.exec("tail -c 4000 /root/work/grading-run.log").stdout
     _ = o.recording  # stop the recorder: the run is over
 
     truth = GroundTruth.load(o.case_dir / "ground_truth.jsonl")
