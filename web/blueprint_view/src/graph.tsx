@@ -2,7 +2,7 @@
 // hovered or picked, and showing each topic's rate while the blueprint runs.
 import { GraphView, type GraphViewHandle, type LayoutId, textWidth } from "dimos-react/graph";
 import { formatRate, messageTypeColor, useTheme } from "dimos-react";
-import { type CSSProperties, forwardRef, type ReactNode, useMemo } from "react";
+import { type CSSProperties, forwardRef, type ReactNode, useEffect, useMemo } from "react";
 import { className, type Module, topicOf } from "./model.ts";
 
 const MODULE_H = 46;
@@ -117,12 +117,34 @@ function buildGraph(modules: Module[], extras: { topic: string; type: string }[]
   return { nodes, edges };
 }
 
+/** Two fingers over `element` zoom only the graph, never the page (even with Android's "force enable zoom", which ignores touch-action). */
+export function useNoPagePinch(element: HTMLElement | null) {
+  useEffect(() => {
+    if (!element) {
+      return;
+    }
+    const onTouchMove = (event: TouchEvent) => event.touches.length > 1 && event.preventDefault();
+    // iOS Safari's own pinch
+    const onGesture = (event: Event) => event.preventDefault();
+    element.addEventListener("touchmove", onTouchMove, { passive: false });
+    element.addEventListener("gesturestart", onGesture);
+    element.addEventListener("gesturechange", onGesture);
+    return () => {
+      element.removeEventListener("touchmove", onTouchMove);
+      element.removeEventListener("gesturestart", onGesture);
+      element.removeEventListener("gesturechange", onGesture);
+    };
+  }, [element]);
+}
+
 export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
   function BlueprintGraph(props, ref) {
     const { modules, extras, layout, spot, rates, onModule, onTopic, onHover } = props;
     // sizes follow the skin's fonts
     const { skin } = useTheme();
-    const { nodes, edges } = useMemo(() => buildGraph(modules, extras), [modules, extras, skin]);
+    // keyed on content, not identity: a new nodes array re-binds GraphView's pointer handlers, which drops a pinch mid-gesture
+    const shape = JSON.stringify([modules, extras]);
+    const { nodes, edges } = useMemo(() => buildGraph(modules, extras), [shape, skin]);
     const types = useMemo(
       () =>
         new Map(nodes.flatMap((node) => node.kind === "topic" ? [[node.topic, node.type]] : [])),

@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, getJson, send } from "./api.ts";
 import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
-import { BlueprintGraph, type Spot } from "./graph.tsx";
+import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import { type Launch, launchedWithOther, type Relaunching, relaunchLabel } from "./run.ts";
@@ -76,6 +76,8 @@ export function App() {
   const [dialog, setDialog] = useState<"config" | "logs" | null>(null);
   const chrome = useDesktopChrome();
   const graph = useRef<GraphViewHandle>(null);
+  const [graphArea, setGraphArea] = useState<HTMLElement | null>(null);
+  useNoPagePinch(graphArea);
 
   const running = !!launch && (launch.phase === "running" || launch.phase === "starting");
   const logsRun = RUN ?? launch?.runId ?? null;
@@ -337,7 +339,7 @@ export function App() {
               />
             )}
         </aside>
-        <main id="graph">
+        <main id="graph" ref={setGraphArea}>
           <BlueprintGraph
             ref={graph}
             modules={modules ?? []}
