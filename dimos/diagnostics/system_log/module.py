@@ -54,6 +54,8 @@ class SystemLogConfig(NativeModuleConfig):
     sample_hz: float = Field(default=4.0, ge=0.1, le=100.0)
     publish_period_s: float = Field(default=1.0, ge=0.01, le=3600.0)
     slow_period_s: float = Field(default=5.0, ge=0.1, le=3600.0)
+    # a subprocess (iw, nvidia-smi, ...) still running after this is killed, so it can't stall sampling
+    command_timeout_s: float = Field(default=2.0, ge=0.1, le=600.0)
     process_period_s: float = Field(default=10.0, ge=0.1, le=3600.0)
     top_processes: int = Field(default=12, ge=1, le=1000)
     buffer_s: float = Field(default=120.0, ge=1.0, le=3600.0)
@@ -87,6 +89,8 @@ class SystemLog(NativeModule):
     @rpc
     def start(self) -> None:
         super().start()
+        if self._resource_stats is not None:
+            return
         # The resource monitor publishes pickled dicts the binary can't read, so per-module usage is forwarded here.
         resource_stats: PubSubTransport[dict[str, Any]] = make_transport(
             self.config.resource_stats_topic

@@ -43,6 +43,9 @@ pub struct Config {
     /// Seconds between refreshes of what needs a subprocess (iw, nvidia-smi, route, pmset) or changes slowly.
     #[validate(range(min = 0.1, max = 3600.0))]
     slow_period_s: f64,
+    /// Seconds a slow refresh waits on each subprocess before killing it, so a hung one can't stall sampling.
+    #[validate(range(min = 0.1, max = 600.0))]
+    command_timeout_s: f64,
     /// Seconds between "processes" records (they're also published with every dump).
     #[validate(range(min = 0.1, max = 3600.0))]
     process_period_s: f64,
@@ -249,12 +252,13 @@ impl Worker {
                 "no run log directory (DIMOS_RUN_LOG_DIR), so dimos' logs won't be on system_log"
             );
         }
+        let sampler = Sampler::new(Duration::from_secs_f64(config.command_timeout_s));
         Self {
             config,
             output,
             runtime,
             dumps,
-            sampler: Sampler::new(),
+            sampler,
             ring: Ring {
                 samples: VecDeque::with_capacity(capacity),
                 capacity: capacity.max(1),
@@ -361,6 +365,7 @@ mod tests {
             sample_hz: 4.0,
             publish_period_s: 1.0,
             slow_period_s: 5.0,
+            command_timeout_s: 2.0,
             process_period_s: 10.0,
             top_processes: 12,
             buffer_s: 120.0,

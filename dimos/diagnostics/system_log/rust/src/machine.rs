@@ -16,9 +16,10 @@
 //! Hz; what needs a subprocess (`iw`, `nvidia-smi`, `route`, `pmset`) is refreshed by `refresh_slow` and carried
 //! along in every sample.
 
+use std::io::Read;
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use sysinfo::{
@@ -34,14 +35,42 @@ const JETSON_GPU_LOAD: [&str; 2] = [
     "/sys/devices/platform/gpu.0/load",
 ];
 
-fn run(program: &str, args: &[&str]) -> String {
-    Command::new(program)
+/// The command's stdout, or nothing if it fails or is still running after `timeout` (then it's killed).
+fn run(program: &str, args: &[&str], timeout: Duration) -> String {
+    let Ok(mut child) = Command::new(program)
         .args(args)
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
-        .unwrap_or_default()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return String::new();
+    };
+    let Some(mut stdout) = child.stdout.take() else {
+        return String::new();
+    };
+    // read while it runs, so a full pipe can't stall it
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
+    let deadline = Instant::now() + timeout;
+    let succeeded = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    match (succeeded, reader.join()) {
+        (true, Ok(out)) => String::from_utf8_lossy(&out).to_string(),
+        _ => String::new(),
+    }
 }
 
 fn on_path(program: &str) -> bool {
@@ -65,20 +94,15 @@ pub struct Sampler {
     last_disk: Option<(Instant, (u64, u64))>,
     has_iw: bool,
     has_nvidia_smi: bool,
+    command_timeout: Duration,
     /// what `refresh_slow` found, merged into every sample
     slow: Map<String, Value>,
     /// iface → `iw` link details, merged into that iface's /proc/net/wireless entry
     iw: Map<String, Value>,
 }
 
-impl Default for Sampler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Sampler {
-    pub fn new() -> Self {
+    pub fn new(command_timeout: Duration) -> Self {
         let mut system = System::new();
         // CPU usage is since the previous refresh; prime it so the first sample means something
         system.refresh_cpu_usage();
@@ -91,6 +115,7 @@ impl Sampler {
             last_disk: None,
             has_iw: on_path("iw"),
             has_nvidia_smi: on_path("nvidia-smi"),
+            command_timeout,
             slow: Map::new(),
             iw: Map::new(),
         }
@@ -99,6 +124,7 @@ impl Sampler {
     /// The parts that need a subprocess or change slowly: Wi-Fi link details, routes, GPUs, battery, disk usage.
     pub fn refresh_slow(&mut self) {
         let mut slow = Map::new();
+        let timeout = self.command_timeout;
         if cfg!(target_os = "linux") {
             let wireless = parse::proc_net_wireless(
                 &parse::read(Path::new("/proc/net/wireless")).unwrap_or_default(),
@@ -109,7 +135,7 @@ impl Sampler {
                 .map(|iface| {
                     (
                         iface.clone(),
-                        Value::Object(parse::iw_link(&run("iw", &["dev", iface, "link"]))),
+                        Value::Object(parse::iw_link(&run("iw", &["dev", iface, "link"], timeout))),
                     )
                 })
                 .collect();
@@ -120,14 +146,14 @@ impl Sampler {
                 )),
             );
         } else {
-            let route = parse::macos_route(&run("route", &["-n", "get", "default"]));
+            let route = parse::macos_route(&run("route", &["-n", "get", "default"], timeout));
             slow.insert(
                 "routes".into(),
                 json!(route.map(|(_, route)| vec![route]).unwrap_or_default()),
             );
             slow.insert(
                 "battery".into(),
-                parse::pmset_batt(&run("pmset", &["-g", "batt"])).unwrap_or(Value::Null),
+                parse::pmset_batt(&run("pmset", &["-g", "batt"], timeout)).unwrap_or(Value::Null),
             );
         }
         if self.has_nvidia_smi {
@@ -136,7 +162,8 @@ impl Sampler {
                 "gpus".into(),
                 json!(parse::nvidia_smi(&run(
                     "nvidia-smi",
-                    &[query, "--format=csv,noheader,nounits"]
+                    &[query, "--format=csv,noheader,nounits"],
+                    timeout
                 ))),
             );
         }
@@ -329,5 +356,18 @@ impl Sampler {
             })
             .collect();
         json!(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hung_command_is_killed_at_the_timeout() {
+        let start = Instant::now();
+        assert_eq!(run("sleep", &["10"], Duration::from_millis(200)), "");
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert_eq!(run("echo", &["hi"], Duration::from_secs(5)), "hi\n");
     }
 }
