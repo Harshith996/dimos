@@ -47,7 +47,7 @@ getZenoh().subscribeDimos("launch", (launch) => show(launch.phase)) // live phas
 ## How do I stop a blueprint?
 
 ```js
-await fetch("../../dimos-gateway/runs/stop", { method: "POST", body: JSON.stringify({ runId }) }) // or { pid } while it's starting (no runId yet)
+await fetch("../../dimos-gateway/runs/stop", { method: "POST", body: JSON.stringify({ runId }) }) // launch.runId is set from the start
 ```
 
 ## How do I relaunch?

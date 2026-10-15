@@ -71,10 +71,10 @@ provides:
       description: Launch a blueprint with the saved config plus one-off overrides and args
     - method: POST
       path: runs/stop
-      description: 'Stop the run {runId} (or {pid}, a launch with no runId yet)'
+      description: 'Stop the run {runId}'
     - method: POST
       path: runs/restart
-      description: 'Stop the run {runId} (or {pid}) and launch it again: the gateway''s launch with the config saved now, another run with its own command line, directory and env'
+      description: 'Stop the run {runId} and launch it again: the gateway''s launch with the config saved now, another run with its own command line, directory and env'
     - method: GET
       path: runs/{runId}/log
       description: A run's structured log (after, level, q, limit; runId may be latest)
