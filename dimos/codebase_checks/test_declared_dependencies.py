@@ -16,7 +16,6 @@ import ast
 import importlib.metadata
 from pathlib import Path
 import re
-import site
 import sys
 
 from packaging.requirements import Requirement
@@ -31,11 +30,31 @@ else:
 DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
 PYPROJECT = DIMOS_PROJECT_ROOT / "pyproject.toml"
 
-# Installed from outside pyproject.toml: the ZED SDK wheel and the in-tree
-# maturin extensions, both set up by bin/build-test-natives.
-UNDECLARABLE_MODULES = frozenset(
+# Modules that pyproject.toml cannot declare because something other than
+# `uv sync` installs them.
+EXTERNAL_MODULES = frozenset(
     {
+        # ROS 2 system install (dimos/protocol/pubsub/impl/rospubsub.py and friends).
+        "ament_index_python",
+        "builtin_interfaces",
+        "geometry_msgs",
+        "nav_msgs",
+        "rclpy",
+        "sensor_msgs",
+        "std_msgs",
+        # GStreamer bindings from the system PyGObject package.
+        "gi",
+        # Habitat-Sim is conda-only.
+        "habitat_sim",
+        # Vendor SDKs. bin/hardware/a1z/setup installs a1z from git and, on macOS,
+        # gs-usb and pyusb. a750_control ships its own binding, and the ZED SDK
+        # wheel (pyzed) comes from bin/build-test-natives.
+        "a1z",
+        "a750_control",
+        "gs_usb",
         "pyzed",
+        "usb",
+        # In-tree maturin extensions built by bin/build-test-natives.
         "dimos_local_planner",
         "dimos_mls_planner",
         "dimos_trajectory_follower",
@@ -43,11 +62,38 @@ UNDECLARABLE_MODULES = frozenset(
     }
 )
 
-# Distributions whose installed metadata does not list their top-level module,
-# so importlib.metadata cannot map the module back to them.
+# Module name -> distribution name for every import whose distribution is named
+# differently. Consulted when the module is not installed, since only installed
+# metadata can answer otherwise. rerun-sdk and pin ship no usable metadata at all.
 MODULE_TO_DISTRIBUTION = {
-    "rerun": "rerun-sdk",
+    "PIL": "pillow",
+    "bosdyn": "bosdyn-client",
+    "can": "python-can",
+    "cv2": "opencv-contrib-python",
+    "dotenv": "python-dotenv",
+    "ffmpeg": "ffmpeg-python",
+    "git": "gitpython",
+    "gtsam": "gtsam-extended",
+    "hydra": "hydra-core",
+    "lcm": "lcm-dimos-fork",
+    "mujoco_playground": "playground",
+    "open_clip": "open-clip-torch",
+    "pink": "pin-pink",
     "pinocchio": "pin",
+    "plum": "plum-dispatch",
+    "pxr": "usd-core",
+    "pydrake": "drake",
+    "rerun": "rerun-sdk",
+    "sam2": "edgetam-dimos",
+    "socketio": "python-socketio",
+    "turbojpeg": "pyturbojpeg",
+    "unitree_sdk2py": "unitree-sdk2py-dimos",
+    "warp": "warp-lang",
+    "websocket": "websocket-client",
+    "whisper": "openai-whisper",
+    "xarm": "xarm-python-sdk",
+    "yaml": "pyyaml",
+    "zenoh": "eclipse-zenoh",
 }
 
 
@@ -96,42 +142,34 @@ def imported_modules() -> dict[str, list[str]]:
 
 
 def test_imports_are_declared_in_pyproject() -> None:
-    """Fail if dimos imports a package that only arrives as a dependency of a dependency."""
+    """Fail if dimos imports a package that pyproject.toml does not declare."""
     declared = declared_distributions()
     assert "numpy" in declared, "pyproject.toml parsing is broken"
 
     installed = importlib.metadata.packages_distributions()
-    # Only distributions inside this venv are pyproject.toml's business. Anything
-    # else on sys.path, such as a sourced ROS 2 install, is ignored.
-    in_venv = {
-        _normalize(dist.metadata["Name"])
-        for dist in importlib.metadata.distributions(path=site.getsitepackages())
-    }
     undeclared: dict[str, list[str]] = {}
     for module, locations in imported_modules().items():
-        if module in UNDECLARABLE_MODULES:
+        if module in EXTERNAL_MODULES:
             continue
-        if module in MODULE_TO_DISTRIBUTION:
-            candidates = [MODULE_TO_DISTRIBUTION[module]]
+        names = sorted({_normalize(name) for name in installed.get(module, [])})
+        if names:
+            label = f"{module} (distribution: {', '.join(names)})"
         else:
-            candidates = installed.get(module, [])
-        names = sorted({_normalize(name) for name in candidates} & in_venv)
-        if not names:
-            # Not installed in this venv, so it cannot be mapped to a distribution.
-            # A transitive dependency is always installed, so this only skips
-            # vendor SDKs and the packages of extras that were not synced here.
-            continue
+            names = [_normalize(MODULE_TO_DISTRIBUTION.get(module, module))]
+            label = f"{module} (not installed, expected distribution: {names[0]})"
         if not any(name in declared for name in names):
-            undeclared[f"{module} (distribution: {', '.join(names)})"] = locations
+            undeclared[label] = locations
 
     if undeclared:
         listing = "\n".join(
-            f"  - {module}\n" + "\n".join(f"      {location}" for location in locations)
-            for module, locations in sorted(undeclared.items())
+            f"  - {label}\n" + "\n".join(f"      {location}" for location in locations)
+            for label, locations in sorted(undeclared.items())
         )
         raise AssertionError(
             f"Imports of packages that pyproject.toml does not declare:\n{listing}\n\n"
-            "These packages are only installed because another dependency happens to "
-            "pull them in. Add each one to [project.dependencies], to the extra that "
-            "covers the importing code, or to a dependency group for test-only use."
+            "Add each one to [project.dependencies], to the extra that covers the "
+            "importing code, or to a dependency group for test-only use. If the "
+            "distribution is named differently from the module, add it to "
+            "MODULE_TO_DISTRIBUTION. If nothing in pyproject.toml can install it, "
+            "add it to EXTERNAL_MODULES."
         )
