@@ -692,11 +692,6 @@ def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
 
 
 LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\s+\"[^\"]*\")?\)")
-CUSTOM_ROBOT = (
-    r"(custom|new|own|your)[ _-]+(robot|platform|hardware)",
-    r"(adding|add|integrat\w*)[ _-]+(a[ _-]+)?(custom|new)",
-    r"(custom|new)[ _-]+\w+[ _-]+(robot|arm|platform)",
-)
 
 
 def docs_site(dimos_dir: Path) -> tuple[str | None, str | None]:
@@ -717,28 +712,44 @@ def doc_title(path: Path) -> str:
     return heading.strip() if heading else path.stem.replace("_", " ")
 
 
-def custom_robot(dimos_dir: Path) -> dict[str, Any] | None:
+def doc_files(dimos_dir: Path) -> list[Path]:
     root = dimos_dir / "docs"
-    base, repo = docs_site(dimos_dir)
-    found: list[tuple[int, int, Path]] = []
-    for path in sorted(root.rglob("*.md")):
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue
-        names = f"{path.stem} {doc_title(path)}".lower()
-        rank = next((i for i, p in enumerate(CUSTOM_ROBOT) if re.search(p, names)), None)
-        if rank is not None:
-            found.append((rank, len(path.parts), path))
-    pages = [path for _, _, path in sorted(found)]
-    if not pages:
+    return [
+        path
+        for path in sorted(root.rglob("*.md"))
+        if not any(part.startswith(".") for part in path.relative_to(root).parts)
+    ]
+
+
+def doc_url(dimos_dir: Path, path: Path) -> str | None:
+    """The docs site's URL for a page under docs/, when the checkout names a site."""
+    base, _ = docs_site(dimos_dir)
+    parts = list(path.relative_to(dimos_dir / "docs").with_suffix("").parts)
+    if parts and parts[-1] in ("index", "README"):
+        parts = parts[:-1]
+    return base + "".join(f"{part}/" for part in parts) if base else None
+
+
+def doc_list(dimos_dir: Path) -> dict[str, Any]:
+    pages = [
+        {
+            "title": doc_title(path),
+            "path": path.relative_to(dimos_dir / "docs").as_posix(),
+            "url": doc_url(dimos_dir, path),
+        }
+        for path in doc_files(dimos_dir)
+    ]
+    return {"pages": pages}
+
+
+def doc_page(dimos_dir: Path, wanted: str) -> dict[str, Any] | None:
+    """A page under docs/ as markdown and HTML, with its relative links made absolute; None if there's no such page."""
+    root = dimos_dir / "docs"
+    page = (root / wanted).resolve()
+    if page.suffix != ".md" or not page.is_relative_to(root.resolve()) or not page.is_file():
         return None
-
-    def page_url(path: Path) -> str | None:
-        parts = list(path.relative_to(root).with_suffix("").parts)
-        if parts and parts[-1] in ("index", "README"):
-            parts = parts[:-1]
-        return base + "".join(f"{part}/" for part in parts) if base else None
-
-    page = pages[0]
+    page = root / page.relative_to(root.resolve())
+    base, repo = docs_site(dimos_dir)
 
     def fix(match: re.Match[str]) -> str:
         opener, target, label = match.group(1), match.group(2), match.group(3) or ""
@@ -752,7 +763,7 @@ def custom_robot(dimos_dir: Path) -> dict[str, Any] | None:
         if resolved.is_relative_to(root.resolve()) and base:
             inside = root / resolved.relative_to(root.resolve())
             url = (
-                page_url(inside)
+                doc_url(dimos_dir, inside)
                 if resolved.suffix == ".md"
                 else base + inside.relative_to(root).as_posix()
             )
@@ -771,16 +782,8 @@ def custom_robot(dimos_dir: Path) -> dict[str, Any] | None:
         html = None
     return {
         "title": doc_title(page),
+        "path": page.relative_to(root).as_posix(),
         "markdown": markdown,
         "html": html,
-        "source_path": page.relative_to(dimos_dir).as_posix(),
-        "url": page_url(page),
-        "others": [
-            {
-                "title": doc_title(p),
-                "source_path": p.relative_to(dimos_dir).as_posix(),
-                "url": page_url(p),
-            }
-            for p in pages[1:]
-        ],
+        "url": doc_url(dimos_dir, page),
     }

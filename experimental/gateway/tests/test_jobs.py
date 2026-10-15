@@ -169,20 +169,31 @@ def test_extras_install_runs_as_a_job(
     log = client.get(f"/jobs/{job}").json()
     assert log["ok"] and any("--extra sim" in line for line in log["lines"])
     assert client.get(f"/jobs/{job}").json()["progress"] is None
-    assert client.get("/jobs/none/log").status_code == 404
+    assert client.get("/jobs/none").status_code == 404
 
 
-def test_custom_robot_guide(client: TestClient, checkout: Path) -> None:
-    assert client.get("/docs/custom-robot").status_code == 404
-    (checkout / "docs").mkdir()
-    (checkout / "docs" / "adding_a_new_robot.md").write_text(
+def test_docs(client: TestClient, checkout: Path) -> None:
+    assert client.get("/docs/robots/adding_a_new_robot.md").status_code == 404
+    (checkout / "docs" / "robots").mkdir(parents=True)
+    (checkout / "docs" / "robots" / "adding_a_new_robot.md").write_text(
         "# Add your own robot\n\nSee [blueprints](b.md).\n"
     )
+    (checkout / "docs" / ".hidden.md").write_text("# no\n")
+    (checkout / "secret.md").write_text("# outside docs\n")
     (checkout / "mkdocs.yml").write_text("site_url: https://docs.example/\n")
-    guide = client.get("/docs/custom-robot").json()
+    assert client.get("/docs/").json()["pages"] == [
+        {
+            "title": "Add your own robot",
+            "path": "robots/adding_a_new_robot.md",
+            "url": "https://docs.example/robots/adding_a_new_robot/",
+        }
+    ]
+    guide = client.get("/docs/robots/adding_a_new_robot.md").json()
     assert guide["title"] == "Add your own robot"
-    assert "https://docs.example/b/" in guide["markdown"]
+    assert "https://docs.example/robots/b/" in guide["markdown"]
     assert guide["html"].startswith("<h1>")
+    assert client.get("/docs/..%2Fsecret.md").status_code == 404
+    assert client.get("/docs/%2E%2E/secret.md").status_code == 404
 
 
 def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_first(

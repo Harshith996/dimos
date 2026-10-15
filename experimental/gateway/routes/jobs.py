@@ -87,9 +87,12 @@ async def job(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
     return found(state, job).log(after)
 
 
-@router.get("/docs/custom-robot", response_model=responses.CustomRobotGuide)
-async def custom_robot(state: GatewayState) -> dict[str, Any]:
-    answer = await asyncio.to_thread(discovery.custom_robot, state.dimos_dir)
+@router.get("/docs/{path:path}", response_model=responses.DocPage | responses.DocList)
+async def docs(state: GatewayState, path: str = "") -> dict[str, Any]:
+    """dimos's docs: /docs/ lists every page under docs/; /docs/<page>.md is one, as markdown and HTML."""
+    if not path.strip("/"):
+        return await asyncio.to_thread(discovery.doc_list, state.dimos_dir)
+    answer = await asyncio.to_thread(discovery.doc_page, state.dimos_dir, path)
     if answer is None:
-        raise ApiError(404, f"no guide to adding a robot in {state.dimos_dir / 'docs'}")
+        raise ApiError(404, f"no page docs/{path}")
     return answer
