@@ -803,11 +803,7 @@ do_install_dev() {
     info "Developer installs use locked PyTorch builds; Linux x86_64 includes CUDA libraries even for CPU use."
     dim "will run: uv sync ${sync_args[*]}"
     if ! prompt_confirm "Install dependencies now?" yes; then INSTALL_DEPS=0; return; fi
-    info "Preparing the pinned upstream message parser for this developer checkout"
-    project_cmd uv run --no-project --with requests python dimos/message_codegen/prepare_parser.py
-    project_cmd uv run --no-project --with requests python -m dimos.message_codegen.prepare_test_inputs
     project_cmd uv sync "${sync_args[@]}"
-    project_cmd uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
     ok "developer environment ready in $dir"
 }
 

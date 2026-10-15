@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build already-prepared upstream sources without fetching at install time."""
-
-from hashlib import sha256
-import json
-from pathlib import Path
+"""Package only the compatibility modules; implementation comes from PyPI."""
 
 from setuptools import setup
+from setuptools.command.build_py import build_py
 
-if not Path(__file__).with_name(".upstream").joinpath("rosidl_adapter/parser.py").is_file():
-    raise RuntimeError(
-        "Upstream parser is not prepared. Run python dimos/message_codegen/prepare_parser.py "
-        "from the repository root (use --offline for a populated cache), then build/install. "
-        "Published backend wheels and sdists already contain the verified source."
-    )
-lock = json.loads(Path(__file__).with_name("parser-source.json").read_text())
-parser = Path(__file__).with_name(".upstream").joinpath("rosidl_adapter/parser.py")
-if sha256(parser.read_bytes()).hexdigest() != lock["parser_sha256"]:
-    raise RuntimeError("Prepared upstream parser differs from its pinned hash; prepare again")
-setup()
+
+class CompatibilityModules(build_py):
+    def find_package_modules(self, package: str, package_dir: str) -> list[tuple[str, str, str]]:
+        return [
+            module
+            for module in super().find_package_modules(package, package_dir)  # type: ignore[no-untyped-call]
+            if not module[1].startswith(("test_", "prepare_test_"))
+        ]
+
+
+setup(cmdclass={"build_py": CompatibilityModules})

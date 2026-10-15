@@ -6,17 +6,16 @@ build never downloads schemas or invokes a native compiler.
 
 ## Prepare the build tools
 
-The backend is a small, separate Python distribution so external projects do not need the DimOS robot runtime as a build dependency. Its import name is `dimos_message_build`.
+The implementation is the published `dimos-cdrgen==0.1.0` package. This checkout retains `dimos-message-build` as a thin compatibility distribution for existing DimOS hooks; its import name is `dimos_message_build`. Neither package needs the DimOS robot runtime.
 
 From this PR checkout, in an environment with pip, setuptools, wheel, and requests:
 
 ```sh
-python dimos/message_codegen/prepare_parser.py
 python -m pip wheel --wheel-dir /tmp/message-wheels ./dimos/message_codegen
 python -m pip wheel --wheel-dir /tmp/message-wheels /path/to/native-package-checkout/packages/dimos-build-config
 ```
 
-Use the matching `dimos-build-config` integration from [PR #4461](https://github.com/dimensionalOS/dimos/pull/4461) for the second path. These commands prepare the pinned upstream parser and build both tools. The wheel directory also contains its Python dependencies. Use an absolute path for pip build isolation. No PyPI release of this proposal is assumed.
+Use the matching `dimos-build-config` integration from [PR #4461](https://github.com/dimensionalOS/dimos/pull/4461) for the second path. These commands build the two local adapters and download their Python dependencies, including the published `dimos-cdrgen==0.1.0` wheel. That wheel already includes its verified parser. Use an absolute wheel directory for pip build isolation. The compatibility distribution and #4461 provider are still local proposal packages.
 
 ## Create an external message package
 
@@ -54,7 +53,8 @@ defaults to `sample_messages`.
 ```text
 pip install . → isolated build environment → scikit-build-core
     → dimos-build-config reads tool.dimos
-    → dimos-message-build reads messages, generates code and schemas
+    → dimos-message-build delegates to dimos-cdrgen
+    → dimos-cdrgen reads messages, generates code and schemas
     → wheel contains generated Python packages → pip installs wheel
 ```
 
@@ -67,11 +67,11 @@ dimos-message-generate
 python -m dimos_message_build.source_package .
 ```
 
-Both routes call `prepare()` in `dimos/message_codegen/source_package.py`.
+Both routes delegate to `dimos_cdrgen.source_package.prepare()`.
 Its `configuration()` reads the TOML and its generator writes `build/message-source`.
 Explicit generation is useful for inspection; it is not a prerequisite for installation.
 
-Use matching proposal backend wheels. They are not assumed to exist on PyPI.
+Use matching local adapter wheels and the published generator wheel. Only `dimos-cdrgen` is available from PyPI in this workflow.
 For an offline build, prepare those wheels and all Python dependencies first:
 
 ```sh

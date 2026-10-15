@@ -1,162 +1,76 @@
-# Standalone native message generation
+# DimOS integration with dimos-cdrgen
 
-This first CDR layer defines the final generation/build contract. It does not
-change the running dimOS message catalog, transports or recording formats.
-Later layers provide built-in packages and runtime integration.
+This layer uses the published `dimos-cdrgen==0.1.0` package. The parser,
+generators, CDR registry, ownership checks and native build recipes are maintained
+in [dimos-cdrgen](https://github.com/TomCC7/dimos-cdrgen). They are not copied here.
 
-- Python: unmodified rosbags 0.11.0 dataclasses and codecs in one frozen registry.
-- C++: full pinned ROSIDL/FastRTPS generators and Fast CDR 2.4.0, built with CMake.
-- Rust: ros2msg 0.5.3 in Cargo `build.rs`, serialized by re_cdr 0.1.0.
+`dimos-message-build==0.1.0` is a local compatibility distribution for existing
+DimOS build hooks. Its modules forward to `dimos_cdrgen`. Both namespaces use the
+same types and registry. Generated packages depend directly on `dimos-cdrgen`.
+The compatibility distribution itself is not claimed to be published on PyPI.
 
-There are no generated Message/Sequence wrapper classes. The retained ROSIDL
-MSG parser and its upstream conformance tests have pinned source hashes; it is
-not a replacement parser. Bulk standard message packages belong to the next layer.
+## Install and generate
 
-## Generate one package
+From this checkout, in an active Python environment:
 
-Install the lightweight core from this proposal checkout:
-
-```sh skip
-python dimos/message_codegen/prepare_parser.py
-pip install './dimos/message_codegen[native]'
+```sh
+python -m pip install './dimos/message_codegen[native]'
 ```
 
-Create `interfaces/demo_msgs/msg/Reading.msg`:
+The dependency wheel already contains its verified parser. No parser preparation
+or native compilation runs during this install. For a standalone external project,
+install `dimos-cdrgen==0.1.0` directly and follow its
+[Python, C++ and Rust quickstarts](https://tomcc7.github.io/dimos-cdrgen/).
 
-```text
-std_msgs/Header header
-float64 value
+The existing project configuration and command remain available:
+
+```toml
+[project]
+name = "sample-messages"
+version = "0.1.0"
+
+[tool.dimos.messages]
+source = "interfaces"
 ```
 
-For this low-level example, explicitly prepare its pinned standard-message inputs:
-
-```sh skip
-python -m dimos.message_codegen.prepare_test_inputs
-python -m dimos.message_codegen.generate --package-root interfaces \
-  --package-root build/message-codegen/test-inputs \
-  --type demo_msgs/msg/Reading --python-module demo_messages --output build/reading
-pip install ./build/reading/python
+```sh
+dimos-message-generate
+python -m pip install build/message-source/python
 ```
 
-For project configuration, use the [source-package walkthrough](../../docs/development/message-source-packages.md).
-The explicit `dimos-message-generate` command and package builds read the same
-`tool.dimos.messages` configuration. A separate `dimos build` command is not required.
+The `.msg` files must exist before generation. `dimos-message-generate` and
+`dimos-cdrgen` call the same implementation. Existing
+`dimos_message_build.source_package` and `dimos.message_codegen.source_package`
+build APIs delegate to that implementation too. See the
+[source-package guide](../../docs/development/message-source-packages.md) for
+package hooks, catalog selection and dependency configuration.
 
-```python skip
-from demo_messages.demo_msgs.msg import Reading
-from demo_messages.std_msgs.msg import Header
-from demo_messages.builtin_interfaces.msg import Time
-from dimos_message_build.registry import encode, decode
+## Native integration
 
-value = Reading(header=Header(stamp=Time(sec=1, nanosec=2), frame_id="map"), value=20.5)
-assert decode(encode(value), Reading).value == 20.5
-```
+`prepare_cpp()` builds native artifacts explicitly. The DimOS
+`write_cmake_toolchain()` adapter also discovers an available DimOS SDK in the
+installed or checkout layout. Source hashes, caches and target settings remain
+owned by the library. `dimos/native/cdr_codec.hpp` forwards to the library's CDR
+header and retains the `dimos::native` function names.
 
-Constructors require explicit fields. NumPy owns numeric arrays. A nested value
-is shared unless the caller copies it explicitly. Separate message packages reuse
-the dependency-owned Python class, C++ declaration and Rust crate type; manifests
-validate schema hashes, owner identity, versions and ABI before native building.
+Standard schema catalogs, transport and recording integration belong to later
+stack layers. This integration does not add ROS nodes or prove live ROS/DDS
+interoperability. Existing [codec limits](../../docs/development/message-limitations.md)
+still apply.
 
-## Native prerequisites and platform validation
+## Verify the integration
 
-C++ source builds support Linux and macOS. Supply a C/C++ compiler and CMake;
-macOS additionally needs Apple's Command Line Tools (`xcrun` and a macOS SDK).
-The build forwards SDK, deployment target and architecture to every nested CMake
-project, separates target configurations in its cache, and uses the platform's
-loader-relative library paths. It does not install system tools or require ROS.
+With CMake, a C++17 compiler, Cargo, and the workflow's Python test dependencies:
 
-`prepare_cpp` builds pinned source dependencies only when explicitly requested:
-
-```python skip
-from pathlib import Path
-from dimos_message_build.native_build import prepare_cpp, write_cmake_toolchain
-
-prefix = prepare_cpp(Path("build/reading"))
-write_cmake_toolchain(prefix, Path("build/toolchain.cmake"))
-```
-
-CMake consumers use `find_package(demo_messages CONFIG REQUIRED)` and link
-`demo_messages::messages`. Cargo uses `build/reading/rust/Cargo.toml`; generated
-Rust declarations live in Cargo's `OUT_DIR`. No native build happens at import.
-Python wheel installation requires no compiler. Offline native building requires
-cached pinned sources and Cargo dependencies; missing prerequisites fail explicitly.
-
-## Validation
-
-```sh skip
+```sh
 bash scripts/test_message_codegen.sh
 ```
 
-The standalone CI matrix runs this on Ubuntu and macOS ARM64. It compiles and
-executes a dependency-owned Header exchange through Python, C++ and Rust, then
-checks the decoded result and schema/version conflicts. This is a codec/consumer
-check, not native SDK pub/sub or a ROS node integration. Jazzy independently reads
-the resulting payloads in its Linux reference container.
+This prepares pinned schema fixtures, checks generated typing and cross-package
+ownership, and compiles the Python/C++/Rust exchange. Set
+`DIMOS_MESSAGE_WHEELHOUSE` and `DIMOS_MESSAGE_INSTALL_REQUIRED=1` to require the
+isolated source/wheel/sdist/editable checks. The optional #4461 joint check needs
+`DIMOS_BUILD_CONFIG_SOURCE`; a skip is not evidence for that adapter.
 
-Linux tests which simulate macOS target configuration are only configuration
-tests. Actual macOS acceptance requires the hosted macOS matrix job to pass.
-
-[Accepted native-library limitations](../../docs/development/message-limitations.md)
-remain explicit: unsupported bounds and permissive native decoder behavior are
-not fixed by wrappers or weakened assertions. The later full-catalog package
-layer retains its complete strict expected-failure suite.
-
-## Upstream parser preparation and offline installation
-
-The parser is imported directly from upstream `rosidl_adapter.parser`; its source
-is not checked into this repository. `parser-source.json` pins the ROSIDL revision,
-archive SHA256 and unchanged parser SHA256. Preparation copies the upstream Python
-package, Apache-2.0 license and package metadata into ignored `.upstream/` output.
-It never patches upstream code. A small constant-name guard in `definitions.py`
-rejects invalid names before upstream's backtracking regex runs.
-
-Prepare once before building this backend from a repository checkout:
-
-```sh
-python dimos/message_codegen/prepare_parser.py
-pip wheel ./dimos/message_codegen --no-deps --wheel-dir dist
-```
-
-Preparation needs `requests`; install it explicitly in the preparation environment.
-It downloads only the pinned project archive. Reuse the cache without network:
-
-```sh
-python dimos/message_codegen/prepare_parser.py --offline
-# Or seed a new cache with the same hash-verified archive:
-python dimos/message_codegen/prepare_parser.py --offline --archive /path/to/rosidl.tar.gz
-```
-
-The backend wheel **and sdist contain these already-prepared upstream files**.
-Ordinary `pip install backend.whl` and `pip install backend.tar.gz` do not fetch
-GitHub. An unprepared repository source build fails with the preparation command;
-it never downloads inside a PEP517 hook or at runtime. No upstream parser wheel
-on PyPI is assumed: this is our backend artifact containing licensed upstream
-files. Distribution of matching proposal wheels remains required.
-
-A fully offline PEP517 source installation also requires setuptools/wheel and
-normal pinned Python dependencies in a wheelhouse (`--no-index --find-links`).
-Python wheels need no native compiler. C++ source preparation remains separate
-and retains its existing explicit toolchain and offline source-cache contract.
-The unchanged parser package is platform-independent; actual macOS checks remain
-CI acceptance, not something proven by Linux configuration tests.
-
-## Generic source-package builds
-
-The [source-package walkthrough](../../docs/development/message-source-packages.md)
-shows explicit local inputs, shared PEP 517/660 build integration, offline
-wheel/sdist installation, dependency-owned types and explicit upstream source
-preparation. These mechanisms have no built-in catalog or repository-path convention.
-
-### Explicit schema inputs
-
-The backend does not include standard message definitions. Pass local schema roots or declared message-package dependencies to generation.
-Prepare the pinned ROS conformance inputs before running standalone tests:
-
-```sh
-python -m dimos.message_codegen.prepare_test_inputs
-# Reuse verified archives without network access:
-python -m dimos.message_codegen.prepare_test_inputs --offline
-```
-
-The inputs live under ignored `build/message-codegen/test-inputs/`. Tests pass that directory explicitly.
-Production standard messages belong to the message-package layer. The backend wheel contains no standard `.msg` files.
+Library parser/emitter/cache regression tests live in the independent repository.
+DimOS retains its compatibility, packaging and consumer acceptance tests here.

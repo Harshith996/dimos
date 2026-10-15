@@ -14,6 +14,5 @@ project under `build/message-codegen/demo/evidence/`. Values progress from 20.5
 to 21.5 to 22.5 with the same Header fields. Each language imports its dependency's
 Header type. No dimOS runtime, transport or MCAP implementation is required.
 
-The original bounded Telemetry fixture remains unchanged as an explicit native
-limitation test; it is not the supported exchange example. Prior wrapper-based
-example code has been removed from this layer.
+The independent library retains bounded-field regressions. See the
+[codec limitations](../../docs/development/message-limitations.md).

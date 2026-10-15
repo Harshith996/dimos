@@ -7,17 +7,12 @@ if [[ "${DIMOS_OFFLINE:-0}" == "1" ]]; then prepare_args+=(--offline); fi
 "$python" -m dimos.message_codegen.prepare_test_inputs "${prepare_args[@]}"
 evidence="$PWD/build/message-codegen/demo/evidence"
 mkdir -p "$evidence"
-# Run upstream assertions in their original source tree, without copying tests.
-"$python" -m pytest --noconftest -o addopts='' -q \
-  build/message-codegen/parser-source/source/rosidl_adapter/test \
-  --ignore=build/message-codegen/parser-source/source/rosidl_adapter/test/test_cli_extensions.py \
-  | tee "$evidence/upstream-parser.txt"
+# Library regression tests live with dimos-cdrgen; exercise DimOS integration here.
 "$python" -m pytest --noconftest -o addopts='' -q -ra \
   --cov=dimos/message_codegen --cov-report="xml:$evidence/coverage.xml" \
-  dimos/message_codegen/test_definitions.py dimos/message_codegen/test_ownership.py \
-  dimos/message_codegen/test_native_libraries.py dimos/message_codegen/test_native_portability.py \
-  dimos/message_codegen/test_stubs.py dimos/message_codegen/test_parser_source.py \
+  dimos/message_codegen/test_ownership.py dimos/message_codegen/test_stubs.py \
+  dimos/message_codegen/test_source_package.py \
   | tee "$evidence/pytest.txt"
 DIMOS_NATIVE_ACCEPTANCE=1 DIMOS_OWNERSHIP_EVIDENCE="$evidence" \
   "$python" -m pytest --noconftest -o addopts='' -q \
-  dimos/message_codegen/test_native_consumer.py dimos/message_codegen/test_generation_transaction.py dimos/message_codegen/test_rust_reexport.py | tee "$evidence/ownership.txt"
+  dimos/message_codegen/test_native_consumer.py | tee "$evidence/ownership.txt"

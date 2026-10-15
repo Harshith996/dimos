@@ -14,17 +14,20 @@
 
 """Generic source-package builds preserve owners and work offline outside a checkout."""
 
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tarfile
+from types import SimpleNamespace
 import zipfile
 
 import pytest
 
-from dimos.message_codegen.source_package import configuration
+from dimos.message_codegen import native_build
+from dimos.message_codegen.source_package import configuration, package_settings
 
 
 def project(root, name, package, definition, dependency=False, backend="setuptools"):
@@ -119,9 +122,14 @@ def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_pa
             str(backend_source),
         ]
     )
-    backend = next(wheels.glob("dimos_message_build-*.whl"))
-    with zipfile.ZipFile(backend) as archive:
-        assert not any(name.endswith(".msg") for name in archive.namelist())
+    backend_wheel = next(wheels.glob("dimos_message_build-*.whl"))
+    with zipfile.ZipFile(backend_wheel) as archive:
+        names = archive.namelist()
+        assert not any(name.endswith(".msg") or "/test_" in name for name in names)
+        assert not any(name.startswith(("rosidl_adapter/", "dimos_cdrgen/")) for name in names)
+        assert not any("templates/" in name for name in names)
+        metadata = archive.read("dimos_message_build-0.1.0.dist-info/METADATA").decode()
+        assert "Requires-Dist: dimos-cdrgen==0.1.0" in metadata
     if backend == "scikit":
         provider_source = os.environ.get("DIMOS_BUILD_CONFIG_SOURCE")
         if not provider_source:
@@ -180,6 +188,8 @@ import pickle
 from base_messages.shared_msgs.msg import Stamp
 from app_messages.app_msgs.msg import Reading
 from dimos_message_build.registry import encode, decode, schema
+from dimos_cdrgen import registry as canonical
+assert encode is canonical.encode and decode is canonical.decode
 from app_messages_schemas.provider import package_root
 from pathlib import Path
 m = Reading(Stamp(17, 'map'), 21.5)
@@ -261,3 +271,55 @@ def test_explicit_generation_uses_project_config_and_removes_renamed_messages(tm
     generated = root / "build/message-source/python/base_messages/shared_msgs/msg/__init__.py"
     assert "Clock" in generated.read_text()
     assert "Stamp" not in generated.read_text()
+
+
+@pytest.mark.parametrize("layout", ["installed", "checkout", "absent"])
+def test_cmake_toolchain_preserves_dimos_sdk_discovery(tmp_path, monkeypatch, layout):
+    prefix = tmp_path / "prefix"
+    prefix.mkdir()
+    (prefix / "native-prefixes.json").write_text(json.dumps([str(prefix)]))
+    (prefix / "native-target.json").write_text('{"values": {}, "toolchain_sha256": null}')
+    package = tmp_path / "dimos"
+    sdk = package / "_native/cpp" if layout == "installed" else tmp_path / "native/cpp"
+    if layout != "absent":
+        sdk.mkdir(parents=True)
+        (sdk / "dimos_nativeConfig.cmake").write_text("")
+    monkeypatch.setattr(
+        native_build,
+        "find_spec",
+        lambda _: SimpleNamespace(submodule_search_locations=[str(package)]),
+    )
+    destination = tmp_path / "toolchain.cmake"
+    assert native_build.write_cmake_toolchain(prefix, destination) == destination
+    text = destination.read_text()
+    assert str(prefix) in text
+    if layout == "absent":
+        assert "list(APPEND CMAKE_PREFIX_PATH" not in text
+    else:
+        assert f'list(APPEND CMAKE_PREFIX_PATH "{sdk}")' in text
+
+
+def test_configured_catalog_and_shared_backend_keep_explicit_selection(tmp_path):
+    project(tmp_path / "project", "selected-messages", "shared_msgs", "int32 tick\n")
+    root = tmp_path / "project"
+    (root / "interfaces/shared_msgs/msg/Unused.msg").write_text("bool ignored\n")
+    metadata = root / "pyproject.toml"
+    metadata.write_text(
+        metadata.read_text().replace(
+            'source = "interfaces"', 'source = "interfaces"\ncatalog = "catalog.json"'
+        )
+    )
+    (root / "catalog.json").write_text(
+        '{"format":1,"roots":{"shared_msgs/msg/Stamp":"test selected catalog"}}'
+    )
+    settings = package_settings(root)
+    assert (
+        settings["wheel"]["packages"]["selected_messages"]
+        == "build/message-source/python/selected_messages"
+    )
+    generated = root / "build/message-source/python/selected_messages/shared_msgs/msg/__init__.py"
+    assert "Stamp" in generated.read_text()
+    assert "Unused" not in generated.read_text()
+    assert (
+        root / "build/message-source/python/selected_messages_schemas/package/catalog.json"
+    ).is_file()

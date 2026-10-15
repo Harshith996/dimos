@@ -85,7 +85,7 @@ representation.
 
 **Invalid boolean data: 1 original case.** Boolean byte `02` becomes `True`, and
 re-encoding changes it to `01`. The decoder changes the invalid value without an error.
-The separate existing array regression in `test_definitions.py` exercises the same
+The independent dimos-cdrgen array regression in `dimos_cdrgen/test_definitions.py` exercises the same
 limitation in both byte orders: **2 additional explicit xfails**, not two additional
 categories. Its valid padding and NaN checks remain ordinary tests.
 
