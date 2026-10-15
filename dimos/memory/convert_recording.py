@@ -24,6 +24,7 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 import importlib
 import io
 import json
@@ -35,16 +36,27 @@ import sqlite3
 import tempfile
 from typing import Any
 
+from dimos_cdrgen.registry import (
+    decode as cdr_decode,
+    encode as cdr_encode,
+    initialize,
+    schema as cdr_schema,
+)
+from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_generated.geometry_msgs.msg import Point
 import lz4.frame
 from mcap.reader import make_reader
 from mcap.records import Attachment, Channel, Metadata, Schema
 from mcap.stream_reader import StreamReader
 import numpy as np
+from rosbags.interfaces import Nodetype
+from rosbags.interfaces.typing import FieldDesc
 import sqlite_vec
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.utils.validation import validate_identifier
 from dimos.msgs.helpers import resolve_msg_type
+from dimos.msgs.time import message_header
 from dimos.protocol.cdr_mcap import CdrMcapWriter
 
 # Deliberate, reviewable mappings. No suffix-based arbitrary Python imports.
@@ -99,6 +111,18 @@ GENERATED_TYPES = {
     for package, names in TYPES.items()
     for name in names
 }
+REGION_STREAMS = {
+    "seed_map": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "map_regions": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "surface_map": ("sensor_msgs/msg/PointCloud2", "dimos_msgs/msg/RegionPointCloud2"),
+    "seed_bounds": ("geometry_msgs/msg/PoseStamped", "dimos_msgs/msg/RegionBounds"),
+    "region_bounds": ("geometry_msgs/msg/PoseStamped", "dimos_msgs/msg/RegionBounds"),
+    "node_edges": ("nav_msgs/msg/Path", "dimos_msgs/msg/RegionLineSegments3D"),
+}
+LEGACY_TYPES["dimos.msgs.nav_msgs.LineSegments3D.LineSegments3D"] = "nav_msgs/msg/Path"
+LEGACY_TYPES["dimos.msgs.nav_msgs.LineSegments3D"] = "nav_msgs/msg/Path"
+ROS_TYPES.update(target for _, target in REGION_STREAMS.values())
+
 CODECS = {"lcm", "jpeg", "json", "cdr", "lz4+lcm", "lz4+jpeg", "lz4+json"}
 
 
@@ -111,8 +135,22 @@ class Stream:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def region_type(self) -> str | None:
+        if self.codec not in {"lcm", "lz4+lcm"}:
+            return None
+        name = self.name
+        if name.startswith("dimos/"):
+            parts = name.split("/")
+            if len(parts) == 3 and parts[2].rsplit(".", 1)[-1] == self.ros_type.rsplit("/", 1)[-1]:
+                name = parts[1]
+        contract = REGION_STREAMS.get(name)
+        return contract[1] if contract and contract[0] == self.ros_type else None
+
+    @property
     def target(self) -> Any:
-        name = "sensor_msgs/msg/CompressedImage" if self.codec.endswith("jpeg") else self.ros_type
+        name = self.region_type or (
+            "sensor_msgs/msg/CompressedImage" if self.codec.endswith("jpeg") else self.ros_type
+        )
         result = resolve_msg_type(name)
         if result is None:
             raise ValueError(f"Generated message package does not provide {name}")
@@ -142,7 +180,7 @@ def _stream(name: str, payload: str, codec: str, schema: str = "", **metadata: A
     if codec.endswith("json") and ros_type != "std_msgs/msg/String":
         raise ValueError(f"{name}: json requires explicitly declared std_msgs/String")
     result = Stream(name, ros_type, codec, schema, metadata)
-    if codec == "cdr" and schema != result.target.schema:
+    if codec == "cdr" and schema != cdr_schema(result.target.__msgtype__):
         raise ValueError(f"{name}: CDR schema differs from the installed generated definition")
     return result
 
@@ -247,12 +285,19 @@ def read_sqlite(
                     raise ValueError(f"{name}: external/custom blob store is unsupported")
                 payload_type = config["payload_module"]
                 schema = ""
-                if config["codec_id"] == "cdr" and payload_type in GENERATED_TYPES:
-                    payload_type = GENERATED_TYPES[payload_type]
-                    message_type = resolve_msg_type(payload_type)
-                    if message_type is None:
-                        raise ValueError(f"{name}: generated type unavailable")
-                    schema = message_type.schema
+                if config["codec_id"] == "cdr":
+                    payload_type = GENERATED_TYPES.get(payload_type, payload_type)
+                    # Match only installed allowlisted identities, never import a name
+                    # supplied by the recording (including native rosbags module paths).
+                    for ros_type in sorted(ROS_TYPES):
+                        message_type = resolve_msg_type(ros_type)
+                        if message_type is not None and payload_type in {
+                            ros_type,
+                            f"{message_type.__module__}.{message_type.__qualname__}",
+                        }:
+                            payload_type = ros_type
+                            schema = cdr_schema(ros_type)
+                            break
                 stream = _stream(name, payload_type, config["codec_id"], schema=schema)
                 vector_schema = conn.execute(
                     "SELECT sql FROM sqlite_master WHERE name=?", (name + "_vec",)
@@ -348,6 +393,13 @@ def read_sqlite(
         conn.close()
 
 
+@lru_cache(maxsize=len(ROS_TYPES))
+def _target_fields(ros_type: str) -> dict[str, FieldDesc]:
+    # The runtime registry is frozen; inspect schema metadata once per type,
+    # rather than rereading the installed package on every nested recording value.
+    return dict(initialize().fielddefs[ros_type][1])
+
+
 def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
     if isinstance(old, (list, tuple)):
         return [_convert_fields(item, sequences, f"{path}[{i}]") for i, item in enumerate(old)]
@@ -364,6 +416,7 @@ def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
     if target is None:
         raise ValueError(f"Missing generated {ros_type}")
     values = {}
+    fields = _target_fields(ros_type)
     for key in old.__slots__:
         value = getattr(old, key)
         if ros_type == "std_msgs/msg/Header" and key == "seq":
@@ -376,7 +429,19 @@ def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
         new_key = "nanosec" if package == "builtin_interfaces" and key == "nsec" else key
         if new_key not in target.__annotations__:
             raise ValueError(f"No lossless field mapping for {ros_type}.{key}")
-        values[new_key] = _convert_fields(value, sequences, f"{path}.{key}".lstrip("."))
+        converted = _convert_fields(value, sequences, f"{path}.{key}".lstrip("."))
+        definition = fields[new_key]
+        if definition[0] == Nodetype.ARRAY or definition[0] == Nodetype.SEQUENCE:
+            element = definition[1][0]
+            if element[0] == Nodetype.BASE and element[1][0] != "string":
+                scalar = element[1][0]
+                dtype = np.dtype({"byte": "uint8", "char": "uint8"}.get(scalar, scalar))
+                converted = (
+                    np.frombuffer(converted, dtype=dtype).copy()
+                    if isinstance(converted, bytes)
+                    else np.asarray(converted, dtype=dtype)
+                )
+        values[new_key] = converted
     return target(**values)
 
 
@@ -386,7 +451,7 @@ def decode(row: Row) -> tuple[Any, dict[str, int]]:
         data = lz4.frame.decompress(data)
         codec = codec[4:]
     if codec == "cdr":
-        return row.stream.target.decode(data), {}
+        return cdr_decode(data, row.stream.target), {}
     if codec == "json":
         text = data.decode("utf-8")
         json.loads(
@@ -410,10 +475,72 @@ def decode(row: Row) -> tuple[Any, dict[str, int]]:
         if old.encoding != "jpeg":
             raise ValueError(f"{row.stream.name}: jpeg codec contains {old.encoding!r}")
         h = _convert_fields(old.header, sequences, "header")
-        return row.stream.target(header=h, format="jpeg", data=old.data), sequences
+        return row.stream.target(
+            header=h, format="jpeg", data=np.frombuffer(old.data, dtype=np.uint8).copy()
+        ), sequences
     if name == "Image" and old.encoding == "jpeg":
         raise ValueError(f"{row.stream.name}: JPEG Image requires explicit jpeg codec metadata")
+    if row.stream.region_type is not None:
+        return _convert_region(row, old, sequences), sequences
     return _convert_fields(old, sequences), sequences
+
+
+def _convert_region(row: Row, old: Any, sequences: dict[str, int]) -> Any:
+    """Migrate only the documented built-in region stream contracts."""
+    header = _convert_fields(old.header, sequences, "header")
+    region_id = old.header.seq
+    if row.stream.region_type == "dimos_msgs/msg/RegionPointCloud2":
+        return row.stream.target(region_id=region_id, cloud=_convert_fields(old, sequences))
+    if row.stream.region_type == "dimos_msgs/msg/RegionBounds":
+        return row.stream.target(
+            header=header,
+            region_id=region_id,
+            center=Point(x=old.pose.position.x, y=old.pose.position.y, z=old.pose.position.z),
+            radius=old.pose.orientation.x,
+            z_min=old.pose.orientation.y,
+            z_max=old.pose.orientation.z,
+        )
+    if len(old.poses) % 2:
+        raise ValueError("Legacy region edge Path requires an even number of endpoint poses")
+    segments = []
+    for i in range(0, len(old.poses), 2):
+        start, end = old.poses[i], old.poses[i + 1]
+        if (
+            start.header.frame_id != old.header.frame_id
+            or end.header.frame_id != old.header.frame_id
+        ):
+            raise ValueError("Legacy region edge endpoints must share the Path frame")
+        if (start.header.stamp.sec, start.header.stamp.nsec) != (
+            old.header.stamp.sec,
+            old.header.stamp.nsec,
+        ) or (end.header.stamp.sec, end.header.stamp.nsec) != (
+            old.header.stamp.sec,
+            old.header.stamp.nsec,
+        ):
+            raise ValueError("Legacy region edge endpoints must share the Path timestamp")
+        if (
+            any(
+                getattr(pose.pose.orientation, axis) != 0.0
+                for pose in (start, end)
+                for axis in ("x", "y", "z")
+            )
+            or start.pose.orientation.w != end.pose.orientation.w
+        ):
+            raise ValueError("Legacy region edge orientation must carry one matching pair weight")
+        sequences[f"poses[{i}].header.seq"] = start.header.seq
+        sequences[f"poses[{i + 1}].header.seq"] = end.header.seq
+        segments.append(
+            LineSegment3D(
+                start=Point(
+                    x=start.pose.position.x, y=start.pose.position.y, z=start.pose.position.z
+                ),
+                end=Point(x=end.pose.position.x, y=end.pose.position.y, z=end.pose.position.z),
+                weight=start.pose.orientation.w,
+            )
+        )
+    return row.stream.target(
+        region_id=region_id, lines=LineSegments3D(header=header, segments=segments)
+    )
 
 
 def convert(source: Path, destination: Path) -> dict[str, Any]:
@@ -458,8 +585,8 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                     for stream in streams:
                         writer.register_stream(
                             stream.name,
-                            schema_name=stream.target.msg_name,
-                            schema=stream.target.schema,
+                            schema_name=stream.target.__msgtype__,
+                            schema=cdr_schema(stream.target.__msgtype__),
                             metadata={
                                 **stream.metadata.get("channel_metadata", {}),
                                 "dimos.payload_type": f"{stream.target.__module__}.{stream.target.__name__}",
@@ -471,12 +598,12 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                 for row in rows:
                     try:
                         value, sequences = decode(row)
-                        payload = value.encode()
+                        payload = cdr_encode(value)
                     except Exception as exc:
                         raise ValueError(
                             f"{row.stream.name}[{counts[row.stream.name]}]: {exc}"
                         ) from exc
-                    header = getattr(value, "header", None)
+                    header = message_header(value)
                     source_ns = (
                         (header.stamp.sec * 1_000_000_000 + header.stamp.nanosec)
                         if header is not None
@@ -490,7 +617,7 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                     sequence = (
                         row.sequence
                         if row.sequence is not None
-                        else sequences.get("header.seq", sequences.get("seq", 0))
+                        else sequences.get("header.seq", sequences.get("seq", 0)) & 0xFFFFFFFF
                     )
                     if not (
                         0 <= row.log_ns < 2**64
@@ -514,8 +641,8 @@ def convert(source: Path, destination: Path) -> dict[str, Any]:
                         writer.write(
                             row.stream.name,
                             payload,
-                            schema_name=value.msg_name,
-                            schema=value.schema,
+                            schema_name=value.__msgtype__,
+                            schema=cdr_schema(value.__msgtype__),
                             log_time_ns=row.log_ns,
                             publish_time_ns=publish_ns,
                             sequence=sequence,
