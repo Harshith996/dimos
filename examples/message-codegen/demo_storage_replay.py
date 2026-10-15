@@ -19,6 +19,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Lock
 from typing import Any
 
+from dimos_cdrgen.registry import encode as cdr_encode, schema as cdr_schema
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
@@ -35,7 +36,13 @@ def main() -> None:
     messages = [
         LineSegments3D(
             header=Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789 + index)),
-            segments=[LineSegment3D(start=Point(x=index), end=Point(y=2), weight=index + 4)],
+            segments=[
+                LineSegment3D(
+                    start=Point(x=index, y=0.0, z=0.0),
+                    end=Point(x=0.0, y=2.0, z=0.0),
+                    weight=index + 4,
+                )
+            ],
         )
         for index in range(3)
     ]
@@ -48,9 +55,9 @@ def main() -> None:
                 stream.append(message, ts=1 + index * 0.05)
                 writer.write(
                     "segments",
-                    message.encode(),
-                    schema_name=message.msg_name,
-                    schema=message.schema,
+                    cdr_encode(message),
+                    schema_name=message.__msgtype__,
+                    schema=cdr_schema(message.__msgtype__),
                     log_time_ns=1000000000 + index * 50000000,
                     publish_time_ns=to_nanoseconds(message.header.stamp),
                 )
