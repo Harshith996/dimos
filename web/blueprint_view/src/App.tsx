@@ -23,7 +23,13 @@ import { ConfigModal, type Saved } from "./config.tsx";
 import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
-import { type Launch, launchedWithOther, type Relaunching, relaunchLabel } from "./run.ts";
+import {
+  type Launch,
+  launchedWithOther,
+  type Relaunching,
+  relaunchLabel,
+  whichRun,
+} from "./run.ts";
 import { CodeButton, ModuleList, ModuleView } from "./side.tsx";
 
 const FRAMED = framedByDesktop();
@@ -218,10 +224,13 @@ export function App() {
     setRelaunching(running ? "stopping" : "starting");
     setRelaunchedPid(launch?.pid ?? null);
     act(() =>
-      send("POST", "runs/restart").then(() => setRelaunching("starting"), (caught) => {
-        setRelaunching(false);
-        throw caught;
-      })
+      send("POST", "runs/restart", whichRun(launch)).then(
+        () => setRelaunching("starting"),
+        (caught) => {
+          setRelaunching(false);
+          throw caught;
+        },
+      )
     );
   };
 
@@ -283,10 +292,7 @@ export function App() {
               <Button
                 size="sm"
                 data-bp-stop
-                onClick={() =>
-                  act(() =>
-                    send("POST", "runs/stop", launch?.runId ? { runId: launch.runId } : {})
-                  )}
+                onClick={() => act(() => send("POST", "runs/stop", whichRun(launch)))}
               >
                 Stop
               </Button>

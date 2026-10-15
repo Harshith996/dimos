@@ -100,3 +100,13 @@ export function relaunchLabel(
   }
   return stale ? "Relaunch to apply" : "Relaunch";
 }
+
+/** The body POST runs/stop and runs/restart take: the launch's runId, or its pid until dimos gives it one. */
+export function whichRun(
+  launch: Launch | null,
+): { runId: string } | { pid: number } | Record<string, never> {
+  if (launch?.runId) {
+    return { runId: launch.runId };
+  }
+  return launch ? { pid: launch.pid } : {};
+}
