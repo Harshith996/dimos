@@ -29,7 +29,6 @@ from pydantic import BeforeValidator
 from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.skills import Skills
-from experimental.gateway.uploads import Uploads
 
 API_VERSION = "4.0.0"
 INTROSPECT_TTL_S = 600.0
@@ -45,7 +44,6 @@ class ApiError(Exception):
 class State:
     dimos_dir: Path
     bus: events.Bus
-    uploads: Uploads
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
     skills: Skills = field(default_factory=Skills)
@@ -83,11 +81,8 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
-    uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
-    return State(
-        dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir, jobs), jobs=jobs
-    )
+    return State(dimos_dir=dimos_dir, bus=bus, scanner=Scanner(dimos_dir, jobs), jobs=jobs)
 
 
 def gateway_state(request: Request) -> State:
