@@ -57,6 +57,7 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.time import message_header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -121,7 +122,7 @@ class RerunEntry(NamedTuple):
 RerunMulti: TypeAlias = "list[tuple[str, Archetype] | RerunEntry]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
-# A region cell packed into a header seq: i in the high half, j in the low half,
+# A region cell packed into a signed region ID: i in the high half, j in the low half,
 # both signed 16 bit. pack_cell in mls_planner/rust/src/region_viz.rs owns this
 # layout, the ray tracer copies it.
 CELL_SHIFT = 16
@@ -129,10 +130,10 @@ CELL_MASK = 0xFFFF
 CELL_SIGN = 0x8000
 
 
-def region_entity(base: str, seq: int) -> str:
-    """The entity of the region cell a native packed into a header seq."""
-    i = seq >> CELL_SHIFT
-    j = ((seq & CELL_MASK) ^ CELL_SIGN) - CELL_SIGN
+def region_entity(base: str, region_id: int) -> str:
+    """The entity of the region cell a native packed into a region ID."""
+    i = region_id >> CELL_SHIFT
+    j = ((region_id & CELL_MASK) ^ CELL_SIGN) - CELL_SIGN
     return f"{base}/{i}_{j}"
 
 
@@ -149,9 +150,9 @@ else:
 
 @runtime_checkable
 class KeyedRenderer(Protocol):
-    """A renderer whose entities are keyed by the message's header seq."""
+    """A renderer whose entities are keyed by the message's region ID."""
 
-    keyed_by_seq: bool
+    keyed_by_region: bool
 
     def __call__(self, *args: object, **kwargs: object) -> object: ...
 
@@ -159,17 +160,17 @@ class KeyedRenderer(Protocol):
 RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
-def keyed_by_seq(renderer: RendererT) -> RendererT:
+def keyed_by_region(renderer: RendererT) -> RendererT:
     """Mark a renderer whose topic carries one message per key, taken unconflated."""
-    renderer.keyed_by_seq = True  # type: ignore[attr-defined]
+    renderer.keyed_by_region = True  # type: ignore[attr-defined]
     return renderer
 
 
-def is_keyed_by_seq(renderer: object) -> bool:
+def is_keyed_by_region(renderer: object) -> bool:
     """Whether a renderer, or the function under a partial, is marked keyed."""
     while isinstance(renderer, functools.partial):
         renderer = renderer.func
-    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
+    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_region
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -316,17 +317,18 @@ class Config(ModuleConfig):
 class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
-    Spawns its own Rerun viewer and subscribes to all topics on each provided
-    pubsub. Any message that has a to_rerun() method is automatically logged.
+        Spawns its own Rerun viewer and subscribes to all topics on each provided
+        pubsub. Any message that has a to_rerun() method is automatically logged.
 
-    Example:
-        from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+        Example:
+            from dimos.msgs.time import message_header
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM()
-        bridge = RerunBridgeModule(pubsubs=[lcm])
-        bridge.start()
-        # All messages with to_rerun() are now logged to Rerun
-        bridge.stop()
+            lcm = LCM()
+            bridge = RerunBridgeModule(pubsubs=[lcm])
+            bridge.start()
+            # All messages with to_rerun() are now logged to Rerun
+            bridge.stop()
     """
 
     config: Config
@@ -426,12 +428,12 @@ class RerunBridgeModule(Module):
         return composed
 
     def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every message must arrive."""
+        """Channels whose renderer keys entities by region ID, so every message must arrive."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
             for path, renderer in self.config.visual_override.items()
-            if is_keyed_by_seq(renderer)
+            if is_keyed_by_region(renderer)
         ]
 
     def _get_entity_path(self, topic: Any) -> str:
@@ -486,7 +488,7 @@ class RerunBridgeModule(Module):
                 rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
+            frame_id = getattr(message_header(msg), "frame_id", None)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
                 rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                 self._frame_attached[entity_path] = frame_id
@@ -500,7 +502,7 @@ class RerunBridgeModule(Module):
                 frame_id = (
                     msg.frame_id
                     if isinstance(msg, CompressedVideo)
-                    else getattr(getattr(msg, "header", None), "frame_id", None)
+                    else getattr(message_header(msg), "frame_id", None)
                 )
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))

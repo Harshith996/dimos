@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode
 from dimos_generated.dimos_msgs.msg import VideoStats
 from dimos_generated.geometry_msgs.msg import TwistStamped
 from reactivex.disposable import Disposable
@@ -126,7 +127,7 @@ class HostedStatsModule(Module):
         if isinstance(data, str):
             data = data.encode()
         try:
-            cmd = TwistStamped.decode(data)
+            cmd = cdr_decode(data, TwistStamped)
             source_time = to_seconds(cmd.header.stamp)
         except Exception:
             return

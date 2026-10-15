@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -59,8 +60,8 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
                     points_2d,
                     camera_info,
                     world_to_optical_transform,
-                    world_pointcloud.frame_id,
-                    world_pointcloud.ts,
+                    world_pointcloud.header.frame_id,
+                    to_seconds(world_pointcloud.header.stamp),
                     filters,
                     splat_m=quantum / 2 if quantum is not None else None,
                 )

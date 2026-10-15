@@ -20,6 +20,7 @@ import time
 import traceback
 from typing import Any
 
+from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Twist, Vector3
 import lcm
 
@@ -30,7 +31,7 @@ CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs/msg/Twist"
 
 
 def publish_twist(lc: lcm.LCM, twist: Twist) -> None:
-    lc.publish(CMD_VEL_CHANNEL, twist.encode())
+    lc.publish(CMD_VEL_CHANNEL, cdr_encode(twist))
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:

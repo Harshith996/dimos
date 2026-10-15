@@ -22,7 +22,7 @@ jpeg_out = "sensor_msgs/msg/CompressedImage"
 
 [dependencies]
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

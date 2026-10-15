@@ -26,7 +26,7 @@ fi
 if [ ! -f "$ROOT/build/message-codegen/install/lib/cmake/fastcdr/fastcdr-config.cmake" ]; then
     bash "$ROOT/scripts/setup_message_codegen.sh"
 fi
-(cd "$ROOT" && .venv/bin/python -m dimos.message_codegen.generate --package \
+(cd "$ROOT" && .venv/bin/python -m dimos_cdrgen.generate --package \
     --output "$OUT/messages" \
     --type geometry_msgs/msg/Twist --type nav_msgs/msg/Odometry \
     --type sensor_msgs/msg/CameraInfo --type sensor_msgs/msg/Image \

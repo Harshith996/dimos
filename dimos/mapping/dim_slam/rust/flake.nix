@@ -29,6 +29,8 @@
         sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name) cu-vslam-rs.packages.${system};
         variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
 
+        messageSource = import "${dimos-repo}/native/message-source.nix" { inherit pkgs; };
+
         src = pkgs.runCommand "dim-slam-module-src" {} ''
           mkdir -p $out/dimos/mapping/dim_slam/rust
           cp -r ${./src} $out/dimos/mapping/dim_slam/rust/src
@@ -40,8 +42,8 @@
           cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
           cp -r ${dimos-repo}/native/rust/dimos-lcm-transport $out/native/rust/dimos-lcm-transport
-          mkdir -p $out/dimos/message_codegen
-          cp -r ${dimos-repo}/dimos/message_codegen/. $out/dimos/message_codegen/
+          mkdir -p $out/packages/dimos-generated/build/message-source
+          cp -r ${messageSource.source}/rust $out/packages/dimos-generated/build/message-source/rust
         '';
 
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
@@ -55,7 +57,6 @@
             inherit pkgs;
             buildRustCrateForPkgs = cratePkgs: cratePkgs.buildRustCrate.override {
               defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
-                dimos-generated-messages = _: { nativeBuildInputs = [cratePkgs.python3]; };
                 # cu_vslam_rs's build.rs compiles its shim against this SDK.
                 cu_vslam_rs = _: { CUVSLAM_SDK_DIR = sdkPackage; };
                 # buildRustCrate names DEP_ vars after the crate, cargo after the

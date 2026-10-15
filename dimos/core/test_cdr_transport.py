@@ -18,12 +18,15 @@ from contextlib import ExitStack
 import threading
 import uuid
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.sensor_msgs.msg import Image
+from dimos_generated.std_msgs.msg import Header
 import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport, SHMTransport, ZenohTransport
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 
@@ -37,9 +40,24 @@ def transport_pair(request, lcm_url):
         def make(message_type):
             topic = f"dimos/cdr/{uuid.uuid4().hex[:8]}"
             transports = []
+            # Native memq queues belong to a handle, which permits only one
+            # dispatcher. Share its pubsub/service for an in-process roundtrip;
+            # UDP endpoints retain independent native handles and dispatchers.
+            memory_bus = (
+                LCM(url=lcm_url)
+                if request.param == "lcm" and lcm_url.startswith("memq://")
+                else None
+            )
             for _ in range(2):
                 if request.param == "lcm":
-                    transport = LCMTransport(topic, message_type, url=lcm_url)
+                    transport = LCMTransport(
+                        topic,
+                        message_type,
+                        url=lcm_url,
+                        lcm=memory_bus.l if memory_bus is not None else None,
+                    )
+                    if memory_bus is not None:
+                        transport.lcm = memory_bus
                 elif request.param == "zenoh":
                     transport = ZenohTransport(
                         topic,
@@ -78,7 +96,15 @@ def test_generated_message_round_trip(transport_pair, retry_until):
 def test_large_generated_image_preserves_pixels_and_header(transport_pair, retry_until):
     publisher, subscriber = transport_pair(Image)
     pixels = np.arange(640 * 480 * 3, dtype=np.uint8)
-    message = Image(width=640, height=480, encoding="rgb8", step=1920, data=pixels)
+    message = Image(
+        width=640,
+        height=480,
+        encoding="rgb8",
+        step=1920,
+        data=np.asarray(pixels, dtype=np.uint8),
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+        is_bigendian=0,
+    )
     message.header.frame_id = "camera"
     message.header.stamp.sec = 1_700_000_000
     message.header.stamp.nanosec = 123_456_789

@@ -22,7 +22,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"], optional = true }
 numpy = { version = "0.25", optional = true }
 dimos-module = { path = "../../../../native/rust/dimos-module", optional = true }
-dimos-generated-messages = { path = "../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust", optional = true }
+dimos-generated-messages = { path = "../../../../packages/dimos-generated/build/message-source/rust", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }

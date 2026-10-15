@@ -25,6 +25,6 @@ cmake -S examples/message-codegen/external-native -B "$native_demo/cpp" \
   -DFETCHCONTENT_SOURCE_DIR_PFR="$PWD/build/native-cpp/_deps/pfr-src"
 cmake --build "$native_demo/cpp" -j 2
 application_site=$("$application/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("platlib"))')
-PYTHONPATH="$PWD:$PWD/build/message-codegen/demo/cpp/build:$application_site${PYTHONPATH:+:$PYTHONPATH}" \
+PYTHONPATH="$PWD:$PWD/build/message-codegen/demo/python:$application_site${PYTHONPATH:+:$PYTHONPATH}" \
   .venv/bin/python examples/message-codegen/demo_external_native.py --build "$native_demo" \
   | tee "$native_demo/evidence/exchange.txt"

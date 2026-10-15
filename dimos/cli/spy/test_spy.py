@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any
 
+from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Vector3
 import pytest
 
@@ -45,7 +46,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
 VEC = Vector3(x=1.0, y=2.0, z=3.0)
-VEC_BYTES = VEC.encode()
+VEC_BYTES = cdr_encode(VEC)
 
 
 # TopicStats: pure, deterministic (injected timestamps, no sleeps)
@@ -201,7 +202,8 @@ def _assert_no_decode(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("spy decoded a payload on the hot path")
 
-    monkeypatch.setattr(Vector3, "decode", staticmethod(boom))
+    monkeypatch.setattr("dimos_cdrgen.registry.decode", boom)
+    monkeypatch.setattr("dimos.protocol.pubsub.encoders.cdr_decode", boom)
 
 
 @pytest.fixture

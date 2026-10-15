@@ -89,7 +89,7 @@ class VisualServoing2D:
         estimated_distance = self._estimate_distance(bbox)
 
         if estimated_distance is None:
-            return Twist()
+            return Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
 
         # Calculate distance error (positive = too far, need to move forward)
         distance_error = estimated_distance - self._target_distance
@@ -118,8 +118,8 @@ class VisualServoing2D:
             linear_x = max(linear_x, 0.1)
 
         return Twist(
-            linear=Vector3(x=linear_x),
-            angular=Vector3(z=angular_z),
+            linear=Vector3(x=linear_x, y=0.0, z=0.0),
+            angular=Vector3(z=angular_z, x=0.0, y=0.0),
         )
 
     def _get_normalized_x(self, pixel_x: float) -> float:
@@ -135,7 +135,7 @@ class VisualServoing2D:
         """
         fx = self._camera_info.k[0]  # focal length x
         cx = self._camera_info.k[2]  # optical center x
-        return (pixel_x - cx) / fx
+        return float((pixel_x - cx) / fx)
 
     def _estimate_distance(self, bbox: tuple[float, float, float, float]) -> float | None:
         """Estimate distance to object based on bounding box size and camera intrinsics.
@@ -162,4 +162,4 @@ class VisualServoing2D:
         fx = self._camera_info.k[0]  # focal length x in pixels
         estimated_distance = (self._assumed_object_width * fx) / bbox_width
 
-        return estimated_distance
+        return float(estimated_distance)

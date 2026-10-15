@@ -24,11 +24,11 @@ import math
 from pathlib import Path
 from typing import NamedTuple
 
+from dimos_cdrgen.registry import decode as cdr_decode
 from dimos_generated.geometry_msgs.msg import TransformStamped as Transform
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 import typer
 

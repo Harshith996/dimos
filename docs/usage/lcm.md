@@ -15,7 +15,7 @@ local-message user story and the three language examples.
 
 ```python session=cdr_transport_demo ansi=false
 from dimos_generated.geometry_msgs.msg import Vector3
-from dimos_message_build.registry import encode, decode
+from dimos_cdrgen.registry import encode, decode
 
 message = Vector3(x=1.0, y=2.0, z=3.0)
 payload = encode(message)

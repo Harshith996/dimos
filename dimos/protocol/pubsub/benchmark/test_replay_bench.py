@@ -20,6 +20,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -196,7 +197,13 @@ def test_benchmark_image_vs_compressed(proto, session_pool, bench_results, lcm_u
 
     raw_wire = len(frame.encode())
     jpeg_wire = len(
-        CompressedImage(header=frame.header, format="jpeg", data=image_to_jpeg(frame)).encode()
+        cdr_encode(
+            CompressedImage(
+                header=frame.header,
+                format="jpeg",
+                data=np.asarray(image_to_jpeg(frame), dtype=np.uint8),
+            )
+        )
     )
 
     raw = _bench(inner(f"dimos/bench/{proto}_raw", Image), frame, n, raw_wire)

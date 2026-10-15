@@ -19,6 +19,7 @@ from threading import Lock, Thread
 import time
 from typing import Any, Protocol
 
+from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -118,14 +119,20 @@ def _prefixed(prefix: str | None, name: str) -> str:
 # TODO we need a standardized way to specify this for all cameras in dimos
 BASE_TO_OPTICAL = compose_transforms(
     TransformStamped(
-        header=Header(frame_id="base_link"),
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
-        transform=Transform(translation=Vector3(x=0.3)),
+        transform=Transform(
+            translation=Vector3(x=0.3, y=0.0, z=0.0),
+            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
     ),
     TransformStamped(
-        header=Header(frame_id="camera_link"),
+        header=Header(frame_id="camera_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_optical",
-        transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+        transform=Transform(
+            rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     ),
 )
 
@@ -377,7 +384,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         if self.config.frame_id_prefix and self.camera_info_static.header.frame_id:
             # Copy so the class-level default is not mutated.
-            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static = copy.deepcopy(self.camera_info_static)
             self.camera_info_static.header.frame_id = _prefixed(
                 self.config.frame_id_prefix, self.camera_info_static.header.frame_id
             )
@@ -453,17 +460,23 @@ class GO2Connection(Module, Camera, Pointcloud):
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "base_link")),
                 child_frame_id=_prefixed(prefix, "camera_link"),
-                transform=Transform(translation=Vector3(x=0.3)),
+                transform=Transform(
+                    translation=Vector3(x=0.3, y=0.0, z=0.0),
+                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
             ),
             TransformStamped(
                 header=Header(stamp=odom.header.stamp, frame_id=_prefixed(prefix, "camera_link")),
                 child_frame_id=_prefixed(prefix, "camera_optical"),
-                transform=Transform(rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)),
+                transform=Transform(
+                    rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                    translation=Vector3(x=0.0, y=0.0, z=0.0),
+                ),
             ),
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        message = copy.copy(msg)
+        message = copy.deepcopy(msg)
         message.header.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(message, prefix=self.config.frame_id_prefix or "")
@@ -473,7 +486,7 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            message = copy.copy(self.camera_info_static)
+            message = copy.deepcopy(self.camera_info_static)
             message.header.stamp = time_from_nanoseconds(time.time_ns())
             self.camera_info.publish(message)
             time.sleep(1.0)

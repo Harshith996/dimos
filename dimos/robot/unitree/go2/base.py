@@ -30,13 +30,13 @@ from dimos_generated.geometry_msgs.msg import Twist
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CameraInfo, PointCloud2
 from dimos_generated.std_msgs.msg import String
+from dimos_generated.tf2_msgs.msg import TFMessage
 from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
 from dimos.robot.unitree.go2.camera_calibration import front_camera_calibration
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (

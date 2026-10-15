@@ -25,8 +25,9 @@ from dimos.msgs.pointcloud import pointcloud_xyz, voxel_downsample_cloud
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos_generated.sensor_msgs.msg import Image
+
     from dimos.memory.type.observation import Observation
-    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.localize.rig import Rig
 
 logger = setup_logger()

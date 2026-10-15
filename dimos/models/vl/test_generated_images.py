@@ -16,6 +16,7 @@ import base64
 from unittest.mock import MagicMock
 
 import cv2
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
@@ -49,7 +50,7 @@ def test_generated_vl_resize_and_detection():
     assert (resized.width, resized.height) == (30, 20)
     assert resized.header == image.header
     detections = model.query_detections(image, "target")
-    wire = Detection2DArray.decode(detections.to_ros_detection2d_array().encode())
+    wire = cdr_decode(cdr_encode(detections.to_ros_detection2d_array()), Detection2DArray)
     assert len(wire.detections) == 1
     assert wire.header == image.header
     assert wire.detections[0].results[0].hypothesis.class_id == "-1"

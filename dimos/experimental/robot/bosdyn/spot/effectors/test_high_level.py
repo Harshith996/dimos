@@ -16,6 +16,7 @@
 
 from types import SimpleNamespace
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.tf2_msgs.msg import TFMessage
 import pytest
@@ -44,8 +45,8 @@ def test_odometry_and_tf_preserve_sdk_pose_velocity_and_source_time(module, mock
 
     odometry_publish.assert_called_once()
     tf_publish.assert_called_once()
-    odometry = Odometry.decode(odometry_publish.call_args.args[0].encode())
-    tf = TFMessage.decode(tf_publish.call_args.args[0].encode())
+    odometry = cdr_decode(cdr_encode(odometry_publish.call_args.args[0]), Odometry)
+    tf = cdr_decode(cdr_encode(tf_publish.call_args.args[0]), TFMessage)
     assert odometry.header.frame_id == "vision"
     assert odometry.child_frame_id == "body"
     assert (odometry.header.stamp.sec, odometry.header.stamp.nanosec) == (-1, 500000000)

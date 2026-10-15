@@ -15,6 +15,7 @@
 from itertools import islice
 from pathlib import Path
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Point
 import pytest
 
@@ -59,7 +60,7 @@ def test_sensor_moment_publishes_selected_cdr_value_and_clears_missing_seek(reco
         moment.seek(1.0)
         moment.publish()
         (published,) = transport.publish.call_args.args
-        assert Point.decode(published.encode()).x == 1
+        assert cdr_decode(cdr_encode(published), Point).x == 1
         moment.seek(10.0)
         assert moment.value is None
         moment.publish()

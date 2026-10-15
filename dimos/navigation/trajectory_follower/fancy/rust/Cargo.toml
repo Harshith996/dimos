@@ -21,7 +21,7 @@ required-features = ["module"]
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
 dimos-module = { path = "../../../../../native/rust/dimos-module", optional = true }
-dimos-generated-messages = { path = "../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust", optional = true }
+dimos-generated-messages = { path = "../../../../../packages/dimos-generated/build/message-source/rust", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }

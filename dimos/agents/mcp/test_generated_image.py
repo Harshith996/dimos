@@ -18,6 +18,7 @@ import asyncio
 import base64
 
 import cv2
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import Image
 import numpy as np
 
@@ -34,7 +35,7 @@ def test_generated_image_mcp_result_reaches_model_history(mocker):
         handle_request(
             {"method": "tools/call", "id": 1, "params": {"name": "observe"}},
             [],
-            {"observe": lambda: Image.decode(original.encode())},
+            {"observe": lambda: cdr_decode(cdr_encode(original), Image)},
         )
     )
     assert response is not None

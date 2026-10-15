@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 import weakref
 
+from dimos_cdrgen.registry import encode as cdr_encode, schema as message_schema
 from dimos_generated.sensor_msgs.msg import Image, JointState
 from dimos_generated.std_msgs.msg import Header, String
-from dimos_message_build.registry import encode as cdr_encode, schema as message_schema
 from mcap.writer import Writer as McapWriter
 import numpy as np
 import pytest

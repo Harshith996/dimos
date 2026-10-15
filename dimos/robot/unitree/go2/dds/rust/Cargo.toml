@@ -17,7 +17,7 @@ path = "src/bin/go2_dds.rs"
 # Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
 cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
 dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/src/dimos_generated_schemas/package/rust" }
+dimos-generated-messages = { path = "../../../../../../packages/dimos-generated/build/message-source/rust" }
 serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

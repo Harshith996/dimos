@@ -15,6 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.nav_msgs.msg import Odometry
 import pytest
 
@@ -48,7 +49,7 @@ async def test_wheel_odometry_generated_frame_inversion_and_local_velocity(
     received: list[Odometry] = []
 
     def publish(value: Odometry) -> None:
-        received.append(Odometry.decode(value.encode()))
+        received.append(cdr_decode(cdr_encode(value), Odometry))
         if len(received) == 2:
             module._odometry_stop.set()
 
