@@ -372,6 +372,9 @@ class MujocoSimModule(
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
+    # World poses of ``tracked_bodies``: simulator ground truth for recording and grading, kept
+    # off ``tf`` so a consumer of the robot's frames does not also get the objects' true poses.
+    body_poses: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -1124,9 +1127,11 @@ class MujocoSimModule(
                     child_frame_id=self._camera_link,
                     ts=ts,
                 ),
-                *self._body_transforms(),
             )
         )
+        bodies = self._body_transforms()
+        if bodies:
+            self.body_poses.publish(TFMessage(*bodies))
 
     def _body_transforms(self) -> list[Transform]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""

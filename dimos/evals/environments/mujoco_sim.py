@@ -43,6 +43,7 @@ class MujocoEnvironmentConfig(SimConfig):
         "camera_info",
         "coordinator_joint_state",
         "tf",
+        "body_poses",
         "odom",
         "overview_image",
         "overview_camera_info",

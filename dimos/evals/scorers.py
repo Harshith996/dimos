@@ -33,7 +33,11 @@ from typing import TypeVar
 
 import numpy as np
 
-from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.lib.recorded_poses import (
+    body_pose_stream,
+    first_body_transform,
+    last_body_transform,
+)
 from dimos.evals.types import Outcome, recording
 
 T = TypeVar("T")
@@ -337,7 +341,7 @@ def _answered_at(outcome: Outcome) -> float | None:
 
 
 def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
-    """World tracks of ``bodies`` that the sim published on tf; missing bodies are left out.
+    """World tracks of ``bodies`` that the sim published; missing bodies are left out.
 
     A run that ends with an answer is graded as it stood at that answer: the sim keeps stepping
     for several seconds while the environment shuts down, and a held part can drop then.
@@ -347,9 +351,11 @@ def _tracks(outcome: Outcome, bodies: Sequence[str]) -> dict[str, _Track]:
     }
     until = _answered_at(outcome)
     with recording(outcome) as store:
-        if "tf" not in store.streams:
+        try:
+            stream = body_pose_stream(store)
+        except LookupError:
             return {}
-        for record in store.streams.tf.order_by("ts"):
+        for record in stream.order_by("ts"):
             if until is not None and record.ts > until:
                 break
             for transform in record.data.transforms:
