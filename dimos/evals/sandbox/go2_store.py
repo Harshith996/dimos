@@ -189,6 +189,12 @@ def _case(case_id: str, prompt: str) -> SandboxCase:
             "robot/odom/**": None,
             "robot/cmd_vel/**": None,  # what the agent told the dog to do
         },
+        # What the "user" says whenever the agent stops without done, e.g. to ask something.
+        reminder=(
+            "I don't understand and I don't care. Please find a way to make it work, and only "
+            "call the done tool when it's working."
+        ),
+        reminders=10,
         done_schema=DONE_SCHEMA,
         evaluate=evaluate,
         timeout_s=4 * 3600.0,
