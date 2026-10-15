@@ -85,6 +85,11 @@ the dog you have these topics, which it's listening for on zenoh on this network
 
 I need you to make sure it doesn't run into people.
 
+I won't be around to set anything up: I'm not going to tell you or the system where the entrance \
+or the fruit stand are, or mark out the store, so it has to work those out itself. When I run your \
+command it should start mapping and then looping on its own, with nobody touching it. I'll keep an \
+eye on it with the remote's emergency stop the first few times.
+
 Do whatever you need to do/test to get the system working. I'm not going to be available to \
 answer any questions, you'll just have to do your best guess and continue. Don't stop until the \
 whole system is working. When you're finished call the done tool and tell it how to run your \
