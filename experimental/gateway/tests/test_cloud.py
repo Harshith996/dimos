@@ -80,7 +80,7 @@ def test_an_upload_goes_through_the_queue(
     until(lambda: state_of(client, upload["id"]) == "done")
     done = client.get("/cloud/uploads").json()["uploads"][0]
     assert done["uploadId"] == "cloud-1" and done["bytesDone"] == 100
-    assert client.get(f"/cloud/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
+    assert client.get("/cloud/uploads").json()["byPath"][str(recording)]["uploadId"] == "cloud-1"
     assert any(key == "ns/dimos/events/upload" for key, _ in sent)
     assert client.app.state.gateway.uploads.rates == {}  # type: ignore[attr-defined]
     assert client.delete("/cloud/uploads").json()["uploads"] == []
@@ -92,13 +92,14 @@ def test_a_running_upload_can_be_cancelled_and_retried(
     work(client)
     upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
     until(lambda: state_of(client, upload["id"]) == "uploading")
-    assert client.post(f"/cloud/uploads/{upload['id']}/retry").status_code == 409
-    assert client.delete(f"/cloud/uploads/{upload['id']}").json() == {"ok": True}
+    assert client.post("/cloud/uploads", json={"retry": upload["id"]}).status_code == 409
+    assert client.delete(f"/cloud/uploads?id={upload['id']}").status_code == 200
     until(lambda: state_of(client, upload["id"]) == "cancelled")
     transfer.set()
-    assert client.post(f"/cloud/uploads/{upload['id']}/retry").json()["state"] == "queued"
+    assert client.post("/cloud/uploads", json={"retry": upload["id"]}).json()["state"] == "queued"
     until(lambda: state_of(client, upload["id"]) == "done")
-    assert client.delete("/cloud/uploads/u99").status_code == 404
+    assert client.delete("/cloud/uploads?id=u99").status_code == 404
+    assert client.post("/cloud/uploads", json={}).status_code == 400
 
 
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
@@ -143,9 +144,34 @@ def test_device_login(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> No
     pending = client.post("/cloud/login").json()
     assert pending["state"] == "pending" and pending["code"] == "ABCD"
     approved.set()
-    until(lambda: client.get("/cloud/login").json()["state"] == "approved")
+    until(lambda: client.get("/cloud/account").json()["login"]["state"] == "approved")
     assert stored == ["key"]
-    assert client.delete("/cloud/login").json()["state"] == "approved"
+    forgot: list[int] = []
+    monkeypatch.setattr(cloud, "_forget", lambda: forgot.append(1))
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+    assert forgot == [1]
+
+
+def test_deleting_a_pending_login_cancels_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def post(path: str, **params: Any) -> dict[str, Any]:
+        if path == "/auth/device":
+            return {
+                "verification_uri": "https://console/device",
+                "user_code": "ABCD",
+                "expires_in": 600,
+                "interval": 0.05,
+                "device_code": "d",
+            }
+        return {"status": "pending"}
+
+    forgot: list[int] = []
+    monkeypatch.setattr(cloud, "_post", post)
+    monkeypatch.setattr(cloud, "_forget", lambda: forgot.append(1))
+    assert client.post("/cloud/login").json()["state"] == "pending"
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+    assert forgot == []
 
 
 def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,9 +202,3 @@ def test_rate_gives_a_time_left_after_warming_up() -> None:
     rate.tick(2.0, 200)
     assert rate.bps == pytest.approx(100, rel=0.2)
     assert rate.eta(800) == pytest.approx(8, rel=0.3)
-
-
-def test_uploads_still_answer_at_their_3_0_path(client: TestClient) -> None:
-    assert client.get("/uploads").json() == client.get("/cloud/uploads").json()
-    paths = client.get("/openapi.json").json()["paths"]
-    assert "/cloud/uploads" in paths and "/uploads" not in paths

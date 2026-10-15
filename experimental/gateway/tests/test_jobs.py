@@ -84,7 +84,7 @@ def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
     status = client.get(f"/jobs/{job}").json()
     assert status["ok"] and status["kind"] == "scan"
     assert status["progress"] == {"done": 3, "total": 3, "current": None}
-    assert any("crashed" in line for line in client.get(f"/jobs/{job}/log").json()["lines"])
+    assert any("crashed" in line for line in client.get(f"/jobs/{job}").json()["lines"])
     answer = client.get("/blueprints").json()
     assert answer["scan"] == {
         "job": job,
@@ -154,8 +154,8 @@ def test_extras_install_runs_as_a_job(
     started = client.post("/extras/install", json={"extras": ["sim"]})
     assert started.status_code == 202
     job = started.json()["job"]
-    until(lambda: client.get(f"/jobs/{job}/log").json()["done"])
-    log = client.get(f"/jobs/{job}/log").json()
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    log = client.get(f"/jobs/{job}").json()
     assert log["ok"] and any("--extra sim" in line for line in log["lines"])
     assert client.get(f"/jobs/{job}").json()["progress"] is None
     assert client.get("/jobs/none/log").status_code == 404
@@ -206,8 +206,8 @@ def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_fir
     monkeypatch.setattr(state, "introspected", packages)
     monkeypatch.setattr(state.scanner, "refresh", lambda reason="": None)
     job = client.post("/extras/install", json={"extras": ["unitree-dds"]}).json()["job"]
-    until(lambda: client.get(f"/jobs/{job}/log").json()["done"])
-    log = client.get(f"/jobs/{job}/log").json()
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    log = client.get(f"/jobs/{job}").json()
     assert log["ok"], log
     assert log["lines"][0].startswith(
         f"$ {nix} --extra-experimental-features nix-command flakes build --out-link {link} "
