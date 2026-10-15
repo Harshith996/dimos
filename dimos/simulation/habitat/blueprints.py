@@ -27,7 +27,6 @@ from typing import Any
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.point_nav import PointNavSkillContainer
 from dimos.agents.typesafe.agent import typesafe_api_key
 from dimos.agents.typesafe.navigation import TypeSafeNavigationAgent
 from dimos.core.coordination.blueprints import autoconnect
@@ -197,7 +196,6 @@ habitat_nav = autoconnect(
 
 habitat_nav_agentic = autoconnect(
     habitat_nav,
-    PointNavSkillContainer.blueprint(world_frame=WORLD_FRAME),
     McpServer.blueprint(),
     McpClient.blueprint(),
 ).global_config(transport="zenoh")
