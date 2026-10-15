@@ -37,8 +37,8 @@ def test_secrets_go_in_the_environment_not_the_command_line() -> None:
     launch = LaunchConfig(
         {"typesafe_api_key": "k", "robot_ip": "1.2.3.4"}, {"cam/x": {"token": "t", "fps": 5}}
     )
-    args = launches.run_args("demo", launch)
-    assert args == ["--robot-ip=1.2.3.4", "run", "demo", "--cam-x.fps=5"]
+    args = launches.run_args("demo", launch, "r1")
+    assert args == ["--robot-ip=1.2.3.4", "run", "--run-id", "r1", "demo", "--cam-x.fps=5"]
     env = ov.secret_env(launch.global_, launch.modules, launch.secrets())
     assert env == {"TYPESAFE_API_KEY": "k", "CAM_X__TOKEN": "t"}
 
@@ -51,7 +51,10 @@ def test_flags_spell_values_as_dimos_reads_them() -> None:
         '--robot-ips=["a"]',
     ]
     launch = LaunchConfig({"replay": True}, {}, args=["--api-key", "x"])
-    assert launches.run_args("demo", launch) == ["run", "demo", "--replay=true", "--api-key", "x"]
+    assert launches.run_args("demo", launch, "r1") == [
+        *("run", "--run-id", "r1", "demo"),
+        *("--replay=true", "--api-key", "x"),
+    ]
     assert ov.shown_args(["--api-key", "x", "--token=y", "--fps=3"]) == [
         "--api-key",
         ov.HIDDEN,

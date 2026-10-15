@@ -367,7 +367,7 @@ class Launch(Body):
     startedAt: str
     pid: int
     output: str
-    runId: str | None
+    runId: str
     logDir: str | None
     error: str | None
     overrides: dict[str, Any]

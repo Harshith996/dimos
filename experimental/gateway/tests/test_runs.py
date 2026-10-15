@@ -46,10 +46,7 @@ def launched(client: TestClient) -> Any:
     yield
     launch = launches.current_launch()
     if launch and launch["phase"] in launches.ACTIVE:
-        client.post(
-            "/runs/stop",
-            json={"runId": launch["runId"]} if launch["runId"] else {"pid": launch["pid"]},
-        )
+        client.post("/runs/stop", json={"runId": launch["runId"]})
 
 
 def test_launch_runs_dimos_with_saved_and_one_off_config(
@@ -65,14 +62,16 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     until(output_has(client, "secret k1"))
     launch = client.get("/runs").json()["launch"]
     assert "--n-workers=4" in launch["output"] and "--replay" in launch["output"]
+    assert f"run --run-id {launch['runId']} demo" in launch["output"].splitlines()[0]
     assert "k1" not in launch["output"].splitlines()[0]
     assert launch["overrides"]["typesafe_api_key"] == ov.HIDDEN
     assert launch["oneOff"]["global"] == {"n_workers": 4, "replay": True}
     again = client.post("/runs", json={"blueprint": "demo"})
     assert again.status_code == 400
     assert client.post("/runs/stop").status_code == 400
-    assert client.post("/runs/stop", json={"pid": launch["pid"] + 1}).status_code == 400
-    stopped = client.post("/runs/stop", json={"pid": launch["pid"]})
+    assert client.post("/runs/stop", json={"pid": launch["pid"]}).status_code == 400
+    assert client.post("/runs/stop", json={"runId": "nope"}).status_code == 400
+    stopped = client.post("/runs/stop", json={"runId": launch["runId"]})
     assert stopped.status_code == 200, stopped.text
     assert client.get("/runs").json()["launch"]["phase"] == "stopped"
 
@@ -84,27 +83,35 @@ def test_a_failed_launch_reports_its_last_output_line(client: TestClient) -> Non
 
 
 def test_restart_launches_the_last_blueprint_again(client: TestClient, launched: None) -> None:
-    assert client.post("/runs/restart", json={"pid": 1}).status_code == 400
+    assert client.post("/runs/restart", json={"runId": "nope"}).status_code == 400
     client.post("/runs", json={"blueprint": "demo", "overrides": {"n_workers": 2}})
     until(output_has(client, "args"))
-    first = client.get("/runs").json()["launch"]["pid"]
+    first = client.get("/runs").json()["launch"]["runId"]
     assert client.post("/runs/restart").status_code == 400
-    restarted = client.post("/runs/restart", json={"pid": first})
+    restarted = client.post("/runs/restart", json={"runId": first})
     assert restarted.status_code == 200, restarted.text
-    assert restarted.json()["pid"] != first
+    assert restarted.json()["runId"] != first
     assert restarted.json()["oneOff"]["global"] == {"n_workers": 2}
-    second = restarted.json()["pid"]
-    assert client.post("/runs/stop", json={"pid": second}).status_code == 200
+    second = restarted.json()["runId"]
+    assert client.post("/runs/stop", json={"runId": second}).status_code == 200
     until(lambda: client.get("/runs").json()["launch"]["phase"] == "stopped")
-    again = client.post("/runs/restart", json={"pid": second})
+    again = client.post("/runs/restart", json={"runId": second})
     assert again.status_code == 200, again.text
-    assert again.json()["pid"] not in (first, second)
+    assert again.json()["runId"] not in (first, second)
 
 
 def test_restart_copies_a_run_the_gateway_did_not_launch(
     client: TestClient, launched: None, tmp_path: Path
 ) -> None:
-    command = [sys.executable, "-c", "import time; time.sleep(60)", "outside"]
+    command = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(60)",
+        "run",
+        "--run-id",
+        "x",
+        "outside",
+    ]
     env = {**os.environ, "OUTSIDE_RUN": "yes"}
     outside = subprocess.Popen(command, cwd=tmp_path, env=env, start_new_session=True)
     threading.Thread(target=outside.wait, daemon=True).start()
@@ -120,10 +127,12 @@ def test_restart_copies_a_run_the_gateway_did_not_launch(
     assert restarted.status_code == 200, restarted.text
     assert outside.poll() is not None
     again = psutil.Process(restarted.json()["pid"])
-    assert again.cmdline()[-1] == "outside" and again.cwd() == str(tmp_path.resolve())
+    run_id = restarted.json()["runId"]
+    assert again.cmdline()[-4:] == ["run", "--run-id", run_id, "outside"]
+    assert again.cwd() == str(tmp_path.resolve())
     assert again.environ()["OUTSIDE_RUN"] == "yes"
     assert restarted.json()["blueprint"] == "outside"
-    assert client.post("/runs/stop", json={"pid": restarted.json()["pid"]}).status_code == 200
+    assert client.post("/runs/stop", json={"runId": run_id}).status_code == 200
 
 
 def test_runs_lists_the_registry(client: TestClient) -> None:
