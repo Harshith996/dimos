@@ -1,0 +1,168 @@
+{
+  "repository": "https://github.com/userguide-galaxea/URDF",
+  "commit": "2e5d31e1784481a34d178006c0d0e18e0a84a82a",
+  "package": "R1Pro/urdf_r1pro_g1z_2026",
+  "urdf": "urdf/r1pro_2026.urdf",
+  "sha256": {
+    "urdf/r1pro_2026.urdf": "6d0edcef1e5cbec0cf51aa38ce58f67d75937b441c54d1f610f8bc1d02199a4e",
+    "meshes/base_link.STL": "6e8181b319c9d1c6646cbc31b91a94fdadea93f4861b4387ae22e1493e324a4e",
+    "meshes/camera_head_left_link.STL": "b8fab2fd326e38b93f9a0338fe1e28f41dd5bf126a26f428afe23eff1d9fb627",
+    "meshes/camera_head_right_link.STL": "b8fab2fd326e38b93f9a0338fe1e28f41dd5bf126a26f428afe23eff1d9fb627",
+    "meshes/head_link.STL": "8a447ece183a03f49e18ba6d559b7f7bf5759d2382156704ade96961318b202c",
+    "meshes/imu_chassis_link.STL": "1a7e8cc355694d0f3b42df25d1d8eb850d38b1afa469f219d563c00b463fc16f",
+    "meshes/imu_torso_link.STL": "82cecbb22cda5f71b29f4699566872a522043f556faf68d9c3b7e0648e6e1a58",
+    "meshes/left_arm_base_link.STL": "94482f8b27c7e6c541cd7dd24e0c3baa5b3078224191d97f38cc3509faf305b0",
+    "meshes/left_arm_link1.STL": "94039e90eef58e91dd7475d0dba8d9d42c0a87acd773b435709980d6536832a2",
+    "meshes/left_arm_link2.STL": "d88fe0ab337ef9c143dafc2d4ebe7a4735b0f1ac9a5dcb28aa96105a518ca005",
+    "meshes/left_arm_link3.STL": "0665aaba941a9c34025f54063433fca22352e3f055d1f078b063533bf34811f3",
+    "meshes/left_arm_link4.STL": "2e26250085fc7f9850ab87acba12c0546f7647ebbdbcbaf18f127ecd0a7462a9",
+    "meshes/left_arm_link5.STL": "cf1516f9ba0c4df3fb5ac721a58da784bcef17eec116492d2ba7e840d4b58de8",
+    "meshes/left_arm_link6.STL": "edafb192f239c8b0aa89874980eb06c353b2c94c02b4d055707590b6cba80ac3",
+    "meshes/left_arm_link7.STL": "69e0583b37843885ec6330acdd0b6551da258d9429f7959ec06ce28f2996bd91",
+    "meshes/left_d405_link.STL": "4d068163f8ee56b9d7ee61e056b93ff1539b11a4eae21c3a0f205be8ae61eb9c",
+    "meshes/left_gmsl_link.STL": "d1d5609d1b7f1f8eabe8477e2ce49f2902d54f00d60b9b3a07dcd7b7287d8cf0",
+    "meshes/left_gripper_finger_link1.STL": "97b56d452ececb1305f2c808400f8c8b430c82e569d3cfc994816bea3ff7f230",
+    "meshes/left_gripper_finger_link2.STL": "d0d70201e4d4b7116332500d3c8481c13bf49a43ac6485628aabe681a7de9cc3",
+    "meshes/left_gripper_link.STL": "10f427c2a7b7e7bcfdbe7472cd6b7c9d505369b43fff88ea163c4da321f62bcf",
+    "meshes/lidar_chassis_left_link.STL": "8c5a8c4819e27a67caa3173a0cf672f166a2e8027001eb510771c751a3a28aee",
+    "meshes/right_arm_base_link.STL": "10e37eb8794900e5f1c783f6e2c519cf86cdd3375b6b3d3ff29ff88d72e6e4a4",
+    "meshes/right_arm_link1.STL": "65c10249e6271bf22719a54cbb40d0d5f7337d673ed76ef2af9ae01253d4cfad",
+    "meshes/right_arm_link2.STL": "8f53ee7f71b96473d1007675f5772174542910c79064670a7699ae3c90cd21e2",
+    "meshes/right_arm_link3.STL": "16e0c8d09a7a8f2b565da7a25564aaf4b0f303173f0e592e27213a5718c54813",
+    "meshes/right_arm_link4.STL": "83f730469354db707f9bfc5bd949b1b47b102cfc699a772651f99532d26ce841",
+    "meshes/right_arm_link5.STL": "38a08ac068570a1d53a9bfae9a4228c298c7b559a37d087ab99e88e9e3e3e590",
+    "meshes/right_arm_link6.STL": "296ebc8245afda46ae8ee9a13a6b1161cc881306797da0fd50e53bb4d89c4690",
+    "meshes/right_arm_link7.STL": "1f52ce88e4da57eb0cc688eade103a885ba3662fae65af179aee5f08fc761c69",
+    "meshes/right_d405_link.STL": "4d068163f8ee56b9d7ee61e056b93ff1539b11a4eae21c3a0f205be8ae61eb9c",
+    "meshes/right_gmsl_link.STL": "d1d5609d1b7f1f8eabe8477e2ce49f2902d54f00d60b9b3a07dcd7b7287d8cf0",
+    "meshes/right_gripper_finger_link1.STL": "97b56d452ececb1305f2c808400f8c8b430c82e569d3cfc994816bea3ff7f230",
+    "meshes/right_gripper_finger_link2.STL": "d0d70201e4d4b7116332500d3c8481c13bf49a43ac6485628aabe681a7de9cc3",
+    "meshes/right_gripper_link.STL": "10f427c2a7b7e7bcfdbe7472cd6b7c9d505369b43fff88ea163c4da321f62bcf",
+    "meshes/steer_motor_link1.STL": "6d6222d27bb836dea357ca7fd2911bcd863e0e2069688ef43052e69fff7c547c",
+    "meshes/steer_motor_link2.STL": "21ef963e21cfaed3c33933ea1c2b19b3a86dd064985b68d8b8b252e14f2b3590",
+    "meshes/steer_motor_link3.STL": "9763a16148a1c5e50185e2eb3c98e7b1547a0c6a8b0d5198e8b86e2dbe8e2e29",
+    "meshes/torso_link1.STL": "9d4c88fa727f50f291d3496c886e97502ca9200891021fcd8dbf1a04a540a457",
+    "meshes/torso_link2.STL": "b3153140413394da24d07e9f3b2f746253c4c2e0e812a9c2499c9b975085a724",
+    "meshes/torso_link3.STL": "9dfe16910e76d7ab05392e94439c2c6943ba4f3615d2c53804d52eee7f18c82c",
+    "meshes/torso_link4.STL": "93b8a950dbcb4badfdae429bcf1f70eb4dcc609022452b84e5969a50fc37fd29",
+    "meshes/wheel_motor_link1.STL": "3e19ac7b0d0a05e42b0990807fafffe4e88e4151282ac5f62bf310114c6a9f4b",
+    "meshes/wheel_motor_link2.STL": "6e43ef48375d5c0b9d567bda63ea2d1961a8794854e7f18852746093ed88e6c4",
+    "meshes/wheel_motor_link3.STL": "5e42304c918e0ff46a51b5b075cdd3751a26b7996d4e330eee36bf3a8655e032"
+  },
+  "collision_exclusions": [
+    [
+      "base_link",
+      "wheel_motor_link1"
+    ],
+    [
+      "base_link",
+      "wheel_motor_link2"
+    ],
+    [
+      "base_link",
+      "wheel_motor_link3"
+    ],
+    [
+      "base_link",
+      "steer_motor_link1"
+    ],
+    [
+      "base_link",
+      "steer_motor_link2"
+    ],
+    [
+      "base_link",
+      "steer_motor_link3"
+    ],
+    [
+      "torso_link4",
+      "left_arm_link1"
+    ],
+    [
+      "torso_link4",
+      "right_arm_link1"
+    ],
+    [
+      "torso_link4",
+      "left_arm_base_link"
+    ],
+    [
+      "torso_link4",
+      "right_arm_base_link"
+    ],
+    [
+      "left_arm_link5",
+      "left_arm_link7"
+    ],
+    [
+      "right_arm_link5",
+      "right_arm_link7"
+    ],
+    [
+      "left_arm_link7",
+      "left_gripper_link"
+    ],
+    [
+      "left_gripper_link",
+      "left_gripper_finger_link1"
+    ],
+    [
+      "left_gripper_link",
+      "left_gripper_finger_link2"
+    ],
+    [
+      "left_gripper_finger_link1",
+      "left_gripper_finger_link2"
+    ],
+    [
+      "left_gripper_link",
+      "left_d405_link"
+    ],
+    [
+      "left_arm_link7",
+      "left_d405_link"
+    ],
+    [
+      "left_gripper_link",
+      "left_gmsl_link"
+    ],
+    [
+      "left_arm_link7",
+      "left_gmsl_link"
+    ],
+    [
+      "right_arm_link7",
+      "right_gripper_link"
+    ],
+    [
+      "right_gripper_link",
+      "right_gripper_finger_link1"
+    ],
+    [
+      "right_gripper_link",
+      "right_gripper_finger_link2"
+    ],
+    [
+      "right_gripper_finger_link1",
+      "right_gripper_finger_link2"
+    ],
+    [
+      "right_gripper_link",
+      "right_d405_link"
+    ],
+    [
+      "right_arm_link7",
+      "right_d405_link"
+    ],
+    [
+      "right_gripper_link",
+      "right_gmsl_link"
+    ],
+    [
+      "right_arm_link7",
+      "right_gmsl_link"
+    ]
+  ],
+  "dynamics_validated": false,
+  "hardware_variant_verified": false
+}

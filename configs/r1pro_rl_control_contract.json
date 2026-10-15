@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "audit_date": "2026-10-15",
+  "source_commit": "8b17f2ff38979a79112ad8c38c9a5e88bcde4c77",
+  "deployment_matched": false,
+  "hardware_variant": null,
+  "installed_sdk_version": null,
+  "scope": "simulation_only",
+  "initial_action_contract": {
+    "kind": "arm_joint_position_targets",
+    "dof": 14,
+    "position_units": "rad",
+    "torso": "fixed_debug_curriculum",
+    "chassis": "fixed_debug_curriculum",
+    "deployment_mapping_verified": false
+  },
+  "dimos_bridge": {
+    "upper_body_order": [
+      "torso_joint1",
+      "torso_joint2",
+      "torso_joint3",
+      "torso_joint4",
+      "left_arm_joint1",
+      "left_arm_joint2",
+      "left_arm_joint3",
+      "left_arm_joint4",
+      "left_arm_joint5",
+      "left_arm_joint6",
+      "left_arm_joint7",
+      "right_arm_joint1",
+      "right_arm_joint2",
+      "right_arm_joint3",
+      "right_arm_joint4",
+      "right_arm_joint5",
+      "right_arm_joint6",
+      "right_arm_joint7"
+    ],
+    "left_target_topic": "/motion_target/target_joint_state_arm_left",
+    "right_target_topic": "/motion_target/target_joint_state_arm_right",
+    "torso_target_topic": "/motion_target/target_joint_state_torso",
+    "joint_target_ros_type": "sensor_msgs/msg/JointState",
+    "dq_semantics": "tracking_speed_limit_not_velocity_servo",
+    "zero_or_vel_stop_dq_becomes_rad_s": 0.5,
+    "forwards_gains": false,
+    "forwards_torque": false,
+    "position_limit_enforcement_in_bridge": false,
+    "feedback_publish_hz": 100,
+    "feedback_discovery_timeout_s": 5,
+    "feedback_age_cutoff_s": null,
+    "chassis_target_topic": "/motion_target/target_speed_chassis",
+    "chassis_target_ros_type": "geometry_msgs/msg/TwistStamped",
+    "chassis_target_fields": [
+      "linear.x",
+      "linear.y",
+      "angular.z"
+    ],
+    "chassis_target_units": [
+      "m/s",
+      "m/s",
+      "rad/s"
+    ],
+    "host_velocity_task_timeout_s": 0.2,
+    "host_velocity_task_timeout_action": "zero_when_active_with_default_configuration",
+    "robot_watchdog_timeout_s": null,
+    "arm_target_timeout_s": null
+  },
+  "restrictions": {
+    "v2_1_4_torso_joint_targets": "disabled_by_project_requirement_historical_primary_doc_not_retrieved",
+    "direct_torso_motor_publishing": "prohibited_by_current_vendor_driver_documentation",
+    "torque_control_available": false,
+    "torque_control_availability_verified": false
+  },
+  "unresolved": [
+    "actual_hardware_variant",
+    "installed_sdk_build",
+    "authorized_torso_interface",
+    "version_specific_units_and_signs",
+    "joint_and_tcp_calibration",
+    "tracker_response_and_gains",
+    "approved_limits",
+    "robot_watchdogs",
+    "stale_feedback_rejection",
+    "disconnect_behavior",
+    "chassis_frame_semantics"
+  ],
+  "primary_sources": [
+    "https://docs.galaxea-dynamics.com/R1Pro/docs/2026/software_interface/r1pro_motion_control/",
+    "https://docs.galaxea-dynamics.com/R1Pro/docs/2026/software_interface/r1pro_driver/",
+    "https://docs.galaxea-dynamics.com/R1Pro/en/docs/2026/development/r1pro_get_sdk/"
+  ]
+}

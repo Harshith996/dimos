@@ -1,0 +1,6 @@
+# This optional experiment owns its dependency list and test invocation.
+# DimOS's parent conftest excludes nested projects from default collection.
+# Install configs/r1pro_rl_requirements.txt from the DimOS repository root.
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = ["mujoco: isolated MuJoCo simulation checks"]

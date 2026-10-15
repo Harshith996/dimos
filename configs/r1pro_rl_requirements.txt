@@ -1,0 +1,9 @@
+# Isolated simulation baseline. Install into a dedicated Python 3.11 environment.
+# CPU torch is sufficient. The local reused K1 runtime has torch 2.7.0+cu128.
+mujoco==3.14.0
+torch==2.7.0
+rsl-rl-lib==3.1.2
+tensordict==0.14.2
+numpy==1.26.0
+tensorboard==2.21.0
+pytest==9.1.1
