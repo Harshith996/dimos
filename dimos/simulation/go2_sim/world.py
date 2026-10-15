@@ -67,6 +67,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 FRAME_DT = 0.1
+# Velocity tracking: low-pass on the measured body velocity (s), integral gains on its error
+# (vx, vy, wz), and the most trim the tracker may add to the policy's command.
+TRACK_TAU = 0.3
+TRACK_KI = np.array([1.5, 1.5, 2.0])
+TRACK_LIMIT = np.array([0.4, 0.3, 0.6])
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
 LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
 SCENE_GROUP = 0
@@ -303,6 +308,30 @@ def scene_edges(scene: Scene | PackageScene) -> NDArray[np.float64]:
     return edges
 
 
+class VelocityTracker:
+    """Trims the policy's command so the body follows the commanded velocity.
+
+    The RL policy alone drifts at a zero command (several degrees a second) and barely creeps
+    on slow ones; a real Go2's sport mode tracks the command closed-loop. Integral action on
+    the low-passed body velocity (vx, vy in the heading frame, and yaw rate) closes that loop.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self._measured = np.zeros(3)
+        self._trim = np.zeros(3)
+
+    def update(
+        self, command: NDArray[np.float64], measured: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        self._measured += CONTROL_DT / (TRACK_TAU + CONTROL_DT) * (measured - self._measured)
+        error = command - self._measured
+        self._trim = np.clip(self._trim + TRACK_KI * error * CONTROL_DT, -TRACK_LIMIT, TRACK_LIMIT)
+        return command + self._trim
+
+
 class Go2Sim:
     """The compiled scene with the Go2 and its Mid-360, ticked from a velocity command."""
 
@@ -314,6 +343,7 @@ class Go2Sim:
             self.model = build_model(scene)
         self.data = mujoco.MjData(self.model)
         self.robot = LeggedGo2(self.model, self.data, policy)
+        self.tracker = VelocityTracker()
         raycaster = (
             StaticSceneRaycaster(self.model, self.data, LIDAR_GROUPS, robot_only_model())
             if isinstance(scene, PackageScene)
@@ -334,6 +364,7 @@ class Go2Sim:
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
         self.robot.reset(x, y, z_feet, yaw)
+        self.tracker.reset()
         self.t = 0.0
         self._tick = 0
         self.lio.clear()
@@ -372,6 +403,16 @@ class Go2Sim:
             return "trunk"
         return "leg"
 
+    def _body_velocity(self) -> NDArray[np.float64]:
+        """(vx, vy) in the heading frame and the yaw rate, as the velocity command means them."""
+        linear, angular = self.robot.base_velocity()
+        _, rotation = self.robot.base_pose()
+        heading = math.atan2(rotation[1, 0], rotation[0, 0])
+        c, s = math.cos(heading), math.sin(heading)
+        return np.array(
+            [c * linear[0] + s * linear[1], -s * linear[0] + c * linear[1], (rotation @ angular)[2]]
+        )
+
     def tick(self, command: NDArray[np.float64]) -> LidarFrame | None:
         """Advance one policy tick. Returns the lidar frame that completed on this tick, if any."""
 
@@ -381,7 +422,7 @@ class Go2Sim:
                 self.lidar.cast(position, rotation, self._points_per_step), position, rotation
             )
 
-        self.robot.tick(command, cast)
+        self.robot.tick(self.tracker.update(command, self._body_velocity()), cast)
         self._tick += 1
         self.t = self._tick * CONTROL_DT
         if self._tick % TICKS_PER_FRAME:
