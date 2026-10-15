@@ -141,27 +141,6 @@ provides:
     - method: GET
       path: docs/custom-robot
       description: The guide to adding a robot
-  # what dimos puts and reads on zenoh (zenoh's ACL words, as an app's `zenoh:` rules use them); an app's
-  # `zenoh:` rules are checked against these
-  zenoh:
-    - id: gateway-events
-      description: The gateway's events, JSON, under Desktop's namespace (dimos-desktop/<host>-<port>)
-      messages: [put]
-      key_exprs:
-        - dimos-desktop/*/dimos/events/launch
-        - dimos-desktop/*/dimos/events/blueprints
-        - dimos-desktop/*/dimos/events/upload
-        - dimos-desktop/*/dimos/events/uploads
-        - dimos-desktop/*/dimos/events/upload-removed
-        - dimos-desktop/*/dimos/events/cloud-login
-    - id: blueprint-streams
-      description: The running blueprint's streams, at dimos/<topic>/<message type> (e.g. geometry_msgs.PoseStamped)
-      messages: [put]
-      key_exprs: ["dimos/**"]
-    - id: blueprint-inputs
-      description: What the running blueprint reads (e.g. cmd_vel as geometry_msgs.Twist), at the same keys
-      messages: [declare_subscriber]
-      key_exprs: ["dimos/**"]
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |
