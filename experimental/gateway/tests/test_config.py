@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
+import yaml
 
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.all_blueprints import all_blueprints
@@ -152,3 +153,8 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields
+
+
+def test_dimos_yaml_declares_this_api_version() -> None:
+    manifest = yaml.safe_load((Path(__file__).parents[3] / "dimos.yaml").read_text())
+    assert manifest["api"]["version"] == API_VERSION
