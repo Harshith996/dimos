@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import queue
 import time
 from typing import Any
 
-from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -30,17 +28,14 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.spec import PREEMPT_REPLACED, NavigationInterfaceSpec, holds_goal
+from dimos.navigation.base import NavigationState
+from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
-from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# How long the tracker has to reach the object.
-_TRACKED_ARRIVAL_TIMEOUT_S = 30.0
 
 
 class NavigationSkillContainer(Module):
@@ -55,7 +50,6 @@ class NavigationSkillContainer(Module):
 
     color_image: In[Image]
     odom: In[PoseStamped]
-    nav_status: In[GoalStatus]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -197,40 +191,41 @@ class NavigationSkillContainer(Module):
 
         logger.info(f"Found {query} at {bbox}")
 
-        # The tracker's goals are stamped after this, and older ones are ignored.
-        started = Timestamped(time.time()).ros_timestamp()
-        statuses: queue.Queue[GoalStatus] = queue.Queue()
+        # Start tracking - BBoxNavigationModule automatically generates goals
+        self._object_tracking.track(bbox)  # type: ignore[arg-type]
 
-        def on_status(msg: GoalStatus) -> None:
-            if [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] >= started:
-                statuses.put(msg)
+        start_time = time.time()
+        timeout = 30.0
+        goal_set = False
 
-        unsubscribe = self.nav_status.subscribe(on_status)
-        try:
-            self._object_tracking.track(bbox)  # type: ignore[arg-type]
-            return self._wait_for_tracked_goal(query, statuses)
-        finally:
-            unsubscribe()
-            self._object_tracking.stop_track()
+        while time.time() - start_time < timeout:
+            # Check if navigator finished
+            if self._navigation.get_state() == NavigationState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self._navigation.is_goal_reached():
+                    logger.info(f"Goal cancelled, tracking '{query}' failed")
+                    self._object_tracking.stop_track()
+                    return None
+                else:
+                    logger.info(f"Reached '{query}'")
+                    self._object_tracking.stop_track()
+                    return f"Successfully arrived at '{query}'"
 
-    def _wait_for_tracked_goal(self, query: str, statuses: queue.Queue[GoalStatus]) -> str | None:
-        """Wait for the tracker's goals to end. Each new one replaces the last."""
-        deadline = time.monotonic() + _TRACKED_ARRIVAL_TIMEOUT_S
-        while True:
-            try:
-                msg = statuses.get(timeout=max(deadline - time.monotonic(), 0.0))
-            except queue.Empty:
-                logger.warning("Tracked navigation ended with no goal reached", query=query)
-                return None
-            if holds_goal(msg.status):
+            # If goal set and tracking lost, just continue (tracker will resume or timeout)
+            if goal_set and not self._object_tracking.is_tracking():
                 continue
-            if msg.status == GoalStatus.PREEMPTED and msg.text == PREEMPT_REPLACED:
-                continue
-            if msg.status == GoalStatus.SUCCEEDED:
-                logger.info("Reached tracked object", query=query)
-                return f"Successfully arrived at '{query}'"
-            logger.info("Tracked goal ended without arriving", query=query, reason=msg.text)
-            return None
+
+            # BBoxNavigationModule automatically sends goals when tracker publishes
+            # Just check if we have any detections to mark goal_set
+            if self._object_tracking.is_tracking():
+                goal_set = True
+
+            time.sleep(0.25)
+
+        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
+        self._object_tracking.stop_track()
+        return None
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
         if self._latest_image is None:

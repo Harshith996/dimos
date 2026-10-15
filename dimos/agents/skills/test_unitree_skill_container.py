@@ -12,25 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
 import difflib
 import math
 from typing import Any
-from unittest.mock import Mock
 
-from dimos_lcm.actionlib_msgs import GoalStatus
 from langchain_core.messages import HumanMessage
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.stream import Out, Stream, Transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.spec import PREEMPT_CANCELED, PREEMPT_REPLACED, goal_status
+from dimos.navigation.base import NavigationState
 from dimos.robot.unitree.unitree_skill_container import (
     _UNITREE_COMMANDS,
     UnitreeSkillContainer,
@@ -39,15 +33,17 @@ from dimos.robot.unitree.unitree_skill_container import (
 
 
 class StubNavigation(Module):
-    nav_status: Out[GoalStatus]
-
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
         return True
 
     @rpc
-    def get_status(self) -> GoalStatus | None:
-        return None
+    def get_state(self) -> NavigationState:
+        return NavigationState.IDLE
+
+    @rpc
+    def is_goal_reached(self) -> bool:
+        return False
 
     @rpc
     def cancel_goal(self) -> bool:
@@ -123,81 +119,3 @@ def test_move_to_relative_turn_in_place() -> None:
     goal = _goal_pose(_pose(0, 0, 90), 0, 0, -90, relative=True)
     assert _xy(goal) == pytest.approx((0, 0))
     assert _yaw_deg(goal) == pytest.approx(0)
-
-
-class _StatusTransport(Transport[GoalStatus]):
-    """Hands reports to the subscribers still held."""
-
-    def __init__(self) -> None:
-        self.subscribers: list[Callable[[GoalStatus], object]] = []
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def broadcast(self, selfstream: Stream[GoalStatus] | None, value: GoalStatus) -> None:
-        for subscriber in self.subscribers:
-            subscriber(value)
-
-    def subscribe(
-        self,
-        callback: Callable[[GoalStatus], object],
-        selfstream: Stream[GoalStatus] | None = None,
-    ) -> Callable[[], None]:
-        self.subscribers.append(callback)
-        return lambda: self.subscribers.remove(callback)
-
-
-@pytest.fixture()
-def navigating(
-    mocker: MockerFixture,
-) -> Generator[tuple[UnitreeSkillContainer, _StatusTransport, Mock], None, None]:
-    transport = _StatusTransport()
-    container = UnitreeSkillContainer()
-    container.nav_status.transport = transport
-    navigation = mocker.Mock()
-    mocker.patch.object(container, "_navigation", navigation, create=True)
-    try:
-        yield container, transport, navigation
-    finally:
-        container._close_module()
-
-
-def _navigate(container: UnitreeSkillContainer, goal: PoseStamped) -> str:
-    """Run _navigate, failing instead of hanging when it never returns."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(container._navigate, goal).result(timeout=5.0)
-
-
-@pytest.mark.parametrize(
-    ("status", "text", "outcome"),
-    [
-        (GoalStatus.SUCCEEDED, "reached", "Navigation goal reached"),
-        (GoalStatus.PREEMPTED, PREEMPT_REPLACED, "Navigation was replaced by another goal"),
-        (GoalStatus.PREEMPTED, PREEMPT_CANCELED, "Navigation was canceled"),
-        (GoalStatus.ABORTED, "no safe path", "Navigation failed: no safe path"),
-        (GoalStatus.REJECTED, "bad goal", "Navigation failed: bad goal"),
-    ],
-)
-def test_navigate_returns_how_the_goal_ended(
-    navigating: tuple[UnitreeSkillContainer, _StatusTransport, Mock],
-    status: int,
-    text: str,
-    outcome: str,
-) -> None:
-    container, transport, navigation = navigating
-    earlier = PoseStamped(ts=900.0, position=(5.0, 0.0, 0.0))
-
-    def set_goal(sent: PoseStamped) -> bool:
-        # The heartbeat still repeats how the goal before this one ended.
-        transport.broadcast(None, goal_status(earlier, GoalStatus.ABORTED, "no safe path"))
-        transport.broadcast(None, goal_status(sent, GoalStatus.ACTIVE, "navigating"))
-        transport.broadcast(None, goal_status(sent, status, text))
-        return True
-
-    navigation.set_goal.side_effect = set_goal
-
-    assert _navigate(container, _pose(1, 0, 0)) == outcome
-    assert transport.subscribers == []

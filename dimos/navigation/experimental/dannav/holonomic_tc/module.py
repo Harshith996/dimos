@@ -35,6 +35,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
     HolonomicPathController,
 )
@@ -42,7 +43,6 @@ from dimos.navigation.experimental.dannav.holonomic_tc.run_profiles import (
     RunProfileError,
     get_run_profile,
 )
-from dimos.navigation.spec import NavigationState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -17,12 +17,9 @@ from __future__ import annotations
 from collections.abc import Generator
 from dataclasses import dataclass, field
 import math
-import threading
 import time
-from unittest.mock import Mock
 
 import pytest
-from pytest_mock import MockerFixture
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -39,6 +36,7 @@ class Captured:
 
     cmd_vel: list = field(default_factory=list)
     stop_movement: list = field(default_factory=list)
+    goal: list = field(default_factory=list)
     way_point: list = field(default_factory=list)
 
 
@@ -48,21 +46,18 @@ def _attach(module):
     unsubs = [
         module.cmd_vel.subscribe(captured.cmd_vel.append),
         module.stop_movement.subscribe(captured.stop_movement.append),
+        module.goal.subscribe(captured.goal.append),
         module.way_point.subscribe(captured.way_point.append),
     ]
     return captured, unsubs
 
 
 @pytest.fixture()
-def manager_and_captured(
-    mocker: MockerFixture,
-) -> Generator[tuple[MovementManager, Captured, Mock], None, None]:
+def manager_and_captured() -> Generator[tuple[MovementManager, Captured], None, None]:
     module = MovementManager(tele_cooldown_sec=0.1)
-    navigation = mocker.Mock()
-    mocker.patch.object(module, "_navigation", navigation, create=True)
     captured, unsubs = _attach(module)
     try:
-        yield module, captured, navigation
+        yield module, captured
     finally:
         for unsub in unsubs:
             unsub()
@@ -77,9 +72,9 @@ def _click(x=1.0, y=2.0, z=0.0):
     return PointStamped(ts=time.time(), frame_id="map", x=x, y=y, z=z)
 
 
-def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured, wait_until):
-    """Teleop arriving should suppress nav, publish stop_movement, and cancel the goal."""
-    manager, captured, navigation = manager_and_captured
+def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured):
+    """Teleop arriving should suppress nav, publish stop_movement, and cancel the goal with NaN."""
+    manager, captured = manager_and_captured
     manager.config.tele_cooldown_sec = 10.0
     manager._on_teleop(_twist(lx=0.3))
 
@@ -91,42 +86,14 @@ def test_teleop_suppresses_nav_and_cancels_goal(manager_and_captured, wait_until
     # stop_movement fired
     assert len(captured.stop_movement) == 1
 
-    wait_until(lambda: navigation.cancel_goal.called, timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-    navigation.cancel_goal.assert_called_once_with()
-    assert math.isnan(captured.way_point[0].x)
-
-
-def test_teleop_cancels_once_per_episode(manager_and_captured, wait_until):
-    """Twists within the cooldown continue one teleop episode, which cancels the goal once."""
-    manager, captured, navigation = manager_and_captured
-    manager.config.tele_cooldown_sec = 10.0
-    for _ in range(5):
-        manager._on_teleop(_twist(lx=0.3))
-
-    wait_until(lambda: navigation.cancel_goal.called, timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-    navigation.cancel_goal.assert_called_once_with()
-    assert len(captured.stop_movement) == 1
-    assert len(captured.cmd_vel) == 5
-
-
-def test_teleop_does_not_wait_for_the_planner(manager_and_captured):
-    """A planner that does not answer cancel_goal cannot hold up teleop cmd_vel."""
-    manager, captured, navigation = manager_and_captured
-    release = threading.Event()
-    navigation.cancel_goal.side_effect = lambda: release.wait(timeout=10.0)
-    try:
-        start = time.monotonic()
-        manager._on_teleop(_twist(lx=0.3))
-        manager._on_teleop(_twist(lx=0.3))
-        assert time.monotonic() - start < 1.0
-        assert len(captured.cmd_vel) == 2
-    finally:
-        release.set()
+    # Goal cancelled with NaN
+    assert len(captured.goal) == 1
+    assert math.isnan(captured.goal[0].x)
 
 
 def test_nav_resumes_after_cooldown(manager_and_captured):
     """After the cooldown expires, nav commands pass through again."""
-    manager, captured, _ = manager_and_captured
+    manager, captured = manager_and_captured
     manager.config.tele_cooldown_sec = 0.05
     manager._on_teleop(_twist(lx=0.3))
     time.sleep(DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -136,32 +103,30 @@ def test_nav_resumes_after_cooldown(manager_and_captured):
     assert len(captured.cmd_vel) == cmd_count_before + 1
 
 
-def test_valid_click_sets_the_goal(manager_and_captured):
-    """A valid click should set the goal and publish the way_point."""
-    manager, captured, navigation = manager_and_captured
+def test_valid_click_publishes_goal(manager_and_captured):
+    """A valid click should publish to both goal and way_point."""
+    manager, captured = manager_and_captured
     click = _click(x=5.0, y=3.0, z=0.1)
     manager._on_click(click)
-    (goal,) = navigation.set_goal.call_args.args
-    assert (goal.x, goal.y, goal.z, goal.ts, goal.frame_id) == (5.0, 3.0, 0.1, click.ts, "map")
+    assert captured.goal == [click]
     assert captured.way_point == [click]
 
 
 def test_invalid_clicks_rejected(manager_and_captured):
-    """NaN, Inf, and out-of-range clicks should not set a goal."""
-    manager, captured, navigation = manager_and_captured
+    """NaN, Inf, and out-of-range clicks should not publish."""
+    manager, captured = manager_and_captured
     for bad_click in [
         _click(x=float("nan")),
         _click(x=float("inf")),
         _click(x=600.0),
     ]:
         manager._on_click(bad_click)
-    navigation.set_goal.assert_not_called()
-    assert captured.way_point == []
+    assert captured.goal == []
 
 
 def test_tele_cmd_vel_scaling(manager_and_captured):
     """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
-    manager, captured, _ = manager_and_captured
+    manager, captured = manager_and_captured
     scaling = Twist(Vector3(0.5, 2.0, 0.0), Vector3(1.0, 1.0, 0.25))
     manager.config.tele_cmd_vel_scaling = scaling
     manager.config.tele_cooldown_sec = 10.0

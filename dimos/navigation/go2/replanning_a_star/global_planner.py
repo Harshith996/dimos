@@ -15,8 +15,8 @@
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
-from typing import NamedTuple
 
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
@@ -30,32 +30,26 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.go2.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.go2.replanning_a_star.replan_limiter import ReplanLimiter
-from dimos.navigation.spec import NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
 
 
-class GoalEnd(NamedTuple):
-    """The goal the planner let go of, None when it held none, and whether it arrived."""
-
-    goal: PoseStamped | None
-    arrived: bool
-
-
 class GlobalPlanner(Resource):
     path: Subject[Path]
-    goal_ended: Subject[GoalEnd]
+    goal_reached: Subject[Bool]
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
+    _goal_reached: bool = False
     _thread: Thread | None = None
 
     _global_config: GlobalConfig
@@ -82,7 +76,7 @@ class GlobalPlanner(Resource):
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
-        self.goal_ended = Subject()
+        self.goal_reached = Subject()
 
         self._global_config = global_config
         self._navigation_map = NavigationMap(self._global_config, "voronoi")
@@ -141,6 +135,7 @@ class GlobalPlanner(Resource):
         logger.info("Got new goal", goal=str(goal))
         with self._lock:
             self._current_goal = goal
+            self._goal_reached = False
         self._replan_limiter.reset()
         self._plan_path()
 
@@ -162,21 +157,28 @@ class GlobalPlanner(Resource):
 
         with self._lock:
             self._position_tracker.reset_data()
-            ended = self._current_goal
 
             if not but_will_try_again:
                 self._current_goal = None
+                self._goal_reached = arrived
                 self._replan_limiter.reset()
 
         self.path.on_next(Path())
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
-            self.goal_ended.on_next(GoalEnd(ended, arrived))
+            self.goal_reached.on_next(Bool(arrived))
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:
             self._replanning_enabled = enabled
+
+    def get_state(self) -> NavigationState:
+        return self._local_planner.get_state()
+
+    def is_goal_reached(self) -> bool:
+        with self._lock:
+            return self._goal_reached
 
     @property
     def cmd_vel(self) -> Subject[Twist]:
@@ -318,7 +320,6 @@ class GlobalPlanner(Resource):
 
         if current_odom is None:
             logger.warning("Cannot handle goal request: missing odometry.")
-            self.cancel_goal()
             return
 
         safe_goal = self._find_safe_goal(current_goal.position)
