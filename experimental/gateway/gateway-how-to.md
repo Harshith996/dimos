@@ -47,13 +47,13 @@ getZenoh().subscribeDimos("launch", (launch) => show(launch.phase)) // live phas
 ## How do I stop a blueprint?
 
 ```js
-await fetch("../../dimos-gateway/runs/stop", { method: "POST" }) // or body { runId } for a specific run
+await fetch("../../dimos-gateway/runs/stop", { method: "POST", body: JSON.stringify({ runId }) }) // or { pid } while it's starting (no runId yet)
 ```
 
 ## How do I relaunch?
 
 ```js
-await fetch("../../dimos-gateway/runs/restart", { method: "POST" }) // the last launch again, with the config saved now
+await fetch("../../dimos-gateway/runs/restart", { method: "POST", body: JSON.stringify({ runId }) }) // the gateway's launch again with the config saved now; another run with its own command line
 ```
 
 ## How do I read a run's logs?
