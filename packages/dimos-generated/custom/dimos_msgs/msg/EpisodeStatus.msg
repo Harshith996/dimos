@@ -9,4 +9,5 @@ int64 episodes_discarded
 # Application values: start, save, discard, init.
 string last_event "init"
 # Nullable string: [] means None; [""] preserves an explicitly empty label.
-string[<=1] task_label
+# Applications validate at most one element; the published Python backend cannot encode bounded sequences.
+string[] task_label

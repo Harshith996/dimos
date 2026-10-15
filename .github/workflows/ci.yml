@@ -1043,13 +1043,6 @@ jobs:
       - name: Build rust native modules
         if: contains(matrix.markers, 'self_hosted')
         run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-      # Collection imports the offline viewer even when its tests are deselected.
-      # Native executables do not install these Python extension modules.
-      - name: Build offline planner Python bindings
-        run: |
-          source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
