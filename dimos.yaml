@@ -115,8 +115,8 @@ provides:
       path: jobs/{job}
       description: 'A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after='
     - method: GET
-      path: docs/custom-robot
-      description: The guide to adding a robot
+      path: docs/*
+      description: 'dimos''s docs: docs/ lists every page under docs/ (title, path, url); docs/<page>.md is one page as markdown and HTML, links made absolute'
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |

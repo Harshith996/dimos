@@ -165,7 +165,9 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
     assert manifest["api"]["version"] == API_VERSION
     routes = client.get("/openapi.json").json()["paths"]
     served = {
-        f"{method.upper()} {path.lstrip('/')}" for path, ops in routes.items() for method in ops
+        f"{method.upper()} {path.lstrip('/').replace('{path}', '*')}"
+        for path, ops in routes.items()
+        for method in ops
     }
     declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
     assert declared == served

@@ -336,21 +336,26 @@ class JobLog(JobStatus):
     code: str | None
 
 
-class GuidePage(Body):
+class DocListed(Body):
     title: str
-    source_path: str
+    path: str
     url: str | None
 
 
-class CustomRobotGuide(Body):
-    """dimos's guide to adding a robot, as markdown and HTML, with links made absolute."""
+class DocList(Body):
+    """Every page under dimos's docs/ (path is relative to docs/)."""
+
+    pages: list[DocListed]
+
+
+class DocPage(Body):
+    """A page of dimos's docs as markdown and HTML, with its relative links made absolute."""
 
     title: str
+    path: str
     markdown: str
     html: str | None
-    source_path: str
     url: str | None
-    others: list[GuidePage]
 
 
 class RunEntry(Body):
