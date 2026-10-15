@@ -73,7 +73,6 @@ class State:
 
     def blueprints_changed(self, added: list[str], removed: list[str]) -> None:
         self.cache = introspect.Cache()
-        self.scanner.invalidate()
         self.bus.send({"type": "blueprints", "added": added, "removed": removed})
 
 

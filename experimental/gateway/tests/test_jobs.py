@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
 from collections.abc import Callable
 from pathlib import Path
 import subprocess
@@ -67,27 +66,26 @@ def scanned(state: State, tmp_path: Path) -> State:
     return state
 
 
-def test_a_finished_scan_is_saved_and_kept_until_the_checkout_changes(
+def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
     client: TestClient, scanned: State
 ) -> None:
     checkout = scanned.dimos_dir
     subprocess.run(["git", "init", "-q", str(checkout)], check=True)
     (checkout / "blueprint.py").write_text("x = 1\n")
     scanned.listed = [{"name": "good", "kind": "builtin"}]
-    job = client.post("/blueprints/scan").json()["job"]
+    job = client.post("/catalog/scan").json()["job"]
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
 
     later = discovery.Scanner(checkout, scanned.jobs, ["false"])
-    asyncio.run(later.wait())
-    assert later.task is None and later.state == "done"
     assert later.catalog()["modules"][0]["name"] == "cam"
-
+    assert later.snapshot()["scanned"] and not later.snapshot()["stale"]
     (checkout / "blueprint.py").write_text("x = 2\n")
-    assert not discovery.Scanner(checkout, scanned.jobs, ["false"]).load()
+    after = discovery.Scanner(checkout, scanned.jobs, ["false"])
+    assert after.snapshot()["stale"] and after.catalog()["modules"][0]["name"] == "cam"
 
 
-def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
-    client: TestClient, scanned: State
+def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
+    client: TestClient, scanned: State, sent: list[Any]
 ) -> None:
     (scanned.dimos_dir / "pyproject.toml").write_text(
         '[project]\nname = "dimos"\n[project.optional-dependencies]\nunitree-dds = ["unitree-sdk2py"]\n'
@@ -95,24 +93,29 @@ def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
     scanned.listed = [
         {"name": n, "kind": "builtin"} for n in ("good", "crashes", "missing", "other")
     ]
+    never = client.get("/catalog").json()
+    assert never["modules"] == [] and never["scan"]["scanned"] is False and never["scan"]["stale"]
+    assert client.get("/blueprints").json()["scan"]["state"] == "idle"
     assert scanned.scanner.task is None
-    first = client.get("/blueprints").json()
-    assert first["scan"]["state"] == "scanning" and "importable" not in first["blueprints"][0]
-    response = client.post("/blueprints/scan")
-    assert response.status_code == 202 and response.json()["job"] == first["scan"]["job"]
-    job = first["scan"]["job"]
+    response = client.post("/catalog/scan")
+    assert response.status_code == 202
+    job = response.json()["job"]
+    assert client.post("/catalog/scan").json()["job"] == job
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
     status = client.get(f"/jobs/{job}").json()
     assert status["ok"] and status["kind"] == "scan"
     assert status["progress"] == {"done": 3, "total": 3, "current": None}
-    assert any("crashed" in line for line in client.get(f"/jobs/{job}").json()["lines"])
+    assert any("crashed" in line for line in status["lines"])
     answer = client.get("/blueprints").json()
-    assert answer["scan"] == {
+    scan = answer["scan"]
+    assert {k: scan[k] for k in ("job", "state", "scanned", "stale", "finished_at")} == {
         "job": job,
-        "state": "done",
+        "state": "idle",
+        "scanned": True,
         "stale": False,
         "finished_at": status["finished_at"],
     }
+    assert 0 <= scan["age_seconds"] < 60
     found = {b["name"]: b for b in answer["blueprints"]}
     assert found["good"]["robot"] == "go2" and found["good"]["modules"][0]["class"] == "x.Cam"
     assert "crashed" in found["crashes"]["import_error"]
@@ -123,34 +126,35 @@ def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
     assert catalog["modules"][0]["skills"] == ["snap"] and catalog["modules"][0]["robots"] == [
         "go2"
     ]
-    assert catalog["skills"][0]["module"] == "cam"
+    assert catalog["skills"][0]["module"] == "cam" and catalog["scan"]["scanned"]
     assert any(e.startswith("blueprint missing: ") for e in catalog["errors"])
     one = client.get("/catalog?module=x.Cam").json()
     assert [m["name"] for m in one["modules"]] == ["cam"] and [
         s["name"] for s in one["skills"]
     ] == ["snap"]
     assert client.get("/catalog?module=nope").json()["modules"] == []
+    bp = client.get("/catalog?blueprint=good").json()
+    assert [b["name"] for b in bp["blueprints"]] == ["good"] and [
+        m["name"] for m in bp["modules"]
+    ] == ["cam"]
+    assert "stale" in bp["scan"] and "age_seconds" in bp["scan"]
+    assert client.get("/catalog?blueprint=nope").json()["modules"] == []
     names = client.get("/blueprints?fields=name").json()["blueprints"]
     assert {b["name"] for b in names} == set(found) and all(b.keys() == {"name"} for b in names)
     assert client.get("/blueprints?fields=robot").json()["blueprints"][0].keys() <= {
         "name",
         "robot",
     }
-    again = client.post("/blueprints/scan").json()["job"]
-    assert again != job and client.get("/blueprints").json()["scan"]["stale"]
-
-
-def test_a_blueprint_change_invalidates_the_scan(
-    client: TestClient, scanned: State, sent: list[Any]
-) -> None:
-    client.get("/catalog")
     scanned.blueprints_changed(["new"], [])
-    assert scanned.scanner.task is None
-    assert client.get("/blueprints").json()["scan"]["stale"]
+    assert client.get("/catalog").json()["modules"]
     assert (
         "ns/dimos/events/blueprints",
         {"type": "blueprints", "added": ["new"], "removed": []},
     ) in sent
+    again = client.post("/catalog/scan").json()["job"]
+    assert again != job
+    during = client.get("/catalog").json()
+    assert during["modules"] and during["scan"]["state"] in ("scanning", "idle")
 
 
 def test_extras_status_from_pyproject(tmp_path: Path) -> None:
@@ -181,7 +185,6 @@ def test_extras_install_runs_as_a_job(
         return {"python": sys.executable, "environment": {}, "packages": {}}
 
     monkeypatch.setattr(state, "introspected", packages)
-    monkeypatch.setattr(state.scanner, "refresh", lambda reason="": None)
     assert client.post("/extras/install", json={"extras": ["nope"]}).status_code == 400
     started = client.post("/extras/install", json={"extras": ["sim"]})
     assert started.status_code == 202
@@ -193,28 +196,12 @@ def test_extras_install_runs_as_a_job(
     assert client.get("/jobs/none").status_code == 404
 
 
-def test_docs(client: TestClient, checkout: Path) -> None:
-    assert client.get("/docs/robots/adding_a_new_robot.md").status_code == 404
-    (checkout / "docs" / "robots").mkdir(parents=True)
-    (checkout / "docs" / "robots" / "adding_a_new_robot.md").write_text(
-        "# Add your own robot\n\nSee [blueprints](b.md).\n"
-    )
-    (checkout / "docs" / ".hidden.md").write_text("# no\n")
-    (checkout / "secret.md").write_text("# outside docs\n")
+def test_docs_search_opens_the_docs_site_on_the_query(client: TestClient, checkout: Path) -> None:
+    assert client.get("/docs/search?q=x", follow_redirects=False).status_code == 404
     (checkout / "mkdocs.yml").write_text("site_url: https://docs.example/\n")
-    assert client.get("/docs/").json()["pages"] == [
-        {
-            "title": "Add your own robot",
-            "path": "robots/adding_a_new_robot.md",
-            "url": "https://docs.example/robots/adding_a_new_robot/",
-        }
-    ]
-    guide = client.get("/docs/robots/adding_a_new_robot.md").json()
-    assert guide["title"] == "Add your own robot"
-    assert "https://docs.example/robots/b/" in guide["markdown"]
-    assert guide["html"].startswith("<h1>")
-    assert client.get("/docs/..%2Fsecret.md").status_code == 404
-    assert client.get("/docs/%2E%2E/secret.md").status_code == 404
+    answer = client.get("/docs/search?q=go2 blueprint", follow_redirects=False)
+    assert answer.status_code == 307
+    assert answer.headers["location"] == "https://docs.example/?q=go2%20blueprint"
 
 
 def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_first(
@@ -247,7 +234,6 @@ def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_fir
         return {"python": sys.executable, "environment": environment, "packages": {}}
 
     monkeypatch.setattr(state, "introspected", packages)
-    monkeypatch.setattr(state.scanner, "refresh", lambda reason="": None)
     job = client.post("/extras/install", json={"extras": ["unitree-dds"]}).json()["job"]
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
     log = client.get(f"/jobs/{job}").json()

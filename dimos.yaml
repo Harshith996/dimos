@@ -38,10 +38,7 @@ provides:
       description: Stop this gateway (a running blueprint keeps running)
     - method: GET
       path: blueprints
-      description: Every blueprint (builtin or external) with the last scan's results (importable, import_error, missing_module, suggested_extras, modules) and the scan's state; ?fields= keeps only those fields (name always), ?fresh= rereads
-    - method: POST
-      path: blueprints/scan
-      description: '202 {job}: scan which blueprints import again (or join the running scan); follow it at jobs/{job}'
+      description: Every blueprint (builtin or external) with what the last scan found (importable, import_error, missing_module, suggested_extras, modules) and how stale that is; ?fields= keeps only those fields (name always), ?fresh= relists
     - method: GET
       path: blueprints/{name}
       description: 'A blueprint''s modules with their streams, RPCs and skills, its file and line, and its configurable args per module with Desktop''s saved values (slow: imports python)'
@@ -51,9 +48,12 @@ provides:
     - method: PUT
       path: blueprints/{name}/config
       description: Save a blueprint's module arg overrides
+    - method: POST
+      path: catalog/scan
+      description: '202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes; follow it at jobs/{job}'
     - method: GET
       path: catalog
-      description: 'Every blueprint, module and skill, with docs; ?module= (name or class) keeps one module, its skills and the blueprints using it (slow)'
+      description: 'Every blueprint, module and skill from the last scan (cached on disk), with how stale it is (scan: finished_at, age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it'
     - method: GET
       path: robots
       description: Robot types, their blueprints and recommended configs
@@ -115,8 +115,8 @@ provides:
       path: jobs/{job}
       description: 'A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after='
     - method: GET
-      path: docs/*
-      description: 'dimos''s docs: docs/ lists every page under docs/ (title, path, url); docs/<page>.md is one page as markdown and HTML, links made absolute'
+      path: docs/search
+      description: 'Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)'
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |

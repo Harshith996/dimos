@@ -16,13 +16,14 @@ uses:
 ```js
 const { blueprints, scan } = await (await fetch("../../dimos-gateway/blueprints")).json()
 // blueprints: [{ name, kind, ...once a scan finished: importable, import_error, suggested_extras, robot, modules }]
-// scan: { job, state, stale, finished_at }; the first call starts the scan in the background
+// scan: { job, state, scanned, finished_at, age_seconds, stale }: the scan is cached (on disk too) and only a POST
+// catalog/scan changes it; stale says the checkout or venv changed since
 ```
 
-To scan again (after installing packages yourself) and follow it:
+To scan (the first time, or after a change) and follow it:
 
 ```js
-const { job } = await (await fetch("../../dimos-gateway/blueprints/scan", { method: "POST" })).json() // 202
+const { job } = await (await fetch("../../dimos-gateway/catalog/scan", { method: "POST" })).json() // 202
 const { done, ok, progress } = await (await fetch(`../../dimos-gateway/jobs/${job}`)).json() // progress: { done, total, current }
 ```
 
@@ -72,7 +73,7 @@ const { modules } = await (await fetch("../../dimos-gateway/blueprints/unitree-g
 ## How do I list every module's inputs and outputs?
 
 ```js
-const { modules } = await (await fetch("../../dimos-gateway/catalog")).json() // [{ name, inputs, outputs, skills }]; slow the first time
+const { modules } = await (await fetch("../../dimos-gateway/catalog")).json() // [{ name, inputs, outputs, skills }], from the last POST catalog/scan; its scan.stale says if the checkout changed since
 ```
 
 ## How do I list skills?

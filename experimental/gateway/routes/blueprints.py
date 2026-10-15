@@ -49,12 +49,11 @@ async def blueprint_list(
     if fresh:
         await state.relist()
     listed = state.listed or (await asyncio.to_thread(introspect.blueprint_list))["blueprints"]
-    state.scanner.ensure("startup")
     scanned = [state.scanner.scanned(entry) for entry in listed]
     if fields:
         kept = {"name", *fields}
         scanned = [{k: v for k, v in entry.items() if k in kept} for entry in scanned]
-    return {"blueprints": scanned, "scan": state.scanner.snapshot()}
+    return {"blueprints": scanned, "scan": await asyncio.to_thread(state.scanner.snapshot)}
 
 
 def field_list(fields: str | None) -> list[str] | None:
@@ -112,12 +111,6 @@ async def list_blueprints(
     return await blueprint_list(state, fresh, field_list(fields))
 
 
-@router.post("/blueprints/scan", status_code=202, response_model=responses.ScanStarted)
-async def scan(state: GatewayState) -> dict[str, Any]:
-    """Scan which blueprints import again (the running scan, if there is one): follow it at /jobs/{job}."""
-    return {"job": state.scanner.start("requested").id}
-
-
 class ArgsCheckRequest(BaseModel):
     args: list[str]
 
@@ -154,21 +147,33 @@ async def put_blueprint_config(
     return shown_config(name, value)
 
 
-@router.get("/catalog", response_model=responses.Catalog, openapi_extra=SLOW)
-async def catalog(state: GatewayState, module: str | None = None) -> dict[str, Any]:
-    """Every blueprint, module and skill; ?module= (a name or class) keeps that module, its skills and the blueprints using it."""
-    await state.scanner.wait()
+@router.get("/catalog", response_model=responses.Catalog)
+async def catalog(
+    state: GatewayState, module: str | None = None, blueprint: str | None = None
+) -> dict[str, Any]:
+    """Every blueprint, module and skill, from the last scan (POST /catalog/scan), with how stale it is.
+
+    ?module= (a name or class) keeps that module, its skills and the blueprints using it; ?blueprint= keeps that
+    blueprint, its modules and their skills.
+    """
     found = state.scanner.catalog()
-    if module is None:
-        return found
-    modules = [m for m in found["modules"] if module in (m["name"], m["class"])]
-    names = {m["name"] for m in modules}
-    return {
-        **found,
-        "modules": modules,
-        "skills": [s for s in found["skills"] if s["module"] in names],
-        "blueprints": [b for b in found["blueprints"] if names & set(b["modules"])],
-    }
+    if blueprint is not None:
+        found["blueprints"] = [b for b in found["blueprints"] if b["name"] == blueprint]
+        names = {name for b in found["blueprints"] for name in b["modules"]}
+        found["modules"] = [m for m in found["modules"] if m["name"] in names]
+    if module is not None:
+        found["modules"] = [m for m in found["modules"] if module in (m["name"], m["class"])]
+        names = {m["name"] for m in found["modules"]}
+        found["blueprints"] = [b for b in found["blueprints"] if names & set(b["modules"])]
+    kept = {m["name"] for m in found["modules"]}
+    found["skills"] = [s for s in found["skills"] if s["module"] in kept]
+    return {**found, "scan": await asyncio.to_thread(state.scanner.snapshot)}
+
+
+@router.post("/catalog/scan", status_code=202, response_model=responses.ScanStarted)
+async def scan(state: GatewayState) -> dict[str, Any]:
+    """Scan every blueprint and module again (or join the running scan); the cache changes when it finishes. Follow it at /jobs/{job}."""
+    return {"job": state.scanner.start("requested").id}
 
 
 @router.get("/robots", response_model=responses.Robots)

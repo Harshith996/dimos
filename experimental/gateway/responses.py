@@ -214,12 +214,15 @@ class BlueprintEntry(Body):
 
 
 class ScanStatus(Body):
-    """The blueprint scan: its job, and whether the results are from before a change (stale)."""
+    """The blueprint scan's cache and how stale it is: when it finished, how long ago, and whether the checkout or
+    venv changed since (stale); and the running or last scan's job."""
 
     job: str | None
-    state: Literal["idle", "scanning", "done", "failed"]
-    stale: bool
+    state: Literal["idle", "scanning", "failed"]
+    scanned: bool
     finished_at: str | None
+    age_seconds: int | None
+    stale: bool
 
 
 class BlueprintList(Body):
@@ -278,6 +281,7 @@ class Catalog(Body):
     modules: list[CatalogModule]
     skills: list[CatalogSkill]
     errors: list[str]
+    scan: ScanStatus
 
 
 class Extra(Body):
@@ -334,28 +338,6 @@ class JobLog(JobStatus):
     next: int
     failure: list[str]
     code: str | None
-
-
-class DocListed(Body):
-    title: str
-    path: str
-    url: str | None
-
-
-class DocList(Body):
-    """Every page under dimos's docs/ (path is relative to docs/)."""
-
-    pages: list[DocListed]
-
-
-class DocPage(Body):
-    """A page of dimos's docs as markdown and HTML, with its relative links made absolute."""
-
-    title: str
-    path: str
-    markdown: str
-    html: str | None
-    url: str | None
 
 
 class RunEntry(Body):
