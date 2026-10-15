@@ -18,7 +18,7 @@ Click in the rerun viewer to drive the dog. The machine's health, alerts, dimos'
 per-module usage land on ``system_log`` next to the robot's odometry, in ``recordings/<time>/mem2.db`` (the run's
 logs go in that folder too)::
 
-    python examples/system_log/go2_sim_system_log.py
+    python examples/system_log/demo_go2_sim_system_log.py
 
 Without the recorder, the same pairing is just ``dimos --dtop run go2-sim system-log``.
 """
@@ -49,7 +49,7 @@ class SystemLogRecorder(Recorder):
         return msg.pose.pose
 
 
-go2_sim_system_log = autoconnect(
+demo_go2_sim_system_log = autoconnect(
     go2_sim,
     SystemLog.blueprint(),
     SystemLogRecorder.blueprint(
@@ -61,5 +61,5 @@ go2_sim_system_log = autoconnect(
 if __name__ == "__main__":
     # system_log tails the run's logs from here, as it does under `dimos run`
     set_run_log_dir(recording_dir)
-    parsed_config = BlueprintConfigParser(go2_sim_system_log).parse()
-    ModuleCoordinator.build(go2_sim_system_log, parsed_config).loop()
+    parsed_config = BlueprintConfigParser(demo_go2_sim_system_log).parse()
+    ModuleCoordinator.build(demo_go2_sim_system_log, parsed_config).loop()
