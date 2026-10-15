@@ -92,6 +92,10 @@ class SandboxCase:
     # What the recorder keeps: zenoh key expression -> most samples a second (None keeps
     # every sample); keys matching none are dropped. None records everything.
     record: Mapping[str, float | None] | None = None
+    # What the agent is told when it stops without an accepted done call (e.g. to ask the
+    # user something), at most `reminders` times; None is a plain "call done" reminder.
+    reminder: str | None = None
+    reminders: int = 3
     done_tool: str = "done"
     done_description: str = (
         "Call this once the task is complete, with the requested result. It ends your run."
