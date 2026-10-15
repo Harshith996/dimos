@@ -44,7 +44,7 @@ from typing import Any
 
 import zenoh
 
-from dimos.constants import STATE_DIR
+from dimos.constants import CACHE_DIR, STATE_DIR
 from dimos.evals.agents.lib.pi_config import Provider, RuntimeConfig, Thinking
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -62,6 +62,7 @@ from dimos.evals.sandbox.case import (
     SandboxOutcome,
     exec_in,
 )
+from dimos.evals.sandbox.ground_truth_log import CASE_MOUNT
 from dimos.evals.sandbox.recorder import NEW_KEY, RECORDING, Recording
 from dimos.evals.types import EvalResult, Trajectory
 from dimos.utils.logging_config import setup_logger
@@ -69,6 +70,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 PROXY_PORT = 8080
+# The robot container's cache, kept on this machine between cases.
+ROBOT_CACHE = CACHE_DIR / "evals" / "sandbox_robot"
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
@@ -159,7 +162,7 @@ class SandboxRunner:
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
         compose_file = case_dir / "compose.json"
         self._write_harness(case, case_dir / "harness")
-        compose_file.write_text(json.dumps(self._compose(robot, case_dir), indent=2))
+        compose_file.write_text(json.dumps(self._compose(case, robot, case_dir), indent=2))
         compose = ["docker", "compose", "-p", project, "-f", str(compose_file)]
         trajectory: Trajectory | None = None
         agent_s = 0.0
@@ -171,17 +174,21 @@ class SandboxRunner:
             trajectory = self._run_pi(compose, case, case_dir)
             agent_s = time.monotonic() - agent_t0
             _write_trajectory(case_dir, trajectory, [*self.agent.tools, case.done_tool])
-            if robot is not None:
-                subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
             done = accepted_done(trajectory, case.done_tool)
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
+
+            def stop_recorder() -> Recording:
+                subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
+                return Recording(case_dir / "zenoh.db")
+
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
-                recording=Recording(case_dir / "zenoh.db") if robot is not None else None,
                 exec=exec_in(project, compose_file),
+                case_dir=case_dir,
+                stop_recorder=stop_recorder if robot is not None else None,
             )
             return self._result(case, t0, trajectory, agent_s, score=case.evaluate(outcome))
         except Exception as e:
@@ -218,7 +225,7 @@ class SandboxRunner:
         }
         (harness / "done.json").write_text(json.dumps(done))
 
-    def _compose(self, robot: Robot | None, case_dir: Path) -> dict[str, Any]:
+    def _compose(self, case: SandboxCase, robot: Robot | None, case_dir: Path) -> dict[str, Any]:
         upstream = os.environ.get(
             f"{self.agent.provider.upper()}_BASE_URL", PROVIDERS[self.agent.provider][1]
         )
@@ -252,13 +259,22 @@ class SandboxRunner:
             },
         }
         if robot is not None:
-            services["robot"] = {"image": robot.image, "init": True, **_robot_service(robot)}
+            services["robot"] = {
+                "image": robot.image,
+                "init": True,
+                **_robot_service(robot, case_dir),
+            }
             services["recorder"] = {
                 "image": robot.image,
                 "init": True,
                 "restart": "on-failure",  # until the router is up
                 "command": owned(
-                    "python", "-m", "dimos.evals.sandbox.recorder", ROBOT_ENDPOINT, "/case/zenoh.db"
+                    "python",
+                    "-m",
+                    "dimos.evals.sandbox.recorder",
+                    ROBOT_ENDPOINT,
+                    "/case/zenoh.db",
+                    *(f"{key}={hz}" for key, hz in case.record_max_hz.items()),
                 ),
                 "volumes": [f"{case_dir}:/case"],
             }
@@ -378,12 +394,23 @@ class SandboxRunner:
         )
 
 
-def _robot_service(robot: Robot) -> dict[str, Any]:
+def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
     if isinstance(robot, DimosRobot):
+        from dimos.utils.data import get_data
+
         forward = [a for endpoint in robot.forward for a in ("--forward", endpoint)]
+        hide = [] if robot.expose_dimos else ["--hide-dimos"]
+        ROBOT_CACHE.mkdir(parents=True, exist_ok=True)
         return {
-            "command": ["dimos", "evals", "robot", *forward, "--", *robot.args],
+            "command": ["dimos", "evals", "robot", *forward, *hide, "--", *robot.args],
             "environment": dict(robot.env),
+            "volumes": [
+                # Ground truth the blueprint logs for grading; the agent cannot reach it.
+                f"{case_dir}:{CASE_MOUNT}",
+                # Compiled models and the like survive from one case to the next.
+                f"{ROBOT_CACHE}:/cache",
+                *(f"{get_data(name)}:/app/data/{name}:ro" for name in robot.data),
+            ],
         }
     forward = [a for endpoint in robot.connect for a in ("--forward", endpoint)]
     return {

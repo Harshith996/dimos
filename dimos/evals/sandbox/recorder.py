@@ -19,7 +19,10 @@ the robot publishes and what the agent sends it. Payloads are stored as raw byte
 :class:`Recording` reads them back and decodes dimOS messages from the type their
 key carries (``dimos/odom/geometry_msgs.PoseStamped``).
 
-    python -m dimos.evals.sandbox.recorder tcp/robot:7447 /out/zenoh.db
+    python -m dimos.evals.sandbox.recorder tcp/robot:7447 /out/zenoh.db ['robot/lidar/**=1.0' ...]
+
+Each optional ``key_expr=hz`` caps how often samples on matching keys are kept, for
+streams too heavy to keep whole over a long run (a Mid-360 is gigabytes an hour).
 """
 
 from __future__ import annotations
@@ -54,16 +57,31 @@ RECORDING = "recording"
 NEW_KEY = "new key: "
 
 
-def record(connect: str, path: Path, stop: threading.Event) -> None:
+def record(
+    connect: str,
+    path: Path,
+    stop: threading.Event,
+    max_hz: dict[str, float] | None = None,
+) -> None:
     """Record until *stop* is set. Prints each key the first time it is seen."""
     samples: queue.Queue[tuple[Any, ...]] = queue.Queue()
+    limits = [(zenoh.KeyExpr(k), 1.0 / hz) for k, hz in (max_hz or {}).items()]
+    last_kept: dict[str, float] = {}
 
     def on_sample(sample: zenoh.Sample) -> None:
+        key = str(sample.key_expr)
+        now = time.time()
+        for expr, period in limits:
+            if expr.intersects(sample.key_expr):
+                if now - last_kept.get(key, 0.0) < period:
+                    return
+                last_kept[key] = now
+                break
         attachment = sample.attachment.to_bytes() if sample.attachment is not None else None
         samples.put(
             (
-                time.time(),
-                str(sample.key_expr),
+                now,
+                key,
                 "PUT" if sample.kind == zenoh.SampleKind.PUT else "DELETE",
                 str(sample.encoding),
                 sample.payload.to_bytes(),
@@ -157,4 +175,5 @@ if __name__ == "__main__":
 
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
-    record(sys.argv[1], Path(sys.argv[2]), stop)
+    rates = dict(arg.rsplit("=", 1) for arg in sys.argv[3:])
+    record(sys.argv[1], Path(sys.argv[2]), stop, {k: float(hz) for k, hz in rates.items()})

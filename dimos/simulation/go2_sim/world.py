@@ -21,6 +21,8 @@ ground truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+from importlib.metadata import version
 import math
 from pathlib import Path
 from threading import Event, Thread
@@ -34,7 +36,7 @@ from pydantic import Field
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import CACHE_DIR, DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -47,20 +49,25 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
+from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Kind, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import Go2Policy, load_policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2, apply_fitted_physics, go2_spec
-from dimos.simulation.scenes.procedural import Family, Scene, generate
+from dimos.simulation.scenes.catalog import resolve_scene_package
+from dimos.simulation.scenes.procedural import Family, Scene, Vec3, generate
 from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sensors.static_scene_raycaster import StaticSceneRaycaster
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Where the robot starts in a named scene package: open floor, as (x, y, yaw).
+PACKAGE_STARTS: dict[str, tuple[float, float, float]] = {"supermarket": (9.2, 11.8, 1.57)}
 
 FRAME_DT = 0.1
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
@@ -192,6 +199,13 @@ def build_model(scene: Scene) -> mujoco.MjModel:
             geom.rgba = BOX_RGBA[box.kind]
         if box.kind == "ceiling":
             geom.group = CEILING_GROUP
+    _add_lidar_housing(spec)
+    model = spec.compile()
+    apply_fitted_physics(model)
+    return model
+
+
+def _add_lidar_housing(spec: mujoco.MjSpec) -> None:
     lidar = spec.body("base").add_geom()
     lidar.name = "mid360"
     lidar.type = mujoco.mjtGeom.mjGEOM_BOX
@@ -200,13 +214,92 @@ def build_model(scene: Scene) -> mujoco.MjModel:
     q = Rotation.from_matrix(MOUNT_R).as_quat()
     lidar.quat = (q[3], q[0], q[1], q[2])
     lidar.group = COLLISION_GROUP
-    model = spec.compile()
+
+
+@dataclass(frozen=True)
+class PackageScene:
+    """A cooked scene package's MuJoCo scene, with where the robot starts in it."""
+
+    name: str
+    mujoco_scene: Path
+    start: Vec3  # x, y, floor z
+    yaw: float = 0.0
+
+
+# Scene geometry whose top is below this is floor; everything else is an obstacle.
+FLOOR_TOP_Z = 0.05
+
+
+# Bump when compose_package_model changes, so cached models are rebuilt.
+PACKAGE_MODEL_VERSION = 1
+
+
+def build_package_model(scene: PackageScene) -> tuple[mujoco.MjModel, dict[int, Kind]]:
+    """The package's static geometry with the Go2 and its Mid-360, and each scene geom's kind.
+
+    Compiling a cooked package's MJCF takes minutes (thousands of meshes), so the
+    compiled model is cached, keyed by everything it is built from.
+    """
+    go2_xml = Path(go2_spec().modelfiledir) / "go2.xml"
+    key = hashlib.sha256(
+        f"{PACKAGE_MODEL_VERSION}|{version('mujoco')}|{scene.mujoco_scene.resolve()}".encode()
+        + go2_xml.read_bytes()
+    ).hexdigest()[:16]
+    cached = CACHE_DIR / "go2_sim" / f"{scene.name}-{key}.mjb"
+    if cached.is_file():
+        model = mujoco.MjModel.from_binary_path(str(cached))  # type: ignore[attr-defined]
+    else:
+        logger.info("Compiling scene package model, minutes the first time", scene=scene.name)
+        model = compose_package_model(scene)
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        mujoco.mj_saveModel(model, str(cached.with_suffix(".tmp")), None)
+        cached.with_suffix(".tmp").rename(cached)
     apply_fitted_physics(model)
-    return model
+    return model, _package_kinds(model)
 
 
-def scene_edges(scene: Scene) -> NDArray[np.float64]:
+def compose_package_model(scene: PackageScene) -> mujoco.MjModel:
+    """The Go2 with its Mid-360 housing, attached into the package's scene.
+
+    Packages put their collision geometry in MuJoCo's collision group, which the lidar
+    skips on the robot; it moves to the scene group here so the lidar sees the scene.
+    """
+    spec = go2_spec()
+    _dress(spec)
+    scene_spec = mujoco.MjSpec.from_file(str(scene.mujoco_scene))
+    for geom in scene_spec.geoms:
+        geom.group = SCENE_GROUP
+    spec.attach(scene_spec, prefix="scene/", frame=spec.worldbody.add_frame())
+    _add_lidar_housing(spec)
+    return spec.compile()
+
+
+def robot_only_model() -> mujoco.MjModel:
+    """The Go2 and its Mid-360 housing alone, with the same joints as any scene built on it."""
+    spec = go2_spec()
+    _add_lidar_housing(spec)
+    return spec.compile()
+
+
+def _package_kinds(model: mujoco.MjModel) -> dict[int, Kind]:
+    """Each scene geom as floor, if its top is at floor height, or as clutter."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    kinds: dict[int, Kind] = {}
+    for i in range(model.ngeom):
+        if model.body_weldid[model.geom_bodyid[i]] != 0:  # the Go2's own geoms move
+            continue
+        up = data.geom_xmat[i].reshape(3, 3)[2]
+        center, half = model.geom_aabb[i, :3], model.geom_aabb[i, 3:]
+        top = data.geom_xpos[i, 2] + up @ center + np.abs(up) @ half
+        kinds[i] = "floor" if top < FLOOR_TOP_Z else "clutter"
+    return kinds
+
+
+def scene_edges(scene: Scene | PackageScene) -> NDArray[np.float64]:
     """The 12 edges of every box, as (N, 2, 3) segments."""
+    if isinstance(scene, PackageScene):
+        return np.zeros((0, 2, 3))
     centers = np.array([box.center for box in scene.boxes])[:, None, None, :]
     halves = np.array([box.half for box in scene.boxes])[:, None, None, :]
     edges: NDArray[np.float64] = (centers + BOX_EDGES[None] * halves).reshape(-1, 2, 3)
@@ -216,21 +309,30 @@ def scene_edges(scene: Scene) -> NDArray[np.float64]:
 class Go2Sim:
     """The compiled scene with the Go2 and its Mid-360, ticked from a velocity command."""
 
-    def __init__(self, scene: Scene, seed: int, policy: Go2Policy) -> None:
+    def __init__(self, scene: Scene | PackageScene, seed: int, policy: Go2Policy) -> None:
         self.scene = scene
-        self.model = build_model(scene)
+        if isinstance(scene, PackageScene):
+            self.model, self._kind = build_package_model(scene)
+        else:
+            self.model = build_model(scene)
         self.data = mujoco.MjData(self.model)
         self.robot = LeggedGo2(self.model, self.data, policy)
-        self.lidar = SimMid360.go2(MujocoRaycaster(self.model, self.data, LIDAR_GROUPS), seed)
+        raycaster = (
+            StaticSceneRaycaster(self.model, self.data, LIDAR_GROUPS, robot_only_model())
+            if isinstance(scene, PackageScene)
+            else MujocoRaycaster(self.model, self.data, LIDAR_GROUPS)
+        )
+        self.lidar = SimMid360.go2(raycaster, seed)
         self.lio = GroundTruthLio()
         self.t = 0.0
         self._tick = 0
         self._points_per_step = int(POINT_RATE * self.model.opt.timestep)
         geom = mujoco.mjtObj.mjOBJ_GEOM
-        self._kind = {
-            mujoco.mj_name2id(self.model, geom, f"{box.kind}_{i}"): box.kind
-            for i, box in enumerate(scene.boxes)
-        }
+        if isinstance(scene, Scene):
+            self._kind = {
+                mujoco.mj_name2id(self.model, geom, f"{box.kind}_{i}"): box.kind
+                for i, box in enumerate(scene.boxes)
+            }
         self._lidar_geom = mujoco.mj_name2id(self.model, geom, "mid360")
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
@@ -260,7 +362,7 @@ class Go2Sim:
             c = d.contact[i]
             for scene_geom, robot_geom in ((c.geom1, c.geom2), (c.geom2, c.geom1)):
                 kind = self._kind.get(scene_geom)
-                if kind is not None and m.geom_bodyid[robot_geom] != 0:
+                if kind is not None and m.body_weldid[m.geom_bodyid[robot_geom]] != 0:
                     found.add(Contact(self._part(robot_geom), kind))
         return sorted(found)
 
@@ -312,6 +414,10 @@ class CommandHold:
 class SimGo2WorldConfig(ModuleConfig):
     family: Family = "office"
     seed: int = 1
+    # A cooked scene package (a name such as "supermarket", or a path) instead of a
+    # generated scene, with the robot's start in it as (x, y, yaw).
+    scene_package: str | None = None
+    start: tuple[float, float, float] | None = None
     real_time_factor: float = Field(default=1.0, gt=0.0)
     mujoco_viewer: bool = False
     policy: Path | None = None
@@ -337,7 +443,11 @@ class SimGo2World(Module):
     def start(self) -> None:
         super().start()
         self._policy = load_policy(self.config.policy)
-        self._sim = self._load(self.config.family, self.config.seed)
+        self._sim = (
+            self._load_package(self.config.scene_package)
+            if self.config.scene_package
+            else self._load(self.config.family, self.config.seed)
+        )
         self._hold = CommandHold()
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
@@ -364,6 +474,20 @@ class SimGo2World(Module):
         if blocked:
             raise RuntimeError(f"robot starts inside scene geometry in {scene.name}: {blocked}")
         logger.info("Sim world ready", scene=scene.name)
+        return sim
+
+    def _load_package(self, name: str) -> Go2Sim:
+        package = resolve_scene_package(name)
+        if package is None or package.mujoco_scene_path is None:
+            raise ValueError(f"scene package {name!r} has no MuJoCo scene")
+        x, y, yaw = self.config.start or PACKAGE_STARTS.get(name, (0.0, 0.0, 0.0))
+        scene = PackageScene(name, package.mujoco_scene_path, (x, y, 0.0), yaw)
+        sim = Go2Sim(scene, self.config.seed, self._policy)
+        sim.reset(x, y, 0.0, yaw)
+        blocked = [c for c in sim.contacts() if c.kind != "floor"]
+        if blocked:
+            raise RuntimeError(f"robot starts inside scene geometry in {name}: {blocked}")
+        logger.info("Sim world ready", scene=name, start=(x, y, yaw))
         return sim
 
     def _open_viewer(self, sim: Go2Sim) -> mujoco.viewer.Handle | None:
