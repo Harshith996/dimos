@@ -51,7 +51,8 @@ async def chosen_run(request: RunRequest) -> str | None:
     launch = await asyncio.to_thread(launches.current_launch)
     if launch is None or launch["pid"] != request.pid or launch["phase"] not in launches.ACTIVE:
         raise ApiError(400, f"no launch still starting with pid {request.pid}")
-    return launch["runId"]
+    run_id: str | None = launch["runId"]
+    return run_id
 
 
 def with_saved(blueprint: str, one_off: ov.LaunchOverrides, args: list[str]) -> LaunchConfig:
