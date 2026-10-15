@@ -31,11 +31,6 @@ use tracing::warn;
 use crate::log_tail::JsonlTail;
 use crate::machine::Sampler;
 
-const CPU_PEGGED_PERCENT: f64 = 95.0;
-const MEMORY_LOW_PERCENT: f64 = 95.0;
-const WEAK_SIGNAL_DBM: f64 = -80.0;
-const HOT_CELSIUS: f64 = 90.0;
-
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
@@ -60,6 +55,17 @@ pub struct Config {
     log_poll_s: f64,
     /// Directory whose *.jsonl files are published; empty for the run's (DIMOS_RUN_LOG_DIR).
     log_dir: String,
+    /// Characters of each process's command line kept in "processes" records.
+    #[validate(range(min = 0, max = 100000))]
+    cmdline_chars: i64,
+    /// Alert (and dump) when total CPU goes above this.
+    cpu_alert_percent: f64,
+    /// Alert when memory use goes above this.
+    memory_alert_percent: f64,
+    /// Alert when a Wi-Fi interface's signal drops below this.
+    weak_signal_dbm: f64,
+    /// Alert when any temperature sensor goes above this.
+    hot_celsius: f64,
 }
 
 #[derive(Module)]
@@ -132,13 +138,13 @@ fn record(kind: &str, fields: Value) -> Value {
 }
 
 /// Everything wrong in one sample, by condition → what to say about it.
-pub fn alerts(sample: &Value) -> BTreeMap<String, String> {
+pub fn alerts(sample: &Value, config: &Config) -> BTreeMap<String, String> {
     let mut wrong = BTreeMap::new();
     let number = |v: &Value| v.as_f64().unwrap_or(0.0);
-    if number(&sample["cpu_percent"]) > CPU_PEGGED_PERCENT {
+    if number(&sample["cpu_percent"]) > config.cpu_alert_percent {
         wrong.insert("cpu".into(), format!("CPU {}%", sample["cpu_percent"]));
     }
-    if number(&sample["memory"]["percent"]) > MEMORY_LOW_PERCENT {
+    if number(&sample["memory"]["percent"]) > config.memory_alert_percent {
         wrong.insert(
             "memory".into(),
             format!("memory {}% used", sample["memory"]["percent"]),
@@ -149,7 +155,7 @@ pub fn alerts(sample: &Value) -> BTreeMap<String, String> {
             wrong.insert(format!("wifi:{iface}"), format!("{iface} not connected"));
         } else if wifi["level_dbm"]
             .as_f64()
-            .is_some_and(|dbm| dbm < WEAK_SIGNAL_DBM)
+            .is_some_and(|dbm| dbm < config.weak_signal_dbm)
         {
             wrong.insert(
                 format!("signal:{iface}"),
@@ -158,7 +164,7 @@ pub fn alerts(sample: &Value) -> BTreeMap<String, String> {
         }
     }
     for (sensor, celsius) in sample["temps_c"].as_object().into_iter().flatten() {
-        if number(celsius) > HOT_CELSIUS {
+        if number(celsius) > config.hot_celsius {
             wrong.insert(format!("hot:{sensor}"), format!("{sensor} at {celsius} C"));
         }
     }
@@ -292,7 +298,7 @@ impl Worker {
                 reasons.push(format!("network changed: {link}"));
             }
             last_link = link;
-            let now_wrong = alerts(&sample);
+            let now_wrong = alerts(&sample, &self.config);
             for (condition, message) in &now_wrong {
                 if !active.contains_key(condition) {
                     self.publish(&record(
@@ -315,9 +321,10 @@ impl Worker {
                 self.publish(&sample);
             }
             if due(&mut next_processes, now, self.config.process_period_s) || !reasons.is_empty() {
-                let top = self
-                    .sampler
-                    .top_processes(self.config.top_processes as usize);
+                let top = self.sampler.top_processes(
+                    self.config.top_processes as usize,
+                    self.config.cmdline_chars as usize,
+                );
                 self.publish(&record("processes", json!({ "top": top })));
             }
 
@@ -349,15 +356,33 @@ impl Worker {
 mod tests {
     use super::*;
 
+    fn config() -> Config {
+        Config {
+            sample_hz: 4.0,
+            publish_period_s: 1.0,
+            slow_period_s: 5.0,
+            process_period_s: 10.0,
+            top_processes: 12,
+            buffer_s: 120.0,
+            log_poll_s: 0.5,
+            log_dir: String::new(),
+            cmdline_chars: 200,
+            cpu_alert_percent: 95.0,
+            memory_alert_percent: 95.0,
+            weak_signal_dbm: -80.0,
+            hot_celsius: 90.0,
+        }
+    }
+
     #[test]
     fn flags_what_looks_wrong() {
         let calm = json!({ "cpu_percent": 30.0, "memory": { "percent": 40.0 },
             "wifi": { "wlan0": { "connected": true, "level_dbm": -50.0 } }, "temps_c": { "cpu": 60.0 } });
-        assert!(alerts(&calm).is_empty());
+        assert!(alerts(&calm, &config()).is_empty());
         let bad = json!({ "cpu_percent": 99.0, "memory": { "percent": 97.0 },
             "wifi": { "wlan0": { "connected": true, "level_dbm": -86.0 }, "wlan1": { "connected": false } },
             "temps_c": { "cpu": 95.0 }, "pi_throttled": { "now": ["undervoltage"] } });
-        let keys: Vec<String> = alerts(&bad).into_keys().collect();
+        let keys: Vec<String> = alerts(&bad, &config()).into_keys().collect();
         assert_eq!(
             keys,
             vec![

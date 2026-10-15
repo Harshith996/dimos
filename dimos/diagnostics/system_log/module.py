@@ -24,7 +24,7 @@
 - processes: the busiest processes, every ``process_period_s`` and with every dump
 - dimos_log: one line of the run's *.jsonl logs, parsed
 - module_stats: per-worker/per-module CPU and memory from the resource monitor (dtop), forwarded by this wrapper
-- whatever arrives on ``robot_health`` (the Go2's battery, motor temperatures and service state), passed through
+- whatever a robot publishes on ``robot_health`` (battery, motor temperatures, ...), passed through
 """
 
 from __future__ import annotations
@@ -60,6 +60,12 @@ class SystemLogConfig(NativeModuleConfig):
     log_poll_s: float = Field(default=0.5, ge=0.01, le=60.0)
     # the run's log directory (DIMOS_RUN_LOG_DIR) when empty
     log_dir: str = ""
+    cmdline_chars: int = Field(default=200, ge=0, le=100000)
+    # an alert (and a dump of the ring) when one of these is crossed
+    cpu_alert_percent: float = 95.0
+    memory_alert_percent: float = 95.0
+    weak_signal_dbm: float = -80.0
+    hot_celsius: float = 90.0
 
 
 class SystemLog(NativeModule):

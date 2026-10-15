@@ -14,5 +14,5 @@
 
 from dimos.diagnostics.system_log.module import SystemLog
 
-# dtop on, since the per-module usage comes from its resource monitor: `dimos run unitree-go2 system-log`
+# dtop on, since the per-module usage comes from its resource monitor: `dimos run <robot> system-log`
 system_log = SystemLog.blueprint().global_config(dtop=True)

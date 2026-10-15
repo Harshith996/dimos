@@ -27,7 +27,6 @@ use sysinfo::{
 
 use crate::parse::{self, round};
 
-const CMDLINE_CHARS: usize = 200;
 const SYS_CLASS: &str = "/sys/class";
 const PI_THROTTLED: &str = "/sys/devices/platform/soc/soc:firmware/get_throttled";
 const JETSON_GPU_LOAD: [&str; 2] = [
@@ -301,7 +300,7 @@ impl Sampler {
     }
 
     /// The busiest processes by CPU since the previous call.
-    pub fn top_processes(&mut self, count: usize) -> Value {
+    pub fn top_processes(&mut self, count: usize, cmdline_chars: usize) -> Value {
         refresh_processes(&mut self.system);
         let mut rows: Vec<_> = self
             .system
@@ -325,7 +324,7 @@ impl Sampler {
                     "name": p.name().to_string_lossy(),
                     "cpu_percent": round(p.cpu_usage() as f64, 1),
                     "rss_mb": p.memory() >> 20,
-                    "cmdline": cmdline.chars().take(CMDLINE_CHARS).collect::<String>(),
+                    "cmdline": cmdline.chars().take(cmdline_chars).collect::<String>(),
                 })
             })
             .collect();

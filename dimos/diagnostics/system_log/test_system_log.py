@@ -94,8 +94,8 @@ def test_publishes_health_logs_robot_health_and_dumps_on_bad_event(
     assert log["file"] == "main.jsonl"
     assert log["record"] == {"event": "hello from dimos", "level": "info"}
 
-    robot_health.broadcast(None, String(json.dumps({"type": "go2_lowstate", "soc": 55})))
-    assert records.wait_for(lambda r: r["type"] == "go2_lowstate")["soc"] == 55
+    robot_health.broadcast(None, String(json.dumps({"type": "robot_battery", "soc": 55})))
+    assert records.wait_for(lambda r: r["type"] == "robot_battery")["soc"] == 55
 
     bad_event.broadcast(None, Bool(True))
     dump = records.wait_for(lambda r: r["type"] == "health_dump")
