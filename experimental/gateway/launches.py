@@ -17,11 +17,9 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import signal
 import subprocess
@@ -33,7 +31,7 @@ import psutil
 
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.core.run_registry import list_runs
+from dimos.core.run_registry import generate_run_id, list_runs
 from experimental.gateway import overrides as ov, store
 from experimental.gateway.overrides import LaunchOverrides, ModuleValues
 
@@ -48,6 +46,10 @@ class RunError(Exception):
 
 
 class StillRunningError(RunError):
+    pass
+
+
+class NoSuchRunError(RunError):
     pass
 
 
@@ -102,22 +104,13 @@ def _tail(path: Path, size: int) -> str:
 
 def _record() -> dict[str, Any] | None:
     record = store.read_json(launch_file())
-    ok = isinstance(record, dict) and all(k in record for k in ("pid", "blueprint", "started_at"))
+    keys = ("pid", "run_id", "blueprint", "started_at")
+    ok = isinstance(record, dict) and all(k in record for k in keys)
     return record if ok else None
 
 
 def _save(record: dict[str, Any]) -> None:
     store.write_atomic(launch_file(), json.dumps(record))
-
-
-def failed_log_dir(blueprint: str, started_at: str) -> Path | None:
-    try:
-        since = datetime.fromisoformat(started_at.replace("Z", "+00:00")).timestamp() - 1
-        name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-        found = [p for p in LOG_DIR.glob(f"*-{name}") if p.is_dir() and p.stat().st_mtime >= since]
-    except (OSError, ValueError):
-        return None
-    return max(found, default=None, key=lambda p: p.stat().st_mtime)
 
 
 def last_error(output: str) -> str:
@@ -130,9 +123,9 @@ def current_launch() -> dict[str, Any] | None:
     if record is None:
         return None
     pid = int(record["pid"])
-    entry = next((run for run in registry_runs() if run["pid"] == pid), None)
-    if entry and not record.get("run_id"):
-        record.update(ever_ran=True, run_id=entry["run_id"], log_dir=entry["log_dir"])
+    entry = next((run for run in registry_runs() if run["run_id"] == record["run_id"]), None)
+    if entry and not record.get("ever_ran"):
+        record.update(ever_ran=True)
         _save(record)
     running = alive(pid)
     stopping = bool(record.get("stopping"))
@@ -146,10 +139,8 @@ def current_launch() -> dict[str, Any] | None:
         phase = "stopped"
     else:
         phase = "failed"
-    run_id, log_dir = record.get("run_id"), record.get("log_dir")
-    if run_id is None and phase == "failed":
-        found = failed_log_dir(str(record["blueprint"]), str(record["started_at"]))
-        run_id, log_dir = (found.name, str(found)) if found else (None, None)
+    run_id = str(record["run_id"])
+    log_dir = LOG_DIR / run_id
     output = _tail(launch_log(), OUTPUT_TAIL)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
@@ -158,7 +149,7 @@ def current_launch() -> dict[str, Any] | None:
         "pid": pid,
         "output": output,
         "runId": run_id,
-        "logDir": log_dir,
+        "logDir": str(log_dir) if log_dir.is_dir() else None,
         "error": last_error(output) if phase == "failed" else None,
         "overrides": record.get("overrides") or {},
         "modules": record.get("modules") or {},
@@ -197,12 +188,13 @@ def last_launch_args() -> tuple[str, LaunchConfig] | None:
     )
 
 
-def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
+def run_args(blueprint: str, launch: LaunchConfig, run_id: str) -> list[str]:
     global_, modules = ov.without_secrets(launch.global_, launch.modules, launch.secrets())
+    run = ["run", "--run-id", run_id, blueprint]
     if launch.args:
         flags = ov.global_flags(global_, explicit_bools=True)
-        return ["run", blueprint, *flags, *ov.module_flags(modules), *launch.args]
-    return [*ov.global_flags(global_), "run", blueprint, *ov.module_flags(modules)]
+        return [*run, *flags, *ov.module_flags(modules), *launch.args]
+    return [*ov.global_flags(global_), *run, *ov.module_flags(modules)]
 
 
 def write_secrets(launch: LaunchConfig) -> None:
@@ -270,7 +262,8 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
         secret_env = ov.secret_env(launch.global_, launch.modules, launch.secrets())
         shown_env = "".join(f"{name}={ov.HIDDEN} " for name in secret_env)
-        shown = run_args(blueprint, replace(launch, args=ov.shown_args(launch.args)))
+        run_id = generate_run_id(blueprint)
+        shown = run_args(blueprint, replace(launch, args=ov.shown_args(launch.args)), run_id)
         launch_log().parent.mkdir(parents=True, exist_ok=True)
         launch_log().write_text(f"$ {shown_env}dimos {shlex.join(shown)}\n")
         venv = store.venv_dir(dimos_dir)
@@ -284,7 +277,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
         }
         with launch_log().open("a") as log:
             child = subprocess.Popen(
-                [str(program), *run_args(blueprint, launch)],
+                [str(program), *run_args(blueprint, launch, run_id)],
                 cwd=dimos_dir,
                 env=env,
                 stdin=subprocess.DEVNULL,
@@ -302,6 +295,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "blueprint": blueprint,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "pid": child.pid,
+            "run_id": run_id,
             "ever_ran": False,
             "overrides": global_,
             "modules": modules,
@@ -325,22 +319,37 @@ def snapshot(pid: int) -> tuple[list[str], str, dict[str, str]]:
         raise RunError(f"can't read how pid {pid} was started: {error}")
 
 
-def run_to_relaunch(run_id: str | None) -> dict[str, Any] | None:
+def run_to_relaunch(run_id: str) -> dict[str, Any] | None:
     """The live run `restart` copies instead of relaunching from saved config, if any."""
     launch = current_launch()
-    if launch is not None and launch["phase"] in ACTIVE and run_id in (None, launch["runId"]):
+    if launch is not None and launch["phase"] in ACTIVE and run_id == launch["runId"]:
         if not (_record() or {}).get("relaunched"):
             return None
         return {"run_id": launch["runId"], "pid": launch["pid"], "blueprint": launch["blueprint"]}
     runs = registry_runs()
-    run = next((r for r in runs if run_id in (None, r["run_id"])), None)
-    if run is None and run_id:
-        raise RunError(f"no live run {run_id}")
+    run = next((r for r in runs if r["run_id"] == run_id), None)
+    if run is None:
+        raise NoSuchRunError(f"no live run {run_id}")
     return run
+
+
+def with_run_id(command: list[str], run_id: str) -> list[str]:
+    """`command` (a `dimos ... run ...` command line) set to start as run `run_id`."""
+    if "run" not in command:
+        raise RunError(f"not a `dimos run` command: {shlex.join(command)}")
+    start = command.index("run") + 1
+    rest = command[start:]
+    if "--run-id" in rest:
+        at = rest.index("--run-id")
+        rest = rest[:at] + rest[at + 2 :]
+    rest = [arg for arg in rest if not arg.startswith("--run-id=")]
+    return [*command[:start], "--run-id", run_id, *rest]
 
 
 def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) -> dict[str, Any]:
     """Start `command` again as this gateway's launch, for a run the gateway didn't start."""
+    run_id = generate_run_id(blueprint)
+    command = with_run_id(command, run_id)
     with _lock:
         launch_log().parent.mkdir(parents=True, exist_ok=True)
         launch_log().write_text(f"$ {shlex.join(ov.shown_args(command))}\n")
@@ -361,6 +370,7 @@ def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) 
                 "blueprint": blueprint,
                 "started_at": started_at,
                 "pid": child.pid,
+                "run_id": run_id,
                 "ever_ran": False,
                 "relaunched": True,
             }
@@ -370,17 +380,15 @@ def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) 
         return started
 
 
-async def stop(run_id: str | None) -> str:
+async def stop(run_id: str) -> str:
     launch = current_launch()
-    if run_id and not (launch and launch["runId"] == run_id and launch["phase"] in ACTIVE):
+    if launch and launch["runId"] == run_id and launch["phase"] in ACTIVE:
+        pid, name = launch["pid"], launch["blueprint"]
+    else:
         run = next((r for r in registry_runs() if r["run_id"] == run_id), None)
         if run is None:
-            raise RunError(f"no live run {run_id}")
+            raise NoSuchRunError(f"no live run {run_id}")
         pid, name = int(run["pid"]), str(run["blueprint"])
-    elif launch and launch["phase"] in ACTIVE:
-        pid, name, run_id = launch["pid"], launch["blueprint"], launch["runId"]
-    else:
-        raise RunError("the dimos gateway hasn't launched anything that's still running")
     try:
         leads = os.getpgid(pid) == pid
     except ProcessLookupError:
@@ -398,6 +406,5 @@ async def stop(run_id: str | None) -> str:
             break
     else:
         raise RunError(f"{name} (pid {pid}) won't stop")
-    if run_id:
-        await asyncio.to_thread(kill_run_processes, run_id)
+    await asyncio.to_thread(kill_run_processes, run_id)
     return f"stopped {name} (pid {pid})"
