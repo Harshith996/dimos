@@ -52,10 +52,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
@@ -63,7 +61,6 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf.articulated_tf import ArticulatedTf
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -151,10 +148,6 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_imu: bool = Field(default=True)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
-    # Publish every URDF joint as a tf edge, posed by FK from live joint angles.
-    publish_joint_tf: bool = Field(default=True)
-    # Joint feedback runs at publish_rate_hz (100), far more tf than any consumer needs.
-    articulated_tf_hz: float = Field(default=30.0, gt=0.0)
     # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
     boot_vendor_stack: bool = Field(default=True)
     # "" boots vendor_setup.sh's own set; a vendor profile, e.g. "ATCStandard/R1PROVRTeleop", boots that.
@@ -222,7 +215,6 @@ class R1ProConnection(Module):
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
-        self._articulated_tf: ArticulatedTf | None = None
 
         # Odom dead-reckoning, integrated from /motion_control/chassis_speed.
         self._odom_x = 0.0
@@ -258,11 +250,6 @@ class R1ProConnection(Module):
         # Lazy import — RawROS pulls rclpy which must not load on import in
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
-
-        if self.config.publish_joint_tf:
-            from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
-
-            self._articulated_tf = ArticulatedTf(R1PRO_MODEL, root_link=self.config.frame_id)
 
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
@@ -637,6 +624,8 @@ class R1ProConnection(Module):
         self._odom_yaw += wz * dt
 
         from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         half = self._odom_yaw * 0.5
         position = Vector3(self._odom_x, self._odom_y, 0.0)
@@ -664,8 +653,6 @@ class R1ProConnection(Module):
         next_tick = time.perf_counter()
         frame_id = self.config.frame_id
         bootstrapped = False
-        next_articulated_tf = 0.0
-        articulated_tf_period = 1.0 / self.config.articulated_tf_hz
 
         while not self._stop_event.is_set():
             with self._lock:
@@ -699,18 +686,16 @@ class R1ProConnection(Module):
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
-                joint_state = JointState(
-                    ts=ts,
-                    frame_id=frame_id,
-                    name=R1PRO_UPPER_BODY_JOINTS,
-                    position=positions,  # type: ignore[arg-type]
-                    velocity=velocities,
-                    effort=efforts,
+                self.motor_states.publish(
+                    JointState(
+                        ts=ts,
+                        frame_id=frame_id,
+                        name=R1PRO_UPPER_BODY_JOINTS,
+                        position=positions,  # type: ignore[arg-type]
+                        velocity=velocities,
+                        effort=efforts,
+                    )
                 )
-                self.motor_states.publish(joint_state)
-                if self._articulated_tf is not None and time.monotonic() >= next_articulated_tf:
-                    next_articulated_tf = time.monotonic() + articulated_tf_period
-                    self.tf.publish(TFMessage(*self._articulated_tf.transforms(joint_state)))
                 if imu_chassis is not None:
                     self.imu_chassis.publish(imu_chassis)
                 if imu_torso is not None:

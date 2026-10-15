@@ -24,15 +24,12 @@ import pinocchio as pin
 import pytest
 import trimesh
 
-from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
-    RoboPlanPointCloudSelfFilter,
-)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm.config import (
@@ -40,6 +37,7 @@ from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REPO,
     make_xarm7_model_config,
 )
+from dimos.robot.urdf_manager import UrdfManager
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -56,12 +54,12 @@ _URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelfFilter]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[RoboPlanPointCloudSelfFilter] = []
+    modules: list[UrdfManager] = []
 
-    def make(**overrides: Any) -> RoboPlanPointCloudSelfFilter:
+    def make(**overrides: Any) -> UrdfManager:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -70,8 +68,8 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = RoboPlanPointCloudSelfFilter(**settings)
-        cast("dict[str, Any]", module.__dict__)["_tf"] = MultiTBuffer()
+        module = UrdfManager(**settings)
+        cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
 
@@ -81,9 +79,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., RoboPlanPointCloudSelf
         module.dispose()
 
 
-def _place_arm(
-    module: RoboPlanPointCloudSelfFilter, at: tuple[float, float, float], ts: float
-) -> None:
+def _place_arm(module: UrdfManager, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -105,7 +101,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManager],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -118,7 +114,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., RoboPlanPointCloudSelfFilter],
+    make_filter: Callable[..., UrdfManager],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -310,3 +306,30 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
     for cloud, filtered in zip(captures, (first, second), strict=True):
         np.testing.assert_allclose(filtered.points_f32(), controls)
         assert filtered.frame_id == "world" and filtered.ts == cloud.ts
+
+
+def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
+    module = make_filter(urdf_xml=_joint_robot("prismatic"))
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    edge = module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001)
+
+    assert edge is not None
+    np.testing.assert_allclose(
+        [edge.translation.x, edge.translation.y, edge.translation.z], [0.3, 0, 0], atol=1e-9
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Multi-DOF joints are read from tf, so publishing them would feed the filter its own output.
+        {"urdf_xml": _joint_robot("planar")},
+        {"urdf_xml": _joint_robot("prismatic"), "publish_joint_tf": False},
+    ],
+)
+def test_no_tf_edge_is_published(make_filter, overrides):
+    module = make_filter(**overrides)
+    module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+
+    assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None

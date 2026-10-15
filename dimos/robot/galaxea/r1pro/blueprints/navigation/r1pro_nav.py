@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
@@ -32,11 +33,13 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
     R1PRO_MAX_STEP_HEIGHT_M,
+    R1PRO_MODEL,
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
 )
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.rerun import render_cloud
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
@@ -74,7 +77,20 @@ r1pro_nav = autoconnect(
     ),
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
     r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
-    r1pro_lidar_odometry(),
+    r1pro_lidar_odometry().remappings([(PointLio, "lidar", "lidar_with_robot")]),
+    # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
+    UrdfManager.blueprint(
+        model=R1PRO_MODEL,
+        # The lidar mount tf comes at 5 Hz.
+        tf_tolerance_s=0.25,
+        tf_forward_tolerance_s=0.25,
+        state_tolerance_s=0.1,
+    ).remappings(
+        [
+            (UrdfManager, "pointcloud", "lidar_with_robot"),
+            (UrdfManager, "filtered_pointcloud", "lidar"),
+        ]
+    ),
     r1pro_head_depth().remappings([(Depth2DepthCloud, "depth_cloud", "lidar")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,

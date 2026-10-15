@@ -12,22 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Capture-time RoboPlan robot surface filtering."""
+"""One URDF and the live joint state: every joint on tf, and the robot cut out of any point cloud wired in."""
 
 from __future__ import annotations
 
 import importlib
+import time
 import xml.etree.ElementTree as ET
 
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
 
+from dimos.core.stream import IO
 from dimos.manipulation.planning.utils.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
 )
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
@@ -35,19 +40,61 @@ from dimos.utils.transform_utils import matrix_to_pose
 logger = setup_logger()
 
 
-class RoboPlanPointCloudSelfFilterConfig(PointCloudSelfFilterConfig):
+# Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
+_MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
+
+class UrdfManagerConfig(PointCloudSelfFilterConfig):
     model: RobotModel
     padding_m: float = Field(default=0.01, ge=0.0)
+    # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
+    publish_joint_tf: bool = True
+    joint_tf_hz: float = Field(default=30.0, gt=0.0)
 
 
-class RoboPlanPointCloudSelfFilter(PointCloudSelfFilter):
-    """Remove robot returns with RoboPlan geometry at the capture time."""
+class UrdfManager(PointCloudSelfFilter):
+    """Poses the URDF from the joint state: publishes it on tf and drops robot returns from clouds at capture time."""
 
-    config: RoboPlanPointCloudSelfFilterConfig
+    config: UrdfManagerConfig
+
+    tf: IO[TFMessage]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._load_scene()
+        self._next_joint_tf_t = 0.0
+
+    def add_joint_state(self, state: JointState) -> None:
+        super().add_joint_state(state)
+        if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
+            return
+        self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
+        # The scene's FK state is shared with the cloud filter's thread.
+        with self._filter_lock:
+            transforms = self.joint_transforms(state)
+        self.tfbuffer.publish(*transforms)
+
+    def joint_transforms(self, state: JointState) -> list[Transform]:
+        """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
+        positions = dict(zip(state.name, state.position, strict=False))
+        q = self._neutral_q.copy()
+        for name in self._scene.getJointNames():
+            info = self._scene.getJointInfo(name)
+            if info.num_velocity_dofs == 1 and name in positions:
+                value = positions[name]
+                values = [np.cos(value), np.sin(value)] if info.num_position_dofs == 2 else [value]
+                q[self._scene.getJointPositionIndices([name])] = values
+        # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as its stalest edge.
+        return [
+            Transform.from_matrix(
+                np.asarray(self._context.forwardKinematics(q, joint.child_link, joint.parent_link)),
+                frame_id=joint.parent_link,
+                child_frame_id=joint.child_link,
+                ts=state.ts,
+            )
+            for joint in self._joints.values()
+            if joint.type not in _MULTI_DOF_JOINT_TYPES
+        ]
 
     def _compute_keep_mask(
         self, cloud: PointCloud2, points: NDArray[np.float32]

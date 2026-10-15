@@ -17,21 +17,16 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.protocol.tf.articulated_tf import ArticulatedTf
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnectionConfig
+from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.urdf_manager import UrdfManager
 
 HEAD = "camera_head_left_link"
 
 
 @pytest.fixture(scope="module")
-def config() -> R1ProConnectionConfig:
-    return R1ProConnectionConfig()
-
-
-@pytest.fixture(scope="module")
-def fk(config: R1ProConnectionConfig) -> ArticulatedTf:
-    return ArticulatedTf(R1PRO_MODEL, root_link=config.frame_id)
+def fk() -> UrdfManager:
+    return UrdfManager(model=R1PRO_MODEL)
 
 
 def joint_state(**positions: float) -> JointState:
@@ -63,23 +58,21 @@ def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
     return position, rotation
 
 
-def test_motor_states_joint_names_all_exist_in_the_model(fk: ArticulatedTf) -> None:
+def test_motor_states_joint_names_all_exist_in_the_model(fk: UrdfManager) -> None:
     """A mismatch is silent: unknown joints are skipped and the camera never moves."""
-    fk.transforms(joint_state())
-
-    assert fk._unknown_joints == set()
+    assert set(R1PRO_UPPER_BODY_JOINTS) <= set(fk._scene.getJointNames())
 
 
-def test_head_camera_moves_when_the_torso_bends(fk: ArticulatedTf) -> None:
+def test_head_camera_moves_when_the_torso_bends(fk: UrdfManager) -> None:
     """The head sits past four revolute torso joints, so it cannot be static."""
-    upright, _ = pose_in_root(fk.transforms(joint_state()), HEAD)
-    bent, _ = pose_in_root(fk.transforms(joint_state(torso_joint2=0.5)), HEAD)
+    upright, _ = pose_in_root(fk.joint_transforms(joint_state()), HEAD)
+    bent, _ = pose_in_root(fk.joint_transforms(joint_state(torso_joint2=0.5)), HEAD)
 
     assert bent[0] - upright[0] == pytest.approx(0.436, abs=0.01)
     assert bent[2] - upright[2] == pytest.approx(-0.144, abs=0.01)
 
 
-def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: ArticulatedTf) -> None:
+def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager) -> None:
     """Only joint edges change with the torso; head_link -> camera stays a fixed mount."""
 
     def edges(state: JointState) -> dict[str, tuple[float, ...]]:
@@ -91,7 +84,7 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: Articulated
                 t.rotation.z,
                 t.rotation.w,
             )
-            for t in fk.transforms(state)
+            for t in fk.joint_transforms(state)
         }
 
     upright, bent = edges(joint_state()), edges(joint_state(torso_joint2=0.5))
@@ -100,14 +93,12 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: Articulated
     assert bent["torso_link2"] != pytest.approx(upright["torso_link2"])
 
 
-def test_transforms_hang_off_the_configured_root(
-    fk: ArticulatedTf, config: R1ProConnectionConfig
-) -> None:
-    transforms = fk.transforms(joint_state())
+def test_transforms_hang_off_base_link(fk: UrdfManager) -> None:
+    transforms = fk.joint_transforms(joint_state())
     children = [t.child_frame_id for t in transforms]
     parents = {t.frame_id for t in transforms}
 
     assert len(children) == len(set(children)), "a link with two parents breaks the tree"
-    assert parents - set(children) == {config.frame_id}
+    assert parents - set(children) == {"base_link"}
     assert {HEAD, "head_link", "camera_head_right_link"} <= set(children)
     assert all(t.ts == 1.0 for t in transforms)
