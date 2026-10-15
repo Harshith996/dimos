@@ -35,8 +35,24 @@ class LaunchRequest(BaseModel):
     args: list[str] | None = None
 
 
-class StopRequest(BaseModel):
+class RunRequest(BaseModel):
+    """Which run: its runId, or for a launch still starting (dimos gives it a runId once it registers) its pid."""
+
     runId: str | None = None
+    pid: int | None = None
+
+
+async def chosen_run(request: RunRequest) -> str | None:
+    """The runId the request names; None for the gateway's own launch still starting under `pid`."""
+    if (request.runId is None) == (request.pid is None):
+        raise ApiError(400, "name the run: runId (or pid, for a launch that has no runId yet)")
+    if request.runId is not None:
+        return request.runId
+    launch = await asyncio.to_thread(launches.current_launch)
+    if launch is None or launch["pid"] != request.pid or launch["phase"] not in launches.ACTIVE:
+        raise ApiError(400, f"no launch still starting with pid {request.pid}")
+    run_id: str | None = launch["runId"]
+    return run_id
 
 
 def with_saved(blueprint: str, one_off: ov.LaunchOverrides, args: list[str]) -> LaunchConfig:
@@ -95,10 +111,11 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
 
 
 @router.post("/runs/stop", response_model=responses.Stopped)
-async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[str, Any]:
-    """Stop the blueprint this gateway launched, or the run `runId`."""
+async def stop(state: GatewayState, request: RunRequest) -> dict[str, Any]:
+    """Stop the run `runId` (or the launch still starting as `pid`)."""
+    run_id = await chosen_run(request)
     try:
-        return {"output": await launches.stop(request.runId if request else None)}
+        return {"output": await launches.stop(run_id)}
     except launches.RunError as error:
         raise ApiError(500, str(error))
     finally:
@@ -106,15 +123,17 @@ async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[
 
 
 @router.post("/runs/restart", response_model=responses.Launch)
-async def restart(state: GatewayState, request: StopRequest | None = None) -> dict[str, Any]:
-    """Stop the last launch if it still runs, and launch it again with the config saved now.
+async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
+    """Stop the run `runId` (or the launch still starting as `pid`) and launch it again.
 
-    A run this gateway didn't launch (the one `runId` names, or else the newest live one) is
-    started again with the same command line, directory and environment.
+    The gateway's own launch starts again with the config saved now; a run it didn't launch starts again with the
+    same command line, directory and environment.
     """
-    run_id = request.runId if request else None
+    run_id = await chosen_run(request)
     current = await asyncio.to_thread(launches.current_launch)
-    ours = current is not None and current["phase"] in launches.ACTIVE
+    ours = (
+        current is not None and current["phase"] in launches.ACTIVE and current["runId"] == run_id
+    )
     # TODO: after gateway is on main, drop this fallback for runs the gateway didn't launch
     try:
         run = await asyncio.to_thread(launches.run_to_relaunch, run_id)
