@@ -106,6 +106,17 @@ async def scan(state: GatewayState) -> dict[str, Any]:
     return {"job": state.scanner.start("requested").id}
 
 
+class ArgsCheckRequest(BaseModel):
+    args: list[str]
+
+
+@router.post("/blueprints/{name}/args", response_model=responses.CheckedArgs, openapi_extra=SLOW)
+async def check_blueprint_args(state: GatewayState, name: str, request: ArgsCheckRequest) -> Any:
+    """Read CLI args as `dimos run <name> <args>` would, without launching: what each sets, and why it'd refuse."""
+    check_name(name)
+    return await state.introspected(["args", name], request.args)
+
+
 @router.get("/blueprints/{name}", response_model=responses.Blueprint, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str) -> Any:
     check_name(name)

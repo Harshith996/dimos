@@ -164,3 +164,20 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
     }
     declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
     assert declared == served
+
+
+def test_blueprint_args_are_read_as_dimos_run_would(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def fake(args: list[str], stdin: Any = None) -> Any:
+        assert args == ["args", "demo"]
+        return {
+            "name": "demo",
+            "args": [{"tokens": [a], "target": "fps", "error": None} for a in stdin],
+        }
+
+    monkeypatch.setattr(state, "introspected", fake)
+    checked = client.post("/blueprints/demo/args", json={"args": ["--fps=5"]})
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["args"] == [{"tokens": ["--fps=5"], "target": "fps", "error": None}]
+    assert client.post("/blueprints/-x/args", json={"args": []}).status_code == 400

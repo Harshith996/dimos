@@ -137,6 +137,19 @@ ModuleConfig = TypedDict(
 with_config(CONFIG)(ModuleConfig)
 
 
+class CheckedArg(Body):
+    tokens: list[str]
+    target: str | None
+    error: str | None
+
+
+class CheckedArgs(Body):
+    """Each group of CLI args, what it sets and why dimos would refuse it."""
+
+    name: str
+    args: list[CheckedArg]
+
+
 class BlueprintConfig(Body):
     """A blueprint's configurable args per module, and the values Desktop saved for it."""
 

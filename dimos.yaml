@@ -22,7 +22,7 @@ install: |
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "3.1.0"
+  version: "3.2.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
@@ -51,6 +51,9 @@ provides:
     - method: GET
       path: blueprints/{name}
       description: 'A blueprint''s modules with their streams, RPCs and skills, and its file and line (slow: imports python)'
+    - method: POST
+      path: blueprints/{name}/args
+      description: Read CLI args ({args}) as `dimos run <name> <args>` would, without launching; what each group sets and why dimos would refuse it (slow)
     - method: GET
       path: blueprints/{name}/config
       description: A blueprint's configurable args per module and Desktop's saved values (slow)
