@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import time
 
 from dimos.utils.trigonometry import angle_diff
 
@@ -40,14 +41,15 @@ class MockTwistBaseAdapter:
     - Development without a physical base
 
     With ``integrate_odometry`` a 3-DOF base moves: each odometry read advances
-    the pose by the last commanded body-frame velocity, with yaw wrapped.
+    the pose by the last commanded body-frame velocity, with yaw wrapped:
+    ``step_dt`` per write, or with ``step_dt=None`` the real time since the last write.
     """
 
     def __init__(
         self,
         dof: int = 3,
         integrate_odometry: bool = False,
-        step_dt: float = 0.01,
+        step_dt: float | None = 0.01,
         **_: object,
     ) -> None:
         self._dof = dof
@@ -57,6 +59,7 @@ class MockTwistBaseAdapter:
         self._connected = False
         self._integrate_odometry = integrate_odometry and dof == 3
         self._step_dt = step_dt
+        self._last_write_t: float | None = None
 
     def connect(self) -> bool:
         """Simulate connection."""
@@ -86,10 +89,12 @@ class MockTwistBaseAdapter:
         return self._odometry.copy()
 
     def _advance_odometry(self) -> None:
-        """Advance the pose by one ``step_dt`` of the commanded body velocity."""
+        """Advance the pose by one step of the commanded body velocity."""
+        now = time.monotonic()
+        last, self._last_write_t = self._last_write_t, now
         if self._odometry is None:
             return
-        dt = self._step_dt
+        dt = self._step_dt if self._step_dt is not None else (0.0 if last is None else now - last)
         vx, vy, wz = self._velocities
         x, y, yaw = self._odometry
         self._odometry = [
