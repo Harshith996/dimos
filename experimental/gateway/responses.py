@@ -37,6 +37,9 @@ class Info(Body):
     found: bool
     installed: bool
     version: str | None
+    api: str
+    commit: str | None
+    tag: str | None
 
 
 class ServerInfo(Body):

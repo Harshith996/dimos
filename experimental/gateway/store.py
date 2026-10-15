@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -130,11 +131,28 @@ def checkout_version(dimos_dir: Path) -> tuple[bool, str | None]:
     return True, str(version) if version else None
 
 
+def git(dimos_dir: Path, *args: str) -> str | None:
+    try:
+        done = subprocess.run(
+            ["git", "-C", str(dimos_dir), *args], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout.strip() or None if done.returncode == 0 else None
+
+
 def info(dimos_dir: Path) -> dict[str, Any]:
+    from experimental.gateway.state import API_VERSION
+
     found, version = checkout_version(dimos_dir)
     return {
         "dir": str(dimos_dir),
         "found": found,
         "installed": found and dimos_bin(dimos_dir).exists(),
         "version": version,
+        "api": API_VERSION,
+        "commit": git(dimos_dir, "rev-parse", "--short=10", "HEAD"),
+        "tag": git(
+            dimos_dir, "describe", "--tags", "--exact-match", "--match", "desktop-gateway-v*"
+        ),
     }

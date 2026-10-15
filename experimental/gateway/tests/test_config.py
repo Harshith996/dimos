@@ -22,7 +22,7 @@ import pytest
 from dimos.core.global_config import GlobalConfig
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
-from experimental.gateway.state import State
+from experimental.gateway.state import API_VERSION, State
 
 ARG = {
     "default": None,
@@ -68,6 +68,9 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
         "found": True,
         "installed": True,
         "version": "0.0.14",
+        "api": API_VERSION,
+        "commit": None,
+        "tag": None,
     }
     paths = client.get("/paths").json()
     assert paths["dimosDir"] == str(checkout)
