@@ -19,7 +19,6 @@ from pathlib import Path
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.std_msgs.msg import Int32
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.experimental.isolated_python.bootstrap import load_class
 from dimos.experimental.isolated_python.example.contract import ExampleExternal

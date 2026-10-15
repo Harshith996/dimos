@@ -19,7 +19,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from PIL import Image
 import pytest

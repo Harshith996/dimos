@@ -21,7 +21,6 @@ from threading import Event
 from typing import Any
 from uuid import uuid4
 
-from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
 import numpy as np
@@ -99,9 +98,7 @@ def main() -> None:
         pixels[:, :80, 0] = 255
         pixels[:, 80:, 2] = 255
         message = image_from_array(
-            pixels,
-            encoding="rgb8",
-            header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0)),
+            pixels, encoding="rgb8", header=Header(frame_id="camera_optical")
         )
         for _ in range(10):
             sender.publish(Topic(channel, Image), message)

@@ -15,7 +15,6 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 

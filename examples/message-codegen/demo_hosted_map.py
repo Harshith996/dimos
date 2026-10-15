@@ -18,11 +18,8 @@ import base64
 import json
 from pathlib import Path
 
-from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid
-from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.geometry import quaternion_from_euler
@@ -39,27 +36,13 @@ def main() -> None:
         cells[20:44, 20:44] = 50
         cells[28:36, 28:36] = 100
         grid = OccupancyGrid(
-            info=MapMetaData(
-                width=64,
-                height=64,
-                resolution=0.1,
-                map_load_time=Time(sec=0, nanosec=0),
-                origin=Pose(
-                    position=Point(x=0.0, y=0.0, z=0.0),
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            data=np.asarray(cells.ravel(), dtype=np.int8),
-            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            info=MapMetaData(width=64, height=64, resolution=0.1), data=cells.ravel()
         )
-        module._on_costmap(cdr_decode(cdr_encode(grid), OccupancyGrid))
+        module._on_costmap(OccupancyGrid.decode(grid.encode()))
         pose = PoseStamped(
-            pose=Pose(
-                position=Point(x=3.2, y=3.2, z=0.0), orientation=quaternion_from_euler(0, 0, 1.0)
-            ),
-            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            pose=Pose(position=Point(x=3.2, y=3.2), orientation=quaternion_from_euler(0, 0, 1.0))
         )
-        module._on_odom(cdr_decode(cdr_encode(pose), PoseStamped))
+        module._on_odom(PoseStamped.decode(pose.encode()))
         assert [value["type"] for value in payloads] == ["map", "odom"]
         assert payloads[1]["yaw"] == 1.0
         destination = Path("build/message-codegen/demo/evidence/hosted-map.png")

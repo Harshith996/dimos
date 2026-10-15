@@ -21,7 +21,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.sensor_msgs.msg import JointState
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -60,37 +59,17 @@ def main() -> None:
         monitor = WorldMonitor(world=world)
         monitor.load_model(config)
         world.finalize()
-        start = cdr_decode(
-            cdr_encode(
-                JointState(
-                    name=config.joint_names,
-                    position=np.array([-0.4, 0.3], dtype=np.float64),
-                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
-                    velocity=np.array([], dtype=np.float64),
-                    effort=np.array([], dtype=np.float64),
-                )
-            ),
-            JointState,
+        start = JointState.decode(
+            JointState(name=config.joint_names, position=[-0.4, 0.3]).encode()
         )
-        goal = cdr_decode(
-            cdr_encode(
-                JointState(
-                    name=config.joint_names,
-                    position=np.array([0.4, -0.3], dtype=np.float64),
-                    header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
-                    velocity=np.array([], dtype=np.float64),
-                    effort=np.array([], dtype=np.float64),
-                )
-            ),
-            JointState,
-        )
+        goal = JointState.decode(JointState(name=config.joint_names, position=[0.4, -0.3]).encode())
         result = RRTConnectPlanner().plan_joint_path(world, start, goal)
         assert result.is_success(), result
         path_points = interpolate_path(result.path, resolution=0.2)
         print(f"Drake model joints: {world.get_prepared_model().joint_space.names}")
         print(f"RRT result: {result.status.name}; interpolated waypoints={len(path_points)}")
         for index, point in enumerate(path_points):
-            decoded = cdr_decode(cdr_encode(point), JointState)
+            decoded = JointState.decode(point.encode())
             assert decoded == point
             assert world.check_config_collision_free(decoded)
             with world.scratch_context() as context:
@@ -106,7 +85,7 @@ def main() -> None:
             )
             pose = monitor.get_group_ee_pose("arm", decoded)
             transform = transform_from_pose(pose, child_frame_id="tool")
-            tf = cdr_decode(cdr_encode(TFMessage(transforms=[transform])), TFMessage)
+            tf = TFMessage.decode(TFMessage(transforms=[transform]).encode())
             assert tf.transforms[0].header.stamp == decoded.header.stamp
             expected = np.array([np.cos(decoded.position[0]), np.sin(decoded.position[0]), 0.0])
             np.testing.assert_allclose(pose_matrix(pose.pose)[:3, 3], expected, atol=1e-12)

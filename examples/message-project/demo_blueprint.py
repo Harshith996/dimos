@@ -27,7 +27,6 @@ from demo_modules import ReadingProcessor
 from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode
 from story_messages.story_msgs.msg import DeviceReading
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect

@@ -17,7 +17,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Vector3
 from dimos_generated.sensor_msgs.msg import CompressedImage, Imu
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 from mcap.writer import Writer
 import numpy as np
 import pytest

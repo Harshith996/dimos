@@ -24,11 +24,6 @@ from dimos_cdrgen.registry import (
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Bool, Header
-from dimos_message_build.registry import (
-    decode as cdr_decode,
-    encode as cdr_encode,
-    schema as cdr_schema,
-)
 from fastapi.testclient import TestClient
 import pytest
 

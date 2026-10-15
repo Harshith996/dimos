@@ -17,7 +17,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 import numpy as np
 import rerun as rr
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore

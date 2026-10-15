@@ -20,7 +20,6 @@ import cv2
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.vision_msgs.msg import Detection2DArray
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.msgs.image import image_from_array, image_view
@@ -46,7 +45,7 @@ def main() -> None:
         image=source,
     )
     collection = ImageDetections2D(image=source, detections=[detection])
-    array = cdr_decode(cdr_encode(collection.to_ros_detection2d_array()), Detection2DArray)
+    array = Detection2DArray.decode(collection.to_ros_detection2d_array().encode())
     wire = array.detections[0]
     assert array.header == source.header
     assert wire.header == source.header

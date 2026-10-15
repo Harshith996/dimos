@@ -28,7 +28,6 @@ from typing import Any
 
 from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Vector3
-from dimos_message_build.registry import encode as cdr_encode
 import pytest
 
 from dimos.cli.spy.core import (

@@ -27,7 +27,6 @@ from typing import Any
 from dimos_cdrgen.registry import decode as cdr_decode
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Float32, Header
-from dimos_message_build.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator

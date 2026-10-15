@@ -23,7 +23,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos_generated.sensor_msgs.msg import PointCloud2, PointField
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 

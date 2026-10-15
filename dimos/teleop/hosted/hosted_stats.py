@@ -31,7 +31,6 @@ from typing import Any
 from dimos_cdrgen.registry import decode as cdr_decode
 from dimos_generated.dimos_msgs.msg import VideoStats
 from dimos_generated.geometry_msgs.msg import TwistStamped
-from dimos_message_build.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc

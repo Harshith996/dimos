@@ -29,7 +29,6 @@ from dimos_generated.geometry_msgs.msg import (
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CompressedImage, Imu, PointCloud2, PointField
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_typestore

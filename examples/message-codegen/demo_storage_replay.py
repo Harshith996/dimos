@@ -23,7 +23,6 @@ from dimos_cdrgen.registry import encode as cdr_encode, schema as cdr_schema
 from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_generated.geometry_msgs.msg import Point
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode, schema as cdr_schema
 
 from dimos.memory.codecs.base import codec_for, codec_id
 from dimos.memory.replay_module import replay_module

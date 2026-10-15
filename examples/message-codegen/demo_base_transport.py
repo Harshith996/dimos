@@ -22,9 +22,7 @@ from typing import Any
 import uuid
 
 from demo_pubsub import free_port
-from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos_generated.std_msgs.msg import Header
 
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
 from dimos.hardware.drive_trains.transport.adapter import TransportTwistAdapter
@@ -70,20 +68,14 @@ def demonstrate(backend: str) -> None:
 
         def collect(message: Twist) -> None:
             received.append(message)
-            (
-                stopped
-                if message
-                == Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0))
-                else moving
-            ).set()
+            (stopped if message == Twist() else moving).set()
 
         stack.callback(commands.subscribe(collect))
         source = PoseStamped(
             pose=Pose(
-                position=Point(x=2.0, y=-1.0, z=0.0),
-                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5), x=0.0, y=0.0),
-            ),
-            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+                position=Point(x=2.0, y=-1.0),
+                orientation=Quaternion(z=math.sqrt(0.5), w=math.sqrt(0.5)),
+            )
         )
 
         def feedback_received() -> bool:
@@ -101,9 +93,7 @@ def demonstrate(backend: str) -> None:
             assert adapter.write_velocities([0.5, -0.2, 0.3])
 
         retry_until(moving, send_command, timeout=5)
-        assert received[0] == Twist(
-            linear=Vector3(x=0.5, y=-0.2, z=0.0), angular=Vector3(z=0.3, x=0.0, y=0.0)
-        )
+        assert received[0] == Twist(linear=Vector3(x=0.5, y=-0.2), angular=Vector3(z=0.3))
         adapter.write_enable(False)
         assert stopped.wait(5), "Disabling the adapter did not deliver a generated stop command"
         assert adapter.read_velocities() == [0.0, 0.0, 0.0]

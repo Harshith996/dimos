@@ -23,7 +23,6 @@ from types import SimpleNamespace
 from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode as cdr_encode
 import numpy as np
 import pytest
 

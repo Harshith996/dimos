@@ -26,7 +26,6 @@ from dimos_generated.foxglove_msgs.msg import CompressedVideo
 from dimos_generated.geometry_msgs.msg import Quaternion
 from dimos_generated.nav_msgs.msg import Odometry
 from dimos_generated.sensor_msgs.msg import CompressedImage, Imu, PointCloud2
-from dimos_message_build.registry import decode as cdr_decode
 import numpy as np
 
 from dimos.robot.unitree.go2.dds import cdr

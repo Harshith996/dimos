@@ -21,7 +21,6 @@ import time
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT

@@ -14,9 +14,8 @@
 
 """Exercise keyboard command and release events without a display or robot."""
 
-from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_generated.geometry_msgs.msg import Twist, TwistStamped
 from dimos_generated.std_msgs.msg import Float32
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pygame
 
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
@@ -28,11 +27,9 @@ def main() -> None:
     gripper: list[Float32] = []
     subscriptions = [
         module.ee_twist_command.subscribe(
-            lambda msg: commands.append(cdr_decode(cdr_encode(msg), TwistStamped))
+            lambda msg: commands.append(TwistStamped.decode(msg.encode()))
         ),
-        module.gripper_command.subscribe(
-            lambda msg: gripper.append(cdr_decode(cdr_encode(msg), Float32))
-        ),
+        module.gripper_command.subscribe(lambda msg: gripper.append(Float32.decode(msg.encode()))),
     ]
     try:
         held = {pygame.K_w, pygame.K_a}
@@ -40,9 +37,7 @@ def main() -> None:
         assert commands[-1].twist.linear.y == 0.05
         print("Release W while A remains held → CDR velocity: left 0.05 m/s")
         module._handle_pygame_event(pygame.event.Event(pygame.KEYUP, key=pygame.K_a), held)
-        assert commands[-1].twist == Twist(
-            linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)
-        )
+        assert commands[-1].twist == Twist()
         print("Release final motion key → CDR velocity: all six components zero")
         for key in [pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET]:
             module._handle_pygame_event(pygame.event.Event(pygame.KEYDOWN, key=key), held)

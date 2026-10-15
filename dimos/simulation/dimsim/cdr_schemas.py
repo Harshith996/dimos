@@ -22,7 +22,6 @@ import json
 from dimos_cdrgen.registry import schema as cdr_schema
 from dimos_generated.geometry_msgs.msg import PoseStamped, Twist
 from dimos_generated.sensor_msgs.msg import Image, PointCloud2
-from dimos_message_build.registry import schema as cdr_schema
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 

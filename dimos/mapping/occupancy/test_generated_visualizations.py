@@ -23,7 +23,6 @@ from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaterni
 from dimos_generated.nav_msgs.msg import MapMetaData, OccupancyGrid, Path
 from dimos_generated.sensor_msgs.msg import Image
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 

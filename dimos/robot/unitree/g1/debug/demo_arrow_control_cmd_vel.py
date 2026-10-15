@@ -22,7 +22,6 @@ from typing import Any
 
 from dimos_cdrgen.registry import encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Twist, Vector3
-from dimos_message_build.registry import encode as cdr_encode
 import lcm
 
 from dimos.core.transport import LCMTransport

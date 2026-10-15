@@ -24,7 +24,6 @@ from unittest.mock import MagicMock
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.core.module import Module

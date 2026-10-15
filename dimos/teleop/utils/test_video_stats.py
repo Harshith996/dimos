@@ -22,11 +22,6 @@ from dimos_cdrgen.registry import (
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.dimos_msgs.msg import VideoStats
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import (
-    decode as cdr_decode,
-    encode as cdr_encode,
-    schema as cdr_schema,
-)
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore

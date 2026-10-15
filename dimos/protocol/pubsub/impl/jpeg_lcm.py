@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import CompressedImage, Image
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 
 from dimos.msgs.image import compressed_image_from_image, image_from_compressed
 from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin, TypedTopicProto

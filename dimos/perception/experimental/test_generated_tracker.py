@@ -26,7 +26,6 @@ from dimos_generated.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 

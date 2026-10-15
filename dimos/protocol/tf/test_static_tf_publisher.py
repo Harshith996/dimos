@@ -18,7 +18,6 @@ import math
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.tf2_msgs.msg import TFMessage
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.msgs.geometry import compose_transforms

@@ -20,7 +20,6 @@ import socket
 import threading
 
 from dimos_generated.geometry_msgs.msg import TwistStamped
-from dimos_message_build.registry import decode as cdr_decode
 import uvicorn
 
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
@@ -33,7 +32,7 @@ class PhonePreview(PhoneTeleopModule):
 
     def _on_sensors_bytes(self, data: bytes) -> None:
         super()._on_sensors_bytes(data)
-        self.received.put(cdr_decode(data, TwistStamped))
+        self.received.put(TwistStamped.decode(data))
 
 
 def main() -> None:
@@ -56,7 +55,7 @@ def main() -> None:
             assert message.header.frame_id == "phone"
             assert message.header.stamp.sec > 0
             print(
-                f"Browser → {message.__msgtype__}: stamp={message.header.stamp.sec}s + "
+                f"Browser → {message.msg_name}: stamp={message.header.stamp.sec}s + "
                 f"{message.header.stamp.nanosec}ns",
                 flush=True,
             )

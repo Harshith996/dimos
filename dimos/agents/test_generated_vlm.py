@@ -19,7 +19,6 @@ import base64
 import cv2
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from dimos_generated.sensor_msgs.msg import Image
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 from langchain_core.messages import AIMessage, HumanMessage
 import numpy as np
 import pytest

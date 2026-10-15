@@ -23,7 +23,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.nav_msgs.msg import OccupancyGrid
 from dimos_generated.sensor_msgs.msg import PointCloud2
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.mapping.occupancy.inflation import simple_inflate
@@ -38,9 +37,9 @@ def main() -> None:
     points = np.column_stack((x.ravel(), y.ravel(), np.zeros(x.size)))
     points[(points[:, 0] > 1.8) & (points[:, 0] < 2.2), 2] = 1
     header = Header(stamp=Time(sec=1700000000, nanosec=123456789), frame_id="map")
-    cloud = cdr_decode(cdr_encode(pointcloud_from_xyz(points, header=header)), PointCloud2)
+    cloud = PointCloud2.decode(pointcloud_from_xyz(points, header=header).encode())
     grid = general_occupancy(cloud, resolution=0.1)
-    inflated = cdr_decode(cdr_encode(simple_inflate(grid, 0.2)), OccupancyGrid)
+    inflated = OccupancyGrid.decode(simple_inflate(grid, 0.2).encode())
     assert inflated.header == header
     before = np.count_nonzero(occupancy_view(grid) == 100)
     after = np.count_nonzero(occupancy_view(inflated) == 100)
