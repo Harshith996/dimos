@@ -104,8 +104,8 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.4",
-    # Stands in for dimos-lcm's lcm-dimos-fork; see override-dependencies.
+    "dimos-lcm>=0.1.5", # First release on upstream lcm instead of lcm-dimos-fork.
+    # 1.5.3 is the first upstream release with the lcm-proj/lcm#621 unsubscribe fix.
     "lcm>=1.5.3",
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
@@ -562,10 +562,6 @@ override-dependencies = [
     # Force the torch 2.9–2.11 lines even if a transitive dep asks for newer.
     "torch>=2.9,<2.12",
     "torchvision>=0.24,<0.27",
-    # dimos-lcm pins lcm-dimos-fork (lcm 1.5.2 plus the lcm-proj/lcm#621
-    # unsubscribe fix), which stops at cp313 wheels. Upstream 1.5.3 ships the
-    # fix and cp310–cp315 wheels, so the core deps require that instead.
-    "lcm-dimos-fork; sys_platform == 'never'",
 ]
 
 [tool.uv.sources]

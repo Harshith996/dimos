@@ -50,7 +50,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-06T15:33:49.631448Z"
+exclude-newer = "2026-10-08T16:06:09.772267Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -72,7 +72,6 @@ overrides = [
     { name = "embreex", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "importlib-metadata", specifier = "<8.8.0" },
     { name = "langgraph-prebuilt", specifier = "<=1.0.8" },
-    { name = "lcm-dimos-fork", marker = "sys_platform == 'never'" },
     { name = "opencv-python", marker = "sys_platform == 'never'" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "pytest", specifier = "==8.3.5" },
@@ -3092,7 +3091,7 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", specifier = ">=0.1.4" },
+    { name = "dimos-lcm", specifier = ">=0.1.5" },
     { name = "dimos-viewer", specifier = "==0.32.0a3" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a3" },
     { name = "drake", marker = "python_full_version >= '3.14' and platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'planning'", specifier = ">=1.47.0" },
@@ -3413,17 +3412,17 @@ tests-self-hosted = [
 
 [[package]]
 name = "dimos-lcm"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foxglove-websocket" },
-    { name = "lcm-dimos-fork", marker = "sys_platform == 'never'" },
+    { name = "lcm" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/05/2c1d03a588ede64ea19c5c22ee72d2a4ac5e5e29c452920aa0e56a578fad/dimos_lcm-0.1.4.tar.gz", hash = "sha256:4cef49c386860b94bd18a5da8b0a195459f56d883eaf7ede4fe297167bb773da", size = 303907, upload-time = "2026-09-22T20:19:47.059Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a5/92/0f332a3fe27324f9103303f961a527de33f13fffbd89e99192386e9df9f0/dimos_lcm-0.1.5.tar.gz", hash = "sha256:0f99d10c811156c18794585e281754fc8a9f5376966af880aeb868f4028d6b07", size = 126550, upload-time = "2026-10-15T15:23:57.171Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/d0/f93e2a2d9062ad0b3981b80db12b34494d231917243ab213265e926b5fa9/dimos_lcm-0.1.4-py3-none-any.whl", hash = "sha256:65efc67a5055b8d53a885bb46a7f49cc6bd07929cbd18403784efe65e186d3a2", size = 593548, upload-time = "2026-09-22T20:19:45.404Z" },
+    { url = "https://files.pythonhosted.org/packages/29/b8/e254f872031ffaebb0e8130a3df30569aa12eca3262971e952ec7ce56522/dimos_lcm-0.1.5-py3-none-any.whl", hash = "sha256:80317b4665cecde161ffb784d2c9569d956d705d9a518e95e59a3c724c50f39d", size = 593860, upload-time = "2026-10-15T15:23:55.541Z" },
 ]
 
 [[package]]
@@ -6130,12 +6129,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/07/ffafe261fc09d0cf7231bfc8a6584198a443d96f6ce40c5a3f5f4b2b7a7b/lcm-1.5.3-cp315-cp315-win_amd64.whl", hash = "sha256:4c97783731819368a065f9c920457ecfb065abce3029158c006db6e80e8bd51e", size = 4489450, upload-time = "2026-09-24T16:34:53.282Z" },
     { url = "https://files.pythonhosted.org/packages/27/ca/bcf7c1d60c09a876f045daab3dccd7db7e5108788ac0a8f8f30c1ef43ad0/lcm-1.5.3-cp315-cp315-win_arm64.whl", hash = "sha256:d9dd602f00cfd49ec105e72949de311b1d499086d1fe799ac03571d7b9a91d5d", size = 4354547, upload-time = "2026-09-24T16:34:55.872Z" },
 ]
-
-[[package]]
-name = "lcm-dimos-fork"
-version = "1.5.2.post1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/06/53/26e5c821858fff27ed9bf5be6e848a63db89bcd6a0c4cb8546dce3396a7d/lcm_dimos_fork-1.5.2.post1.tar.gz", hash = "sha256:3ec3703605ea1ea2f82ab327d73eb7fddf3775c1365e4a112314e11f389ad72f", size = 5538346, upload-time = "2026-06-03T07:09:31.465Z" }
 
 [[package]]
 name = "libcoal"
