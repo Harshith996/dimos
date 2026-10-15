@@ -81,6 +81,8 @@ r1pro_nav = autoconnect(
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
     UrdfManager.blueprint(
         model=R1PRO_MODEL,
+        # Replaying a 10-14 recording, self-hits per scan rose from 13 at 1 cm to 20 at 5 cm and stayed 20 at 10 cm.
+        padding_m=0.05,
         # The lidar mount tf comes at 5 Hz.
         tf_tolerance_s=0.25,
         tf_forward_tolerance_s=0.25,
