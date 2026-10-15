@@ -205,7 +205,7 @@ class BlueprintEntry(Body):
     """A blueprint, and (once a scan finished) what the last scan found: whether it imports, and if not why."""
 
     name: str
-    kind: Literal["builtin", "external"]
+    kind: NotRequired[Literal["builtin", "external"]]
     ref: NotRequired[str | None]
     robot: NotRequired[str | None]
     importable: NotRequired[bool]
