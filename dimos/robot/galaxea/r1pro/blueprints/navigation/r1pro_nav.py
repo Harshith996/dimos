@@ -134,7 +134,8 @@ r1pro_nav = autoconnect(
     ),
     MovementManager.blueprint(),
 ).global_config(
-    n_workers=8,
+    # One per module, so no two share a Python process (and its GIL).
+    n_workers=15,
     robot_width=R1PRO_CHASSIS_WIDTH_M,
     robot_rotation_diameter=R1PRO_ROTATION_DIAMETER_M,
 )
