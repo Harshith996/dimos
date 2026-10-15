@@ -297,9 +297,11 @@ def r1pro_lidar_odometry() -> Blueprint:
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
-            [(PointLio, "odometry", "pointlio_odometry")]
-        ),
+        PointLio.blueprint(
+            sensor_frame_id=lidar_frame,
+            # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
+            lidar_meas_cov=1.0,
+        ).remappings([(PointLio, "odometry", "pointlio_odometry")]),
         R1ProLio.blueprint(),
     ).remappings(
         [
