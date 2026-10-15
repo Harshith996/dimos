@@ -478,10 +478,6 @@ class Uploads(Body):
     byPath: dict[str, Uploaded]
 
 
-class Ok(Body):
-    ok: bool
-
-
 class SkillRun(Body):
     runId: str | None
     blueprint: str | None
