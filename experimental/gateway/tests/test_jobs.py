@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 from collections.abc import Callable
 from pathlib import Path
+import subprocess
 import sys
 import time
 from typing import Any
@@ -63,6 +65,25 @@ def scanned(state: State, tmp_path: Path) -> State:
     script.write_text(FAKE_SCAN.format(marker=introspect.MARKER))
     state.scanner.command = [sys.executable, str(script)]
     return state
+
+
+def test_a_finished_scan_is_saved_and_kept_until_the_checkout_changes(
+    client: TestClient, scanned: State
+) -> None:
+    checkout = scanned.dimos_dir
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    (checkout / "blueprint.py").write_text("x = 1\n")
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    job = client.post("/blueprints/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+
+    later = discovery.Scanner(checkout, scanned.jobs, ["false"])
+    asyncio.run(later.wait())
+    assert later.task is None and later.state == "done"
+    assert later.catalog()["modules"][0]["name"] == "cam"
+
+    (checkout / "blueprint.py").write_text("x = 2\n")
+    assert not discovery.Scanner(checkout, scanned.jobs, ["false"]).load()
 
 
 def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
