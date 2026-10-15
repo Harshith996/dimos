@@ -146,8 +146,9 @@ class SandboxRunner:
             result = self.run_case(case)
             logger.info("sandbox case done", case=case.id, score=result.score, error=result.error)
             results.append(result)
-        lines = [json.dumps(asdict(r)) for r in results]
-        (self.run_dir / "results.jsonl").write_text("\n".join(lines) + "\n")
+            # Written as each case ends, so a crash or ctrl-c keeps the cases already run.
+            with (self.run_dir / "results.jsonl").open("a") as out:
+                out.write(json.dumps(asdict(result)) + "\n")
         summary = {**asdict(summarize(results)), "manifest": "manifest.json"}
         (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
         return results
@@ -196,6 +197,12 @@ class SandboxRunner:
         finally:
             with (case_dir / "containers.log").open("w") as log:
                 subprocess.run([*compose, "logs", "--no-color", "-t"], stdout=log, stderr=log)
+                # What the agent wrote, before its container is removed.
+                subprocess.run(
+                    [*compose, "cp", "agent:/root/work", str(case_dir / "work")],
+                    stdout=log,
+                    stderr=log,
+                )
             subprocess.run(
                 [*compose, "down", "-v", "--remove-orphans", "-t", "5"], capture_output=True
             )
