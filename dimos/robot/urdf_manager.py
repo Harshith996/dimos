@@ -57,6 +57,8 @@ class UrdfManagerConfig(PointCloudSelfFilterConfig):
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
     # urdf_info is re-sent so a late subscriber gets it; nothing on these streams is latched.
     urdf_info_period_s: float = Field(default=5.0, gt=0.0)
+    # Seconds between self-filter summary log lines (0 disables).
+    filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
 
 class UrdfManager(PointCloudSelfFilter):
@@ -76,6 +78,8 @@ class UrdfManager(PointCloudSelfFilter):
         super().__init__(**kwargs)
         self._load_scene()
         self._next_joint_tf_t = 0.0
+        self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
     @rpc
     def start(self) -> None:
@@ -110,6 +114,23 @@ class UrdfManager(PointCloudSelfFilter):
         with self._filter_lock:
             transforms = self.joint_transforms(state)
         self.tfbuffer.publish(*transforms)
+
+    def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
+        filtered = super().filter_cloud(cloud)
+        self._clouds_in += 1
+        if filtered is None:
+            self._clouds_dropped += 1
+        else:
+            self._points_in += len(cloud)
+            self._points_removed += len(cloud) - len(filtered)
+        if self.config.filter_stats_interval_s > 0 and time.monotonic() >= self._next_stats_t:
+            self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+            logger.info(
+                f"self filter: {self._clouds_in} clouds, {self._clouds_dropped} dropped for missing tf/joint state, "
+                f"{self._points_removed} of {self._points_in} points were the robot"
+            )
+            self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        return filtered
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
