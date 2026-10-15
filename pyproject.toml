@@ -488,6 +488,7 @@ lint = [
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
+    "deptry==0.25.1",
 
     "aiortc>=1.14.0",
     "ipython",
@@ -583,6 +584,107 @@ torchvision = [
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[tool.deptry]
+# Match the original codebase check: scan source and colocated tests, and
+# accept declarations in any extra or development group.
+ignore = ["DEP002", "DEP004", "DEP005"]
+ignore_notebooks = true
+known_first_party = ["dimos"]
+# Keep default build/venv/gitignore exclusions. These four existing leaf
+# modules have undeclared optional dependencies; keep this debt file-scoped
+# rather than exempting datasets, redis, etc. everywhere in the project.
+extend_exclude = [
+    "^dimos/types/sample\\.py$",  # datasets, gymnasium, jsonref, mbodied
+    "^dimos/protocol/pubsub/impl/redispubsub\\.py$",  # redis
+    "^dimos/stream/audio/tts/node_pytts\\.py$",  # pyttsx3
+    "^dimos/simulation/genesis/simulator\\.py$",  # genesis-world
+]
+
+[tool.deptry.per_rule_ignores]
+# ROS, system bindings, vendor SDKs and in-tree native builds are installed
+# outside uv. Isaac imports come from the Isaac Sim application runtime;
+# lcm_msgs is a legacy optional message namespace guarded by ImportError.
+# Ignore both codes so installing an external package cannot change the result.
+DEP001 = [
+    "a1z",
+    "a750_control",
+    "ament_index_python",
+    "builtin_interfaces",
+    "dimos_local_planner",
+    "dimos_mls_planner",
+    "dimos_trajectory_follower",
+    "dimos_voxel_ray_tracing",
+    "geometry_msgs",
+    "gi",
+    "gs_usb",
+    "habitat_sim",
+    "isaacsim",
+    "lcm_msgs",
+    "nav_msgs",
+    "omni",
+    "pyzed",
+    "rclpy",
+    "sensor_msgs",
+    "std_msgs",
+    "usb",
+]
+DEP003 = [
+    "a1z",
+    "a750_control",
+    "ament_index_python",
+    "builtin_interfaces",
+    "dimos_local_planner",
+    "dimos_mls_planner",
+    "dimos_trajectory_follower",
+    "dimos_voxel_ray_tracing",
+    "geometry_msgs",
+    "gi",
+    "gs_usb",
+    "habitat_sim",
+    "isaacsim",
+    "lcm_msgs",
+    "nav_msgs",
+    "omni",
+    "pyzed",
+    "rclpy",
+    "sensor_msgs",
+    "std_msgs",
+    "usb",
+]
+
+[tool.deptry.package_module_name_map]
+# Keys match dependency spelling, including case, in this deptry release.
+# Explicit mappings also work when an optional dependency is not installed.
+bosdyn-client = "bosdyn"
+drake = "pydrake"
+eclipse-zenoh = "zenoh"
+edgetam-dimos = "sam2"
+ffmpeg-python = "ffmpeg"
+GitPython = "git"
+gtsam-extended = "gtsam"
+hydra-core = "hydra"
+ipython = "IPython"
+lcm-dimos-fork = "lcm"
+open_clip_torch = "open_clip"
+openai-whisper = "whisper"
+opencv-contrib-python = "cv2"
+Pillow = "PIL"
+pin = "pinocchio"
+pin-pink = "pink"
+playground = "mujoco_playground"
+plum-dispatch = "plum"
+python-can = "can"
+python-dotenv = "dotenv"
+python-socketio = "socketio"
+PyTurboJPEG = "turbojpeg"
+pyyaml = "yaml"
+rerun-sdk = "rerun"
+unitree-sdk2py-dimos = "unitree_sdk2py"
+usd-core = "pxr"
+warp-lang = "warp"
+websocket-client = "websocket"
+xarm-python-sdk = "xarm"
 
 [tool.ruff]
 line-length = 100

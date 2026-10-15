@@ -168,8 +168,8 @@ def monitor(
 
 
 if __name__ == "__main__":
-    from audio.node_simulated import SimulatedAudioSource  # type: ignore[import-not-found]
-    from utils import keepalive  # type: ignore[import-not-found]
+    from dimos.stream.audio.node_simulated import SimulatedAudioSource
+    from dimos.stream.audio.utils import keepalive
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())
