@@ -42,8 +42,9 @@ from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.simulation.go2_sim.world import SimGo2World
 
-# Where the Go2 starts: open floor facing into the aisles, as (x, y, yaw).
-START = (9.2, 11.8, 1.57)
+# Where the Go2 starts, as (x, y, yaw): the open front of the store, about 2.9 m clear all
+# around, facing 7 m of free floor.
+START = (18.5, 10.0, -0.17)
 
 # The Go2 in the supermarket, serving only raw-robot-bridge's topics, logging ground truth.
 sandbox_go2_supermarket = autoconnect(
