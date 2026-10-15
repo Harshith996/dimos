@@ -904,6 +904,16 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Start a PulseAudio server for PortAudio
+        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
+        # Pa_Initialize fails outright when no server answers, which breaks
+        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
+        # A daemon with the null sink is enough; root needs --daemonize.
+        if: matrix.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --daemonize=yes --exit-idle-time=-1
       - name: Install web_browser e2e dependencies (macOS)
         if: matrix.os == 'macOS'
         run: |
@@ -1161,7 +1171,15 @@ jobs:
             libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
             libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
-            libxkbcommon-x11-0
+            libxkbcommon-x11-0 \
+            `# PortAudio 19.7 (Ubuntu 26.04) needs a PulseAudio server; started below.` \
+            pulseaudio
+      - name: Start a PulseAudio server for PortAudio
+        # Ubuntu 26.04's PortAudio is built with the PulseAudio host API and
+        # Pa_Initialize fails outright when no server answers, which breaks
+        # `import sounddevice` (unitree_webrtc_connect imports it eagerly).
+        # A daemon with the null sink is enough; root needs --daemonize.
+        run: pulseaudio --daemonize=yes --exit-idle-time=-1
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
