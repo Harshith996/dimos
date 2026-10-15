@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -106,13 +107,18 @@ def saved_scan_file(dimos_dir: Path) -> Path:
     )
 
 
+FINGERPRINT_TTL_S = 2.0
+
+
 class Scanner:
+    """The blueprint scan's cache: it changes only when a scan (POST /catalog/scan) finishes, and survives restarts."""
+
     def __init__(self, dimos_dir: Path, jobs: Jobs, command: list[str] | None = None) -> None:
         self.dimos_dir = dimos_dir
         self.jobs = jobs
         self.command = command or child_command(dimos_dir)
+        # what the running scan found so far; the cache is replaced with it when the scan finishes
         self.blueprints: dict[str, dict[str, Any]] = {}
-        self.results: dict[str, dict[str, Any]] = {}
         self.modules: dict[str, dict[str, Any]] = {}
         self.errors: list[str] = []
         self.names: dict[str, list[str]] = {"blueprints": [], "modules": []}
@@ -121,80 +127,50 @@ class Scanner:
         self.job: Job | None = None
         self.state = "idle"
         self.current: str | None = None
-        self.finished_at: str | None = None
-        # a saved scan counts until something says the blueprints changed
-        self.trust_saved = True
+        self.saved: dict[str, Any] | None = None
+        self.looked = False
+        self.now_print: tuple[float, str] | None = None
+
+    def cache(self) -> dict[str, Any] | None:
+        """The last finished scan (from disk after a restart), or None if this checkout was never scanned."""
+        if not self.looked:
+            self.looked = True
+            saved = store.read_json(saved_scan_file(self.dimos_dir))
+            if isinstance(saved, dict) and {"results", "modules", "finished_at"} <= saved.keys():
+                self.saved = saved
+        return self.saved
+
+    def current_fingerprint(self) -> str:
+        if self.now_print is None or time.monotonic() - self.now_print[0] > FINGERPRINT_TTL_S:
+            self.now_print = (time.monotonic(), fingerprint(self.dimos_dir))
+        return self.now_print[1]
 
     def snapshot(self) -> dict[str, Any]:
-        stale = self.finished_at is not None and self.state != "done"
+        """How stale the cache is: when its scan finished, how long ago, and whether the checkout or venv changed since."""
+        cache = self.cache()
+        finished = cache["finished_at"] if cache else None
+        age = None
+        if finished:
+            age = max(
+                0, int(time.time() - calendar.timegm(time.strptime(finished, "%Y-%m-%dT%H:%M:%SZ")))
+            )
         return {
             "job": self.job and self.job.id,
             "state": self.state,
-            "stale": stale,
-            "finished_at": self.finished_at,
+            "scanned": cache is not None,
+            "finished_at": finished,
+            "age_seconds": age,
+            "stale": cache is None or cache.get("fingerprint") != self.current_fingerprint(),
         }
-
-    def ensure(self, reason: str = "requested") -> None:
-        if self.task is None and not self.load():
-            self.refresh(reason)
-
-    def load(self) -> bool:
-        """Takes the last scan saved for this checkout, when nothing it depends on changed since."""
-        if self.state == "done":
-            return True
-        if not self.trust_saved:
-            return False
-        saved = store.read_json(saved_scan_file(self.dimos_dir))
-        if not isinstance(saved, dict) or saved.get("fingerprint") != fingerprint(self.dimos_dir):
-            return False
-        self.results, self.modules = saved["results"], saved["modules"]
-        self.errors, self.names = saved["errors"], saved["names"]
-        self.finished_at, self.state = saved["finished_at"], "done"
-        return True
-
-    def save(self) -> None:
-        saved = {
-            "fingerprint": fingerprint(self.dimos_dir),
-            "finished_at": self.finished_at,
-            "results": self.results,
-            "modules": self.modules,
-            "errors": self.errors,
-            "names": self.names,
-        }
-        try:
-            store.write_atomic(saved_scan_file(self.dimos_dir), json.dumps(saved))
-        except OSError as error:
-            logger.warning(f"couldn't save the blueprint scan: {error}")
 
     def start(self, reason: str = "requested") -> Job:
         """The running scan's job, or a new scan's."""
         if self.task is None or self.task.done():
-            self.refresh(reason)
+            self.state = "scanning"
+            self.job = self.jobs.add(f"Scan blueprints ({reason})", "scan", [*self.command, "scan"])
+            self.task = asyncio.get_running_loop().create_task(self.scan(self.job))
         assert self.job is not None
         return self.job
-
-    def refresh(self, reason: str = "requested") -> None:
-        self.invalidate()
-        self.state = "scanning"
-        self.job = self.jobs.add(f"Scan blueprints ({reason})", "scan", [*self.command, "scan"])
-        self.task = asyncio.get_running_loop().create_task(self.scan(self.job))
-
-    def invalidate(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-        self.state = "idle"
-        self.task = None
-        self.trust_saved = False
-
-    async def wait(self) -> None:
-        while True:
-            self.ensure()
-            task = self.task
-            if task is None:
-                return
-            await asyncio.wait({task})
-            if task is self.task:
-                return
 
     def pending(self) -> tuple[list[str], list[str]]:
         return (
@@ -220,6 +196,9 @@ class Scanner:
         self.blueprints, self.modules, self.errors = {}, {}, []
         self.names, self.finished_modules = {"blueprints": [], "modules": []}, set()
         self.current = None
+        # taken before the imports, so a change made while scanning still reads as stale
+        before = await asyncio.to_thread(fingerprint, self.dimos_dir)
+        ok = False
         try:
             problem = await self.child(None)
             while problem is not None and any(self.pending()):
@@ -249,26 +228,33 @@ class Scanner:
                 problem = await self.child(request)
             self.current = None
             self.tick()
-            self.results = await asyncio.to_thread(self.finish)
-            self.state = "done"
+            results = await asyncio.to_thread(self.finish)
+            self.saved = {
+                "fingerprint": before,
+                "finished_at": now_iso(),
+                "results": results,
+                "modules": self.modules,
+                "errors": self.errors,
+                "names": self.names,
+            }
+            self.looked = True
+            # saved before the job says done, so whoever waited for it finds the scan on disk
+            await asyncio.to_thread(self.save)
+            ok = True
         except Exception as error:
             logger.exception("the blueprint scan failed")
             self.error(f"scan: {type(error).__name__}: {error}")
-            self.state = "failed"
         finally:
-            ok = job is self.job and self.state == "done"
-            failed = (
-                "the scan was cancelled" if job is not self.job or self.state == "idle" else None
-            )
-            if ok:
-                # saved before the job says done, so whoever waited for it finds the scan on disk
-                self.finished_at = now_iso()
-                await asyncio.to_thread(self.save)
-            job.finish(ok, None if ok else failed or (self.errors or ["the scan failed"])[-1])
-            if job is self.job:
-                if ok:
-                    job.finished_at = self.finished_at
-                self.finished_at = job.finished_at
+            self.state = "idle" if ok else "failed"
+            job.finish(ok, None if ok else (self.errors or ["the scan was cancelled"])[-1])
+            if ok and self.saved:
+                job.finished_at = self.saved["finished_at"]
+
+    def save(self) -> None:
+        try:
+            store.write_atomic(saved_scan_file(self.dimos_dir), json.dumps(self.saved))
+        except OSError as error:
+            logger.warning(f"couldn't save the blueprint scan: {error}")
 
     async def child(self, request: dict[str, Any] | None) -> str | None:
         child = await asyncio.create_subprocess_exec(
@@ -346,11 +332,13 @@ class Scanner:
 
     def scanned(self, entry: dict[str, Any]) -> dict[str, Any]:
         """A /blueprints entry with what the last finished scan found for it."""
-        record = self.results.get(entry["name"])
+        cache = self.cache()
+        record = cache["results"].get(entry["name"]) if cache else None
         return {**entry, **{k: record.get(k) for k in SCANNED}} if record else entry
 
     def catalog(self) -> dict[str, Any]:
-        records = list(self.results.values())
+        cache = self.cache() or {"results": {}, "modules": {}, "errors": []}
+        records = list(cache["results"].values())
         used_by: dict[str, set[str]] = {}
         for record in records:
             for module in record["modules"]:
@@ -368,7 +356,7 @@ class Scanner:
             if r["importable"] and r["builtin"]
         ]
         modules, skills = [], []
-        for record in sorted(self.modules.values(), key=lambda m: m["name"]):
+        for record in sorted(cache["modules"].values(), key=lambda m: m["name"]):
             owners = sorted(used_by.get(record["class"], ()))
             modules.append(
                 {
@@ -381,7 +369,7 @@ class Scanner:
         errors = [
             f"blueprint {r['name']}: {r['import_error']}" for r in records if not r["importable"]
         ]
-        errors += [e for e in self.errors if e.startswith("module ")]
+        errors += [e for e in cache.get("errors", []) if e.startswith("module ")]
         if len(errors) > MAX_ERRORS:
             errors = [*errors[:MAX_ERRORS], f"... and {len(errors) - MAX_ERRORS} more"]
         return {"blueprints": blueprints, "modules": modules, "skills": skills, "errors": errors}
@@ -756,9 +744,6 @@ def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
     return prepare
 
 
-LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\s+\"[^\"]*\")?\)")
-
-
 def docs_site(dimos_dir: Path) -> tuple[str | None, str | None]:
     try:
         settings = yaml.load((dimos_dir / "mkdocs.yml").read_text(), Loader=yaml.BaseLoader)
@@ -769,86 +754,9 @@ def docs_site(dimos_dir: Path) -> tuple[str | None, str | None]:
     return (str(url).rstrip("/") + "/" if url else None, str(repo) if repo else None)
 
 
-def doc_title(path: Path) -> str:
-    try:
-        heading = next((l[2:] for l in path.read_text().splitlines() if l.startswith("# ")), None)
-    except OSError:
-        heading = None
-    return heading.strip() if heading else path.stem.replace("_", " ")
+def docs_search_url(dimos_dir: Path, query: str) -> str | None:
+    """The docs site with its search open on `query` (mkdocs-material reads ?q=); None when the checkout names no site."""
+    from urllib.parse import quote
 
-
-def doc_files(dimos_dir: Path) -> list[Path]:
-    root = dimos_dir / "docs"
-    return [
-        path
-        for path in sorted(root.rglob("*.md"))
-        if not any(part.startswith(".") for part in path.relative_to(root).parts)
-    ]
-
-
-def doc_url(dimos_dir: Path, path: Path) -> str | None:
-    """The docs site's URL for a page under docs/, when the checkout names a site."""
     base, _ = docs_site(dimos_dir)
-    parts = list(path.relative_to(dimos_dir / "docs").with_suffix("").parts)
-    if parts and parts[-1] in ("index", "README"):
-        parts = parts[:-1]
-    return base + "".join(f"{part}/" for part in parts) if base else None
-
-
-def doc_list(dimos_dir: Path) -> dict[str, Any]:
-    pages = [
-        {
-            "title": doc_title(path),
-            "path": path.relative_to(dimos_dir / "docs").as_posix(),
-            "url": doc_url(dimos_dir, path),
-        }
-        for path in doc_files(dimos_dir)
-    ]
-    return {"pages": pages}
-
-
-def doc_page(dimos_dir: Path, wanted: str) -> dict[str, Any] | None:
-    """A page under docs/ as markdown and HTML, with its relative links made absolute; None if there's no such page."""
-    root = dimos_dir / "docs"
-    page = (root / wanted).resolve()
-    if page.suffix != ".md" or not page.is_relative_to(root.resolve()) or not page.is_file():
-        return None
-    page = root / page.relative_to(root.resolve())
-    base, repo = docs_site(dimos_dir)
-
-    def fix(match: re.Match[str]) -> str:
-        opener, target, label = match.group(1), match.group(2), match.group(3) or ""
-        if re.match(r"^[a-z][a-z0-9+.-]*:|^#", target):
-            return match.group(0)
-        file, _, anchor = target.partition("#")
-        resolved = (
-            dimos_dir / file.lstrip("/") if file.startswith("/") else page.parent / file
-        ).resolve()
-        url = None
-        if resolved.is_relative_to(root.resolve()) and base:
-            inside = root / resolved.relative_to(root.resolve())
-            url = (
-                doc_url(dimos_dir, inside)
-                if resolved.suffix == ".md"
-                else base + inside.relative_to(root).as_posix()
-            )
-        elif repo and resolved.is_relative_to(dimos_dir.resolve()):
-            url = f"{repo.rstrip('/')}/blob/main/{resolved.relative_to(dimos_dir.resolve()).as_posix()}"
-        return f"{opener}{url}{'#' + anchor if anchor else ''}{label})" if url else match.group(0)
-
-    markdown = LINK.sub(fix, page.read_text())
-    try:
-        from markdown_it import MarkdownIt
-
-        html: str | None = str(
-            MarkdownIt("commonmark", {"html": False}).enable("table").render(markdown)
-        )
-    except ImportError:
-        html = None
-    return {
-        "title": doc_title(page),
-        "path": page.relative_to(root).as_posix(),
-        "markdown": markdown,
-        "html": html,
-        "url": doc_url(dimos_dir, page),
-    }
+    return f"{base}?q={quote(query)}" if base else None

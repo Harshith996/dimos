@@ -118,7 +118,7 @@ def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
     assert {"/runs", "/skills", "/catalog"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
-    assert slow == {"/catalog", "/blueprints/{name}"}
+    assert slow == {"/blueprints/{name}"}
     assert not any(path.startswith("/discovery") for path in routes)
 
 
@@ -196,9 +196,7 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
     assert manifest["api"]["version"] == API_VERSION
     routes = client.get("/openapi.json").json()["paths"]
     served = {
-        f"{method.upper()} {path.lstrip('/').replace('{path}', '*')}"
-        for path, ops in routes.items()
-        for method in ops
+        f"{method.upper()} {path.lstrip('/')}" for path, ops in routes.items() for method in ops
     }
     declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
     assert declared == served

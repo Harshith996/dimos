@@ -18,6 +18,7 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from experimental.gateway import discovery, responses, store
@@ -65,7 +66,6 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
 
     def then() -> None:
         state.cache.forget("packages")
-        state.scanner.refresh("extras installed")
 
     builds = await asyncio.to_thread(discovery.builds_cyclonedds, state.dimos_dir, probed, wanted)
     prepare = discovery.prepare_cyclonedds(state.dimos_dir) if builds else None
@@ -87,12 +87,10 @@ async def job(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
     return found(state, job).log(after)
 
 
-@router.get("/docs/{path:path}", response_model=responses.DocPage | responses.DocList)
-async def docs(state: GatewayState, path: str = "") -> dict[str, Any]:
-    """dimos's docs: /docs/ lists every page under docs/; /docs/<page>.md is one, as markdown and HTML."""
-    if not path.strip("/"):
-        return await asyncio.to_thread(discovery.doc_list, state.dimos_dir)
-    answer = await asyncio.to_thread(discovery.doc_page, state.dimos_dir, path)
-    if answer is None:
-        raise ApiError(404, f"no page docs/{path}")
-    return answer
+@router.get("/docs/search", response_class=RedirectResponse, status_code=307)
+async def docs_search(state: GatewayState, q: str = "") -> str:
+    """Redirects to dimos's docs site with its search open on ?q= (open it in a new tab, or an iframe)."""
+    url = await asyncio.to_thread(discovery.docs_search_url, state.dimos_dir, q)
+    if url is None:
+        raise ApiError(404, f"no docs site in {state.dimos_dir / 'mkdocs.yml'} (site_url)")
+    return url
