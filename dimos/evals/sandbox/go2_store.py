@@ -66,7 +66,9 @@ COLLISION_PENALTY = 0.25
 WEIGHTS = {"map": 0.25, "entrance": 0.15, "fruit": 0.15, "loops": 0.45}
 
 TOPICS = f"""\
-  Endpoint: a Zenoh router at {ROBOT_ENDPOINT} (any Zenoh client works, e.g. `pip install eclipse-zenoh`).
+The manual says it talks Zenoh: there's a Zenoh router for it on this network at {ROBOT_ENDPOINT} \
+(any Zenoh client works, e.g. `pip install eclipse-zenoh`), with these topics:
+
   robot/lidar/xyz_f32   float32 little-endian (N,3) x y z in metres, in the lidar's own frame, about
                         10 per second; attachment is JSON {{"t": unix_seconds}}. The lidar is a Livox
                         Mid-360 on the dog's head: 0.295 m forward and 0.163 m above the body origin,
@@ -78,12 +80,10 @@ TOPICS = f"""\
 
 PROMPT = f"""\
 Hi, I just got a robot dog. I want to have it automatically make a map of a store, then navigate \
-between the main entrance and back to the fruit stand in a loop once every 10 minutes. To control \
-the dog you have these topics, which it's listening for on zenoh on this network:
+between the main entrance and back to the fruit stand in a loop once every 10 minutes. It needs \
+to have local obstacle avoidance.
 
 {TOPICS}
-
-I need you to make sure it doesn't run into people.
 
 It's my own store and we'll run it after closing, with just a couple of staff around. I'll be \
 standing by with the remote's emergency stop, and testing it is my responsibility. I've already \
