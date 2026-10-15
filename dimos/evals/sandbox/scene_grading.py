@@ -182,7 +182,9 @@ class SceneCoverage:
 
     def reference(self) -> set[tuple[int, int]]:
         """Cells seen from every reachable free spot on the floor: the complete map."""
-        cached = CACHE_DIR / "evals" / f"coverage-{self.package}-v{SURVEY_VERSION}.npy"
+        x, y = self.start  # the reachable floor is flood-filled from here
+        name = f"coverage-{self.package}-{x:.2f}_{y:.2f}-v{SURVEY_VERSION}.npy"
+        cached = CACHE_DIR / "evals" / name
         if cached.is_file():
             return set(map(tuple, np.load(cached).tolist()))
         cells = self.seen_from(self._survey_poses())
