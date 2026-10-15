@@ -59,6 +59,10 @@ HEAD_CLOUD_MAX_HEIGHT_M = 0.35
 # behind; a cloud older than MAX_CLOUD_AGE_S is skipped so it can never work through a stale queue.
 HEAD_CLOUD_DECIMATION = 11
 HEAD_CLOUD_MAX_POINTS = 1500
+# JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
+HEAD_CLOUD_DECODE_SCALE = 4
+# One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
+HEAD_CLOUD_ANCHOR_STEP = 4
 MAX_CLOUD_AGE_S = 1.0
 
 
@@ -128,6 +132,8 @@ r1pro_nav = autoconnect(
         max_height_m=HEAD_CLOUD_MAX_HEIGHT_M,
         decimation=HEAD_CLOUD_DECIMATION,
         max_points=HEAD_CLOUD_MAX_POINTS,
+        decode_scale=HEAD_CLOUD_DECODE_SCALE,
+        anchor_step=HEAD_CLOUD_ANCHOR_STEP,
     ).remappings([(Depth2DepthCloud, "depth_cloud", "lidar")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
