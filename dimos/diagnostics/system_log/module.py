@@ -23,7 +23,7 @@
 - alert: a condition starting (CPU pegged, memory low, weak or no Wi-Fi, something hot, Pi throttled)
 - processes: the busiest processes, every ``process_period_s`` and with every dump
 - dimos_log: one line of the run's *.jsonl logs, parsed
-- module_stats: per-worker/per-module CPU and memory from the resource monitor (dtop), forwarded by this wrapper
+- module_stats: per-worker/per-module CPU and memory from the resource monitor (run with `--dtop`), forwarded by this wrapper
 - whatever a robot publishes on ``robot_health`` (battery, motor temperatures, ...), passed through
 """
 
