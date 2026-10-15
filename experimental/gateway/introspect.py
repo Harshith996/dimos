@@ -431,13 +431,14 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
         token = tokens[index]
         option = token.partition("=")[0]
         group = [token]
-        entry: dict[str, Any] = {"tokens": group, "error": None}
+        entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
         checked.append(entry)
         index += 1
         if option in RUN_REFUSED:
             entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
             continue
         if option in RUN_VALUE_OPTIONS:
+            entry["target"] = f"run {option}"
             if "=" not in token:
                 if index >= len(tokens) or tokens[index].startswith("-"):
                     entry["error"] = f"{option} needs a value"
@@ -454,6 +455,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
                 entry["error"] = f"{option}: no file {given}"
             continue
         if option in RUN_SWITCHES:
+            entry["target"] = f"run {option}"
             continue
         if not token.startswith("--") or option in ("-o", "--option"):
             entry["error"] = (
@@ -480,6 +482,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
         try:
             merge_cli(modules, global_values, {}, tuple(group), schema)
             assert target is not None
+            entry["target"] = target.qualified_name
             if target.section == "global":
                 validate_global_values({**global_schema_defaults(), **global_values})
             elif target.section == "module":
