@@ -14,7 +14,9 @@
 
 import copy
 from enum import Enum
+from functools import partial
 from importlib import resources
+import json
 import sys
 from threading import Lock, Thread
 import time
@@ -25,6 +27,7 @@ from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -43,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
@@ -56,6 +60,8 @@ else:
     from typing import TypeVar
 
 logger = setup_logger()
+
+ROBOT_HEALTH_PERIOD_S = 1.0
 
 
 class Go2Mode(str, Enum):
@@ -350,11 +356,14 @@ class GO2Connection(Module, Camera, Pointcloud):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
+    # JSON records for SystemLog: battery, power, motor temperatures and the dog's service and lidar state
+    robot_health: Out[String]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
+    _last_robot_health: float = 0.0
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -416,6 +425,17 @@ class GO2Connection(Module, Camera, Pointcloud):
             # Every stream this module will subscribe is wired; a finished
             # replay may now shut the run down (--replay-exit).
             self.connection.seal_subscriptions()
+
+        if isinstance(self.connection, UnitreeWebRTCConnection):
+            for kind, topic in (
+                ("go2_service_state", "SERVICE_STATE"),
+                ("go2_lidar_state", "ULIDAR_STATE"),
+            ):
+                self.register_disposable(
+                    self.connection.unitree_sub_stream(RTC_TOPIC[topic]).subscribe(
+                        partial(self._publish_robot_health, kind)
+                    )
+                )
 
         if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
             self.connection.set_motion_mode(self.config.motion_mode)
@@ -545,8 +565,42 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.stop_movement()
 
     def _on_lowstate(self, msg: LowStateMsg) -> None:
-        """Cache the latest low-level state push (battery, IMU, motors, etc.)."""
+        """Cache the latest low-level state push (battery, IMU, motors, etc.), and pass it on at most 1 Hz."""
         self._latest_lowstate = msg
+        now = time.time()
+        if now - self._last_robot_health < ROBOT_HEALTH_PERIOD_S:
+            return
+        self._last_robot_health = now
+        data = msg["data"]
+        bms = data["bms_state"]
+        motors = data["motor_state"][:12]
+        current_a = bms["current"] / 1000
+        self.robot_health.publish(
+            String(
+                json.dumps(
+                    {
+                        "type": "go2_lowstate",
+                        "t": now,
+                        "soc": bms["soc"],
+                        "voltage": data["power_v"],
+                        "current_a": current_a,
+                        "power_w": round(data["power_v"] * current_a, 1),
+                        "cycles": bms["cycle"],
+                        "bms_temps_c": bms["bq_ntc"],
+                        "bms_mcu_temps_c": bms["mcu_ntc"],
+                        "board_temp_c": data["temperature_ntc1"],
+                        "motor_temps_c": [m["temperature"] for m in motors],
+                        "motor_lost": [m["lost"] for m in motors],
+                        "foot_force": data["foot_force"],
+                    }
+                )
+            )
+        )
+
+    def _publish_robot_health(self, kind: str, msg: dict[str, Any]) -> None:
+        self.robot_health.publish(
+            String(json.dumps({"type": kind, "t": time.time(), "data": msg.get("data")}))
+        )
 
     @skill
     def get_battery_soc(self) -> int | None:
