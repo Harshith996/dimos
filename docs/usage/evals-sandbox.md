@@ -87,7 +87,9 @@ dimos evals sandbox dimos.evals.sandbox.example --model gpt-5.6-luna --max-steps
 
 Each run writes `~/.local/state/dimos/evals/sandbox-*/`: `manifest.json`, `results.jsonl`,
 `summary.json`, and per case `trajectory.json`, `raw/` (exact model payloads), `zenoh.db`,
-`compose.json`, `containers.log` and `pi-stderr.txt`. The robot image is rebuilt from the
+`work/` (the agent's working directory, copied out before its container is removed),
+`harness/session/` (Pi's own session), `compose.json`, `containers.log` and `pi-stderr.txt`.
+`results.jsonl` gains a line as each case ends. The robot image is rebuilt from the
 checkout, so rebuild it after changing dimOS.
 
 ## A real robot
