@@ -17,13 +17,7 @@
 import argparse
 from pathlib import Path
 import shutil
-import sys
 import tempfile
-
-if sys.version_info >= (3, 11):
-    pass
-else:
-    pass
 
 from dimos_cdrgen.source_package import prepare
 
@@ -49,6 +43,8 @@ def main() -> None:
             str(path.relative_to(target)): path.read_bytes()
             for path in target.rglob("*")
             if path.is_file()
+            and path.relative_to(target).parts[0]
+            not in {"MANIFEST.in", "message-package.json", "pyproject.toml", "setup.py"}
             and "__pycache__" not in path.parts
             and path.suffix != ".pyc"
             and not any(part.endswith(".egg-info") for part in path.parts)

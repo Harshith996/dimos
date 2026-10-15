@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 
+from dimos_cdrgen.source_package import prepare
 import pytest
 
 
@@ -186,3 +187,11 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
             "VERSION 0.1.1"
             in (output / "dimos_generated_schemas/package/cpp/CMakeLists.txt").read_text()
         )
+
+
+def test_source_package_preparation_keeps_alignment_check_valid(aligned_checkout):
+    project = aligned_checkout / "packages/dimos-generated"
+    prepare(project)
+    assert (project / "build/message-source/python/setup.py").is_file()
+    result = run_generation(aligned_checkout, check=True)
+    assert result.returncode == 0, result.stderr
