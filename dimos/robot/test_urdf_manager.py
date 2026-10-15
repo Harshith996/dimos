@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +30,8 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.shape_msgs.MeshFile import MeshFile
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
@@ -333,3 +336,29 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
 
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
+
+
+def test_urdf_info_names_meshes_by_package_and_mesh_request_serves_only_those(
+    make_filter, tmp_path, monkeypatch
+):
+    package = tmp_path / "box_description"
+    (package / "meshes").mkdir(parents=True)
+    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
+    urdf = tmp_path / "mesh_robot.urdf"
+    urdf.write_text(
+        _URDF.replace(
+            '<box size="0.2 0.2 0.2"/>', '<mesh filename="package://box/meshes/cube.stl"/>'
+        )
+    )
+    module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
+    sent: list[MeshFile] = []
+    monkeypatch.setattr(module.mesh_info, "publish", sent.append)
+
+    assert 'filename="package://box/meshes/cube.stl"' in module._urdf_xml
+    assert str(tmp_path) not in module._urdf_xml
+    for request in ("package://box/meshes/cube.stl", str(urdf)):
+        asyncio.run(module.handle_mesh_request(String(request)))
+
+    assert [mesh.uri for mesh in sent] == ["package://box/meshes/cube.stl"]
+    decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
+    assert decoded.data == (package / "meshes" / "cube.stl").read_bytes()

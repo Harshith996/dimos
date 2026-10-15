@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+from pathlib import Path
 import time
 import xml.etree.ElementTree as ET
 
@@ -24,7 +26,8 @@ import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
 
-from dimos.core.stream import IO
+from dimos.core.core import rpc
+from dimos.core.stream import IO, In, Out
 from dimos.manipulation.planning.utils.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
@@ -32,8 +35,10 @@ from dimos.manipulation.planning.utils.point_cloud_self_filter import (
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.shape_msgs.MeshFile import MeshFile
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
@@ -50,6 +55,8 @@ class UrdfManagerConfig(PointCloudSelfFilterConfig):
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
+    # urdf_info is re-sent so a late subscriber gets it; nothing on these streams is latched.
+    urdf_info_period_s: float = Field(default=5.0, gt=0.0)
 
 
 class UrdfManager(PointCloudSelfFilter):
@@ -58,11 +65,41 @@ class UrdfManager(PointCloudSelfFilter):
     config: UrdfManagerConfig
 
     tf: IO[TFMessage]
+    # The URDF XML, its meshes named package://<package>/<path>; any of those names on mesh_request gets the file on mesh_info.
+    urdf_info: Out[String]
+    mesh_request: In[String]
+    mesh_info: Out[MeshFile]
+
+    _running: bool = False
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._load_scene()
         self._next_joint_tf_t = 0.0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._running = True
+        self.spawn(self._publish_urdf_loop())
+
+    @rpc
+    def stop(self) -> None:
+        self._running = False
+        super().stop()
+
+    async def _publish_urdf_loop(self) -> None:
+        while self._running:
+            self.urdf_info.publish(String(self._urdf_xml))
+            await asyncio.sleep(self.config.urdf_info_period_s)
+
+    async def handle_mesh_request(self, request: String) -> None:
+        # Only meshes the URDF names: a request is never a path into the filesystem.
+        path = self._mesh_paths.get(request.data)
+        if path is None:
+            logger.warning(f"mesh_request for {request.data!r}, which is not a mesh in urdf_info")
+            return
+        self.mesh_info.publish(MeshFile(request.data, await asyncio.to_thread(path.read_bytes)))
 
     def add_joint_state(self, state: JointState) -> None:
         super().add_joint_state(state)
@@ -195,6 +232,23 @@ class UrdfManager(PointCloudSelfFilter):
                 num_threads=1,
             ),
         )
+        self._urdf_xml, self._mesh_paths = _shareable_urdf(description)
         # Reuse the asset loader's topology for multi-DOF TF lookup, not geometry parsing.
         self._base_link = description.root_link
         self._joints = {joint.name: joint for joint in description.joints}
+
+
+def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, Path]]:
+    """The URDF with each mesh's local path swapped for package://<package>/<path>, and those names' files."""
+    root = ET.fromstring(description.xml)
+    mesh_paths: dict[str, Path] = {}
+    for mesh in root.iter("mesh"):
+        path = Path(mesh.attrib["filename"])
+        uri = str(path)
+        for package, package_root in description.package_paths.items():
+            if path.is_relative_to(package_root):
+                uri = f"package://{package}/{path.relative_to(package_root).as_posix()}"
+                break
+        mesh.set("filename", uri)
+        mesh_paths[uri] = path
+    return ET.tostring(root, encoding="unicode"), mesh_paths
