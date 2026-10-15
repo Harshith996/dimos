@@ -55,6 +55,8 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         calls.append((args, stdin))
         if args[0] == "config":
             return CONFIG
+        if args[0] == "blueprint":
+            return {"name": args[1], "file": None, "line": None, "modules": []}
         bad = [a for a in stdin or [] if "fps=fast" in a]
         return {"args": [{"tokens": [a], "error": "not an int"} for a in bad]}
 
@@ -65,7 +67,21 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.get("/healthz").text == "ok"
     monkeypatch.delenv("DESKTOP_DIMOS_RANGE", raising=False)
-    assert client.get("/info").json() == {
+    info = client.get("/info").json()
+    assert {
+        k: info[k]
+        for k in (
+            "dir",
+            "found",
+            "installed",
+            "version",
+            "range",
+            "inRange",
+            "api",
+            "commit",
+            "tag",
+        )
+    } == {
         "dir": str(checkout),
         "found": True,
         "installed": True,
@@ -79,8 +95,11 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.0.14b1 <0.1")
     assert client.get("/info").json()["inRange"] is True
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
-    assert client.get("/info").json() | {"dir": ""} == {
-        "dir": "",
+    narrow = client.get("/info").json()
+    assert {
+        k: narrow[k]
+        for k in ("found", "installed", "version", "range", "inRange", "api", "commit", "tag")
+    } == {
         "found": True,
         "installed": True,
         "version": "0.0.14",
@@ -90,16 +109,16 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "commit": None,
         "tag": None,
     }
-    paths = client.get("/paths").json()
-    assert paths["dimosDir"] == str(checkout)
-    assert paths["server"]["zenohNamespace"] == "ns"
+    assert info["python"]
+    assert info["paths"]["dimosDir"] == str(checkout)
+    assert info["server"]["zenohNamespace"] == "ns"
 
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
     assert {"/runs", "/skills", "/catalog"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
-    assert slow == {"/catalog", "/blueprints/{name}", "/blueprints/{name}/config"}
+    assert slow == {"/catalog", "/blueprints/{name}"}
     assert not any(path.startswith("/discovery") for path in routes)
 
 
@@ -137,7 +156,7 @@ def test_module_config_round_trip(client: TestClient, introspected: list[Any]) -
     )
     assert put.status_code == 200
     assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
-    shown = client.get("/blueprints/demo/config").json()
+    shown = client.get("/blueprints/demo").json()["config"]
     assert shown["overrides"] == {"camera": {"api_key": ov.HIDDEN, "fps": 5}}
     args = {a["name"]: a for a in shown["modules"][0]["args"]}
     assert args["api_key"]["secret"] and args["api_key"]["value"] == ov.HIDDEN
@@ -147,7 +166,7 @@ def test_module_config_round_trip(client: TestClient, introspected: list[Any]) -
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
-    assert client.get("/blueprints/-x/config").status_code == 400
+    assert client.get("/blueprints/-x").status_code == 400
 
 
 def test_robots_come_from_the_yaml_with_global_config_reflected(client: TestClient) -> None:

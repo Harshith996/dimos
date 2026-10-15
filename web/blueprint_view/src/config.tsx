@@ -96,11 +96,11 @@ export function ConfigModal(
   useEffect(() => {
     Promise.all([
       getJson<GlobalConfig>("global-config"),
-      getJson<BlueprintConfig>(`blueprints/${encodeURIComponent(name)}/config`),
+      getJson<{ config: BlueprintConfig }>(`blueprints/${encodeURIComponent(name)}`),
       recommendedOf(name),
-    ]).then(([g, m, r]) => {
+    ]).then(([g, b, r]) => {
       setGlobal(g);
-      setModules(m);
+      setModules(b.config);
       setRecommended(r);
     }, (caught) => setProblem(errorText(caught)));
   }, [name]);

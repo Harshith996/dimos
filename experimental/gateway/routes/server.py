@@ -35,29 +35,30 @@ async def healthz() -> str:
 
 @router.get("/info", response_model=responses.Info)
 async def info(state: GatewayState) -> dict[str, Any]:
-    return store.info(state.dimos_dir)
-
-
-@router.get("/paths", response_model=responses.Paths)
-async def paths(state: GatewayState) -> dict[str, Any]:
     from dimos.core.run_registry import REGISTRY_DIR
 
     try:
         modified: int | None = int(os.stat(sys.executable).st_mtime)
     except OSError:
         modified = None
-    return {
+    paths = {
         "dimosDir": str(state.dimos_dir),
         "runsDir": str(REGISTRY_DIR),
         "logsDirs": [str(d) for d in logs.logs_dirs(state.dimos_dir)],
         "recordingsDir": str(store.recordings_dir()),
-        "server": {
-            "exe": sys.executable,
-            "exeModified": modified,
-            "kind": "dimos",
-            "startedAt": state.started_at,
-            "zenohNamespace": state.bus.namespace,
-        },
+    }
+    server = {
+        "exe": sys.executable,
+        "exeModified": modified,
+        "kind": "dimos",
+        "startedAt": state.started_at,
+        "zenohNamespace": state.bus.namespace,
+    }
+    return {
+        **store.info(state.dimos_dir),
+        "python": store.python_for(state.dimos_dir),
+        "paths": paths,
+        "server": server,
     }
 
 
@@ -67,9 +68,3 @@ async def stop_server(state: GatewayState) -> dict[str, Any]:
     state.uploads.shutdown()
     asyncio.get_running_loop().call_later(0.2, state.exit)
     return {"stopping": True}
-
-
-@router.get("/python", response_model=responses.Python)
-async def python(state: GatewayState) -> dict[str, Any]:
-    """The python that runs this dimos checkout (the one the gateway introspects with)."""
-    return {"python": store.python_for(state.dimos_dir)}

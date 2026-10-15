@@ -14,8 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -23,37 +22,20 @@ from pydantic import BaseModel
 from experimental.gateway import responses
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState
 
-Handler = TypeVar("Handler", bound=Callable[..., Any])
-
 router = APIRouter()
 
 
-def upload_route(method: str, path: str = "", **options: Any) -> Callable[[Handler], Handler]:
-    """A /cloud/uploads route, also answered (unlisted) at its 3.0 path /uploads."""
-
-    # TODO: drop the /uploads aliases in API 4.0, once the apps call /cloud/uploads
-    def register(handler: Handler) -> Handler:
-        getattr(router, method)(f"/cloud/uploads{path}", **options)(handler)
-        getattr(router, method)(f"/uploads{path}", include_in_schema=False, **options)(handler)
-        return handler
-
-    return register
-
-
 class UploadRequest(BaseModel):
-    path: str
+    path: str | None = None
     robotId: str | None = None
     kind: str | None = None
+    retry: str | None = None
 
 
 @router.get("/cloud/account", response_model=responses.Account)
 async def account(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
-    return await state.uploads.account(fresh)
-
-
-@router.get("/cloud/login", response_model=responses.Login)
-async def login(state: GatewayState) -> dict[str, Any]:
-    return state.uploads.login_state()
+    """The cloud account, and the device login in progress."""
+    return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
 
 
 @router.post("/cloud/login", response_model=responses.Login)
@@ -62,57 +44,50 @@ async def start_login(state: GatewayState) -> dict[str, Any]:
     return await state.uploads.start_login()
 
 
-@router.delete("/cloud/login", response_model=responses.Login)
-async def cancel_login(state: GatewayState) -> dict[str, Any]:
-    return state.uploads.cancel_login()
+@router.delete("/cloud/login", response_model=responses.Account)
+async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
+    """Cancel the device login in progress; with none in progress, log out."""
+    if state.uploads.login_state()["state"] in ("starting", "pending"):
+        state.uploads.cancel_login()
+        answer = await state.uploads.account(False)
+    else:
+        answer = await state.uploads.logout()
+    return {**answer, "login": state.uploads.login_state()}
 
 
-@router.post("/cloud/logout", response_model=responses.Account)
-async def logout(state: GatewayState) -> dict[str, Any]:
-    return await state.uploads.logout()
-
-
-@upload_route("get", response_model=responses.Uploads)
+@router.get("/cloud/uploads", response_model=responses.Uploads)
 async def upload_list(state: GatewayState) -> dict[str, Any]:
-    return state.uploads.listing()
+    """The upload queue, and every file uploaded before, by path."""
+    return {**state.uploads.listing(), **state.uploads.uploaded()}
 
 
-@upload_route("post", response_model=responses.Upload)
+@router.post("/cloud/uploads", response_model=responses.Upload)
 async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
+    """Queue a recording ({path}), or a finished upload again ({retry: id})."""
+    if (request.path is None) == (request.retry is None):
+        raise ApiError(400, "give either path or retry")
+    if request.path is None:
+        assert request.retry is not None
+        try:
+            return state.uploads.retry(request.retry)
+        except KeyError as error:
+            raise ApiError(404, error.args[0])
+        except ValueError as error:
+            raise ApiError(409, str(error))
     try:
         return state.uploads.enqueue(request.path, request.robotId, request.kind)
     except ValueError as error:
         raise ApiError(400, str(error))
 
 
-@upload_route("delete", response_model=responses.Uploads)
-async def clear_finished(state: GatewayState) -> dict[str, Any]:
-    return state.uploads.clear_finished()
-
-
-@upload_route(
-    "get", "/uploaded", response_model=responses.UploadedByPath | responses.Uploaded | None
-)
-async def uploaded(state: GatewayState, path: str | None = None) -> Any:
-    """Every file uploaded before, or with `path` that one file (null if it never was)."""
-    return state.uploads.uploaded() if path is None else state.uploads.uploaded_one(path)
-
-
-@upload_route("delete", "/{id}", response_model=responses.Ok)
-async def cancel(state: GatewayState, id: str) -> dict[str, Any]:
-    try:
-        state.uploads.cancel(id)
-    except KeyError as error:
-        raise ApiError(404, error.args[0])
-    return {"ok": True}
-
-
-@upload_route("post", "/{id}/retry", response_model=responses.Upload)
-async def retry(state: GatewayState, id: str) -> dict[str, Any]:
-    """Queue a finished upload again."""
-    try:
-        return state.uploads.retry(id)
-    except KeyError as error:
-        raise ApiError(404, error.args[0])
-    except ValueError as error:
-        raise ApiError(409, str(error))
+@router.delete("/cloud/uploads", response_model=responses.Uploads)
+async def remove(state: GatewayState, id: str | None = None) -> dict[str, Any]:
+    """Cancel a queued or running upload, or remove a finished one (?id=); no id clears the finished ones."""
+    if id is None:
+        state.uploads.clear_finished()
+    else:
+        try:
+            state.uploads.cancel(id)
+        except KeyError as error:
+            raise ApiError(404, error.args[0])
+    return {**state.uploads.listing(), **state.uploads.uploaded()}

@@ -30,8 +30,25 @@ class Body(TypedDict):
     pass
 
 
+class ServerInfo(Body):
+    exe: str
+    exeModified: int | None
+    kind: Literal["dimos"]
+    startedAt: int
+    zenohNamespace: str | None
+
+
+class Paths(Body):
+    """Where dimos keeps its runs, logs and recordings."""
+
+    dimosDir: str
+    runsDir: str
+    logsDirs: list[str]
+    recordingsDir: str
+
+
 class Info(Body):
-    """The dimos checkout this gateway drives."""
+    """The dimos checkout this gateway drives, the python that runs it, its directories and this process."""
 
     dir: str
     found: bool
@@ -42,34 +59,13 @@ class Info(Body):
     api: str
     commit: str | None
     tag: str | None
-
-
-class ServerInfo(Body):
-    exe: str
-    exeModified: int | None
-    kind: Literal["dimos"]
-    startedAt: int
-    zenohNamespace: str | None
-
-
-class Paths(Body):
-    """Where dimos keeps its runs, logs and recordings, and which process serves this API."""
-
-    dimosDir: str
-    runsDir: str
-    logsDirs: list[str]
-    recordingsDir: str
+    python: str
+    paths: Paths
     server: ServerInfo
 
 
 class Stopping(Body):
     stopping: bool
-
-
-class Python(Body):
-    """The python that runs this dimos checkout."""
-
-    python: str
 
 
 class Param(Body):
@@ -108,15 +104,6 @@ BlueprintModule = TypedDict(
     },
 )
 with_config(CONFIG)(BlueprintModule)
-
-
-class Blueprint(Body):
-    """A blueprint's modules: their streams (topic, type, direction), RPCs and skills."""
-
-    name: str
-    file: str | None
-    line: int | None
-    modules: list[BlueprintModule]
 
 
 class ConfigArg(Body):
@@ -159,6 +146,16 @@ class BlueprintConfig(Body):
     name: str
     modules: list[ModuleConfig]
     overrides: dict[str, dict[str, Any]]
+
+
+class Blueprint(Body):
+    """A blueprint's modules: their streams (topic, type, direction), RPCs and skills; and its config."""
+
+    name: str
+    file: str | None
+    line: int | None
+    modules: list[BlueprintModule]
+    config: BlueprintConfig
 
 
 class GlobalConfig(Body):
@@ -305,7 +302,7 @@ class Extras(Body):
 
 
 class JobStarted(Body):
-    """The job running the install: follow it at /jobs/{job}/log."""
+    """The job running the install: follow it at /jobs/{job}?after=."""
 
     shell: None
     job: str
@@ -333,7 +330,7 @@ class JobStatus(Body):
 
 
 class JobLog(JobStatus):
-    """A job's output from line `after` on, and whether it finished."""
+    """A job, whether it finished, its progress, and its output from line `after` on."""
 
     command: list[str]
     lines: list[str]
@@ -426,17 +423,6 @@ class RunLog(Body):
     loggers: list[str]
 
 
-class Account(Body):
-    """Whether this machine is logged in to Dimensional cloud, and as whom."""
-
-    loggedIn: bool
-    email: str | None
-    scopes: str | list[str] | None
-    source: Literal["env", "stored"] | None
-    cloudUrl: str
-    error: str | None
-
-
 class Login(Body):
     """The device login: the URL and code to open, until it's done, expired or cancelled."""
 
@@ -447,6 +433,18 @@ class Login(Body):
     expiresAt: int | None
     email: str | None
     error: str | None
+
+
+class Account(Body):
+    """Whether this machine is logged in to Dimensional cloud, and as whom."""
+
+    loggedIn: bool
+    email: str | None
+    scopes: str | list[str] | None
+    source: Literal["env", "stored"] | None
+    cloudUrl: str
+    error: str | None
+    login: NotRequired[Login]
 
 
 class Upload(Body):
@@ -476,13 +474,6 @@ class Upload(Body):
     link: str | None
 
 
-class Uploads(Body):
-    """The upload queue, and whether it waits for a login."""
-
-    uploads: list[Upload]
-    waitingForLogin: bool
-
-
 class Uploaded(Body):
     """A file uploaded before, and whether it changed since."""
 
@@ -495,9 +486,11 @@ class Uploaded(Body):
     changed: bool
 
 
-class UploadedByPath(Body):
-    """Every file uploaded before, by path."""
+class Uploads(Body):
+    """The upload queue, whether it waits for a login, and every file uploaded before, by path."""
 
+    uploads: list[Upload]
+    waitingForLogin: bool
     byPath: dict[str, Uploaded]
 
 

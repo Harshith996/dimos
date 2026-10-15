@@ -42,11 +42,13 @@ async function loadSaved(): Promise<Saved | null> {
   try {
     const [global, modules] = await Promise.all([
       getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>("global-config"),
-      getJson<{ overrides?: Saved["modules"] }>(`blueprints/${encodeURIComponent(NAME)}/config`),
+      getJson<{ config?: { overrides?: Saved["modules"] } }>(
+        `blueprints/${encodeURIComponent(NAME)}`,
+      ),
     ]);
     return {
       global: global.overrides ?? {},
-      modules: modules.overrides ?? {},
+      modules: modules.config?.overrides ?? {},
       defaults: global.defaults ?? {},
     };
   } catch {

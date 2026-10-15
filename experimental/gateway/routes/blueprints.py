@@ -119,16 +119,12 @@ async def check_blueprint_args(state: GatewayState, name: str, request: ArgsChec
 
 @router.get("/blueprints/{name}", response_model=responses.Blueprint, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str) -> Any:
+    """A blueprint's modules (streams, RPCs, skills), its file and line, and its configurable args with the saved values."""
     check_name(name)
-    return await state.introspected(["blueprint", name])
-
-
-@router.get(
-    "/blueprints/{name}/config", response_model=responses.BlueprintConfig, openapi_extra=SLOW
-)
-async def blueprint_config(state: GatewayState, name: str) -> dict[str, Any]:
-    check_name(name)
-    return shown_config(name, await state.introspected(["config", name]))
+    found, config = await asyncio.gather(
+        state.introspected(["blueprint", name]), state.introspected(["config", name])
+    )
+    return {**found, "config": shown_config(name, config)}
 
 
 @router.put("/blueprints/{name}/config", response_model=responses.BlueprintConfig)

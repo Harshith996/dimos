@@ -112,13 +112,13 @@ robots.go2.blueprints["unitree-go2"] // { title, description, starter, recommend
 ## How do I get dimos's python?
 
 ```js
-const { python } = await (await fetch("../../dimos-gateway/python")).json() // run `${python} -c 'import dimos'`
+const { python } = await (await fetch("../../dimos-gateway/info")).json() // run `${python} -c 'import dimos'`
 ```
 
 ## How do I read a blueprint's config?
 
 ```js
-const { modules } = await (await fetch("../../dimos-gateway/blueprints/unitree-go2/config")).json()
+const { config: { modules } } = await (await fetch("../../dimos-gateway/blueprints/unitree-go2")).json()
 // modules[i]: { module, args: [{ name, type, default, value }] }
 ```
 

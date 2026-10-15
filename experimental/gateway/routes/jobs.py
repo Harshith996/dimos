@@ -81,14 +81,9 @@ def found(state: State, job: str) -> discovery.Job:
     return answer
 
 
-@router.get("/jobs/{job}", response_model=responses.JobStatus)
-async def job_status(state: GatewayState, job: str) -> dict[str, Any]:
-    """A job (an extras install, a blueprint scan): whether it finished, and its progress."""
-    return found(state, job).status()
-
-
-@router.get("/jobs/{job}/log", response_model=responses.JobLog)
-async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
+@router.get("/jobs/{job}", response_model=responses.JobLog)
+async def job(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
+    """A job (an extras install, a blueprint scan): whether it finished, its progress, and its output from line `after` on."""
     return found(state, job).log(after)
 
 

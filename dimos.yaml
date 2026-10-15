@@ -22,7 +22,7 @@ install: |
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "3.2.0"
+  version: "4.0.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
@@ -32,16 +32,10 @@ provides:
   endpoints:
     - method: GET
       path: info
-      description: Whether dimos is found and installed, its version, the gateway API version, and the checkout's commit and desktop-gateway tag
-    - method: GET
-      path: paths
-      description: The checkout, venv, runs and log directories
+      description: Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process
     - method: POST
       path: server/stop
       description: Stop this gateway (a running blueprint keeps running)
-    - method: GET
-      path: python
-      description: The python that runs this dimos checkout
     - method: GET
       path: blueprints
       description: Every blueprint (builtin or external) with the last scan's results (importable, import_error, missing_module, suggested_extras, modules) and the scan's state; ?fresh= rereads
@@ -50,13 +44,10 @@ provides:
       description: '202 {job}: scan which blueprints import again (or join the running scan); follow it at jobs/{job}'
     - method: GET
       path: blueprints/{name}
-      description: 'A blueprint''s modules with their streams, RPCs and skills, and its file and line (slow: imports python)'
+      description: 'A blueprint''s modules with their streams, RPCs and skills, its file and line, and its configurable args per module with Desktop''s saved values (slow: imports python)'
     - method: POST
       path: blueprints/{name}/args
       description: Read CLI args ({args}) as `dimos run <name> <args>` would, without launching; what each group sets and why dimos would refuse it (slow)
-    - method: GET
-      path: blueprints/{name}/config
-      description: A blueprint's configurable args per module and Desktop's saved values (slow)
     - method: PUT
       path: blueprints/{name}/config
       description: Save a blueprint's module arg overrides
@@ -89,37 +80,22 @@ provides:
       description: A run's structured log (after, level, q, limit; runId may be latest)
     - method: GET
       path: cloud/account
-      description: 'The Dimensional cloud account: loggedIn, email, source; ?fresh= rechecks'
-    - method: GET
-      path: cloud/login
-      description: The device login in progress
+      description: 'The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks'
     - method: POST
       path: cloud/login
       description: 'Start a device login: open the answer''s url and enter its code'
     - method: DELETE
       path: cloud/login
-      description: Cancel the device login
-    - method: POST
-      path: cloud/logout
-      description: Log out of the Dimensional cloud
+      description: Cancel the device login in progress; with none in progress, log out
     - method: GET
       path: cloud/uploads
-      description: 'The cloud upload queue: each upload''s state, progress, speed, time left and error, and waitingForLogin'
+      description: 'The cloud upload queue: each upload''s state, progress, speed, time left and error, waitingForLogin, and every file already in the cloud, by path, with a console link'
     - method: POST
       path: cloud/uploads
-      description: Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud
+      description: 'Queue a recording ({path}, robotId, kind) for upload to the Dimensional cloud, or a finished upload again ({retry: id})'
     - method: DELETE
       path: cloud/uploads
-      description: Clear the finished uploads from the list
-    - method: GET
-      path: cloud/uploads/uploaded
-      description: Which files are already in the cloud, by path, with a console link; ?path= for one
-    - method: DELETE
-      path: cloud/uploads/{id}
-      description: Cancel a queued or running upload, or remove a finished one
-    - method: POST
-      path: cloud/uploads/{id}/retry
-      description: Queue a finished upload again
+      description: 'Cancel a queued or running upload, or remove a finished one (?id=); with no id, clear the finished uploads'
     - method: GET
       path: skills
       description: The running blueprint's skills
@@ -137,10 +113,7 @@ provides:
       description: '202 {job, command}: install extras with uv; follow it at jobs/{job}'
     - method: GET
       path: jobs/{job}
-      description: 'A job (an extras install, a blueprint scan): done, ok, progress, error'
-    - method: GET
-      path: jobs/{job}/log
-      description: A job's output lines after `after`
+      description: 'A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after='
     - method: GET
       path: docs/custom-robot
       description: The guide to adding a robot
