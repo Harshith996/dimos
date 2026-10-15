@@ -155,6 +155,12 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
                     assert setting["global"] in GlobalConfig.model_fields
 
 
-def test_dimos_yaml_declares_this_api_version() -> None:
+def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> None:
     manifest = yaml.safe_load((Path(__file__).parents[3] / "dimos.yaml").read_text())
     assert manifest["api"]["version"] == API_VERSION
+    routes = client.get("/openapi.json").json()["paths"]
+    served = {
+        f"{method.upper()} {path.lstrip('/')}" for path, ops in routes.items() for method in ops
+    }
+    declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
+    assert declared == served
