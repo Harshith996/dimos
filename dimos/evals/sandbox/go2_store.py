@@ -31,7 +31,7 @@ import time
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.evals.sandbox.case import ROBOT_ENDPOINT, DimosRobot, SandboxCase, SandboxOutcome
 from dimos.evals.sandbox.ground_truth_log import GroundTruthLog
-from dimos.evals.sandbox.store_grading import (
+from dimos.evals.sandbox.scene_grading import (
     GroundTruth,
     SceneCoverage,
     Zone,
@@ -42,9 +42,12 @@ from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.simulation.go2_sim.world import SimGo2World
 
+# Where the Go2 starts: open floor facing into the aisles, as (x, y, yaw).
+START = (9.2, 11.8, 1.57)
+
 # The Go2 in the supermarket, serving only raw-robot-bridge's topics, logging ground truth.
 sandbox_go2_supermarket = autoconnect(
-    SimGo2World.blueprint(scene_package="supermarket"),
+    SimGo2World.blueprint(scene_package="supermarket", start=START),
     Go2Mid360StaticTf.blueprint(),
     RawRobotBridge.blueprint().remappings([(RawRobotBridge, "odom", "ground_truth")]),
     GroundTruthLog.blueprint(),
@@ -121,7 +124,7 @@ def evaluate(o: SandboxOutcome) -> float:
     _ = o.recording  # stop the recorder: the run is over
 
     truth = GroundTruth.load(o.case_dir / "ground_truth.jsonl")
-    coverage = SceneCoverage("supermarket")
+    coverage = SceneCoverage("supermarket", START)
     reference = coverage.reference()
     seen = coverage.seen_from(truth.poses[::10])  # one pose a second
     map_share = len(seen & reference) / max(len(reference), 1)

@@ -30,6 +30,8 @@ ROBOT_IMAGE = "dimensional/evals-robot"
 AGENT_IMAGE = "dimensional/evals-agent"
 # Where the agent finds its robot, whichever robot it is.
 ROBOT_ENDPOINT = "tcp/robot:7447"
+# Where the robot container sees this case's output dir, e.g. to log ground truth for grading.
+CASE_MOUNT = "/case"
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -140,14 +140,13 @@ def round_trips(sequence: Iterable[str], a: str, b: str) -> int:
 class SceneCoverage:
     """What the Go2's Mid-360 can see of a scene package, from given poses or from everywhere."""
 
-    def __init__(self, package: str) -> None:
+    def __init__(self, package: str, start: tuple[float, float, float]) -> None:
         import mujoco
 
         from dimos.simulation.go2_sim.world import (
             LIDAR_GROUPS,
             MOUNT_R,
             MOUNT_XYZ,
-            PACKAGE_STARTS,
             PackageScene,
             build_package_model,
         )
@@ -157,7 +156,7 @@ class SceneCoverage:
 
         resolved = resolve_scene_package(package)
         assert resolved is not None and resolved.mujoco_scene_path is not None
-        x, y, yaw = PACKAGE_STARTS.get(package, (0.0, 0.0, 0.0))
+        x, y, yaw = start  # the robot's start, where the reachable floor is flood-filled from
         self.package = package
         self.start = (x, y)
         model, _ = build_package_model(

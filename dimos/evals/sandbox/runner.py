@@ -53,6 +53,7 @@ from dimos.evals.constants import MAX_TOOL_SECONDS, PROVIDERS
 from dimos.evals.runner import _git_record, _write_trajectory, summarize
 from dimos.evals.sandbox.case import (
     AGENT_IMAGE,
+    CASE_MOUNT,
     ROBOT_ENDPOINT,
     ROBOT_IMAGE,
     DimosRobot,
@@ -62,7 +63,6 @@ from dimos.evals.sandbox.case import (
     SandboxOutcome,
     exec_in,
 )
-from dimos.evals.sandbox.ground_truth_log import CASE_MOUNT
 from dimos.evals.sandbox.recorder import NEW_KEY, RECORDING, Recording
 from dimos.evals.types import EvalResult, Trajectory
 from dimos.utils.logging_config import setup_logger

@@ -66,9 +66,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Where the robot starts in a named scene package: open floor, as (x, y, yaw).
-PACKAGE_STARTS: dict[str, tuple[float, float, float]] = {"supermarket": (9.2, 11.8, 1.57)}
-
 FRAME_DT = 0.1
 TICKS_PER_FRAME = round(FRAME_DT / CONTROL_DT)
 LIDAR_HALF_EXTENTS = (0.0325, 0.0325, 0.03)
@@ -480,7 +477,7 @@ class SimGo2World(Module):
         package = resolve_scene_package(name)
         if package is None or package.mujoco_scene_path is None:
             raise ValueError(f"scene package {name!r} has no MuJoCo scene")
-        x, y, yaw = self.config.start or PACKAGE_STARTS.get(name, (0.0, 0.0, 0.0))
+        x, y, yaw = self.config.start or (0.0, 0.0, 0.0)
         scene = PackageScene(name, package.mujoco_scene_path, (x, y, 0.0), yaw)
         sim = Go2Sim(scene, self.config.seed, self._policy)
         sim.reset(x, y, 0.0, yaw)

@@ -31,11 +31,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.evals.sandbox.case import CASE_MOUNT
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sim_msgs.Contacts import Contacts
-
-# Where the runner mounts the case directory in the robot container.
-CASE_MOUNT = "/case"
 
 
 class GroundTruthLogConfig(ModuleConfig):

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.evals.sandbox.store_grading import GroundTruth, Zone, round_trips, visits
+from dimos.evals.sandbox.scene_grading import GroundTruth, Zone, round_trips, visits
 
 A = Zone("a", center=(0.0, 0.0), radius=1.0)
 B = Zone("b", box=(9.0, -1.0, 11.0, 1.0))
