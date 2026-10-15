@@ -17,12 +17,9 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.protocol.tf.articulated_tf import ArticulatedTf
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
-from dimos.robot.galaxea.r1pro.connection import (
-    R1PRO_UPPER_BODY_JOINTS,
-    ArticulatedTf,
-    R1ProConnectionConfig,
-)
+from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnectionConfig
 
 HEAD = "camera_head_left_link"
 
