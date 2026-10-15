@@ -77,8 +77,6 @@ KILL_AGENT_PROCESSES = (
     'for pid in $(pgrep -v -f "^(/sbin/docker-init|sleep infinity)"); do '
     '[ "$pid" != "$$" ] && kill -9 "$pid"; done; true'
 )
-# Times an agent that stops without a done call is told to make one.
-DONE_REMINDERS = 3
 # Extra seconds the runner waits past the in-container timeout before giving up on Pi.
 TIMEOUT_GRACE_S = 15.0
 
@@ -219,9 +217,10 @@ class SandboxRunner:
             "description": case.done_description,
             "schema": case.done_schema,
             "accepted": DONE_ACCEPTED,
-            "reminder": f"You have not called {case.done_tool} yet. The task only counts as done "
+            "reminder": case.reminder
+            or f"You have not called {case.done_tool} yet. The task only counts as done "
             f"once you call {case.done_tool} with valid arguments.",
-            "reminders": DONE_REMINDERS,
+            "reminders": case.reminders,
         }
         (harness / "done.json").write_text(json.dumps(done))
 

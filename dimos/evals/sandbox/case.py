@@ -89,6 +89,10 @@ class SandboxCase:
     timeout_s: float = 600.0
     threshold: float = 1.0
     tags: frozenset[str] = frozenset()
+    # What the agent is told when it stops without an accepted done call (e.g. to ask the
+    # user something), at most `reminders` times; None is a plain "call done" reminder.
+    reminder: str | None = None
+    reminders: int = 3
     done_tool: str = "done"
     done_description: str = (
         "Call this once the task is complete, with the requested result. It ends your run."
