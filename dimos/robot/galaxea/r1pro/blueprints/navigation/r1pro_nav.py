@@ -16,10 +16,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -39,9 +35,8 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
 )
-from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
+from dimos.robot.galaxea.r1pro.rerun import render_cloud
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
@@ -66,32 +61,6 @@ HEAD_CLOUD_ANCHOR_STEP = 4
 MAX_CLOUD_AGE_S = 1.0
 
 
-# Both clouds share the `lidar` port, so the viewer splits them by frame_id.
-_CLOUD_COLOR_UNKNOWN = [170, 170, 170]
-
-
-def _render_cloud(msg: Any) -> Any:
-    import rerun as rr
-
-    frame_id = getattr(msg, "frame_id", "") or "unknown"
-    path = f"world/lidar/{frame_id}"
-    xyz = msg.points_f32()
-    head_frame = HeadLeftCameraConfig.model_fields["frame_id"].default
-    lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
-    if frame_id in (head_frame, lidar_frame) and len(xyz):
-        # Rainbow by the frame's own up axis (the optical frame's is -y), inverted so dark blue is never on black.
-        up = -xyz[:, 1] if frame_id == head_frame else xyz[:, 2]
-        level = 1.0 - np.clip((up - up.min()) / max(float(np.ptp(up)), 1e-3), 0.0, 1.0)
-        colors = np.stack(
-            [255 * level, 255 * (1 - np.abs(2 * level - 1)), 255 * (1 - level)], axis=1
-        )
-        points = rr.Points3D(xyz, colors=(0.35 * 255 + 0.65 * colors).astype(np.uint8), radii=0.02)
-    else:
-        points = msg.to_rerun(colors=_CLOUD_COLOR_UNKNOWN, rgb=False)
-    # A list skips the bridge's frame attach, so each cloud hangs off its own tf frame here.
-    return [(path, points), (path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))]
-
-
 _MAX_HZ: dict[str, float] = {
     "world/local_map": 0.5,
     "world/lidar": 0.2,
@@ -109,7 +78,7 @@ _rerun_config = {
         # Full-resolution intrinsics sharing the depth image's frame would give it the wrong pinhole.
         "world/head_left_info": None,
         "world/head_right_info": None,
-        "world/lidar": _render_cloud,
+        "world/lidar": render_cloud,
         # Raw sensor streams, heavy over a laptop's link and shown better by what is built from them.
         "world/lidar_raw": None,
         "world/imu_raw": None,
