@@ -14,14 +14,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from pytest_mock import MockerFixture
-from typer.testing import CliRunner
 
-from dimos.cli.dimos import main as app
+from dimos.evals.vqa import odom_rows
 
 
 class _Vec:
@@ -57,41 +54,14 @@ def _patch_odom(mocker: MockerFixture) -> None:
     stream = _OdomStream([obs(1000.0, 0.0), obs(1010.0, 3.0), obs(1030.0, 3.0, 4.0)])
     store = mocker.Mock()
     store.streams.odom = stream
-    mocker.patch("dimos.evals.suites.lib.generate.open_dataset", return_value=store)
+    mocker.patch("dimos.evals.vqa.odom_rows.open_dataset", return_value=store)
 
 
-@pytest.mark.parametrize("window", ["10:x", "10:5", "nope"])
-def test_memory_rows_cli_rejects_bad_windows(
-    window: str, tmp_path: Path, mocker: MockerFixture
-) -> None:
+def test_memory_rows_displacement_and_path(mocker: MockerFixture) -> None:
     _patch_odom(mocker)
-    result = CliRunner().invoke(
-        app,
-        ["evals", "memory-rows", "desk", "-o", str(tmp_path / "rows.json"), "--window", window],
-    )
-    assert result.exit_code != 0
-
-
-def test_memory_rows_cli_writes_deterministic_json(tmp_path: Path, mocker: MockerFixture) -> None:
-    _patch_odom(mocker)
-    first = tmp_path / "a.json"
-    second = tmp_path / "b.json"
-    for path in (first, second):
-        result = CliRunner().invoke(
-            app,
-            [
-                "evals",
-                "memory-rows",
-                "desk",
-                "--window",
-                "0:20",
-                "--window",
-                "0:31",
-                "-o",
-                str(path),
-            ],
-        )
-        assert result.exit_code == 0, result.stdout
-    assert first.read_bytes() == second.read_bytes()
-    assert b"desk_disp_0_20" in first.read_bytes()
-    assert b"desk_path_0_31" in first.read_bytes()
+    # range_time is half-open [start, stop); stop must clear the last sample.
+    rows = odom_rows.memory_rows("desk", [(0.0, 31.0)])
+    assert [(row["id"], row["family"], row["a"]) for row in rows] == [
+        ("desk_disp_0_31", "displacement", 5.0),
+        ("desk_path_0_31", "path_length", 7.0),
+    ]
