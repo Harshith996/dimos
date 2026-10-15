@@ -25,12 +25,11 @@ def _kwargs(blueprint):
     ).kwargs
 
 
-def test_a_height_band_is_measured_from_base_link() -> None:
-    kwargs = _kwargs(r1pro_head_depth(min_height_m=-0.15, max_height_m=0.35))
-    assert (kwargs["height_frame"], kwargs["min_height_m"], kwargs["max_height_m"]) == (
+def test_the_height_band_is_measured_from_base_link() -> None:
+    kwargs = _kwargs(r1pro_head_depth(min_height_m=-0.2))
+    assert (kwargs["height_frame"], kwargs["min_height_m"]) == (
         R1ProLioConfig.model_fields["base_frame"].default,
-        -0.15,
-        0.35,
+        -0.2,
     )
 
 

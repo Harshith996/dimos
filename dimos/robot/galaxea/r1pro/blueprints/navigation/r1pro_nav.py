@@ -44,70 +44,43 @@ VOXEL_SIZE_M = 0.07
 WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2
 PLANNER_VIZ_HZ = 0.0
 
-# Head depth kept only in the band from the floor to just above the lidar's plane, what the lidar sees worst;
-# dropping (not snapping) anything under the floor, since nothing can be there.
-HEAD_CLOUD_MIN_HEIGHT_M = -0.15
-HEAD_CLOUD_MAX_HEIGHT_M = 0.35
-
-# The ray tracer shares the Orin with everything else; head depth at one point per 11x11 pixels, at most 1500,
-# keeps it near one Point-LIO's worth of work with every lidar ray traced. Live, heavier settings fell ~10 s
-# behind; a cloud older than MAX_CLOUD_AGE_S is skipped so it can never work through a stale queue.
-HEAD_CLOUD_DECIMATION = 11
-HEAD_CLOUD_MAX_POINTS = 1500
-# JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
-HEAD_CLOUD_DECODE_SCALE = 4
-# One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
-HEAD_CLOUD_ANCHOR_STEP = 4
-MAX_CLOUD_AGE_S = 1.0
-
-
-_MAX_HZ: dict[str, float] = {
-    "world/local_map": 0.5,
-    "world/lidar": 0.2,
-}
-
-_rerun_config = {
-    "tf_axes": 0.35,
-    # Keep the viewer's bandwidth off the Orin.
-    "max_hz": _MAX_HZ,
-    "visual_override": {
-        "world/head_left_color": None,
-        "world/head_right_color": None,
-        "world/wrist_left_color": None,
-        "world/wrist_right_color": None,
-        # Full-resolution intrinsics sharing the depth image's frame would give it the wrong pinhole.
-        "world/head_left_info": None,
-        "world/head_right_info": None,
-        "world/lidar": render_cloud,
-        # Raw sensor streams, heavy over a laptop's link and shown better by what is built from them.
-        "world/lidar_raw": None,
-        "world/imu_raw": None,
-        "world/imu_torso": None,
-        "world/r1pro/imu": None,
-        "world/region_bounds": None,
-        "world/path": None,
-        **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_M, WALL_CLEARANCE_M),
-    },
-}
-
 
 r1pro_nav = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    vis_module(
+        viewer_backend=global_config.viewer,
+        rerun_config={
+            "tf_axes": 0.35,
+            # Keep the viewer's bandwidth off the Orin.
+            "max_hz": {"world/local_map": 0.5, "world/lidar": 0.2},
+            "visual_override": {
+                "world/head_left_color": None,
+                "world/head_right_color": None,
+                "world/wrist_left_color": None,
+                "world/wrist_right_color": None,
+                # Full-resolution intrinsics sharing the depth image's frame would give it the wrong pinhole.
+                "world/head_left_info": None,
+                "world/head_right_info": None,
+                "world/lidar": render_cloud,
+                # Raw sensor streams, heavy over a laptop's link and shown better by what is built from them.
+                "world/lidar_raw": None,
+                "world/imu_raw": None,
+                "world/imu_torso": None,
+                "world/r1pro/imu": None,
+                "world/region_bounds": None,
+                "world/path": None,
+                **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_M, WALL_CLEARANCE_M),
+            },
+        },
+    ),
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
     r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
     r1pro_lidar_odometry(),
-    r1pro_head_depth(
-        min_height_m=HEAD_CLOUD_MIN_HEIGHT_M,
-        max_height_m=HEAD_CLOUD_MAX_HEIGHT_M,
-        decimation=HEAD_CLOUD_DECIMATION,
-        max_points=HEAD_CLOUD_MAX_POINTS,
-        decode_scale=HEAD_CLOUD_DECODE_SCALE,
-        anchor_step=HEAD_CLOUD_ANCHOR_STEP,
-    ).remappings([(Depth2DepthCloud, "depth_cloud", "lidar")]),
+    r1pro_head_depth().remappings([(Depth2DepthCloud, "depth_cloud", "lidar")]),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
         max_range=10.0,
-        max_cloud_age_s=MAX_CLOUD_AGE_S,
+        # Live, heavier head depth fell ~10 s behind; skipping stale clouds means it never works through a queue.
+        max_cloud_age_s=1.0,
         emit_every=1,
         global_emit_every=50,
         support_min=4,

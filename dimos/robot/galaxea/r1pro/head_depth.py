@@ -20,37 +20,32 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
-# Past this the per-pixel calibration has few lidar anchors to lean on.
-MAX_RANGE_M = 6.0
 
-# The lidar mount tf comes at 5 Hz and Point-LIO's at 10 with jitter; 0.1 s dropped frames (as for the ray tracer).
-TF_TOLERANCE_S = 0.25
-# The chassis lidar never sees the floor near the robot; floor it swept a few seconds ago anchors it.
-LIDAR_HISTORY_S = 6.0
-
-
-def r1pro_head_depth(
-    *,
-    min_height_m: float | None = None,
-    max_height_m: float | None = None,
-    **cloud: object,
-) -> Blueprint:
-    """Head depth anchored on Point-LIO's scans; height bounds (in base_link) gate only the cloud.
-
-    Other keywords are Depth2DepthCloud config (e.g. decimation, max_points).
-    """
-    options: dict[str, object] = {"lidar_history_s": LIDAR_HISTORY_S, **cloud}
-    if min_height_m is not None or max_height_m is not None:
-        options["height_frame"] = R1ProLioConfig.model_fields["base_frame"].default
-    if min_height_m is not None:
-        options["min_height_m"] = min_height_m
-    if max_height_m is not None:
-        options["max_height_m"] = max_height_m
-
+def r1pro_head_depth(**overrides: object) -> Blueprint:
+    """Head depth anchored on Point-LIO's scans, tuned for the Orin; keywords override the Depth2DepthCloud config."""
     return Depth2DepthCloud.blueprint(
-        max_range_m=MAX_RANGE_M,
-        tf_tolerance_s=TF_TOLERANCE_S,
-        **options,
+        **{
+            # Past this the per-pixel calibration has few lidar anchors to lean on.
+            "max_range_m": 6.0,
+            # The lidar mount tf comes at 5 Hz and Point-LIO's at 10 with jitter; 0.1 s dropped frames (as for the ray tracer).
+            "tf_tolerance_s": 0.25,
+            # The chassis lidar never sees the floor near the robot; floor it swept a few seconds ago anchors it.
+            "lidar_history_s": 6.0,
+            # Kept only from the floor to just above the lidar's plane, what the lidar sees worst; dropping (not
+            # snapping) anything under the floor, since nothing can be there.
+            "height_frame": R1ProLioConfig.model_fields["base_frame"].default,
+            "min_height_m": -0.15,
+            "max_height_m": 0.35,
+            # The ray tracer shares the Orin with everything else; one point per 11x11 pixels, at most 1500, keeps it
+            # near one Point-LIO's worth of work with every lidar ray traced.
+            "decimation": 11,
+            "max_points": 1500,
+            # JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
+            "decode_scale": 4,
+            # One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
+            "anchor_step": 4,
+            **overrides,
+        }
     ).remappings(
         [
             (Depth2DepthCloud, "image", "head_left_color"),
