@@ -20,10 +20,12 @@ from pathlib import Path
 import subprocess
 import sys
 
+from dimos_cdrgen.generate import generate
+from dimos_cdrgen.native_build import prepare_cpp
+from dimos_cdrgen.registry import schema_roots
 import pytest
 
-from dimos.message_codegen.generate import generate
-from dimos.message_codegen.native_build import prepare_cpp, write_cmake_toolchain
+from dimos.message_codegen.native_build import write_cmake_toolchain
 
 
 def test_region_cdr_exchange_through_cpp_and_rust(tmp_path):
@@ -32,7 +34,7 @@ def test_region_cdr_exchange_through_cpp_and_rust(tmp_path):
     root = Path(__file__).resolve().parents[2]
     package = tmp_path / "package"
     generate(
-        [],
+        list(schema_roots()),
         package,
         [
             "dimos_msgs/msg/RegionBounds",
@@ -55,11 +57,11 @@ def test_region_cdr_exchange_through_cpp_and_rust(tmp_path):
         source_dirs=sources or None,
     )
     toolchain = write_cmake_toolchain(prefix, tmp_path / "toolchain.cmake")
-    (tmp_path / "dimos_message_build").symlink_to(Path(__file__).parent, target_is_directory=True)
+    (tmp_path / "dimos_message_project").symlink_to(Path(__file__).parent, target_is_directory=True)
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(tmp_path), str(package / "python")])}
     bootstrap = """
 from pathlib import Path
-from dimos_message_build import registry
+from dimos_cdrgen import registry
 registry.providers = lambda: ()
 registry.initialize((Path('package'),), discover=False)
 from region_messages.dimos_msgs.msg import RegionBounds, RegionPointCloud2, RegionLineSegments3D, LineSegments3D, LineSegment3D

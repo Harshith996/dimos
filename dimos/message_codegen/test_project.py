@@ -13,15 +13,18 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
+import subprocess
 import tarfile
 from types import SimpleNamespace
 
+from dimos_cdrgen.generate import generate
+from dimos_cdrgen.registry import schema_roots
+from dimos_message_project.backend import build_sdist, get_requires_for_build_wheel
+from dimos_message_project.build import build_project
+import dimos_message_project.project as project_module
+from dimos_message_project.project import Project, prepare
 import pytest
-
-from dimos.message_codegen.backend import build_sdist, get_requires_for_build_wheel
-from dimos.message_codegen.generate import generate
-import dimos.message_codegen.project as project_module
-from dimos.message_codegen.project import Project, prepare
 
 
 def project(tmp_path, definition="float64 value\n"):
@@ -40,7 +43,7 @@ dependencies = {}
 def test_defaults_and_cache_reuse_without_touching_generated_files(tmp_path):
     config, _ = project(tmp_path)
     output = prepare(config)
-    header = output / "cpp/messages.hpp"
+    header = output / "python/example_messages/_types.pyi"
     stamp = header.stat().st_mtime_ns
     assert config.module == "example_messages"
     assert config.languages == ("python",)
@@ -62,13 +65,13 @@ def test_schema_edits_deletion_and_rename_remove_stale_outputs(tmp_path):
     assert (output / "schemas/example_msgs/msg/Renamed.msg").is_file()
     source.with_name("Renamed.msg").write_text("int32 replacement\n")
     prepare(config)
-    assert "replacement" in (output / "cpp/messages.hpp").read_text()
+    assert "replacement" in (output / "python/example_messages/_types.pyi").read_text()
 
 
 def test_missing_or_modified_generated_file_is_repaired(tmp_path):
     config, _ = project(tmp_path)
     output = prepare(config)
-    header = output / "cpp/messages.hpp"
+    header = output / "python/example_messages/_types.pyi"
     original = header.read_bytes()
     header.write_text("corrupt")
     prepare(config)
@@ -80,7 +83,7 @@ def test_missing_or_modified_generated_file_is_repaired(tmp_path):
 
 def test_missing_standard_type_owner_is_not_silently_regenerated(tmp_path):
     config, _ = project(tmp_path, "std_msgs/Header header\n")
-    with pytest.raises(ValueError, match="Missing dependency owners"):
+    with pytest.raises(ValueError, match="unresolved message dependency"):
         prepare(config)
     assert not config.output.exists()
 
@@ -109,8 +112,6 @@ def test_python_backend_never_requests_native_sdk_or_rust(tmp_path, monkeypatch)
     assert get_requires_for_build_wheel() == [
         "setuptools>=70",
         "wheel",
-        "pybind11==3.0.1",
-        "cmake>=3.20",
     ]
     name = build_sdist(str(tmp_path / "dist"))
     with tarfile.open(tmp_path / "dist" / name) as archive:
@@ -149,7 +150,15 @@ def test_module_override_cannot_change_distribution_identity(tmp_path):
 def test_transitive_dependencies_are_discovered_and_versions_checked(tmp_path, monkeypatch):
     config, _ = project(tmp_path)
     base = tmp_path / "base_schemas/package"
-    generate([], base, ["std_msgs/msg/Header"], "base", version="1.0.0", shared=True)
+    generate(
+        list(schema_roots()),
+        base,
+        ["std_msgs/msg/Header"],
+        "base",
+        version="1.0.0",
+        shared=True,
+        installed=True,
+    )
     middle = tmp_path / "middle_schemas/package"
     middle.mkdir(parents=True)
     metadata = json.loads((base / "message-package.json").read_text())
@@ -165,3 +174,92 @@ def test_transitive_dependencies_are_discovered_and_versions_checked(tmp_path, m
     config.dependency_specs["base"] = {"version": "2.0.0"}
     with pytest.raises(ValueError, match="mismatch|Conflicting package versions"):
         config.dependencies()
+
+
+def test_python_only_build_needs_no_native_build_tool(tmp_path, monkeypatch):
+    config, _ = project(tmp_path)
+    monkeypatch.setattr("dimos_message_project.build.shutil.which", lambda tool: None)
+    artifacts = build_project(config)
+    assert artifacts["python_wheel"].endswith("-py3-none-any.whl")
+    assert (tmp_path / "dist/example_messages-1.2.3.tar.gz").is_file()
+    assert "cmake_prefix" not in artifacts
+    assert "cargo_manifest" not in artifacts
+
+
+def test_generator_version_invalidates_project_cache(tmp_path, monkeypatch):
+    config, _ = project(tmp_path)
+    output = prepare(config)
+    state = (output / "generation.json").read_bytes()
+    monkeypatch.setattr(project_module, "version", lambda _: "0.1.1")
+    prepare(config)
+    assert (output / "generation.json").read_bytes() != state
+
+
+def test_rust_build_recovers_dependency_sources_from_python_only_package(tmp_path, monkeypatch):
+    config, source = project(tmp_path, "std_msgs/Header header\nfloat64 value\n")
+    dependency = tmp_path / "base_schemas/package"
+    generate(
+        list(schema_roots()),
+        dependency,
+        ["std_msgs/msg/Header"],
+        "base",
+        version="1.0.0",
+        shared=True,
+        languages=("python",),
+        installed=True,
+    )
+    config.dependency_specs["base"] = {"version": "1.0.0", "path": str(dependency)}
+    commands = []
+    monkeypatch.setattr("dimos_message_project.build.shutil.which", lambda tool: "/tools/" + tool)
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: commands.append(command))
+
+    artifacts = build_project(config, ("rust",), offline=True)
+
+    manifest = Path(artifacts["cargo_manifest"])
+    base = manifest.parent.parent / "base"
+    assert not (dependency / "rust").exists()
+    assert (base / "interfaces/std_msgs/msg/Header.msg").read_text() == (
+        dependency / "schemas/std_msgs/msg/Header.msg"
+    ).read_text()
+    assert "pub use base_messages::std_msgs;" in (manifest.parent / "src/lib.rs").read_text()
+    assert 'path = "../base"' in manifest.read_text()
+    schemas = json.loads((manifest.parent / "schemas.json").read_text())
+    assert "MSG: std_msgs/Header" in schemas["example_msgs/msg/Reading"]
+    assert commands == [["cargo", "build", "--manifest-path", str(manifest), "--offline"]]
+    with tarfile.open(artifacts["cargo_archive"]) as archive:
+        assert "./base/interfaces/std_msgs/msg/Header.msg" in archive.getnames()
+
+
+def test_selected_language_cache_invalidates_on_selection_edit_delete_and_rename(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="accept-messages"\nversion="0.1.0"\n[tool.dimos.messages]\ndependencies={}\n'
+    )
+    source = tmp_path / "interfaces/accept_msgs/msg/Reading.msg"
+    source.parent.mkdir(parents=True)
+    source.write_text("float64 value\n")
+    config = Project.load(tmp_path)
+
+    def no_tools(*args, **kwargs):
+        raise AssertionError("Source packaging invoked an external build")
+
+    monkeypatch.setattr(subprocess, "run", no_tools)
+    output = prepare(config)
+    stamp = (output / "generation.json").stat().st_mtime_ns
+    assert prepare(config) == output
+    assert (output / "generation.json").stat().st_mtime_ns == stamp
+    assert not (output / "cpp").exists()
+    assert not (output / "rust").exists()
+    prepare(config, ("rust",))
+    assert (output / "rust/build.rs").is_file()
+    assert not (output / "python").exists()
+    source.rename(source.with_name("Renamed.msg"))
+    source.with_name("Renamed.msg").write_text("int32 other\n")
+    prepare(config)
+    assert not (output / "schemas/accept_msgs/msg/Reading.msg").exists()
+    assert (output / "schemas/accept_msgs/msg/Renamed.msg").read_text() == "int32 other\n"
+    source.with_name("Renamed.msg").unlink()
+    with pytest.raises(ValueError, match="No messages"):
+        prepare(config)
+    assert (output / "schemas/accept_msgs/msg/Renamed.msg").is_file()

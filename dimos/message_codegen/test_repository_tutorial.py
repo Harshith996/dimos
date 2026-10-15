@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from pathlib import Path
 import re
@@ -29,9 +30,8 @@ except ModuleNotFoundError:  # Python 3.10
 
 def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     wheelhouse = os.environ.get("DIMOS_MESSAGE_WHEELHOUSE")
-    fastcdr = os.environ.get("DIMOS_FASTCDR_PREFIX")
-    if not wheelhouse or not fastcdr:
-        pytest.skip("Set message wheelhouse and Fast CDR prefix for clean source acceptance")
+    if not wheelhouse:
+        pytest.skip("Set message wheelhouse for clean source acceptance")
     root = Path(__file__).resolve().parents[2]
     tutorial = (root / "docs/development/messages-in-repository.md").read_text()
     definition = re.search(r"<!-- builtin-message: [^>]+ -->\n```text\n(.*?)```", tutorial, re.S)
@@ -45,9 +45,13 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     (checkout / "dimos/__init__.py").write_text("")
     package = checkout / "packages/dimos-generated"
     shutil.copytree(root / "packages/dimos-generated", package, ignore=ignore)
-    source = checkout / "dimos/message_codegen/schemas/dimos_msgs/msg/DeviceReading.msg"
+    source = checkout / "packages/dimos-generated/interfaces/dimos_msgs/msg/DeviceReading.msg"
     assert not source.exists()
     source.write_text(definition.group(1))
+    catalog = package / "catalog.json"
+    roots = json.loads(catalog.read_text())
+    roots["roots"]["dimos_msgs/msg/DeviceReading"] = "Repository tutorial contract"
+    catalog.write_text(json.dumps(roots))
     environment = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
     environment.update(
         PATH=os.pathsep.join(
@@ -57,7 +61,20 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
         ),
         PIP_NO_INDEX="1",
         PIP_FIND_LINKS=str(Path(wheelhouse).resolve()),
-        CMAKE_PREFIX_PATH=str(Path(fastcdr).resolve()),
+        CC="/bin/false",
+        CXX="/bin/false",
+    )
+    (checkout / "scripts").mkdir()
+    shutil.copyfile(
+        root / "scripts/generate_builtin_messages.py",
+        checkout / "scripts/generate_builtin_messages.py",
+    )
+    shutil.copyfile(root / "pyproject.toml", checkout / "pyproject.toml")
+    subprocess.run(
+        [sys.executable, "-m", "scripts.generate_builtin_messages"],
+        check=True,
+        cwd=checkout,
+        env=environment,
     )
     venv = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
@@ -84,7 +101,7 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
     )
     wheel = next(dist.glob("dimos_generated-*.whl"))
     subprocess.run(
-        [python, "-m", "pip", "install", "--no-deps", str(wheel)],
+        [python, "-m", "pip", "install", str(wheel)],
         cwd=tmp_path,
         env=environment,
         check=True,
@@ -94,7 +111,8 @@ def test_builtin_tutorial_builds_new_definition_without_runtime(tmp_path):
         + """
 from importlib.metadata import distributions
 assert 'dimos' not in {dist.metadata['Name'] for dist in distributions()}
-assert 'MSG: std_msgs/Header' in DeviceReading.schema
+from dimos_cdrgen.registry import schema
+assert 'MSG: std_msgs/Header' in schema(DeviceReading.__msgtype__)
 """
     )
     subprocess.run([python, "-I", "-c", validation], cwd=tmp_path, env=environment, check=True)
@@ -144,18 +162,16 @@ def test_checkout_sync_sees_generated_source_changes_without_reinstall(tmp_path)
     )
     python = str(checkout / ".venv/bin/python")
     validation = (
+        "import dimos_generated; "
         "from dimos_generated.geometry_msgs.msg import Point; "
-        "assert Point.decode(Point(x=1.25).encode()).x == 1.25; "
-        "assert getattr(Point, 'CHECKOUT_PROBE', None) == 17"
+        "from dimos_cdrgen.registry import encode, decode; "
+        "assert decode(encode(Point(x=1.25, y=0., z=0.)), Point).x == 1.25; "
+        "assert dimos_generated.CHECKOUT_PROBE == 17"
     )
-    # Stand in for a regenerated constant in a committed source value class.
-    # The isolated wheel tutorial separately verifies .msg -> all-language generation.
-    values = package / "src/dimos_generated/_types.py"
-    values.write_text(
-        values.read_text().replace(
-            "class geometry_msgs__msg__Point(Message):",
-            "class geometry_msgs__msg__Point(Message):\n    CHECKOUT_PROBE = 17",
-        )
-    )
+    # Editable installation must expose refreshed generated package exports.
+    # The isolated wheel tutorial above verifies actual .msg -> source generation.
+    # Native rosbags classes are not declarations in _types.py to rewrite.
+    exports = package / "build/message-source/python/dimos_generated/__init__.py"
+    exports.write_text(exports.read_text() + "\nCHECKOUT_PROBE = 17\n")
     subprocess.run([uv, "sync", "--frozen", "--offline"], cwd=checkout, env=environment, check=True)
     subprocess.run([python, "-I", "-c", validation], cwd=checkout, env=environment, check=True)

@@ -2,28 +2,32 @@
 
 Use this tutorial when changing dimOS's own message definitions. Work in a
 checkout of the CDR proposal; this is not a main-branch or published-release API.
-The separate `packages/dimos-generated` package owns the Python extension.
+The separate `packages/dimos-generated` package owns checked-in generated Python source.
 The root dimOS package consumes it and does not generate it in `setup.py`.
 
-Prepare Python 3.12, uv, a C++ compiler with Python development headers, CMake,
-and Rust/Cargo. No ROS installation is required. These are explicit toolchain
+Prepare Python 3.12 and uv for installation. Message maintainers additionally
+need Ruff 0.14.3 and rustfmt for explicit generation. Native applications need
+their C++/Rust toolchains. No ROS installation is required. These are explicit toolchain
 prerequisites; message builds do not install OS packages. From the checkout root:
 
 ```sh skip
-bash scripts/setup_message_codegen.sh
-export CMAKE_PREFIX_PATH="$PWD/build/message-codegen/install"
-uv sync --group tests --frozen
+uv sync --group tests --group message-codegen --frozen
 ```
 
-The setup script downloads and hash-checks Fast CDR 2.4.0, then installs it into
-this checkout's ignored build directory. `uv sync` uses the local packages in
+`uv sync` installs the built-in message package as editable Python source from
+`packages/dimos-generated/src`; no message-native extension is built. It consumes
+the local packages in
 `[tool.uv.sources]`. **Plain `pip install .` at the dimOS root does not read those
-uv sources.** It needs matching `dimos-generated` and `dimos-message-build`
+uv sources.** It needs matching `dimos-generated` and `dimos-message-project`
 distributions available to pip; it is not a substitute for this checkout setup.
+
+The [accepted native-library limitations](https://tomcc7.github.io/dimos-cdrgen/) describe the
+provisional input constraints and unsupported schemas. They also identify the
+precise expected-failure tests; bounded valid messages do not silently work.
 
 ## Define and rebuild one message
 
-Create `dimos/message_codegen/schemas/dimos_msgs/msg/DeviceReading.msg`:
+Create `packages/dimos-generated/custom/dimos_msgs/msg/DeviceReading.msg`:
 
 <!-- builtin-message: dimos_msgs/msg/DeviceReading -->
 ```text
@@ -38,28 +42,35 @@ source of truth; do not edit generated bindings. Standard message inputs are
 vendored separately and intentionally pinned; avoid editing a standard Header
 just to add an application-specific field.
 
-Build the independently packaged built-ins, then install the resulting wheel:
+Generate source explicitly after editing `.msg`:
 
 ```sh skip
-uv build packages/dimos-generated --python .venv/bin/python \
-  --out-dir build/message-codegen/ux-wheelhouse
-uv pip install --python .venv/bin/python --reinstall --no-deps \
-  build/message-codegen/ux-wheelhouse/dimos_generated-*.whl
+uv run python -m scripts.generate_builtin_messages
+uv run python -m scripts.generate_builtin_messages --check
 ```
 
-Keep that output directory to one compatible built-in wheel, or pass the exact
-wheel filename. This invokes generation and the Python extension build; it does
-not rebuild the dimOS robot runtime. Restart running Python processes after a
-native package rebuild. Import and check the new value:
+The checkout's editable dependency uses the regenerated source directly; no
+wheel rebuild or native message compiler is needed for development. Native
+rosbags classes/codecs are initialized in memory from installed schemas; this is
+not precompiled Python class delivery. Constructors require explicit fields, even
+when `.msg` declares a default. Restart Python
+processes after changing generated classes. Editing `.msg` alone does not change
+installed classes: the drift check rejects missing, stale or changed outputs
+until you explicitly regenerate and commit them. Import and check the new value:
 
 <!-- builtin-value-check -->
 ```python skip
 from dimos_generated.dimos_msgs.msg import DeviceReading
 from dimos_generated.std_msgs.msg import Header
+from dimos_generated.builtin_interfaces.msg import Time
+from dimos_cdrgen.registry import encode, decode
 
-reading = DeviceReading(header=Header(frame_id="sensor"), value=20.5)
+reading = DeviceReading(
+    header=Header(stamp=Time(sec=0, nanosec=0), frame_id="sensor"),
+    sequence=1, value=20.5, label="sensor",
+)
 assert type(reading.header) is Header
-assert DeviceReading.decode(reading.encode()).value == 20.5
+assert decode(encode(reading), DeviceReading).value == 20.5
 ```
 
 Run the package and runtime regressions appropriate to your changed consumers:
@@ -69,17 +80,32 @@ Run the package and runtime regressions appropriate to your changed consumers:
   dimos/message_codegen/test_stubs.py
 ```
 
-Use the active interpreter directly after installing your rebuilt wheel; a
-subsequent `uv run` may resync the local-source dependency from its cache.
-The new built-in wheel must be installed before testing a runtime module that
-imports the new type. In the runtime-cutover layer, use the same
+In the runtime-cutover layer, use the same
 `Module`/`In[DeviceReading]`/`Out[DeviceReading]` API as other generated messages.
 Do not use `dimos build` at the repository root for this workflow: that command
 builds an **external message project**, not all built-in messages.
 
-## Native artifacts and CI distribution
+The main CI **Built-in message alignment** check fails `ci-complete` if definitions,
+package versions, generator/templates, or any checked-in output drift. Python,
+C++ source projects, Rust build-script/schema inputs and viewer schemas are committed; the check independently regenerates
+in a temporary directory and includes new/untracked and deleted files. Prepare
+Rust 1.92.0 with `rustup toolchain install 1.92.0 --component rustfmt` once.
+[The alignment guide](/docs/development/message-alignment.md) gives the small
+locked check environment and repair commands; CI does not make bot commits.
 
-Build CMake headers/schemas and the Rust crate with the package's configured
+## Package artifacts and CI distribution
+
+CI builds the committed generated source as an ordinary compiler-free Python
+wheel/sdist; wheel users do not need an editable checkout:
+
+```sh skip
+uv build packages/dimos-generated --python .venv/bin/python \
+  --out-dir build/message-codegen/ux-wheelhouse
+```
+
+## Native artifacts
+
+Build native source inputs/schemas and the Rust crate with the package's configured
 version:
 
 ```sh skip
@@ -87,15 +113,18 @@ bash scripts/package_messages.sh
 ```
 
 Artifacts land in `build/message-codegen/release/dist/`: a
-`dimos-messages-cmake-0.1.0.tar.gz` and `dimos-generated-messages-0.1.0.crate` for
-the current proposal version. CMake consumers use `dimos_generated::messages`;
+`dimos-messages-sources-0.1.0.tar.gz` and `dimos-generated-messages-0.1.0.crate` for
+the current proposal version. The C++ archive contains source inputs, not a
+header-only or prebuilt SDK. The shared `prepare_cpp` build core must generate and
+compile the upstream ROSIDL typesupport and support libraries before consumption.
+C++ distribution is source-only; prebuilt native SDK archives are out of scope.
+CMake consumers use `dimos_generated::messages`;
 Rust consumers use the `dimos-generated-messages` dependency. Native module
 applications additionally need the transport SDK and its native dependencies;
 a message wheel alone does not supply an installed SDK.
 
 CI builds the Python wheel/sdist and native artifacts and verifies consumers.
-Ordinary users install matching prebuilt artifacts; they never need to run this
-maintainer generation workflow. Changes to wire layout require matching rebuilt
+Python users install matching wheels without this maintainer generation workflow. Changes to wire layout require matching rebuilt
 producers and typed consumers. Version changes must update dependency pins
 consistently; package registry publication is a separate release operation.
 
