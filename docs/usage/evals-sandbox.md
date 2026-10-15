@@ -64,6 +64,9 @@ SUITE = [
 - `done_schema` is the JSON schema of the `done` tool's arguments. Pi validates each call;
   an invalid call is an error the agent sees and can retry, and the first valid call ends
   the run. A run that never makes a valid call scores 0 and `evaluate` is not called.
+- `reminder` is what the agent is told, at most `reminders` times (3), when it stops without an
+  accepted `done` call, e.g. to ask a question; Pi carries on in the same session. Unset, it is
+  a plain "you have not called done yet".
 - `evaluate(o)` runs after the agent stops, with the robot and agent containers still up:
   - `o.done`: the accepted done arguments.
   - `o.recording`: every zenoh sample of the run, both directions
