@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "reference_frame": "world",
+    "position_unit": "m",
+    "angle_unit": "rad",
+    "quaternion_order": "wxyz",
+    "clock": "relative_seconds",
+    "source": "loader-example-not-human-data",
+    "kind": "synthetic_fixture",
+    "calibration_id": "synthetic-placeholder-not-robot-calibration",
+    "session_id": "synthetic-loader-example",
+    "operator_id": null
+  },
+  "frames": [
+    {
+      "stamp_s": 0.0,
+      "positions_m": [
+        [
+          -0.079397,
+          0.25099366,
+          0.719602
+        ],
+        [
+          -0.07975203,
+          -0.25300626,
+          0.719602
+        ]
+      ],
+      "position_valid": [
+        true,
+        true
+      ],
+      "orientation_valid": [
+        false,
+        false
+      ],
+      "quaternions_wxyz": [
+        null,
+        null
+      ],
+      "confidence": [
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "stamp_s": 0.04,
+      "positions_m": [
+        [
+          -0.079397,
+          0.25099366,
+          0.719602
+        ],
+        [
+          -0.07975203,
+          -0.25300626,
+          0.719602
+        ]
+      ],
+      "position_valid": [
+        true,
+        true
+      ],
+      "orientation_valid": [
+        false,
+        false
+      ],
+      "quaternions_wxyz": [
+        null,
+        null
+      ],
+      "confidence": [
+        1.0,
+        1.0
+      ]
+    }
+  ]
+}

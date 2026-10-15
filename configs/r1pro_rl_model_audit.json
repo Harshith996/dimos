@@ -1454,5 +1454,7 @@
   "wrist_sites": {
     "left_wrist": "left_gripper_link origin",
     "right_wrist": "right_gripper_link origin"
-  }
+  },
+  "static_import_evidence": "configs/r1pro_rl_static_evidence.json",
+  "static_audit_command": "python -m dimos.robot.galaxea.r1pro.rl.static_audit --output /tmp/r1pro-static-evidence.json"
 }

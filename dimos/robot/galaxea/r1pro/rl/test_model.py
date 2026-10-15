@@ -19,6 +19,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from dimos.robot.galaxea.r1pro.rl import static_audit
 from dimos.robot.galaxea.r1pro.rl.model import (
     ARM_JOINT_NAMES,
     collision_pairs,
@@ -61,3 +62,45 @@ def test_neutral_fk_and_short_deterministic_simulation() -> None:
         assert np.isfinite(data.qpos).all()
         assert data.time == pytest.approx(0.2)
     np.testing.assert_array_equal(first.qpos, second.qpos)
+
+
+def test_full_source_to_import_audit() -> None:
+    evidence = static_audit.audit_model()
+    assert evidence["status"] == "static_import_checks_passed"
+    assert len(evidence["links"]) == 43
+    assert len(evidence["joint_origin_transforms_checked"]) == 42
+    assert evidence["collision_geometries"] == 43
+    assert evidence["noncolliding_visual_geometries"] == 43
+    assert evidence["exclusion_pairs_checked"] == 28
+    assert evidence["dynamics_validated"] is False
+
+
+def _assert_corrupted_import_rejected(monkeypatch: pytest.MonkeyPatch, fault: str) -> None:
+    model = load_model()
+    if fault == "mass":
+        model.body_mass[model.body("left_arm_link1").id] += 0.1
+    elif fault == "inertia":
+        model.body_inertia[model.body("left_arm_link1").id] *= 2
+    elif fault == "visual_mask":
+        model.geom_contype[np.flatnonzero(model.geom_group == 1)[0]] = 1
+    else:
+        model.actuator_gainprm[0, 0] = 40
+    monkeypatch.setattr(static_audit, "load_model", lambda path: model)
+    with pytest.raises(AssertionError):
+        static_audit.audit_model()
+
+
+def test_static_audit_rejects_corrupted_mass(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_corrupted_import_rejected(monkeypatch, "mass")
+
+
+def test_static_audit_rejects_corrupted_inertia(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_corrupted_import_rejected(monkeypatch, "inertia")
+
+
+def test_static_audit_rejects_visual_collision(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_corrupted_import_rejected(monkeypatch, "visual_mask")
+
+
+def test_static_audit_rejects_actuator_gain(monkeypatch: pytest.MonkeyPatch) -> None:
+    _assert_corrupted_import_rejected(monkeypatch, "actuator_gain")

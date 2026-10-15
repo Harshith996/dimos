@@ -103,6 +103,11 @@ class TrackingEnv:
         self._rejected_stale_input = False
 
     @property
+    def current_target(self) -> TargetFrame | None:
+        """Return the immutable current reference without refreshing its timestamp."""
+        return self._target
+
+    @property
     def time_s(self) -> float:
         return float(self.data.time)
 

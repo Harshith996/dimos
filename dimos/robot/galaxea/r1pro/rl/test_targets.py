@@ -21,6 +21,7 @@ import pytest
 from dimos.robot.galaxea.r1pro.rl.targets import (
     CurrentTargetBuffer,
     FkTrajectorySource,
+    FrozenTargetSource,
     TargetFrame,
     generate_joint_trajectory,
 )
@@ -102,3 +103,45 @@ def test_orientation_mask_and_manifest_faults() -> None:
     assert not target.orientation_valid[1]
     with pytest.raises(ValueError, match="shape"):
         replace(target, position_valid=np.ones(3, bool))
+
+
+def test_frozen_source_replays_exact_past_samples_and_dropout() -> None:
+    source = FrozenTargetSource(
+        [
+            {
+                "query_time_s": 0.0,
+                "frame": {
+                    "positions_m": np.zeros((2, 3)),
+                    "quaternions_wxyz": np.array([[1.0, 0, 0, 0]] * 2),
+                    "stamp_s": 0.0,
+                },
+            },
+            {"query_time_s": 0.02, "frame": None},
+            {
+                "query_time_s": 0.04,
+                "frame": {
+                    "positions_m": np.ones((2, 3)),
+                    "quaternions_wxyz": np.array([[1.0, 0, 0, 0]] * 2),
+                    "stamp_s": 0.04,
+                },
+            },
+        ]
+    )
+    assert source.sample(0.019).stamp_s == 0
+    assert source.sample(0.021) is None
+    np.testing.assert_array_equal(source.sample(0.04).positions_m, np.ones((2, 3)))
+    assert source.sample(0.05) is None
+    with pytest.raises(ValueError, match="future target"):
+        FrozenTargetSource(
+            [
+                {
+                    "query_time_s": 0.0,
+                    "frame": {
+                        "positions_m": np.zeros((2, 3)),
+                        "quaternions_wxyz": np.array([[1.0, 0, 0, 0]] * 2),
+                        "stamp_s": 0.01,
+                    },
+                },
+                {"query_time_s": 0.02, "frame": None},
+            ]
+        )

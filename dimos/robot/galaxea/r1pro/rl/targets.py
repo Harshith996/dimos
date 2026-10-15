@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -249,3 +249,34 @@ HELDOUT_MANIFEST = (
     EvaluationCase(41003, "pause", dropout_s=(3.0, 3.4)),
     EvaluationCase(41004, "reversal", stale_s=(3.0, 3.4)),
 )
+
+
+class FrozenTargetSource:
+    """Replay recorded references verbatim; select only the latest available frame.
+
+    The source holds the prior sampled reference between grid times. It never
+    interpolates with a future frame. A recorded dropout remains a dropout.
+    """
+
+    def __init__(self, samples: list[dict[str, Any]]) -> None:
+        if len(samples) < 2:
+            raise ValueError("Frozen targets require at least two samples")
+        self.times_s = np.array([sample["query_time_s"] for sample in samples], dtype=float)
+        if not np.isfinite(self.times_s).all() or np.any(np.diff(self.times_s) <= 0):
+            raise ValueError("Frozen sample times must be finite and increasing")
+        self.frames: tuple[TargetFrame | None, ...] = tuple(
+            None if sample["frame"] is None else TargetFrame(**sample["frame"])
+            for sample in samples
+        )
+        for query_time, frame in zip(self.times_s, self.frames, strict=True):
+            if frame is not None and frame.stamp_s > query_time + 1e-9:
+                raise ValueError("Frozen reference cannot contain a future target")
+        self.times_s.flags.writeable = False
+
+    def sample(self, now_s: float) -> TargetFrame | None:
+        if not np.isfinite(now_s):
+            raise ValueError("Sample time must be finite")
+        if now_s < self.times_s[0] - 1e-9 or now_s > self.times_s[-1] + 1e-9:
+            return None
+        index = int(np.searchsorted(self.times_s, now_s + 1e-9, side="right")) - 1
+        return self.frames[max(0, index)]

@@ -1,0 +1,924 @@
+{
+  "status": "static_import_checks_passed",
+  "mujoco_version": "3.14.0",
+  "source_commit": "2e5d31e1784481a34d178006c0d0e18e0a84a82a",
+  "links": [
+    {
+      "name": "base_link",
+      "mass_kg": 47.63,
+      "inertia_eigenvalues_kg_m2": [
+        1.4647999989466727,
+        1.5789126861571636,
+        2.8372873148961633
+      ],
+      "relative_tensor_error": 1.0706257501113857e-06,
+      "max_tensor_error_kg_m2": 2.6654007323489992e-06,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "steer_motor_link1",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.00016212742229537044,
+        0.00021216153556811667,
+        0.00031697411385203504
+      ],
+      "relative_tensor_error": 1.5587494798028805e-06,
+      "max_tensor_error_kg_m2": 4.6401698973528964e-10,
+      "max_com_error_m": 4.049166439645813e-08
+    },
+    {
+      "name": "wheel_motor_link1",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.000710603853748395,
+        0.0007106038537484063,
+        0.0012783992188172971
+      ],
+      "relative_tensor_error": 5.016238886664747e-07,
+      "max_tensor_error_kg_m2": 7.8118271400196e-10,
+      "max_com_error_m": 3.508087710081542e-09
+    },
+    {
+      "name": "steer_motor_link2",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.0001621274222953704,
+        0.00021216153556811776,
+        0.0003169741138520348
+      ],
+      "relative_tensor_error": 1.5587494780601935e-06,
+      "max_tensor_error_kg_m2": 4.6401698873240263e-10,
+      "max_com_error_m": 4.0491664500541535e-08
+    },
+    {
+      "name": "wheel_motor_link2",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.0004542139791301355,
+        0.0004542139791301357,
+        0.000833150371732014
+      ],
+      "relative_tensor_error": 3.613922961923207e-07,
+      "max_tensor_error_kg_m2": 3.7173200639634835e-10,
+      "max_com_error_m": 2.892675080181721e-17
+    },
+    {
+      "name": "steer_motor_link3",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.00016212742229531333,
+        0.0002121615355680278,
+        0.00031697411385183115
+      ],
+      "relative_tensor_error": 1.5586842613679716e-06,
+      "max_tensor_error_kg_m2": 4.6401816617596195e-10,
+      "max_com_error_m": 2.1994967396021803e-08
+    },
+    {
+      "name": "wheel_motor_link3",
+      "mass_kg": 1.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.00045421397913013545,
+        0.0004542139791301365,
+        0.0008331503717320158
+      ],
+      "relative_tensor_error": 3.613928236695892e-07,
+      "max_tensor_error_kg_m2": 3.7173200834791226e-10,
+      "max_com_error_m": 8.53576078248493e-17
+    },
+    {
+      "name": "lidar_chassis_left_link",
+      "mass_kg": 0.265,
+      "inertia_eigenvalues_kg_m2": [
+        5.975833793610234e-06,
+        5.977206067454452e-06,
+        8.48663964320729e-06
+      ],
+      "relative_tensor_error": 4.803934305769551e-07,
+      "max_tensor_error_kg_m2": 3.899041919510477e-12,
+      "max_com_error_m": 5.917367399028983e-10
+    },
+    {
+      "name": "imu_chassis_link",
+      "mass_kg": 0.00069659,
+      "inertia_eigenvalues_kg_m2": [
+        1.1718999999993264e-08,
+        1.5993999999975096e-08,
+        2.6571000000031645e-08
+      ],
+      "relative_tensor_error": 1.3563005783884272e-07,
+      "max_tensor_error_kg_m2": 3.1795935830944783e-15,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "torso_link1",
+      "mass_kg": 5.72,
+      "inertia_eigenvalues_kg_m2": [
+        0.008121706951885778,
+        0.10736016208583221,
+        0.10931033096228202
+      ],
+      "relative_tensor_error": 2.4019593664925863e-06,
+      "max_tensor_error_kg_m2": 3.30958423541694e-07,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "torso_link2",
+      "mass_kg": 3.5,
+      "inertia_eigenvalues_kg_m2": [
+        0.0018490145974126094,
+        0.02608348532243753,
+        0.027574000080149853
+      ],
+      "relative_tensor_error": 4.057728785554875e-07,
+      "max_tensor_error_kg_m2": 1.4678940174484012e-08,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "torso_link3",
+      "mass_kg": 3.4,
+      "inertia_eigenvalues_kg_m2": [
+        0.001609899149557511,
+        0.0017023885399653786,
+        0.0023014123104771107
+      ],
+      "relative_tensor_error": 8.734373952812954e-07,
+      "max_tensor_error_kg_m2": 2.314221413893952e-09,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "torso_link4",
+      "mass_kg": 5.0,
+      "inertia_eigenvalues_kg_m2": [
+        0.013022987632463633,
+        0.021537261876730423,
+        0.026839750490805957
+      ],
+      "relative_tensor_error": 1.7395067022916845e-06,
+      "max_tensor_error_kg_m2": 4.950208712731219e-08,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "imu_torso_link",
+      "mass_kg": 0.00069659,
+      "inertia_eigenvalues_kg_m2": [
+        1.1718999999991773e-08,
+        1.599400000000699e-08,
+        2.6571000000001238e-08
+      ],
+      "relative_tensor_error": 1.5623594227322187e-08,
+      "max_tensor_error_kg_m2": 3.662660085451159e-16,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "head_link",
+      "mass_kg": 3.3054,
+      "inertia_eigenvalues_kg_m2": [
+        0.010357999997075837,
+        0.012179212344202764,
+        0.014621787658721389
+      ],
+      "relative_tensor_error": 8.140494085437269e-07,
+      "max_tensor_error_kg_m2": 1.2139408839262344e-08,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "camera_head_left_link",
+      "mass_kg": 0.05,
+      "inertia_eigenvalues_kg_m2": [
+        3.38746679054183e-06,
+        4.560582845866672e-06,
+        4.618250363591502e-06
+      ],
+      "relative_tensor_error": 5.890724415192554e-07,
+      "max_tensor_error_kg_m2": 3.120586897153527e-12,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "camera_head_right_link",
+      "mass_kg": 0.05,
+      "inertia_eigenvalues_kg_m2": [
+        3.38746679054183e-06,
+        4.560582845866672e-06,
+        4.618250363591502e-06
+      ],
+      "relative_tensor_error": 5.890724415192554e-07,
+      "max_tensor_error_kg_m2": 3.120586897153527e-12,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_base_link",
+      "mass_kg": 1.48,
+      "inertia_eigenvalues_kg_m2": [
+        0.001020098460468702,
+        0.0010297294459113383,
+        0.0014076720936199592
+      ],
+      "relative_tensor_error": 1.3165761096258543e-06,
+      "max_tensor_error_kg_m2": 2.0906409194977604e-09,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link1",
+      "mass_kg": 1.135,
+      "inertia_eigenvalues_kg_m2": [
+        0.0003025833180680899,
+        0.0004713590252402949,
+        0.0006160376566916153
+      ],
+      "relative_tensor_error": 5.660608090540022e-07,
+      "max_tensor_error_kg_m2": 3.4327209228347116e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link2",
+      "mass_kg": 0.92,
+      "inertia_eigenvalues_kg_m2": [
+        0.00031669595744625106,
+        0.00034546638526623813,
+        0.00037394765728751106
+      ],
+      "relative_tensor_error": 8.6364401798771e-07,
+      "max_tensor_error_kg_m2": 3.415502122122195e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link3",
+      "mass_kg": 1.245,
+      "inertia_eigenvalues_kg_m2": [
+        0.00033135184834213587,
+        0.0007387454871501515,
+        0.0007653726645077119
+      ],
+      "relative_tensor_error": 5.486464671068999e-07,
+      "max_tensor_error_kg_m2": 4.871065217848525e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link4",
+      "mass_kg": 0.827,
+      "inertia_eigenvalues_kg_m2": [
+        0.00010191946939650413,
+        0.00013918898075406617,
+        0.0001975315498494297
+      ],
+      "relative_tensor_error": 2.497536282620965e-06,
+      "max_tensor_error_kg_m2": 4.6475343189254607e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link5",
+      "mass_kg": 0.939,
+      "inertia_eigenvalues_kg_m2": [
+        0.00032222093363144506,
+        0.0006778190585124777,
+        0.0007049600078560775
+      ],
+      "relative_tensor_error": 8.823097262090539e-08,
+      "max_tensor_error_kg_m2": 6.75822374950584e-11,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link6",
+      "mass_kg": 0.527,
+      "inertia_eigenvalues_kg_m2": [
+        8.118042178094892e-05,
+        8.24978525039848e-05,
+        8.568572571506632e-05
+      ],
+      "relative_tensor_error": 4.04527523598475e-07,
+      "max_tensor_error_kg_m2": 4.1974670131816536e-11,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_arm_link7",
+      "mass_kg": 0.185,
+      "inertia_eigenvalues_kg_m2": [
+        3.7814523454680576e-05,
+        4.551500105375281e-05,
+        5.269547549156664e-05
+      ],
+      "relative_tensor_error": 5.144697601735699e-07,
+      "max_tensor_error_kg_m2": 2.408595675337799e-11,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "left_gripper_link",
+      "mass_kg": 0.0934809943288547,
+      "inertia_eigenvalues_kg_m2": [
+        5.1650626973684974e-05,
+        9.244050818411549e-05,
+        0.00012256965497107358
+      ],
+      "relative_tensor_error": 2.2438954125374336e-06,
+      "max_tensor_error_kg_m2": 3.4499322487864005e-10,
+      "max_com_error_m": 9.232213101645348e-09
+    },
+    {
+      "name": "left_gmsl_link",
+      "mass_kg": 0.0230739846089694,
+      "inertia_eigenvalues_kg_m2": [
+        3.3202774618648254e-06,
+        4.922666737391142e-06,
+        5.37335121571116e-06
+      ],
+      "relative_tensor_error": 5.405818249709258e-07,
+      "max_tensor_error_kg_m2": 3.248892567668071e-12,
+      "max_com_error_m": 3.0173506696679064e-09
+    },
+    {
+      "name": "left_gripper_finger_link1",
+      "mass_kg": 0.0640306062005943,
+      "inertia_eigenvalues_kg_m2": [
+        1.5860221045988067e-05,
+        2.5396738250122664e-05,
+        3.0501958637250664e-05
+      ],
+      "relative_tensor_error": 1.4076408722096162e-06,
+      "max_tensor_error_kg_m2": 3.8571353315491495e-11,
+      "max_com_error_m": 1.8180736400738584e-08
+    },
+    {
+      "name": "left_gripper_finger_link2",
+      "mass_kg": 0.063607579375099,
+      "inertia_eigenvalues_kg_m2": [
+        1.5854919852808375e-05,
+        2.539261129303347e-05,
+        3.049321250880235e-05
+      ],
+      "relative_tensor_error": 6.106647946528136e-07,
+      "max_tensor_error_kg_m2": 1.965348502973481e-11,
+      "max_com_error_m": 4.810629649493192e-08
+    },
+    {
+      "name": "left_d405_link",
+      "mass_kg": 0.0674054673338197,
+      "inertia_eigenvalues_kg_m2": [
+        1.7391589842585555e-05,
+        2.1711435697456354e-05,
+        2.4462296086928986e-05
+      ],
+      "relative_tensor_error": 1.0120927614135104e-06,
+      "max_tensor_error_kg_m2": 2.2420473047585497e-11,
+      "max_com_error_m": 1.6780061099300192e-08
+    },
+    {
+      "name": "right_arm_base_link",
+      "mass_kg": 1.48,
+      "inertia_eigenvalues_kg_m2": [
+        0.0010200984593221323,
+        0.0010297294470205135,
+        0.0014076720936573527
+      ],
+      "relative_tensor_error": 1.317068428965411e-06,
+      "max_tensor_error_kg_m2": 2.0904689615637573e-09,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link1",
+      "mass_kg": 1.135,
+      "inertia_eigenvalues_kg_m2": [
+        0.00030258335778078166,
+        0.00047134897980209716,
+        0.0006160376624171211
+      ],
+      "relative_tensor_error": 5.926036294648066e-07,
+      "max_tensor_error_kg_m2": 3.5758236747052835e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link2",
+      "mass_kg": 0.92,
+      "inertia_eigenvalues_kg_m2": [
+        0.0003246095989662413,
+        0.0003459530531588266,
+        0.00038205734787493225
+      ],
+      "relative_tensor_error": 8.768146821519932e-07,
+      "max_tensor_error_kg_m2": 3.4413111834989685e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link3",
+      "mass_kg": 1.245,
+      "inertia_eigenvalues_kg_m2": [
+        0.0003313296113810608,
+        0.0007387259947586686,
+        0.0007653243938602712
+      ],
+      "relative_tensor_error": 6.326885354143767e-07,
+      "max_tensor_error_kg_m2": 4.997192178286813e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link4",
+      "mass_kg": 0.827,
+      "inertia_eigenvalues_kg_m2": [
+        0.00012644131744487006,
+        0.00016193676630755577,
+        0.0002202619162475742
+      ],
+      "relative_tensor_error": 1.3456808329133713e-06,
+      "max_tensor_error_kg_m2": 3.12130236858766e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link5",
+      "mass_kg": 0.63,
+      "inertia_eigenvalues_kg_m2": [
+        0.00030391380218130364,
+        0.0006640961899881393,
+        0.0006913400078305574
+      ],
+      "relative_tensor_error": 2.752676338938623e-07,
+      "max_tensor_error_kg_m2": 1.970488788414701e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link6",
+      "mass_kg": 0.527,
+      "inertia_eigenvalues_kg_m2": [
+        8.117942207303627e-05,
+        8.249839111366969e-05,
+        8.568518681329413e-05
+      ],
+      "relative_tensor_error": 1.8971744868350272e-07,
+      "max_tensor_error_kg_m2": 2.1902464257951386e-11,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_arm_link7",
+      "mass_kg": 0.185,
+      "inertia_eigenvalues_kg_m2": [
+        3.982933580274457e-05,
+        9.466999987384743e-05,
+        9.983366432340802e-05
+      ],
+      "relative_tensor_error": 4.827537943331266e-07,
+      "max_tensor_error_kg_m2": 4.3881929130175096e-11,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_gripper_link",
+      "mass_kg": 0.24625,
+      "inertia_eigenvalues_kg_m2": [
+        9.863733194407354e-05,
+        0.0001651236680315734,
+        0.00017588000002435305
+      ],
+      "relative_tensor_error": 1.2874520167829883e-06,
+      "max_tensor_error_kg_m2": 3.325000741860769e-10,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_gmsl_link",
+      "mass_kg": 0.0230739846089694,
+      "inertia_eigenvalues_kg_m2": [
+        3.3202774618648254e-06,
+        4.922666737391142e-06,
+        5.37335121571116e-06
+      ],
+      "relative_tensor_error": 5.405818249709258e-07,
+      "max_tensor_error_kg_m2": 3.248892567668071e-12,
+      "max_com_error_m": 3.0173506696679064e-09
+    },
+    {
+      "name": "right_gripper_finger_link1",
+      "mass_kg": 0.027,
+      "inertia_eigenvalues_kg_m2": [
+        2.3577591568875836e-06,
+        5.7520403900387496e-06,
+        6.491500453073663e-06
+      ],
+      "relative_tensor_error": 1.2813784790388882e-07,
+      "max_tensor_error_kg_m2": 9.079095664330189e-13,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_gripper_finger_link2",
+      "mass_kg": 0.027,
+      "inertia_eigenvalues_kg_m2": [
+        2.357756162811933e-06,
+        5.752042613431867e-06,
+        6.4915012237562e-06
+      ],
+      "relative_tensor_error": 5.352478059918885e-07,
+      "max_tensor_error_kg_m2": 3.701201139598735e-12,
+      "max_com_error_m": 0.0
+    },
+    {
+      "name": "right_d405_link",
+      "mass_kg": 0.0674054673338197,
+      "inertia_eigenvalues_kg_m2": [
+        1.7391589842585555e-05,
+        2.1711435697456354e-05,
+        2.4462296086928986e-05
+      ],
+      "relative_tensor_error": 1.0120927614135104e-06,
+      "max_tensor_error_kg_m2": 2.2420473047585497e-11,
+      "max_com_error_m": 1.6780061099300192e-08
+    }
+  ],
+  "joint_origin_transforms_checked": [
+    "steer_motor_joint1",
+    "wheel_motor_joint1",
+    "steer_motor_joint2",
+    "wheel_motor_joint2",
+    "steer_motor_joint3",
+    "wheel_motor_joint3",
+    "lidar_chassis_left_joint",
+    "imu_chassis_joint",
+    "torso_joint1",
+    "torso_joint2",
+    "torso_joint3",
+    "torso_joint4",
+    "imu_torso_joint",
+    "head_joint",
+    "camera_head_left_joint",
+    "camera_head_right_joint",
+    "left_arm_base_joint",
+    "left_arm_joint1",
+    "left_arm_joint2",
+    "left_arm_joint3",
+    "left_arm_joint4",
+    "left_arm_joint5",
+    "left_arm_joint6",
+    "left_arm_joint7",
+    "left_gripper_joint",
+    "left_gmsl_joint",
+    "left_gripper_finger_joint1",
+    "left_gripper_finger_joint2",
+    "left_d405_joint",
+    "right_arm_base_joint",
+    "right_arm_joint1",
+    "right_arm_joint2",
+    "right_arm_joint3",
+    "right_arm_joint4",
+    "right_arm_joint5",
+    "right_arm_joint6",
+    "right_arm_joint7",
+    "right_gripper_joint",
+    "right_gmsl_joint",
+    "right_gripper_finger_joint1",
+    "right_gripper_finger_joint2",
+    "right_d405_joint"
+  ],
+  "collision_geometries": 43,
+  "noncolliding_visual_geometries": 43,
+  "exclusion_pairs_checked": 28,
+  "actuators": [
+    {
+      "joint": "left_arm_joint1",
+      "effort_cap_nm": 55.0,
+      "imported_force_range_nm": [
+        -55.0,
+        55.0
+      ],
+      "imported_control_range_rad": [
+        -4.41569,
+        1.27409
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 7.1209
+    },
+    {
+      "joint": "left_arm_joint2",
+      "effort_cap_nm": 55.0,
+      "imported_force_range_nm": [
+        -55.0,
+        55.0
+      ],
+      "imported_control_range_rad": [
+        -0.139593,
+        3.10669
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 7.1209
+    },
+    {
+      "joint": "left_arm_joint3",
+      "effort_cap_nm": 25.0,
+      "imported_force_range_nm": [
+        -25.0,
+        25.0
+      ],
+      "imported_control_range_rad": [
+        -2.32129,
+        2.32129
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 8.3776
+    },
+    {
+      "joint": "left_arm_joint4",
+      "effort_cap_nm": 25.0,
+      "imported_force_range_nm": [
+        -25.0,
+        25.0
+      ],
+      "imported_control_range_rad": [
+        -2.05949,
+        0.314193
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 8.3776
+    },
+    {
+      "joint": "left_arm_joint5",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -2.32129,
+        2.32129
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    },
+    {
+      "joint": "left_arm_joint6",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -1.01229,
+        1.01229
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    },
+    {
+      "joint": "left_arm_joint7",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -1.53589,
+        1.53589
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    },
+    {
+      "joint": "right_arm_joint1",
+      "effort_cap_nm": 55.0,
+      "imported_force_range_nm": [
+        -55.0,
+        55.0
+      ],
+      "imported_control_range_rad": [
+        -4.41569,
+        1.27409
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 7.1209
+    },
+    {
+      "joint": "right_arm_joint2",
+      "effort_cap_nm": 55.0,
+      "imported_force_range_nm": [
+        -55.0,
+        55.0
+      ],
+      "imported_control_range_rad": [
+        -3.10669,
+        0.139593
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 7.1209
+    },
+    {
+      "joint": "right_arm_joint3",
+      "effort_cap_nm": 25.0,
+      "imported_force_range_nm": [
+        -25.0,
+        25.0
+      ],
+      "imported_control_range_rad": [
+        -2.32129,
+        2.32129
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 8.3776
+    },
+    {
+      "joint": "right_arm_joint4",
+      "effort_cap_nm": 25.0,
+      "imported_force_range_nm": [
+        -25.0,
+        25.0
+      ],
+      "imported_control_range_rad": [
+        -2.05949,
+        0.314193
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 8.3776
+    },
+    {
+      "joint": "right_arm_joint5",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -2.32129,
+        2.32129
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    },
+    {
+      "joint": "right_arm_joint6",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -1.01229,
+        1.01229
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    },
+    {
+      "joint": "right_arm_joint7",
+      "effort_cap_nm": 18.0,
+      "imported_force_range_nm": [
+        -18.0,
+        18.0
+      ],
+      "imported_control_range_rad": [
+        -1.53589,
+        1.53589
+      ],
+      "imported_gain_prm": [
+        80.0,
+        0.0,
+        0.0
+      ],
+      "imported_bias_prm": [
+        0.0,
+        -80.0,
+        -8.0
+      ],
+      "imported_damping": 2.0,
+      "source_velocity_metadata_rad_s": 10.472
+    }
+  ],
+  "simulation_assumptions": {
+    "kp": 80,
+    "kv": 8,
+    "joint_damping": 2,
+    "timestep_s": 0.002,
+    "integrator": "implicitfast",
+    "fixed_base_and_torso": true
+  },
+  "limitations": [
+    "Convex mesh collision does not reproduce concave STL geometry.",
+    "URDF velocity metadata is not a MuJoCo hard speed constraint.",
+    "Mass and inertia transfer checks do not validate real dynamics.",
+    "Controller gains and damping are provisional simulation parameters."
+  ],
+  "hardware_variant_verified": false,
+  "dynamics_validated": false
+}
