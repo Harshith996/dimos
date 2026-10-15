@@ -66,44 +66,46 @@ def work(client: TestClient) -> None:
 
 
 def state_of(client: TestClient, id: str) -> str:
-    return next(u["state"] for u in client.get("/uploads").json()["uploads"] if u["id"] == id)
+    return next(u["state"] for u in client.get("/cloud/uploads").json()["uploads"] if u["id"] == id)
 
 
 def test_an_upload_goes_through_the_queue(
     client: TestClient, recording: Path, transfer: threading.Event, sent: list[Any]
 ) -> None:
     work(client)
-    upload = client.post("/uploads", json={"path": str(recording)}).json()
-    assert client.post("/uploads", json={"path": str(recording)}).json()["id"] == upload["id"]
-    until(lambda: client.get("/uploads").json()["uploads"][0]["bytesDone"] == 50)
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    assert client.post("/cloud/uploads", json={"path": str(recording)}).json()["id"] == upload["id"]
+    until(lambda: client.get("/cloud/uploads").json()["uploads"][0]["bytesDone"] == 50)
     transfer.set()
     until(lambda: state_of(client, upload["id"]) == "done")
-    done = client.get("/uploads").json()["uploads"][0]
+    done = client.get("/cloud/uploads").json()["uploads"][0]
     assert done["uploadId"] == "cloud-1" and done["bytesDone"] == 100
-    assert client.get(f"/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
+    assert client.get(f"/cloud/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
     assert any(key == "ns/dimos/events/upload" for key, _ in sent)
     assert client.app.state.gateway.uploads.rates == {}  # type: ignore[attr-defined]
-    assert client.delete("/uploads").json()["uploads"] == []
+    assert client.delete("/cloud/uploads").json()["uploads"] == []
 
 
 def test_a_running_upload_can_be_cancelled_and_retried(
     client: TestClient, recording: Path, transfer: threading.Event
 ) -> None:
     work(client)
-    upload = client.post("/uploads", json={"path": str(recording)}).json()
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
     until(lambda: state_of(client, upload["id"]) == "uploading")
-    assert client.post(f"/uploads/{upload['id']}/retry").status_code == 409
-    assert client.delete(f"/uploads/{upload['id']}").json() == {"ok": True}
+    assert client.post(f"/cloud/uploads/{upload['id']}/retry").status_code == 409
+    assert client.delete(f"/cloud/uploads/{upload['id']}").json() == {"ok": True}
     until(lambda: state_of(client, upload["id"]) == "cancelled")
     transfer.set()
-    assert client.post(f"/uploads/{upload['id']}/retry").json()["state"] == "queued"
+    assert client.post(f"/cloud/uploads/{upload['id']}/retry").json()["state"] == "queued"
     until(lambda: state_of(client, upload["id"]) == "done")
-    assert client.delete("/uploads/u99").status_code == 404
+    assert client.delete("/cloud/uploads/u99").status_code == 404
 
 
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
-    assert client.post("/uploads", json={"path": "relative.mcap"}).status_code == 400
-    assert client.post("/uploads", json={"path": str(tmp_path / "gone.mcap")}).status_code == 400
+    assert client.post("/cloud/uploads", json={"path": "relative.mcap"}).status_code == 400
+    assert (
+        client.post("/cloud/uploads", json={"path": str(tmp_path / "gone.mcap")}).status_code == 400
+    )
 
 
 def test_without_a_login_the_queue_waits(
@@ -112,8 +114,8 @@ def test_without_a_login_the_queue_waits(
     path = recording.rename(recording.with_name("nologin.mcap"))
     work(client)
     transfer.set()
-    upload = client.post("/uploads", json={"path": str(path)}).json()
-    until(lambda: client.get("/uploads").json()["waitingForLogin"])
+    upload = client.post("/cloud/uploads", json={"path": str(path)}).json()
+    until(lambda: client.get("/cloud/uploads").json()["waitingForLogin"])
     assert state_of(client, upload["id"]) == "queued"
 
 
@@ -174,3 +176,9 @@ def test_rate_gives_a_time_left_after_warming_up() -> None:
     rate.tick(2.0, 200)
     assert rate.bps == pytest.approx(100, rel=0.2)
     assert rate.eta(800) == pytest.approx(8, rel=0.3)
+
+
+def test_uploads_still_answer_at_their_3_0_path(client: TestClient) -> None:
+    assert client.get("/uploads").json() == client.get("/cloud/uploads").json()
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/cloud/uploads" in paths and "/uploads" not in paths
