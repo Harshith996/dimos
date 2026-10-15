@@ -38,7 +38,7 @@ provides:
       description: Stop this gateway (a running blueprint keeps running)
     - method: GET
       path: blueprints
-      description: Every blueprint (builtin or external) with the last scan's results (importable, import_error, missing_module, suggested_extras, modules) and the scan's state; ?fresh= rereads
+      description: Every blueprint (builtin or external) with the last scan's results (importable, import_error, missing_module, suggested_extras, modules) and the scan's state; ?fields= keeps only those fields (name always), ?fresh= rereads
     - method: POST
       path: blueprints/scan
       description: '202 {job}: scan which blueprints import again (or join the running scan); follow it at jobs/{job}'
@@ -53,7 +53,7 @@ provides:
       description: Save a blueprint's module arg overrides
     - method: GET
       path: catalog
-      description: Every blueprint, module and skill, with docs (slow)
+      description: 'Every blueprint, module and skill, with docs; ?module= (name or class) keeps one module, its skills and the blueprints using it (slow)'
     - method: GET
       path: robots
       description: Robot types, their blueprints and recommended configs

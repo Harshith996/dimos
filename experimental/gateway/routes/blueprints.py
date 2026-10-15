@@ -43,13 +43,22 @@ def check_name(name: str) -> None:
         raise ApiError(400, f"bad blueprint name: {name}")
 
 
-async def blueprint_list(state: State, fresh: bool = False) -> dict[str, Any]:
+async def blueprint_list(
+    state: State, fresh: bool = False, fields: list[str] | None = None
+) -> dict[str, Any]:
     if fresh:
         await state.relist()
     listed = state.listed or (await asyncio.to_thread(introspect.blueprint_list))["blueprints"]
     state.scanner.ensure("startup")
     scanned = [state.scanner.scanned(entry) for entry in listed]
+    if fields:
+        kept = {"name", *fields}
+        scanned = [{k: v for k, v in entry.items() if k in kept} for entry in scanned]
     return {"blueprints": scanned, "scan": state.scanner.snapshot()}
+
+
+def field_list(fields: str | None) -> list[str] | None:
+    return [f.strip() for f in fields.split(",") if f.strip()] if fields else None
 
 
 async def global_config() -> dict[str, Any]:
@@ -96,8 +105,11 @@ async def refused_args(state: State, name: str, args: list[str]) -> list[str]:
 
 
 @router.get("/blueprints", response_model=responses.BlueprintList)
-async def list_blueprints(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
-    return await blueprint_list(state, fresh)
+async def list_blueprints(
+    state: GatewayState, fresh: FreshQuery = False, fields: str | None = None
+) -> dict[str, Any]:
+    """Every blueprint and what the last scan found; ?fields=kind,importable keeps only those (and name)."""
+    return await blueprint_list(state, fresh, field_list(fields))
 
 
 @router.post("/blueprints/scan", status_code=202, response_model=responses.ScanStarted)
@@ -143,9 +155,20 @@ async def put_blueprint_config(
 
 
 @router.get("/catalog", response_model=responses.Catalog, openapi_extra=SLOW)
-async def catalog(state: GatewayState) -> dict[str, Any]:
+async def catalog(state: GatewayState, module: str | None = None) -> dict[str, Any]:
+    """Every blueprint, module and skill; ?module= (a name or class) keeps that module, its skills and the blueprints using it."""
     await state.scanner.wait()
-    return state.scanner.catalog()
+    found = state.scanner.catalog()
+    if module is None:
+        return found
+    modules = [m for m in found["modules"] if module in (m["name"], m["class"])]
+    names = {m["name"] for m in modules}
+    return {
+        **found,
+        "modules": modules,
+        "skills": [s for s in found["skills"] if s["module"] in names],
+        "blueprints": [b for b in found["blueprints"] if names & set(b["modules"])],
+    }
 
 
 @router.get("/robots", response_model=responses.Robots)

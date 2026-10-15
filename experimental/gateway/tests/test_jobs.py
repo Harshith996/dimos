@@ -104,6 +104,17 @@ def test_the_scan_runs_on_demand_as_a_job_and_survives_a_crash(
     ]
     assert catalog["skills"][0]["module"] == "cam"
     assert any(e.startswith("blueprint missing: ") for e in catalog["errors"])
+    one = client.get("/catalog?module=x.Cam").json()
+    assert [m["name"] for m in one["modules"]] == ["cam"] and [
+        s["name"] for s in one["skills"]
+    ] == ["snap"]
+    assert client.get("/catalog?module=nope").json()["modules"] == []
+    names = client.get("/blueprints?fields=name").json()["blueprints"]
+    assert {b["name"] for b in names} == set(found) and all(b.keys() == {"name"} for b in names)
+    assert client.get("/blueprints?fields=robot").json()["blueprints"][0].keys() <= {
+        "name",
+        "robot",
+    }
     again = client.post("/blueprints/scan").json()["job"]
     assert again != job and client.get("/blueprints").json()["scan"]["stale"]
 
