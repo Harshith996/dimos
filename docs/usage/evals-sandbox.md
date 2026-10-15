@@ -58,6 +58,9 @@ SUITE = [
   router dials itself, for a peer that only listens, e.g. `raw-robot-bridge` at
   `tcp/127.0.0.1:7448`, which serves plain JSON/bytes topics under `robot/`.
 - `ready_key` is a zenoh key expression the robot must publish before the agent starts.
+- `record` picks what the recorder keeps: `{"robot/lidar/**": 1.0, "robot/odom/**": None}`
+  keeps lidar at most once a second, odometry whole, and drops every other key. Leave it
+  unset to keep everything, which for a lidar is gigabytes an hour.
 - `done_schema` is the JSON schema of the `done` tool's arguments. Pi validates each call;
   an invalid call is an error the agent sees and can retry, and the first valid call ends
   the run. A run that never makes a valid call scores 0 and `evaluate` is not called.
@@ -128,6 +131,7 @@ dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
 
 - The robot container runs `sandbox-go2-supermarket` with `--hide-dimos`: the agent sees
   only raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
+- The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
 - `GroundTruthLog` writes the true pose and every contact to the case directory, which
   only the grader reads.
 - `evaluate` runs the agent's command for 30 minutes, then scores map coverage (the share

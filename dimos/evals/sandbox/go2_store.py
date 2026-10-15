@@ -164,7 +164,12 @@ def _case(case_id: str, prompt: str) -> SandboxCase:
         ),
         ready_key="robot/lidar/xyz_f32",
         ready_timeout_s=900.0,  # the first start compiles the store model, minutes
-        record_max_hz={"robot/lidar/**": 1.0},
+        record={
+            "robot/lidar/**": 1.0,
+            "robot/camera/**": 2.0,  # none in this sim; kept for a real Go2's camera
+            "robot/odom/**": None,
+            "robot/cmd_vel/**": None,  # what the agent told the dog to do
+        },
         done_schema=DONE_SCHEMA,
         evaluate=evaluate,
         timeout_s=4 * 3600.0,

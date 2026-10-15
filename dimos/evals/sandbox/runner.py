@@ -274,7 +274,7 @@ class SandboxRunner:
                     "dimos.evals.sandbox.recorder",
                     ROBOT_ENDPOINT,
                     "/case/zenoh.db",
-                    *(f"{key}={hz}" for key, hz in case.record_max_hz.items()),
+                    *([json.dumps(dict(case.record))] if case.record is not None else []),
                 ),
                 "volumes": [f"{case_dir}:/case"],
             }
