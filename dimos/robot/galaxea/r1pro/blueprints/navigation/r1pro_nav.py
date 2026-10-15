@@ -33,20 +33,20 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_lidar_odometry,
 )
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_WIDTH_M,
+    R1PRO_MAX_STEP_HEIGHT_M,
+    R1PRO_OVERHEAD_CLEARANCE_M,
+    R1PRO_ROTATION_DIAMETER_M,
+)
 from dimos.robot.galaxea.r1pro.head_cameras import HeadLeftCameraConfig
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 from dimos.visualization.vis_module import vis_module
 
-# First-pass R1 Pro clearances; tune on the robot.
-CHASSIS_WIDTH_M = 0.65
-ROTATION_DIAMETER_M = 0.9
-OVERHEAD_CLEARANCE_M = 1.9
-MAX_STEP_HEIGHT_M = 0.03
-
 VOXEL_SIZE_M = 0.07
 # A hard limit, so the chassis can turn in place anywhere on a route.
-WALL_CLEARANCE_M = ROTATION_DIAMETER_M / 2
+WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2
 PLANNER_VIZ_HZ = 0.0
 
 # Head depth kept only in the band from the floor to just above the lidar's plane, what the lidar sees worst;
@@ -148,12 +148,12 @@ r1pro_nav = autoconnect(
     ),
     MLSPlannerNative.blueprint(
         voxel_size=VOXEL_SIZE_M,
-        robot_height=OVERHEAD_CLEARANCE_M,
+        robot_height=R1PRO_OVERHEAD_CLEARANCE_M,
         start_z_offset_m=0.0,
         wall_clearance_m=WALL_CLEARANCE_M,
-        wall_buffer_m=CHASSIS_WIDTH_M,
+        wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
         wall_buffer_weight=100.0,
-        step_threshold_m=MAX_STEP_HEIGHT_M,
+        step_threshold_m=R1PRO_MAX_STEP_HEIGHT_M,
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
@@ -175,6 +175,6 @@ r1pro_nav = autoconnect(
     MovementManager.blueprint(),
 ).global_config(
     n_workers=8,
-    robot_width=CHASSIS_WIDTH_M,
-    robot_rotation_diameter=ROTATION_DIAMETER_M,
+    robot_width=R1PRO_CHASSIS_WIDTH_M,
+    robot_rotation_diameter=R1PRO_ROTATION_DIAMETER_M,
 )

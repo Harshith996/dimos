@@ -34,6 +34,12 @@ from dimos.robot.galaxea.r1pro.joints import (
 R1PRO_CHASSIS_LIDAR_IP = "192.168.2.100"
 R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
 
+# First-pass chassis clearances for navigation; tune on the robot.
+R1PRO_CHASSIS_WIDTH_M = 0.65
+R1PRO_ROTATION_DIAMETER_M = 0.9
+R1PRO_OVERHEAD_CLEARANCE_M = 1.9
+R1PRO_MAX_STEP_HEIGHT_M = 0.03
+
 
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(
     url="https://github.com/userguide-galaxea/URDF",
