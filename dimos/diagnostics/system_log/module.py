@@ -16,7 +16,8 @@
 
 ``system_log`` carries JSON records, each with a "type" and "t" (unix seconds):
 
-- health: CPU (total, per core, MHz), load, memory, temperatures, power rails/supplies/battery, fans, GPUs,
+- health: CPU (total, per core, MHz), load, memory, temperatures (on Apple silicon the GPU's from the SMC; channels
+  reading below absolute zero are listed as unreadable), power rails/supplies/battery, fans, GPUs,
   Wi-Fi (signal, SSID, bitrates, address), routes, network and disk throughput, Pi throttling
 - health_dump: every sample since the last dump, at ``sample_hz``, when an alert starts, the network changes or
   ``bad_event`` fires

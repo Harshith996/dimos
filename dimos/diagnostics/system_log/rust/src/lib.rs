@@ -19,3 +19,5 @@ pub mod log_tail;
 pub mod machine;
 pub mod module;
 pub mod parse;
+#[cfg(target_os = "macos")]
+pub mod smc;

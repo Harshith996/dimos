@@ -30,6 +30,7 @@ use sysinfo::{
 use crate::parse::{self, round};
 
 const SYS_CLASS: &str = "/sys/class";
+const ABSOLUTE_ZERO_C: f32 = -273.15;
 const PI_THROTTLED: &str = "/sys/devices/platform/soc/soc:firmware/get_throttled";
 const JETSON_GPU_LOAD: [&str; 2] = [
     "/sys/devices/gpu.0/load",
@@ -93,6 +94,24 @@ struct Slow {
     fields: Map<String, Value>,
     /// iface → `iw` link details, merged into that iface's /proc/net/wireless entry
     iw: Map<String, Value>,
+    /// merged into every sample's temps_c
+    temps: Map<String, Value>,
+}
+
+/// The hottest of the GPU's SMC sensors. M3 and later keep GPU temperatures in the SMC rather than in the IOHID
+/// sensors sysinfo reads, and M5 left the IOHID channels that used to carry them (`PMU tdev*`) unpopulated.
+#[cfg(target_os = "macos")]
+fn smc_temps(smc: Option<&crate::smc::Smc>) -> Map<String, Value> {
+    let hottest = smc
+        .map(|smc| smc.gpu_temps())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, celsius)| celsius)
+        .reduce(f32::max);
+    hottest
+        .map(|celsius| ("GPU".to_string(), json!(round(celsius as f64, 1))))
+        .into_iter()
+        .collect()
 }
 
 /// The parts that need a subprocess or change slowly: Wi-Fi link details, routes, GPUs, battery, disk usage.
@@ -159,7 +178,11 @@ fn read_slow(has_iw: bool, has_nvidia_smi: bool, timeout: Duration) -> Slow {
         );
     }
     slow.insert("uptime_s".into(), json!(System::uptime()));
-    Slow { fields: slow, iw }
+    Slow {
+        fields: slow,
+        iw,
+        temps: Map::new(),
+    }
 }
 
 pub struct Sampler {
@@ -183,10 +206,20 @@ impl Sampler {
         let shared = Arc::clone(&slow);
         std::thread::Builder::new()
             .name("system_log_slow".into())
-            .spawn(move || loop {
-                let readings = read_slow(has_iw, has_nvidia_smi, command_timeout);
-                *shared.lock().unwrap_or_else(|e| e.into_inner()) = readings;
-                std::thread::sleep(slow_period);
+            .spawn(move || {
+                // ~14 ms for an M5 Max's 84 GPU sensors, too slow to read every sample
+                #[cfg(target_os = "macos")]
+                let smc = crate::smc::Smc::open();
+                loop {
+                    #[allow(unused_mut)]
+                    let mut readings = read_slow(has_iw, has_nvidia_smi, command_timeout);
+                    #[cfg(target_os = "macos")]
+                    {
+                        readings.temps = smc_temps(smc.as_ref());
+                    }
+                    *shared.lock().unwrap_or_else(|e| e.into_inner()) = readings;
+                    std::thread::sleep(slow_period);
+                }
             })
             .expect("spawn the system_log_slow thread");
         Self {
@@ -219,19 +252,31 @@ impl Sampler {
             .filter(|&f| f > 0)
             .collect();
         let load = System::load_average();
-        let mut temps: Map<String, Value> = self
-            .components
-            .list()
-            .iter()
-            .filter_map(|c| {
-                Some((
-                    c.label().to_string(),
-                    json!(round(c.temperature()? as f64, 1)),
-                ))
-            })
-            .collect();
+        let (mut temps, mut unreadable) = (Map::new(), Vec::new());
+        for component in self.components.list() {
+            let Some(celsius) = component.temperature() else {
+                continue;
+            };
+            // below absolute zero is a channel with nothing on it (an M5's `PMU tdev*` read about -9200), not a temperature
+            if celsius < ABSOLUTE_ZERO_C {
+                unreadable.push(component.label().to_string());
+            } else {
+                temps.insert(
+                    component.label().to_string(),
+                    json!(round(celsius as f64, 1)),
+                );
+            }
+        }
+        unreadable.sort();
         let sys_class = Path::new(SYS_CLASS);
         temps.extend(parse::thermal_zones(&sys_class.join("thermal")));
+        temps.extend(
+            self.slow
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .temps
+                .clone(),
+        );
         let (rails, fans) = parse::hwmon(&sys_class.join("hwmon"));
         let mut sample = json!({
             "cpu_percent": round(self.system.global_cpu_usage() as f64, 1),
@@ -245,6 +290,7 @@ impl Sampler {
                 "swap_used_mb": self.system.used_swap() >> 20,
             },
             "temps_c": temps,
+            "temps_unreadable": unreadable,
             "power": {
                 "rails_w": rails,
                 "supplies": parse::power_supplies(&sys_class.join("power_supply")),
