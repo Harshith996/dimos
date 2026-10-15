@@ -46,8 +46,9 @@ from dimos.msgs.std_msgs.String import String
 
 class SystemLogConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/diagnostics/system_log/rust"
-    executable: str = "../../../../target/release/system_log"
-    build_command: str | None = "cargo build --release -p dimos-system-log"
+    executable: str = "result/bin/system_log"
+    # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
+    build_command: str | None = "nix build -L ."
     stdin_config: bool = True
 
     sample_hz: float = Field(default=4.0, ge=0.1, le=100.0)
