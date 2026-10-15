@@ -118,6 +118,7 @@ class PerceptionLocalize(Module):
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
+        self._clouds: dict[str, PointCloud2] = {}  # by instance id, as last reported
 
         memory_frames = int(self.config.horizon_s * EMBED_HZ)
         feed_frames = self.config.feed_frames
@@ -295,6 +296,7 @@ class PerceptionLocalize(Module):
                     )
                 lines.append(line)
             for hit in hits:
+                self._clouds[hit.instance_id] = hit.point_cloud
                 x, y, z = hit.position_world_xyz
                 line = f"{query!r} at ({x:.2f}, {y:.2f}, {z:.2f}) in {hit.frame_id} "
                 box = footprint(hit.point_cloud.as_numpy()[0])
@@ -309,6 +311,12 @@ class PerceptionLocalize(Module):
                     f"id={hit.instance_id} seen {max(0.0, head - hit.last_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def object_cloud(self, object_id: str) -> PointCloud2 | None:
+        """The world-frame point cloud of an object localize reported, by its id; None if no
+        call has reported that id."""
+        return self._clouds.get(object_id)
 
 
 def footprint(
