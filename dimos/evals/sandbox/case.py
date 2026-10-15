@@ -89,6 +89,9 @@ class SandboxCase:
     timeout_s: float = 600.0
     threshold: float = 1.0
     tags: frozenset[str] = frozenset()
+    # What the recorder keeps: zenoh key expression -> most samples a second (None keeps
+    # every sample); keys matching none are dropped. None records everything.
+    record: Mapping[str, float | None] | None = None
     done_tool: str = "done"
     done_description: str = (
         "Call this once the task is complete, with the requested result. It ends your run."
