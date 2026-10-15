@@ -176,9 +176,3 @@ def test_rate_gives_a_time_left_after_warming_up() -> None:
     rate.tick(2.0, 200)
     assert rate.bps == pytest.approx(100, rel=0.2)
     assert rate.eta(800) == pytest.approx(8, rel=0.3)
-
-
-def test_uploads_still_answer_at_their_3_0_path(client: TestClient) -> None:
-    assert client.get("/uploads").json() == client.get("/cloud/uploads").json()
-    paths = client.get("/openapi.json").json()["paths"]
-    assert "/cloud/uploads" in paths and "/uploads" not in paths

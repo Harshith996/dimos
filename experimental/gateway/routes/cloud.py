@@ -14,8 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -23,21 +22,7 @@ from pydantic import BaseModel
 from experimental.gateway import responses
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState
 
-Handler = TypeVar("Handler", bound=Callable[..., Any])
-
 router = APIRouter()
-
-
-def upload_route(method: str, path: str = "", **options: Any) -> Callable[[Handler], Handler]:
-    """A /cloud/uploads route, also answered (unlisted) at its 3.0 path /uploads."""
-
-    # TODO: drop the /uploads aliases in API 4.0, once the apps call /cloud/uploads
-    def register(handler: Handler) -> Handler:
-        getattr(router, method)(f"/cloud/uploads{path}", **options)(handler)
-        getattr(router, method)(f"/uploads{path}", include_in_schema=False, **options)(handler)
-        return handler
-
-    return register
 
 
 class UploadRequest(BaseModel):
@@ -72,12 +57,12 @@ async def logout(state: GatewayState) -> dict[str, Any]:
     return await state.uploads.logout()
 
 
-@upload_route("get", response_model=responses.Uploads)
+@router.get("/cloud/uploads", response_model=responses.Uploads)
 async def upload_list(state: GatewayState) -> dict[str, Any]:
     return state.uploads.listing()
 
 
-@upload_route("post", response_model=responses.Upload)
+@router.post("/cloud/uploads", response_model=responses.Upload)
 async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
     try:
         return state.uploads.enqueue(request.path, request.robotId, request.kind)
@@ -85,20 +70,20 @@ async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]
         raise ApiError(400, str(error))
 
 
-@upload_route("delete", response_model=responses.Uploads)
+@router.delete("/cloud/uploads", response_model=responses.Uploads)
 async def clear_finished(state: GatewayState) -> dict[str, Any]:
     return state.uploads.clear_finished()
 
 
-@upload_route(
-    "get", "/uploaded", response_model=responses.UploadedByPath | responses.Uploaded | None
+@router.get(
+    "/cloud/uploads/uploaded", response_model=responses.UploadedByPath | responses.Uploaded | None
 )
 async def uploaded(state: GatewayState, path: str | None = None) -> Any:
     """Every file uploaded before, or with `path` that one file (null if it never was)."""
     return state.uploads.uploaded() if path is None else state.uploads.uploaded_one(path)
 
 
-@upload_route("delete", "/{id}", response_model=responses.Ok)
+@router.delete("/cloud/uploads/{id}", response_model=responses.Ok)
 async def cancel(state: GatewayState, id: str) -> dict[str, Any]:
     try:
         state.uploads.cancel(id)
@@ -107,7 +92,7 @@ async def cancel(state: GatewayState, id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
-@upload_route("post", "/{id}/retry", response_model=responses.Upload)
+@router.post("/cloud/uploads/{id}/retry", response_model=responses.Upload)
 async def retry(state: GatewayState, id: str) -> dict[str, Any]:
     """Queue a finished upload again."""
     try:
