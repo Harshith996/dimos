@@ -1,0 +1,134 @@
+{
+  "name": "dual_openyam_workcell",
+  "date": "2026-10-15",
+  "status": "provisional: touch calibration; expected camera-to-fingertip error about 7 mm rms, worst about 10 mm",
+  "frames": {
+    "rig": "origin midway between the two arm bases at the bottom face of the base blocks; x forward, y toward the left arm, z up; oriented like the left base",
+    "base": "each arm's URDF {side}_base frame",
+    "camera": "overhead D405 colour optical frame: x right, y down, z out of the lens"
+  },
+  "arms": {
+    "left": {
+      "base_in_rig": {
+        "xyz_m": [
+          -0.00862,
+          0.22219,
+          -0.00559
+        ],
+        "quat_xyzw": [
+          -0.0,
+          -0.0,
+          0.0,
+          1.0
+        ],
+        "rpy_deg": [
+          -0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "joint_zero_offsets_rad": {
+        "joint3": -0.04907
+      },
+      "joint_zero_offsets_note": "add to the encoder reading; joint3 -2.81 +/- 0.36 deg from 8 touches, fit residual 3.1 mm rms"
+    },
+    "right": {
+      "base_in_rig": {
+        "xyz_m": [
+          0.00862,
+          -0.22219,
+          0.00559
+        ],
+        "quat_xyzw": [
+          -0.032517,
+          0.014623,
+          0.010943,
+          0.999304
+        ],
+        "rpy_deg": [
+          -3.71,
+          1.715,
+          1.199
+        ]
+      },
+      "joint_zero_offsets_rad": {
+        "joint3": -0.06793
+      },
+      "joint_zero_offsets_note": "add to the encoder reading; joint3 -3.89 +/- 0.61 deg from 8 touches, fit residual 4.1 mm rms"
+    }
+  },
+  "tool": {
+    "finger_length_from_housing_face_m": 0.0825,
+    "housing_face_z_in_gripper_m": -0.0635,
+    "fingertip_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.146
+    ],
+    "grasp_point_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.141
+    ],
+    "note": "printed fingers measure the same as stock (82-83 mm, calipers); grasp point = middle of the 10 mm pinch surface"
+  },
+  "table": {
+    "top_z_in_rig_m": -0.0346,
+    "hand_measured_z_m": -0.03
+  },
+  "overhead_camera": {
+    "serial": "230322272156",
+    "camera_in_rig": {
+      "xyz_m": [
+        -0.01676,
+        0.01263,
+        0.4152
+      ],
+      "quat_xyzw": [
+        0.688681,
+        -0.667454,
+        0.20986,
+        -0.190219
+      ],
+      "rpy_deg": [
+        -147.147,
+        -2.013,
+        -88.8
+      ]
+    },
+    "intrinsics_1280x720": {
+      "fx": 653.3819580078125,
+      "fy": 652.3980102539062,
+      "cx": 640.0418701171875,
+      "cy": 359.3155517578125,
+      "model": "distortion.inverse_brown_conrady",
+      "coeffs": [
+        -0.0545458048582077,
+        0.05949542298913002,
+        -0.0003498499863781035,
+        0.0013387323124334216,
+        -0.02008039318025112
+      ]
+    },
+    "depth_check": "depth agrees with the colour-derived board distance to +0.6 mm mean, 1.6 mm spread at 0.53 m"
+  },
+  "validation": {
+    "held_out": "6 touches on a second board placement, calibration fitted on the first placement only",
+    "before_krishna_model": {
+      "sideways_rms_mm": 31.9,
+      "rms_3d_mm": 32.6,
+      "worst_mm": 42.9
+    },
+    "after_this_method": {
+      "sideways_rms_mm": 4.6,
+      "height_mean_mm": 4.5,
+      "rms_3d_mm": 6.8,
+      "worst_mm": 10.5
+    },
+    "arms_agree_on_one_point_mm": {
+      "before": 43.1,
+      "after": 4.4
+    }
+  },
+  "raw_data": "/home/anvil/.local/share/dimos/calibration/dual_openyam/2026-10-14"
+}
