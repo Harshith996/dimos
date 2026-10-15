@@ -18,6 +18,7 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import hashlib
 import itertools
 import json
 import os
@@ -79,6 +80,32 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def fingerprint(dimos_dir: Path) -> str:
+    """What a scan's results depend on: the checkout (commit, and each changed file's size and time) and the venv."""
+    parts = [str(dimos_dir.resolve()), str(store.checkout_version(dimos_dir))]
+    parts.append(store.git(dimos_dir, "rev-parse", "HEAD") or "")
+    for line in (
+        store.git(dimos_dir, "status", "--porcelain", "--untracked-files=all") or ""
+    ).splitlines():
+        path = dimos_dir / line[3:].split(" -> ")[-1].strip('"')
+        try:
+            found = path.stat()
+            parts.append(f"{line} {found.st_size} {found.st_mtime_ns}")
+        except OSError:
+            parts.append(line)
+    for packages in sorted((store.venv_dir(dimos_dir) / "lib").glob("python*/site-packages")):
+        parts.append(f"{packages} {packages.stat().st_mtime_ns}")
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def saved_scan_file(dimos_dir: Path) -> Path:
+    return (
+        store.gateway_dir()
+        / "scans"
+        / f"{hashlib.sha256(str(dimos_dir.resolve()).encode()).hexdigest()[:16]}.json"
+    )
+
+
 class Scanner:
     def __init__(self, dimos_dir: Path, jobs: Jobs, command: list[str] | None = None) -> None:
         self.dimos_dir = dimos_dir
@@ -95,6 +122,8 @@ class Scanner:
         self.state = "idle"
         self.current: str | None = None
         self.finished_at: str | None = None
+        # a saved scan counts until something says the blueprints changed
+        self.trust_saved = True
 
     def snapshot(self) -> dict[str, Any]:
         stale = self.finished_at is not None and self.state != "done"
@@ -106,8 +135,36 @@ class Scanner:
         }
 
     def ensure(self, reason: str = "requested") -> None:
-        if self.task is None:
+        if self.task is None and not self.load():
             self.refresh(reason)
+
+    def load(self) -> bool:
+        """Takes the last scan saved for this checkout, when nothing it depends on changed since."""
+        if self.state == "done":
+            return True
+        if not self.trust_saved:
+            return False
+        saved = store.read_json(saved_scan_file(self.dimos_dir))
+        if not isinstance(saved, dict) or saved.get("fingerprint") != fingerprint(self.dimos_dir):
+            return False
+        self.results, self.modules = saved["results"], saved["modules"]
+        self.errors, self.names = saved["errors"], saved["names"]
+        self.finished_at, self.state = saved["finished_at"], "done"
+        return True
+
+    def save(self) -> None:
+        saved = {
+            "fingerprint": fingerprint(self.dimos_dir),
+            "finished_at": self.finished_at,
+            "results": self.results,
+            "modules": self.modules,
+            "errors": self.errors,
+            "names": self.names,
+        }
+        try:
+            store.write_atomic(saved_scan_file(self.dimos_dir), json.dumps(saved))
+        except OSError as error:
+            logger.warning(f"couldn't save the blueprint scan: {error}")
 
     def start(self, reason: str = "requested") -> Job:
         """The running scan's job, or a new scan's."""
@@ -125,14 +182,16 @@ class Scanner:
     def invalidate(self) -> None:
         if self.task is not None:
             self.task.cancel()
-            self.state = "idle"
+        self.state = "idle"
         self.task = None
+        self.trust_saved = False
 
     async def wait(self) -> None:
         while True:
             self.ensure()
             task = self.task
-            assert task is not None
+            if task is None:
+                return
             await asyncio.wait({task})
             if task is self.task:
                 return
@@ -201,8 +260,14 @@ class Scanner:
             failed = (
                 "the scan was cancelled" if job is not self.job or self.state == "idle" else None
             )
+            if ok:
+                # saved before the job says done, so whoever waited for it finds the scan on disk
+                self.finished_at = now_iso()
+                await asyncio.to_thread(self.save)
             job.finish(ok, None if ok else failed or (self.errors or ["the scan failed"])[-1])
             if job is self.job:
+                if ok:
+                    job.finished_at = self.finished_at
                 self.finished_at = job.finished_at
 
     async def child(self, request: dict[str, Any] | None) -> str | None:
