@@ -40,7 +40,6 @@ vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROV
 
 ```bash
 dimos run r1pro-coordinator      # the base: connection, head cameras, Mid-360 + Point-LIO, viewer
-dimos run r1pro-teleop           # + viewer WASD drives the chassis
 dimos run r1pro-nav              # base + head depth + 3D ray-traced map + MLS planner (click a goal)
 dimos run r1pro-manipulation     # dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview on mock hardware
