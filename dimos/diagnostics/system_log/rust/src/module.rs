@@ -43,7 +43,7 @@ pub struct Config {
     /// Seconds between refreshes of what needs a subprocess (iw, nvidia-smi, route, pmset) or changes slowly.
     #[validate(range(min = 0.1, max = 3600.0))]
     slow_period_s: f64,
-    /// Seconds a slow refresh waits on each subprocess before killing it, so a hung one can't stall sampling.
+    /// Seconds a slow refresh waits on each subprocess before killing it, so a hung one can't freeze those readings.
     #[validate(range(min = 0.1, max = 600.0))]
     command_timeout_s: f64,
     /// Seconds between "processes" records (they're also published with every dump).
@@ -252,7 +252,10 @@ impl Worker {
                 "no run log directory (DIMOS_RUN_LOG_DIR), so dimos' logs won't be on system_log"
             );
         }
-        let sampler = Sampler::new(Duration::from_secs_f64(config.command_timeout_s));
+        let sampler = Sampler::new(
+            Duration::from_secs_f64(config.command_timeout_s),
+            Duration::from_secs_f64(config.slow_period_s),
+        );
         Self {
             config,
             output,
@@ -280,17 +283,14 @@ impl Worker {
     fn run(mut self) {
         let period = Duration::from_secs_f64(1.0 / self.config.sample_hz);
         let start = Instant::now();
-        let (mut next_tick, mut next_publish, mut next_slow, mut next_processes, mut next_log) =
-            (start, start, start, start, start);
+        let (mut next_tick, mut next_publish, mut next_processes, mut next_log) =
+            (start, start, start, start);
         let mut active: BTreeMap<String, String> = BTreeMap::new();
         let mut last_link = String::new();
         loop {
             let now = Instant::now();
             if due(&mut next_log, now, self.config.log_poll_s) {
                 self.publish_logs();
-            }
-            if due(&mut next_slow, now, self.config.slow_period_s) {
-                self.sampler.refresh_slow();
             }
             let mut sample = self.sampler.sample();
             sample["t"] = json!(now_s());

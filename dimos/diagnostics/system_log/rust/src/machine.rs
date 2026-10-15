@@ -13,12 +13,13 @@
 // limitations under the License.
 
 //! What the computer is doing. A sample is cheap (sysinfo plus a few /proc and /sys reads) so it can run at a few
-//! Hz; what needs a subprocess (`iw`, `nvidia-smi`, `route`, `pmset`) is refreshed by `refresh_slow` and carried
-//! along in every sample.
+//! Hz; what needs a subprocess (`iw`, `nvidia-smi`, `route`, `pmset`) is refreshed on its own thread by `read_slow`
+//! and carried along in every sample.
 
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
@@ -86,105 +87,116 @@ fn refresh_processes(system: &mut System) {
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
 }
 
+#[derive(Default)]
+struct Slow {
+    /// merged into every sample
+    fields: Map<String, Value>,
+    /// iface → `iw` link details, merged into that iface's /proc/net/wireless entry
+    iw: Map<String, Value>,
+}
+
+/// The parts that need a subprocess or change slowly: Wi-Fi link details, routes, GPUs, battery, disk usage.
+fn read_slow(has_iw: bool, has_nvidia_smi: bool, timeout: Duration) -> Slow {
+    let mut slow = Map::new();
+    let mut iw = Map::new();
+    if cfg!(target_os = "linux") {
+        let wireless = parse::proc_net_wireless(
+            &parse::read(Path::new("/proc/net/wireless")).unwrap_or_default(),
+        );
+        iw = wireless
+            .keys()
+            .filter(|_| has_iw)
+            .map(|iface| {
+                (
+                    iface.clone(),
+                    Value::Object(parse::iw_link(&run("iw", &["dev", iface, "link"], timeout))),
+                )
+            })
+            .collect();
+        slow.insert(
+            "routes".into(),
+            json!(parse::proc_net_route(
+                &parse::read(Path::new("/proc/net/route")).unwrap_or_default()
+            )),
+        );
+    } else {
+        let route = parse::macos_route(&run("route", &["-n", "get", "default"], timeout));
+        slow.insert(
+            "routes".into(),
+            json!(route.map(|(_, route)| vec![route]).unwrap_or_default()),
+        );
+        slow.insert(
+            "battery".into(),
+            parse::pmset_batt(&run("pmset", &["-g", "batt"], timeout)).unwrap_or(Value::Null),
+        );
+    }
+    if has_nvidia_smi {
+        let query =
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw";
+        slow.insert(
+            "gpus".into(),
+            json!(parse::nvidia_smi(&run(
+                "nvidia-smi",
+                &[query, "--format=csv,noheader,nounits"],
+                timeout
+            ))),
+        );
+    }
+    let disks = Disks::new_with_refreshed_list();
+    let root = disks
+        .list()
+        .iter()
+        .filter(|d| Path::new("/").starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len());
+    if let Some(disk) = root {
+        let used = disk.total_space().saturating_sub(disk.available_space());
+        slow.insert(
+            "disk_percent".into(),
+            json!(round(
+                100.0 * used as f64 / disk.total_space().max(1) as f64,
+                1
+            )),
+        );
+    }
+    slow.insert("uptime_s".into(), json!(System::uptime()));
+    Slow { fields: slow, iw }
+}
+
 pub struct Sampler {
     system: System,
     networks: Networks,
     components: Components,
     last_net: Instant,
     last_disk: Option<(Instant, (u64, u64))>,
-    has_iw: bool,
-    has_nvidia_smi: bool,
-    command_timeout: Duration,
-    /// what `refresh_slow` found, merged into every sample
-    slow: Map<String, Value>,
-    /// iface → `iw` link details, merged into that iface's /proc/net/wireless entry
-    iw: Map<String, Value>,
+    /// the latest `read_slow`, refreshed on its own thread so a stuck command never delays a sample
+    slow: Arc<Mutex<Slow>>,
 }
 
 impl Sampler {
-    pub fn new(command_timeout: Duration) -> Self {
+    pub fn new(command_timeout: Duration, slow_period: Duration) -> Self {
         let mut system = System::new();
         // CPU usage is since the previous refresh; prime it so the first sample means something
         system.refresh_cpu_usage();
         refresh_processes(&mut system);
+        let slow = Arc::new(Mutex::new(Slow::default()));
+        let (has_iw, has_nvidia_smi) = (on_path("iw"), on_path("nvidia-smi"));
+        let shared = Arc::clone(&slow);
+        std::thread::Builder::new()
+            .name("system_log_slow".into())
+            .spawn(move || loop {
+                let readings = read_slow(has_iw, has_nvidia_smi, command_timeout);
+                *shared.lock().unwrap_or_else(|e| e.into_inner()) = readings;
+                std::thread::sleep(slow_period);
+            })
+            .expect("spawn the system_log_slow thread");
         Self {
             system,
             networks: Networks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
             last_net: Instant::now(),
             last_disk: None,
-            has_iw: on_path("iw"),
-            has_nvidia_smi: on_path("nvidia-smi"),
-            command_timeout,
-            slow: Map::new(),
-            iw: Map::new(),
+            slow,
         }
-    }
-
-    /// The parts that need a subprocess or change slowly: Wi-Fi link details, routes, GPUs, battery, disk usage.
-    pub fn refresh_slow(&mut self) {
-        let mut slow = Map::new();
-        let timeout = self.command_timeout;
-        if cfg!(target_os = "linux") {
-            let wireless = parse::proc_net_wireless(
-                &parse::read(Path::new("/proc/net/wireless")).unwrap_or_default(),
-            );
-            self.iw = wireless
-                .keys()
-                .filter(|_| self.has_iw)
-                .map(|iface| {
-                    (
-                        iface.clone(),
-                        Value::Object(parse::iw_link(&run("iw", &["dev", iface, "link"], timeout))),
-                    )
-                })
-                .collect();
-            slow.insert(
-                "routes".into(),
-                json!(parse::proc_net_route(
-                    &parse::read(Path::new("/proc/net/route")).unwrap_or_default()
-                )),
-            );
-        } else {
-            let route = parse::macos_route(&run("route", &["-n", "get", "default"], timeout));
-            slow.insert(
-                "routes".into(),
-                json!(route.map(|(_, route)| vec![route]).unwrap_or_default()),
-            );
-            slow.insert(
-                "battery".into(),
-                parse::pmset_batt(&run("pmset", &["-g", "batt"], timeout)).unwrap_or(Value::Null),
-            );
-        }
-        if self.has_nvidia_smi {
-            let query = "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw";
-            slow.insert(
-                "gpus".into(),
-                json!(parse::nvidia_smi(&run(
-                    "nvidia-smi",
-                    &[query, "--format=csv,noheader,nounits"],
-                    timeout
-                ))),
-            );
-        }
-        let disks = Disks::new_with_refreshed_list();
-        let root = disks
-            .list()
-            .iter()
-            .filter(|d| Path::new("/").starts_with(d.mount_point()))
-            .max_by_key(|d| d.mount_point().as_os_str().len());
-        if let Some(disk) = root {
-            let used = disk.total_space().saturating_sub(disk.available_space());
-            slow.insert(
-                "disk_percent".into(),
-                json!(round(
-                    100.0 * used as f64 / disk.total_space().max(1) as f64,
-                    1
-                )),
-            );
-        }
-        slow.insert("uptime_s".into(), json!(System::uptime()));
-        self.slow = slow;
     }
 
     /// One sample; rates (CPU %, network and disk throughput) are since the previous call.
@@ -253,19 +265,20 @@ impl Sampler {
         {
             sample["gpus"] = json!([{ "name": "jetson", "util_percent": load / 10.0 }]);
         }
-        for (key, value) in &self.slow {
+        for (key, value) in &self.slow.lock().unwrap_or_else(|e| e.into_inner()).fields {
             sample[key] = value.clone();
         }
         sample
     }
 
     fn wifi(&self) -> Value {
+        let slow = self.slow.lock().unwrap_or_else(|e| e.into_inner());
         let mut wifi = parse::proc_net_wireless(
             &parse::read(Path::new("/proc/net/wireless")).unwrap_or_default(),
         );
         for (iface, entry) in wifi.iter_mut() {
             if let (Some(entry), Some(Value::Object(link))) =
-                (entry.as_object_mut(), self.iw.get(iface))
+                (entry.as_object_mut(), slow.iw.get(iface))
             {
                 entry.extend(link.clone());
             }
