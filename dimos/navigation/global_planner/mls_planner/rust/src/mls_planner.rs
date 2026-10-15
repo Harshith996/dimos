@@ -82,6 +82,12 @@ pub struct Config {
     /// Seconds a goal may go without a safe path before it is aborted.
     #[validate(range(min = 0.0))]
     pub blocked_timeout_s: f32,
+    /// Seconds a followed goal may go without the robot moving before it is aborted.
+    #[validate(range(min = 0.0))]
+    pub progress_timeout_s: f32,
+    /// Ground-plane distance the robot must cover to count as moving.
+    #[validate(range(exclusive_min = 0.0))]
+    pub progress_min_m: f32,
     /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0
     /// disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
@@ -745,6 +751,8 @@ pub(crate) fn test_config() -> Config {
         goal_tolerance: 0.3,
         goal_z_tolerance: 0.5,
         blocked_timeout_s: 2.0,
+        progress_timeout_s: 10.0,
+        progress_min_m: 0.2,
         viz_publish_hz: 2.0,
         viz_region_m: 4.0,
         viz_sweep_regions: 0,

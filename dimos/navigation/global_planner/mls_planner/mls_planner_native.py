@@ -79,6 +79,10 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     goal_z_tolerance: float = 0.5
     # Seconds a goal may go without a safe path before the planner aborts it.
     blocked_timeout_s: float = 2.0
+    # Seconds a followed goal may go without the robot moving before it is aborted.
+    progress_timeout_s: float = 10.0
+    # Ground-plane distance the robot must cover to count as moving.
+    progress_min_m: float = 0.2
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
     # changed ones each tick, plus this many unchanged ones round robin.

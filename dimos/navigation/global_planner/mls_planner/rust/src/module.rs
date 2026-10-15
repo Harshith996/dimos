@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 
 use crate::goal_status::{
     clear_if_held, goal_request, stop_due, stop_on_arrival, Blocked, Goal, GoalId, GoalRequest,
-    LatestStatus, Report, StatusReporter, NO_POSE, NO_SAFE_PATH, PREEMPT_CANCELED,
-    PREEMPT_REPLACED,
+    LatestStatus, Report, Stall, StatusReporter, NO_POSE, NO_PROGRESS, NO_SAFE_PATH,
+    PREEMPT_CANCELED, PREEMPT_REPLACED,
 };
 use crate::mls_planner::{Config, Plan, Planner, RegionBounds};
 use crate::planner::snap_pose_to_cell;
@@ -419,6 +419,7 @@ fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> b
 struct GoalProgress {
     blocked: Option<Blocked>,
     followed: Option<GoalId>,
+    stall: Option<Stall>,
     last_path_at: Option<Instant>,
 }
 
@@ -438,9 +439,36 @@ impl GoalProgress {
         Some(timed_out)
     }
 
+    /// Time left before the stalled goal is aborted.
+    fn stall_remaining(&self, timeout: Duration) -> Option<Duration> {
+        self.stall
+            .map(|stall| stall.remaining(timeout, Instant::now()))
+    }
+
+    /// Take the followed goal once the robot has stood still for the whole timeout.
+    fn take_stalled(&mut self, timeout: Duration) -> Option<Stall> {
+        let stalled = self
+            .stall
+            .filter(|s| s.remaining(timeout, Instant::now()).is_zero())?;
+        self.stall = None;
+        Some(stalled)
+    }
+
+    /// Note where the robot stands on its way to the goal.
+    fn track(&mut self, goal: Goal, position: Xyz, min_m: f32) {
+        self.stall = Some(Stall::track(
+            goal,
+            position,
+            self.stall,
+            min_m,
+            Instant::now(),
+        ));
+    }
+
     /// Mark the goal blocked, keeping when its block began.
     fn block(&mut self, goal: Goal, reason: &'static str) {
         self.blocked = Some(Blocked::of(goal, reason, self.blocked, Instant::now()));
+        self.stall = None;
     }
 
     /// Whether an arrival stops the follower, which then follows nothing.
@@ -449,16 +477,19 @@ impl GoalProgress {
         if stop {
             self.followed = None;
         }
+        self.stall = None;
         stop
     }
 
-    /// Follow the goal's new path. Milliseconds since the last path, or -1.
-    fn follow(&mut self, goal: GoalId, produced: Instant) -> f64 {
+    /// Follow the goal's new path from this position. Milliseconds since the
+    /// last path, or -1.
+    fn follow(&mut self, goal: Goal, position: Xyz, min_m: f32, produced: Instant) -> f64 {
         let since_last_ms = self
             .last_path_at
             .map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
         self.last_path_at = Some(produced);
-        self.followed = Some(goal);
+        self.followed = Some(goal.id);
+        self.track(goal, position, min_m);
         since_last_ms
     }
 }
@@ -492,11 +523,13 @@ impl Worker {
         let mut seed_progress = SeedProgress::default();
         let mut progress = GoalProgress::default();
         let blocked_timeout = Duration::from_secs_f32(self.config.blocked_timeout_s);
+        let stall_timeout = Duration::from_secs_f32(self.config.progress_timeout_s);
         loop {
             let seeding = seed_progress.in_flight();
             let wait = [
                 seeding.then_some(SEED_SETTLE),
                 progress.blocked_remaining(blocked_timeout),
+                progress.stall_remaining(stall_timeout),
             ]
             .into_iter()
             .flatten()
@@ -516,6 +549,7 @@ impl Worker {
             if !woke {
                 self.abort_if_timed_out(&mut progress, blocked_timeout)
                     .await;
+                self.abort_if_stalled(&mut progress, stall_timeout).await;
                 continue;
             }
             loop {
@@ -540,6 +574,7 @@ impl Worker {
                 }
                 self.abort_if_timed_out(&mut progress, blocked_timeout)
                     .await;
+                self.abort_if_stalled(&mut progress, stall_timeout).await;
                 // Live updates apply first, then one seed region per pass.
                 let (seed, queued) = {
                     let mut queue = self.seed_regions.lock().expect("seed mutex");
@@ -742,10 +777,33 @@ impl Worker {
         }
     }
 
+    /// Abort a goal whose path the robot has not advanced on for the whole
+    /// timeout, and stop the follower.
+    async fn abort_if_stalled(&self, progress: &mut GoalProgress, timeout: Duration) {
+        if let (Some(stall), Some(position)) = (progress.stall, self.base_position()) {
+            progress.track(stall.goal, position, self.config.progress_min_m);
+        }
+        let Some(stalled) = progress.take_stalled(timeout) else {
+            return;
+        };
+        progress.followed = None;
+        if self.clear_goal(stalled.goal) {
+            publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+            self.status
+                .report(Report::new(
+                    stalled.goal.id,
+                    GoalStatus::ABORTED,
+                    NO_PROGRESS,
+                ))
+                .await;
+        }
+    }
+
     /// Gate and publish a replan. The planning itself lives in Planner::plan.
     async fn maybe_replan(&self, planner: &mut Planner, progress: &mut GoalProgress) {
         let Some(goal) = *self.active_goal.lock().expect("goal mutex") else {
             progress.blocked = None;
+            progress.stall = None;
             return;
         };
         let Some(start) = self.base_position() else {
@@ -782,7 +840,8 @@ impl Worker {
             Replan::Planned(Plan::Full(waypoints) | Plan::Truncated(waypoints)) => waypoints,
         };
         let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
-        let since_last_ms = progress.follow(goal.id, Instant::now());
+        let since_last_ms =
+            progress.follow(goal, start, self.config.progress_min_m, Instant::now());
 
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
@@ -1125,6 +1184,30 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 mod tests {
     use super::*;
     use crate::mls_planner::test_config;
+
+    #[test]
+    fn a_stall_restarts_only_when_the_robot_moves_or_the_goal_changes() {
+        let goal = |arrival: u64| Goal {
+            id: GoalId {
+                sec: 0,
+                nsec: 0,
+                arrival,
+            },
+            position: (5.0, 0.0, 0.0),
+        };
+        let timeout = Duration::from_secs(10);
+        let t0 = Instant::now();
+        let later = t0 + Duration::from_secs(4);
+        let end = t0 + timeout;
+        let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), None, 0.2, t0);
+        // Creeping, or standing higher, is not progress.
+        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall), 0.2, later);
+        assert!(still.remaining(timeout, end).is_zero());
+        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall), 0.2, later);
+        assert_eq!(moved.remaining(timeout, end), Duration::from_secs(4));
+        let replaced = Stall::track(goal(2), (0.0, 0.0, 0.0), Some(stall), 0.2, later);
+        assert_eq!(replaced.remaining(timeout, end), Duration::from_secs(4));
+    }
 
     #[test]
     fn a_goal_directly_above_the_start_is_not_reached() {

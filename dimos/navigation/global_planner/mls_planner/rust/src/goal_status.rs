@@ -35,6 +35,7 @@ pub(crate) const PREEMPT_CANCELED: &str = "canceled";
 /// Why a goal that ran out its blocked timeout was aborted.
 pub(crate) const NO_SAFE_PATH: &str = "no safe path";
 pub(crate) const NO_POSE: &str = "no robot pose";
+pub(crate) const NO_PROGRESS: &str = "no progress";
 
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
@@ -62,6 +63,43 @@ impl Blocked {
             goal,
             since,
             reason,
+        }
+    }
+
+    /// Time left before the goal is aborted. Zero once it has run out.
+    pub(crate) fn remaining(&self, timeout: Duration, now: Instant) -> Duration {
+        timeout.saturating_sub(now.duration_since(self.since))
+    }
+}
+
+/// A followed goal, where the robot last gained ground on it, and when.
+#[derive(Clone, Copy)]
+pub(crate) struct Stall {
+    pub(crate) goal: Goal,
+    anchor: Xyz,
+    since: Instant,
+}
+
+impl Stall {
+    /// Where the robot stands, anchored anew once it moved min_m or the goal
+    /// changed, else carried over.
+    pub(crate) fn track(
+        goal: Goal,
+        position: Xyz,
+        earlier: Option<Stall>,
+        min_m: f32,
+        now: Instant,
+    ) -> Self {
+        let moved = |earlier: &Stall| {
+            (earlier.anchor.0 - position.0).hypot(earlier.anchor.1 - position.1) >= min_m
+        };
+        match earlier.filter(|earlier| earlier.goal == goal && !moved(earlier)) {
+            Some(earlier) => earlier,
+            None => Self {
+                goal,
+                anchor: position,
+                since: now,
+            },
         }
     }
 
