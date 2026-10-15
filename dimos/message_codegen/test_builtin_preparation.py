@@ -19,9 +19,9 @@ import os
 from pathlib import Path
 import shutil
 
+from dimos_cdrgen.source_package import configuration, prepare as generate
 import pytest
 
-from dimos.message_codegen.source_package import configuration, prepare as generate
 from scripts.prepare_builtin_sources import prepare
 
 
@@ -46,7 +46,7 @@ def test_unprepared_product_fails_and_cached_preparation_is_complete(tmp_path, m
     def no_network(*args, **kwargs):
         raise AssertionError("Offline builtin preparation attempted a download")
 
-    monkeypatch.setattr("dimos.message_codegen.source_inputs.requests.get", no_network)
+    monkeypatch.setattr("dimos_cdrgen.source_inputs.requests.get", no_network)
     inputs = prepare(cache, offline=True, project=project)
     assert len(list(inputs.rglob("*.msg"))) == 73
     output = generate(project)

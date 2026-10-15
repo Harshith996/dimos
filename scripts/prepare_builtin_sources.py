@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 import shutil
 
-from dimos.message_codegen.source_inputs import prepare_sources
+from dimos_cdrgen.source_inputs import prepare_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT = ROOT / "packages/dimos-generated"

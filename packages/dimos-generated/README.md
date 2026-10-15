@@ -48,7 +48,7 @@ no download or native compilation. Python uses rosbags classes and CDR codecs:
 ```python
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
-from dimos_message_build.registry import encode, decode
+from dimos_cdrgen.registry import encode, decode
 
 header = Header(Time(17, 23), "map")
 assert decode(encode(header), Header) == header
@@ -59,7 +59,6 @@ assert decode(encode(header), Header) == header
 Prepare the backend parser first, then prepare builtin inputs as a separate action:
 
 ```sh
-python scripts/prepare_message_parser.py
 python -m scripts.prepare_builtin_sources
 # Reuse cached, hash-checked archives without network:
 python -m scripts.prepare_builtin_sources --offline
@@ -79,7 +78,7 @@ not the full builtin catalog. Product data do not select backend behavior.
 PEP 517/660 calls the same `generate_builtin()` implementation used by native
 source packaging. It emits Python files and native source projects, but never
 invokes a native compiler. A source build needs the matching
-`dimos-message-build` wheel, setuptools/wheel and their dependencies. An offline
+`dimos-cdrgen` wheel, setuptools/wheel and their dependencies. An offline
 build needs these in its wheelhouse:
 
 ```sh

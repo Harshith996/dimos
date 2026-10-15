@@ -18,9 +18,8 @@ import json
 from pathlib import Path
 import shutil
 
+from dimos_cdrgen.source_package import prepare
 import pytest
-
-from dimos.message_codegen.source_package import prepare
 
 
 def test_unlisted_sources_do_not_expand_the_public_catalog(tmp_path):

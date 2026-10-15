@@ -1813,6 +1813,8 @@ dependencies = [
     { name = "bleak" },
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
+    { name = "dimos-cdrgen" },
+    { name = "dimos-generated" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
@@ -2299,6 +2301,7 @@ lint = [
     { name = "xacro" },
 ]
 message-codegen = [
+    { name = "dimos-cdrgen", extra = ["prepare"] },
     { name = "pytest" },
     { name = "rosbags" },
     { name = "ruff" },
@@ -2355,7 +2358,6 @@ tests = [
     { name = "openai" },
     { name = "pre-commit" },
     { name = "py-spy" },
-    { name = "pybind11" },
     { name = "pygame" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -2470,6 +2472,8 @@ requires-dist = [
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "dimos-generated", editable = "packages/dimos-generated" },
     { name = "dimos-lcm", specifier = ">=0.1.4" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2645,6 +2649,7 @@ lint = [
     { name = "xacro" },
 ]
 message-codegen = [
+    { name = "dimos-cdrgen", extras = ["prepare"], specifier = "==0.1.0" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "rosbags", specifier = "==0.11.0" },
     { name = "ruff", specifier = "==0.14.3" },
@@ -2702,7 +2707,6 @@ tests = [
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
-    { name = "pybind11", specifier = "==3.0.1" },
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
@@ -2762,7 +2766,7 @@ tests-self-hosted = [
     { name = "openai" },
     { name = "pre-commit", specifier = "==4.2.0" },
     { name = "py-spy" },
-    { name = "pybind11", specifier = "==3.0.1" },
+    { name = "pybind11", specifier = ">=2.12" },
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "pytest-asyncio", specifier = "==1.4.0" },
@@ -2810,6 +2814,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/1a/31327fa4bb2a240783d0b41e315be2a4485eabf07ab032f49c6328f5f51b/dimos_cdrgen-0.1.0.tar.gz", hash = "sha256:69ea4955e64a769d56d4bd5e0fff44c98f96c29c5608125cd011cef2740624f0", size = 75010, upload-time = "2026-10-15T05:00:09.663Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/9c/086701c3249ed2caabe83cea008c3e08bd6063c48a1df852fbca6aadff50/dimos_cdrgen-0.1.0-py3-none-any.whl", hash = "sha256:6731e8900f7e61af419b8c77599587f32677c9d64f27ac15f5e78be4b76bc011", size = 70183, upload-time = "2026-10-15T05:00:08.098Z" },
+]
+
+[package.optional-dependencies]
+prepare = [
+    { name = "requests" },
+]
+
+[[package]]
+name = "dimos-generated"
+version = "0.1.0"
+source = { editable = "packages/dimos-generated" }
+dependencies = [
+    { name = "dimos-cdrgen" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "rosbags" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dimos-cdrgen", specifier = "==0.1.0" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "rosbags", specifier = "==0.11.0" },
 ]
 
 [[package]]

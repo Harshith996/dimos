@@ -29,7 +29,7 @@ import pickle
 from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos_message_build.registry import encode, decode, schema
+from dimos_cdrgen.registry import encode, decode, schema
 from dimos_generated_schemas.provider import message_types, package_root
 from pathlib import Path
 h = Header(Time(17, 23), 'map')
@@ -65,19 +65,6 @@ def test_cold_offline_source_sdist_wheel_and_editable(tmp_path):
         result = subprocess.run(command, cwd=cwd, env=environment, capture_output=True, text=True)
         assert result.returncode == 0, result.stdout + result.stderr
 
-    run(
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "wheel",
-            "--no-deps",
-            "--no-build-isolation",
-            "--wheel-dir",
-            str(wheels),
-            str(root / "dimos/message_codegen"),
-        ]
-    )
     checkout = tmp_path / "checkout"
     project = checkout / "packages/dimos-generated"
     shutil.copytree(

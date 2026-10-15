@@ -12,24 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Product adapter for generic source-package hooks."""
+"""Build the curated DimOS catalog with the published generator."""
 
 from pathlib import Path
 
-from dimos_message_build.source_package import SourceDistribution, setup_arguments
+from dimos_cdrgen.source_package import setup_arguments
 from setuptools import setup
 
-
-class BuiltinSourceDistribution(SourceDistribution):
-    def make_release_tree(self, base_dir: str, files: list[str]) -> None:
-        super().make_release_tree(base_dir, files)
-        metadata = Path(base_dir) / "pyproject.toml"
-        marker = "# Checkout-only uv source."
-        text = metadata.read_text()
-        if marker in text:
-            metadata.write_text(text.split(marker, 1)[0].rstrip() + "\n")
-
-
-arguments = setup_arguments(Path(__file__).resolve().parent)
-arguments["cmdclass"] = {"sdist": BuiltinSourceDistribution}
-setup(**arguments)
+setup(**setup_arguments(Path(__file__).resolve().parent))
