@@ -48,8 +48,13 @@ def dual_openyam_hardware(
     *,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
+    inertial_overrides: str | None = None,
 ) -> HardwareComponent:
-    """Select mock hardware or an explicitly configured dual-CAN adapter."""
+    """Select mock hardware or an explicitly configured dual-CAN adapter.
+
+    ``inertial_overrides`` is the path of a ``gravity_fit`` JSON whose per-link
+    mass and COM replace the URDF values in the adapter's gravity model.
+    """
     if left_can_port is None and right_can_port is None:
         return dual_openyam_mock_hardware()
     if left_can_port is None or right_can_port is None:
@@ -62,6 +67,7 @@ def dual_openyam_hardware(
             "runtime_config": DamiaoRuntimeConfig(
                 bus_devices={"left": left_can_port, "right": right_can_port},
                 gravity_comp=True,
+                inertial_overrides=inertial_overrides,
             )
         },
     )

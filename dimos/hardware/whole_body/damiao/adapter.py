@@ -27,12 +27,40 @@ import numpy as np
 import pinocchio
 
 from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.damiao.config import (
+    DamiaoRuntimeConfig,
+    LinkInertial,
+    load_inertial_overrides,
+)
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def apply_inertial_overrides(model: pinocchio.Model, overrides: Mapping[str, LinkInertial]) -> None:
+    """Replace the mass and COM of the named links in ``model`` (rotational inertia kept).
+
+    A link must be a body frame coincident with its joint, which holds for every
+    URDF link attached by a movable joint; pinocchio stores that body's inertia
+    on the joint. Raises ``ValueError`` for unknown or merged links.
+    """
+    for name, inertial in overrides.items():
+        if not model.existFrame(name):
+            raise ValueError(f"inertial override names unknown link {name!r}")
+        frame = model.frames[model.getFrameId(name)]
+        if frame.type != pinocchio.FrameType.BODY or not frame.placement.isIdentity(1e-9):
+            raise ValueError(
+                f"inertial override for {name!r}: not a body frame coincident with its joint"
+            )
+        joint_id = int(frame.parentJoint)
+        current = model.inertias[joint_id]
+        model.inertias[joint_id] = pinocchio.Inertia(
+            float(inertial.mass_kg),
+            np.asarray(inertial.com_m, dtype=np.float64),
+            current.inertia,
+        )
 
 
 class DamiaoWholeBodyAdapter(ABC):
@@ -392,6 +420,14 @@ class DamiaoWholeBodyAdapter(ABC):
         if robot_model is None:
             raise ValueError("Damiao arm safety requires a kinematic model")
         model = pinocchio.buildModelFromXML(robot_model.load().xml)
+        overrides = load_inertial_overrides(self._runtime_config.inertial_overrides)
+        if overrides:
+            apply_inertial_overrides(model, overrides)
+            logger.info(
+                "Damiao gravity model uses inertial overrides",
+                hardware_id=self._hardware_id,
+                links=sorted(overrides),
+            )
         controlled_joints = set(self.kinematic_joint_names)
         locked_joint_ids = [
             joint_id

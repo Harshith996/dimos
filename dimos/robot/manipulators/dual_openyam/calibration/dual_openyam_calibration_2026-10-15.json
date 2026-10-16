@@ -130,5 +130,96 @@
       "after": 4.4
     }
   },
-  "raw_data": "/home/anvil/.local/share/dimos/calibration/dual_openyam/2026-10-14"
+  "raw_data": "/home/anvil/.local/share/dimos/calibration/dual_openyam/2026-10-14",
+  "control_gains": {
+    "note": "MIT-mode kp/kd per joint for calibration moves, chosen from step sweeps with the gravity override applied (END-310). kd on DM4310 wrist joints must stay near 1.5: kd 3+ buzzes at 100 Hz. Right arm not swept yet; left values copied as a starting point.",
+    "chosen_on": "2026-10-16",
+    "gravity_override": "dimos/robot/manipulators/dual_openyam/calibration/gravity_both_2026-10-16.json (left from recording 20261016-010922-4571, right from 20261016-014420-3612; both 15 poses, 3 deg dithers)",
+    "left": {
+      "left_joint1": [
+        120,
+        5
+      ],
+      "left_joint2": [
+        120,
+        5
+      ],
+      "left_joint3": [
+        240,
+        5
+      ],
+      "left_joint4": [
+        80,
+        1.5
+      ],
+      "left_joint5": [
+        80,
+        1.5
+      ],
+      "left_joint6": [
+        80,
+        1.5
+      ]
+    },
+    "right": {
+      "right_joint1": [
+        120,
+        5
+      ],
+      "right_joint2": [
+        120,
+        5
+      ],
+      "right_joint3": [
+        240,
+        5
+      ],
+      "right_joint4": [
+        80,
+        1.5
+      ],
+      "right_joint5": [
+        80,
+        1.5
+      ],
+      "right_joint6": [
+        80,
+        1.5
+      ],
+      "status": "confirmed 2026-10-16 (recording 20261016-024912-c7b4): same gains as left pass on the right"
+    },
+    "baseline_before": {
+      "arm": [
+        80,
+        5
+      ],
+      "wrist": [
+        10,
+        1.5
+      ]
+    },
+    "confirmation": {
+      "recording": "20261016-024912-c7b4-dual-openyam-step-test",
+      "note": "both arms, +/-1 and +/-3 deg steps at the chosen gains with gravity_both applied; bias = mean of the +/-3 deg resting errors, deg",
+      "bias_deg": {
+        "left": [
+          -0.05,
+          0.21,
+          -0.04,
+          -0.08,
+          -0.05,
+          -0.03
+        ],
+        "right": [
+          0.0,
+          -0.14,
+          -0.02,
+          0.06,
+          0.0,
+          -0.08
+        ]
+      },
+      "open": "joint 2 on both arms keeps a 0.2 to 0.5 deg residual (gravity ~0.3 Nm plus kd at the MIT frame ceiling)"
+    }
+  }
 }
