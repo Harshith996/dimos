@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import json
+from pathlib import Path
 import shlex
 import subprocess
 import time
@@ -73,6 +74,8 @@ FRUIT = Zone("fruit", box=(19.0, 12.3, 26.7, 26.4))
 GRADE_RUN_S = 30 * 60
 # How long the store owner tries the system each time the agent says it is done.
 TRIAL_RUN_S = 20 * 60
+# These are sim time; a sim running this many times slower than the wall clock is cut short.
+WALL_CLOCK_LIMIT = 4
 LOOP_PERIOD_S = 10 * 60
 EXPECTED_LOOPS = 2
 # A complete map: this share of what the lidar sees from everywhere reachable.
@@ -148,15 +151,36 @@ DONE_SCHEMA = {
 }
 
 
+def sim_now(case_dir: Path) -> float:
+    """The simulator's clock: the time of the latest ground truth. Under load the sim runs
+    slower than the wall clock, and ground truth is stamped in sim time."""
+    with (case_dir / "ground_truth.jsonl").open("rb") as f:
+        f.seek(max(0, f.seek(0, 2) - 8192))
+        lines = f.read().splitlines()
+    for line in reversed(lines[1:-1] if len(lines) > 2 else lines):
+        try:
+            return float(json.loads(line)["t"])
+        except (ValueError, KeyError):
+            continue
+    raise RuntimeError("no ground truth yet")
+
+
 def run_system(
-    exec: Callable[..., subprocess.CompletedProcess[str]], command: str, seconds: float, log: str
-) -> None:
-    """The agent's command, from /root/work, for *seconds*; then everything it started is killed."""
-    exec(
-        f"cd /root/work && timeout -k 10 {seconds:.0f} bash -lc {shlex.quote(command)} "
-        f"> /root/work/{log} 2>&1; {KILL_AGENT_PROCESSES}",
-        timeout=seconds + 60,
-    )
+    exec: Callable[..., subprocess.CompletedProcess[str]],
+    case_dir: Path,
+    command: str,
+    seconds: float,
+    log: str,
+) -> float:
+    """The agent's command, from /root/work, for *seconds* of sim time; then everything it
+    started is killed. Returns the sim time it started at."""
+    started = sim_now(case_dir)
+    exec(f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/work/{log} 2>&1 &")
+    give_up = time.monotonic() + WALL_CLOCK_LIMIT * seconds
+    while sim_now(case_dir) < started + seconds and time.monotonic() < give_up:
+        time.sleep(5.0)
+    exec(KILL_AGENT_PROCESSES)
+    return started
 
 
 def store_owner(
@@ -174,8 +198,9 @@ def store_owner(
         tried += 1
         assert conversation.done is not None
         command = conversation.done["command"]
-        started = time.time()
-        run_system(conversation.exec, command, trial_s, "run-output.log")
+        started = run_system(
+            conversation.exec, conversation.case_dir, command, trial_s, "run-output.log"
+        )
         truth = GroundTruth.load(conversation.case_dir / "ground_truth.jsonl")
         problems = what_went_wrong(truth, started)
         if not problems:
@@ -219,8 +244,7 @@ def evaluate(o: SandboxOutcome) -> float:
     (e) collisions: any contact but feet on floor, at any point, costs COLLISION_PENALTY each
     """
     command = o.done["command"]
-    started = time.time()
-    run_system(o.exec, command, GRADE_RUN_S, "grading-run.log")
+    started = run_system(o.exec, o.case_dir, command, GRADE_RUN_S, "grading-run.log")
     log_tail = o.exec("tail -c 4000 /root/work/grading-run.log").stdout
     _ = o.recording  # stop the recorder: the run is over
 

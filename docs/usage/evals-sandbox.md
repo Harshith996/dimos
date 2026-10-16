@@ -179,11 +179,12 @@ dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
 - `GroundTruthLog` writes the true pose and every contact to the case directory, which
   only the grader reads.
 - The human is the store owner (`store_owner`). Until the agent calls done they say "I don't
-  understand and I don't care..."; after each done they run its command for 20 minutes
+  understand and I don't care..."; after each done they run its command for 20 minutes of sim time
   and, unless the dog reached both places and looped once without bumping anything, tell it
   what they saw ("The dog barely moved...", "It never went to the fruit stand.") and ask for
   a fix, at most 3 times. Its output is `/root/work/run-output.log`.
-- `evaluate` then runs the agent's command for 30 minutes, then scores map coverage (the share
+- `evaluate` then runs the agent's command for 30 minutes of sim time (the sim can run slower
+  than the wall clock when the machine is loaded; ground truth is in sim time), then scores map coverage (the share
   of the store its lidar saw, from the true poses, against what is visible from every
   reachable spot), reaching the entrance and the fruit stand, entrance/fruit round trips,
   and multiplies by a penalty for each collision. `grading.json` has the breakdown.
