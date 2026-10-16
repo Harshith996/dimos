@@ -45,6 +45,10 @@ VOXEL_SIZE_M = 0.07
 # A hard limit, so the chassis can turn in place anywhere on a route.
 WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2
 PLANNER_VIZ_HZ = 0.0
+# How far apart a sensor sample and the tf it is placed with may be, for every module here that matches them: the lidar
+# mount tf comes at 5 Hz, Point-LIO's at 10 with jitter, and the Livox cloud arrives ~0.11 s behind its stamp (0.1 s
+# dropped clouds and head-depth frames).
+TF_TOLERANCE_S = 0.5
 
 
 r1pro_nav = autoconnect(
@@ -56,13 +60,19 @@ r1pro_nav = autoconnect(
     r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
-    UrdfManager.blueprint(**R1PRO_URDF_MANAGER_CONFIG).remappings(
+    UrdfManager.blueprint(
+        **R1PRO_URDF_MANAGER_CONFIG,
+        tf_tolerance_s=TF_TOLERANCE_S,
+        tf_forward_tolerance_s=TF_TOLERANCE_S,
+    ).remappings(
         [
             (UrdfManager, "pointcloud", "lidar_with_robot"),
             (UrdfManager, "filtered_pointcloud", "lidar"),
         ]
     ),
-    r1pro_head_depth().remappings([(Depth2DepthCloud, "depth_cloud", "lidar")]),
+    r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S).remappings(
+        [(Depth2DepthCloud, "depth_cloud", "lidar")]
+    ),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
         max_range=10.0,
@@ -72,8 +82,7 @@ r1pro_nav = autoconnect(
         global_emit_every=50,
         support_min=4,
         worker_threads=3,
-        # The Livox cloud arrives ~0.11 s behind its stamp; 0.1 dropped clouds on jitter.
-        tf_match_tolerance_s=0.25,
+        tf_match_tolerance_s=TF_TOLERANCE_S,
     ),
     MLSPlannerNative.blueprint(
         voxel_size=VOXEL_SIZE_M,
