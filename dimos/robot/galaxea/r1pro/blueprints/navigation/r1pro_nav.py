@@ -24,7 +24,6 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
@@ -34,14 +33,14 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_WIDTH_M,
     R1PRO_MAX_STEP_HEIGHT_M,
-    R1PRO_MODEL,
     R1PRO_OVERHEAD_CLEARANCE_M,
     R1PRO_ROTATION_DIAMETER_M,
+    R1PRO_URDF_MANAGER_CONFIG,
     make_r1pro_model_config,
 )
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
-from dimos.robot.galaxea.r1pro.rerun import render_cloud
+from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
@@ -54,43 +53,13 @@ PLANNER_VIZ_HZ = 0.0
 r1pro_nav = autoconnect(
     vis_module(
         viewer_backend=global_config.viewer,
-        rerun_config={
-            "tf_axes": 0.35,
-            # Keep the viewer's bandwidth off the Orin.
-            "max_hz": {"world/local_map": 0.5, "world/lidar": 0.2},
-            "visual_override": {
-                "world/head_left_color": None,
-                "world/head_right_color": None,
-                "world/wrist_left_color": None,
-                "world/wrist_right_color": None,
-                # Full-resolution intrinsics sharing the depth image's frame would give it the wrong pinhole.
-                "world/head_left_info": None,
-                "world/head_right_info": None,
-                "world/lidar": render_cloud,
-                # Raw sensor streams, heavy over a laptop's link and shown better by what is built from them.
-                "world/lidar_raw": None,
-                "world/imu_raw": None,
-                "world/imu_torso": None,
-                "world/r1pro/imu": None,
-                "world/region_bounds": None,
-                "world/path": None,
-                **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_M, WALL_CLEARANCE_M),
-            },
-        },
+        rerun_config=r1pro_nav_rerun_config(VOXEL_SIZE_M, WALL_CLEARANCE_M, PLANNER_VIZ_HZ),
     ),
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
     r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
-    UrdfManager.blueprint(
-        model=R1PRO_MODEL,
-        # Replaying a 10-14 recording, self-hits per scan rose from 13 at 1 cm to 20 at 5 cm and stayed 20 at 10 cm.
-        padding_m=0.05,
-        # The lidar mount tf comes at 5 Hz.
-        tf_tolerance_s=0.25,
-        tf_forward_tolerance_s=0.25,
-        state_tolerance_s=0.1,
-    ).remappings(
+    UrdfManager.blueprint(**R1PRO_URDF_MANAGER_CONFIG).remappings(
         [
             (UrdfManager, "pointcloud", "lidar_with_robot"),
             (UrdfManager, "filtered_pointcloud", "lidar"),
