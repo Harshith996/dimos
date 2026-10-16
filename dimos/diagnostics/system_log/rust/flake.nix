@@ -2,44 +2,52 @@
   description = "system_log native module for DimOS: machine health, a ring dumped on trouble, and dimos' logs";
 
   inputs = {
+    nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, crate2nix }:
-    flake-utils.lib.eachSystem [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ] (system:
+  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        name = "dimos-system-log";
 
-        # The root workspace (this crate is a member), so crate2nix reads the shared Cargo.lock.
-        src = pkgs.lib.fileset.toSource {
-          root = ../../../..;
-          fileset = pkgs.lib.fileset.unions [
-            ../../../../Cargo.lock
-            ../../../../Cargo.toml
-            ../../../../dimos/experimental/memory/rust
-            ../../../../native/rust/dimos-module
-            ../../../../native/rust/dimos-module-macros
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/mapping/ray_tracing/rust/py
-            ../../../../dimos/navigation/global_planner/mls_planner/rust
-            ../../../../dimos/navigation/global_planner/mls_planner/rust/py
-            ../../../../dimos/hardware/sensors/lidar/livox/rust
-            ../../../../dimos/hardware/sensors/lidar/pointlio/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../dimos/hardware/sensors/camera/v4l2/rust
-            ../../../../dimos/diagnostics/system_log/rust
-            ../../../../examples/native-modules/rust
-          ];
-        };
+        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
-          name = "system-log";
-          inherit src;
+        ours = [ name "dimos-module" "dimos-module-macros" ];
+        callWith = mode: import generated {
+          inherit pkgs;
+          buildRustCrateForPkgs = cratePkgs: crate:
+            (cratePkgs.buildRustCrate.override {
+              defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
+                # stabby-macros writes the builder's core count (NUM_JOBS) into its code; one value makes every machine's copy match.
+                stabby-macros = _: { preConfigure = "export NIX_BUILD_CORES=1"; };
+              };
+            }) (crate // pkgs.lib.optionalAttrs (mode != null && builtins.elem crate.crateName ours) ({
+              release = false;
+              extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-C" "debuginfo=0" ];
+            } // pkgs.lib.optionalAttrs (mode == "lint") {
+              useClippy = true;
+              capLints = "forbid";
+              extraRustcOpts = (crate.extraRustcOpts or [ ]) ++ [ "-D" "warnings" "-C" "debuginfo=0" ];
+            }));
         };
+        buildOf = called:
+          if called ? rootCrate then called.rootCrate.build
+          else called.workspaceMembers.${name}.build;
       in {
-        packages.default = (import generatedCargoNix { inherit pkgs; }).workspaceMembers."dimos-system-log".build;
+        packages = {
+          default = buildOf (callWith null);
+          lint = (buildOf (callWith "lint")).override { runTests = true; testCrateFlags = [ "--list" ]; };
+          tests = (buildOf (callWith "test")).override { runTests = true; };
+        };
+        checks.lint = self.packages.${system}.lint;
+        checks.tests = self.packages.${system}.tests;
+
+        devShells.default = pkgs.mkShell { packages = [ pkgs.cargo pkgs.rustc pkgs.clippy pkgs.rustfmt ]; };
       });
 }

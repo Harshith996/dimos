@@ -49,7 +49,7 @@ class SystemLogConfig(NativeModuleConfig):
     source_dir: str | None = "dimos/diagnostics/system_log/rust"
     executable: str = "result/bin/system_log"
     # "." in a git checkout enters the whole repo, so the flake can read ../../../../native/rust (tracked files only).
-    build_command: str | None = "nix build -L ."
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     sample_hz: float = Field(default=4.0, ge=0.1, le=100.0)
