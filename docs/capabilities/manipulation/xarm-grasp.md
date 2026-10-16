@@ -174,10 +174,9 @@ A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset
 does not respawn them. Restart the blueprint between pick attempts that need a
 pristine scene.
 
-The generic `PointCloudSelfFilter` handles streams and point fields; subclasses
-supply a capture-time keep mask. The xArm blueprint selects
-`UrdfManager` (with its joint tf off, since `ManipulationModule` owns those frames), which delegates geometry loading, kinematics,
-mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
+The xArm blueprint uses `UrdfManager`'s self filter (its `self_filter` option, on by
+default; its joint tf off, since `ManipulationModule` owns those frames), which delegates
+geometry loading, kinematics, mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
 joint state and TF to the capture timestamp, preserves point fields, and drops
 unaligned captures. The xArm blueprint filters only the arm using a model without
 the gripper. Gripper points may enter the map; separate gripper control and grasp

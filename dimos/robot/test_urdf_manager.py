@@ -362,3 +362,36 @@ def test_urdf_info_names_meshes_by_package_and_mesh_request_serves_only_those(
     assert [mesh.uri for mesh in sent] == ["package://box/meshes/cube.stl"]
     decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
     assert decoded.data == (package / "meshes" / "cube.stl").read_bytes()
+
+
+def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_captures_drop(
+    make_filter: Callable[..., UrdfManager],
+) -> None:
+    module = make_filter()
+    _place_arm(module, (0.0, 0.0, 0.0), 2.0)
+    cloud = _cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=2.0)
+    cloud.seq = 7
+    cloud.pointcloud_tensor.point["intensity"] = Tensor(np.asarray([[10], [20]], dtype=np.float32))
+
+    result = module.filter_cloud(cloud)
+
+    assert result is not None
+    assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
+    np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    # a capture older than one already published is out of order
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]], ts=1.0)) is None
+
+
+def test_with_self_filter_off_no_cloud_is_filtered_or_published(
+    make_filter: Callable[..., UrdfManager],
+) -> None:
+    module = make_filter(self_filter=False)
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    published: list[PointCloud2] = []
+    module.filtered_pointcloud.subscribe(published.append)
+
+    asyncio.run(module.handle_pointcloud(_cloud([[2.0, 0.0, 0.0]])))
+
+    assert published == []
