@@ -42,8 +42,7 @@ _chassis_hardware = HardwareComponent(
     hardware_type=HardwareType.BASE,
     joints=make_twist_base_joints("chassis"),
     adapter_type="mock_twist_base",
-    # Real elapsed time, so the mock keeps pace with the trajectory even when ticks run late.
-    adapter_kwargs={"integrate_odometry": True, "step_dt": None},
+    adapter_kwargs={"integrate_odometry": True},
 )
 _vx_limit, _vy_limit, _wz_limit = R1PRO_PLANAR_BASE.velocity_limits
 
