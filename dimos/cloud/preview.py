@@ -14,7 +14,8 @@
 
 """Console preview of a recording, built by `dimos data upload` while the recording is at hand:
 LiDAR map and timed scans with the robot's path (from the poses the store keeps with every
-LiDAR observation), timed camera thumbnails, joystick input, and an H.264 timelapse."""
+LiDAR observation, else the recording's tf), timed camera thumbnails, joystick input, and an
+H.264 timelapse."""
 
 from __future__ import annotations
 
@@ -48,8 +49,10 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.memory.tf import StreamTF
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -58,7 +61,7 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def _stream(store: Store, payload: type, prefer: str) -> Any:
+def _stream(store: Store, payload: type | tuple[type, ...], prefer: str) -> Any:
     """The first stream carrying this dimos type, named like *prefer* first: a mapper's
     `global_map` is a PointCloud2 too, `goal_request` a Pose and `depth_image` an Image."""
     for name in sorted(store.list_streams(), key=lambda n: prefer not in n):
@@ -67,6 +70,20 @@ def _stream(store: Store, payload: type, prefer: str) -> Any:
                 return store.streams[name]
         except LookupError:  # empty stream
             continue
+    return None
+
+
+def _in_world(
+    pc: PointCloud2, pose: Pose | None, ts: float, tf: StreamTF | None
+) -> PointCloud2 | None:
+    """A sensor-frame scan placed by its own pose (a .db keeps one), else by tf (an .mcap's)."""
+    if pose is not None:
+        return pc.transform(Transform.from_pose(WORLD_FRAMES[0], pose))
+    if tf is None:
+        return None
+    for world in WORLD_FRAMES:
+        if (t := tf.get(world, pc.frame_id, ts, warn=False)) is not None:
+            return pc.transform(t)
     return None
 
 
@@ -91,7 +108,8 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
     lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
-    odom = _stream(store, Pose, "odom")
+    odom = _stream(store, (Pose, Odometry), "odom")
+    tf = StreamTF.from_store(store)
     joy = _stream(store, Joy, "joy")
     poses, scans, world, ends = [], [], None, []
     if lidar is not None:
@@ -104,10 +122,10 @@ def build(store: Store) -> dict[str, Any] | None:
             if i not in merged:
                 continue
             pc = obs.data
-            if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it with its own pose
-                if obs.pose is None:
+            if pc.frame_id not in WORLD_FRAMES:  # sensor frame: place it
+                pc = _in_world(pc, obs.pose, obs.ts, tf)
+                if pc is None:
                     continue
-                pc = pc.transform(Transform.from_pose(WORLD_FRAMES[0], obs.pose))
             pc = pc.voxel_downsample(PREVIEW_MAP_VOXEL)
             if i in shown:
                 scans.append((obs.ts, pc))
