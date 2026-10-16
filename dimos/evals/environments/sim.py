@@ -133,7 +133,7 @@ class Sim(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-        # Without mcp-server (agents on the Python API) the run's registry entry, written once
+        # Without mcp-server (Python-API and raw agents) the run's registry entry, written once
         # every module has started, is the readiness signal.
         mcp = self.config.attach or "mcp-server" in (*self.config.blueprint, *modules)
         mcp_url = default_mcp_url() if mcp else ""
