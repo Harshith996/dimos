@@ -27,7 +27,7 @@ from numpy.typing import NDArray
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.stream import IO, In, Out
+from dimos.core.stream import In, Out
 from dimos.manipulation.planning.utils.point_cloud_self_filter import (
     PointCloudSelfFilter,
     PointCloudSelfFilterConfig,
@@ -37,7 +37,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.shape_msgs.MeshFile import MeshFile
 from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
@@ -66,7 +65,6 @@ class UrdfManager(PointCloudSelfFilter):
 
     config: UrdfManagerConfig
 
-    tf: IO[TFMessage]
     # The URDF XML, its meshes named package://<package>/<path>; any of those names on mesh_request gets the file on mesh_info.
     urdf_info: Out[String]
     mesh_request: In[String]
