@@ -294,20 +294,17 @@ def explore_house(
 # TEMPORARY: kill whatever a dead earlier run left holding the dimsim/relay ports on the self-hosted runners.
 @pytest.fixture(scope="session", autouse=True)
 def _kill_stale_port_holders() -> None:
-    for port in (8090, 7780):
+    import psutil
+
+    for proc in psutil.process_iter(["pid", "username", "cmdline", "create_time"]):
         try:
-            pids = subprocess.run(
-                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"], capture_output=True, text=True
-            ).stdout.split()
-        except FileNotFoundError:
-            pids = subprocess.run(
-                ["fuser", "-n", "tcp", str(port)], capture_output=True, text=True
-            ).stdout.split()
-        for pid in pids:
-            info = subprocess.run(
-                ["ps", "-o", "pid,user,etime,command", "-p", pid], capture_output=True, text=True
-            ).stdout
-            print(f"[stale port {port}] killing:\n{info}", file=sys.stderr)
-            subprocess.run(["kill", "-9", pid])
-        if not pids:
-            print(f"[stale port {port}] nothing listening", file=sys.stderr)
+            ports = {
+                c.laddr.port
+                for c in proc.net_connections(kind="tcp")
+                if c.status == psutil.CONN_LISTEN and c.laddr.port in (8090, 7780)
+            }
+            if ports:
+                print(f"[stale port {sorted(ports)}] killing {proc.info}", file=sys.stderr)
+                proc.kill()
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            pass
