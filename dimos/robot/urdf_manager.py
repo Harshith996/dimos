@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from pathlib import Path
+from threading import RLock
 import time
 import xml.etree.ElementTree as ET
 
@@ -27,17 +28,16 @@ from numpy.typing import NDArray
 from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.stream import In, Out
-from dimos.manipulation.planning.utils.point_cloud_self_filter import (
-    PointCloudSelfFilter,
-    PointCloudSelfFilterConfig,
-)
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.shape_msgs.MeshFile import MeshFile
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
@@ -48,9 +48,16 @@ logger = setup_logger()
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 
-class UrdfManagerConfig(PointCloudSelfFilterConfig):
+class UrdfManagerConfig(ModuleConfig):
     model: RobotModel
+    # Cut the robot out of `pointcloud` onto `filtered_pointcloud`; off where nothing needs a robot-free cloud.
+    self_filter: bool = True
     padding_m: float = Field(default=0.01, ge=0.0)
+    # How far a cloud's capture time may be from the tf and joint state it is matched with.
+    tf_tolerance_s: float = Field(default=0.02, ge=0.0)
+    tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
+    state_tolerance_s: float = Field(default=0.02, ge=0.0)
+    state_history_s: float = Field(default=5.0, gt=0.0)
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
@@ -60,11 +67,17 @@ class UrdfManagerConfig(PointCloudSelfFilterConfig):
     filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
 
-class UrdfManager(PointCloudSelfFilter):
-    """Poses the URDF from the joint state: publishes it on tf and drops robot returns from clouds at capture time."""
+class UrdfManager(Module):
+    """Poses the URDF from the joint state: publishes it on tf, and (self_filter) drops robot returns from clouds at
+    their capture time."""
 
     config: UrdfManagerConfig
 
+    pointcloud: In[PointCloud2]
+    # IO: the joints it poses are published on it, and a cloud's mount is read from it
+    tf: IO[TFMessage]
+    coordinator_joint_state: In[JointState]
+    filtered_pointcloud: Out[PointCloud2]
     # The URDF XML, its meshes named package://<package>/<path>; any of those names on mesh_request gets the file on mesh_info.
     urdf_info: Out[String]
     mesh_request: In[String]
@@ -74,6 +87,9 @@ class UrdfManager(PointCloudSelfFilter):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._filter_lock = RLock()
+        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._last_capture: float | None = None
         self._load_scene()
         self._next_joint_tf_t = 0.0
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
@@ -81,6 +97,7 @@ class UrdfManager(PointCloudSelfFilter):
 
     @rpc
     def start(self) -> None:
+        self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
         self._running = True
         self.spawn(self._publish_urdf_loop())
@@ -103,8 +120,23 @@ class UrdfManager(PointCloudSelfFilter):
             return
         self.mesh_info.publish(MeshFile(request.data, await asyncio.to_thread(path.read_bytes)))
 
+    async def handle_pointcloud(self, cloud: PointCloud2) -> None:
+        """Filter the latest capture without starving TF transport callbacks."""
+        if self.config.self_filter:
+            await asyncio.to_thread(self._on_pointcloud, cloud)
+
+    async def handle_coordinator_joint_state(self, state: JointState) -> None:
+        await asyncio.to_thread(self.add_joint_state, state)
+
     def add_joint_state(self, state: JointState) -> None:
-        super().add_joint_state(state)
+        """Buffer the full model state (out-of-order arrivals stay timestamped) and publish its joints on tf."""
+        with self._filter_lock:
+            if np.isfinite(state.ts):
+                self._states.remove_by_timestamp(state.ts)
+                self._states.add(JointState(state))
+                latest = self._states.last()
+                if latest is not None:
+                    self._states.prune_old(latest.ts - self.config.state_history_s)
         if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
             return
         self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
@@ -114,7 +146,8 @@ class UrdfManager(PointCloudSelfFilter):
         self.tfbuffer.publish(*transforms)
 
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
-        filtered = super().filter_cloud(cloud)
+        """The capture with the robot's points removed, frame and point fields unchanged; None when it can't be."""
+        filtered = self._filter_capture(cloud)
         self._clouds_in += 1
         if filtered is None:
             self._clouds_dropped += 1
@@ -129,6 +162,31 @@ class UrdfManager(PointCloudSelfFilter):
             )
             self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         return filtered
+
+    def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
+        with self._filter_lock:
+            if not np.isfinite(cloud.ts) or (
+                self._last_capture is not None and cloud.ts < self._last_capture
+            ):
+                logger.warning("Dropping cloud: invalid or out-of-order capture timestamp")
+                return None
+            points = cloud.points_f32()
+            if not np.isfinite(points).all():
+                return None
+            keep = self._compute_keep_mask(cloud, points)
+            if keep is None:
+                return None
+            filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
+            for name, values in cloud.pointcloud_tensor.point.items():
+                filtered.pointcloud_tensor.point[name] = values[keep]
+            self._last_capture = cloud.ts
+            return filtered
+
+    def _on_pointcloud(self, cloud: PointCloud2) -> None:
+        with self._filter_lock:
+            filtered = self.filter_cloud(cloud)
+            if filtered is not None:
+                self.filtered_pointcloud.publish(filtered)
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
@@ -155,6 +213,7 @@ class UrdfManager(PointCloudSelfFilter):
     def _compute_keep_mask(
         self, cloud: PointCloud2, points: NDArray[np.float32]
     ) -> NDArray[np.bool_] | None:
+        """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
         base_from_sensor = self.tfbuffer.get(
             self._base_link,
             cloud.frame_id,
