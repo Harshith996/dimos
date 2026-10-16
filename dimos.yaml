@@ -102,9 +102,6 @@ provides:
     - method: POST
       path: skills/call
       description: Call one of the running blueprint's skills (skill, args, module, runId)
-    - method: POST
-      path: mcp
-      description: An MCP server (JSON-RPC) with list_skills and call_skill for the running blueprint
     - method: GET
       path: extras
       description: 'dimos''s optional extras: installed, applicable, missing, download size'
