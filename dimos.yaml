@@ -22,7 +22,7 @@ install: |
   "$DIMOS_DIR/.venv/bin/python" -c "import dimos" && echo "dimos is installed in $DIMOS_DIR"
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "4.0.0"
+  version: "4.1.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
