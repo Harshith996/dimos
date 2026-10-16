@@ -64,6 +64,8 @@ class SystemLogConfig(NativeModuleConfig):
     # the run's log directory (DIMOS_RUN_LOG_DIR) when empty
     log_dir: str = ""
     cmdline_chars: int = Field(default=200, ge=0, le=100000)
+    # seconds after start that the one "identity" record (host, user, MACs, addresses, ...) is published
+    identity_delay_s: float = Field(default=30.0, ge=0.0, le=86400.0)
     # an alert (and a dump of the ring) when one of these is crossed
     cpu_alert_percent: float = 95.0
     memory_alert_percent: float = 95.0

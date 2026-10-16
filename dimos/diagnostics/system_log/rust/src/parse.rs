@@ -308,6 +308,89 @@ fn sorted_entries(dir: &Path, prefix: &str) -> Vec<std::path::PathBuf> {
     entries
 }
 
+/// `id` → {"uid", "gid", "groups"}, each as "501(jeff)"
+pub fn id(text: &str) -> Value {
+    let mut id = Map::new();
+    for field in text.split_whitespace() {
+        if let Some((key, value)) = field.split_once('=') {
+            let value = if key == "groups" {
+                json!(value.split(',').collect::<Vec<_>>())
+            } else {
+                json!(value)
+            };
+            id.insert(key.into(), value);
+        }
+    }
+    Value::Object(id)
+}
+
+/// The user's name from `id` ("uid=501(jeff) ...") → "jeff"
+pub fn id_name(text: &str) -> Option<String> {
+    let uid = text.split_whitespace().next()?.strip_prefix("uid=")?;
+    Some(uid.split_once('(')?.1.trim_end_matches(')').to_string())
+}
+
+/// /etc/resolv.conf → {"nameservers", "search"}
+pub fn resolv_conf(text: &str) -> Value {
+    let (mut nameservers, mut search) = (Vec::new(), Vec::new());
+    for line in text.lines() {
+        let mut words = line.split_whitespace();
+        match words.next() {
+            Some("nameserver") => nameservers.extend(words),
+            Some("search") | Some("domain") => search.extend(words),
+            _ => {}
+        }
+    }
+    json!({ "nameservers": nameservers, "search": search })
+}
+
+/// `arp -an` → [{"ip", "mac", "iface"}], skipping entries still unresolved
+pub fn arp(text: &str) -> Vec<Value> {
+    text.lines()
+        .filter_map(|line| {
+            let ip = line.split_once('(')?.1.split_once(')')?.0;
+            let mut after = line.split_once(") at ")?.1.split_whitespace();
+            let mac = after.next().filter(|m| m.contains(':'))?;
+            let iface = after.skip_while(|w| *w != "on").nth(1);
+            Some(json!({ "ip": ip, "mac": mac, "iface": iface }))
+        })
+        .collect()
+}
+
+/// The value of `key` in ioreg's `"key" = "value"` / `<"value">` lines, or ipconfig's and lscpu's `key : value` ones.
+pub fn key_value(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let line = line.trim();
+        let rest = line
+            .strip_prefix(&format!("\"{key}\""))
+            .or_else(|| line.strip_prefix(key))?
+            .trim_start();
+        let value = rest.strip_prefix('=').or_else(|| rest.strip_prefix(':'))?;
+        Some(
+            value
+                .trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .trim_matches('"')
+                .to_string(),
+        )
+    })
+}
+
+/// `networksetup -listallhardwareports` → the Wi-Fi devices ("en0")
+pub fn macos_wifi_devices(text: &str) -> Vec<String> {
+    let mut devices = Vec::new();
+    let mut wifi = false;
+    for line in text.lines() {
+        if let Some(port) = line.strip_prefix("Hardware Port: ") {
+            wifi = port == "Wi-Fi" || port == "AirPort";
+        } else if let (true, Some(device)) = (wifi, line.strip_prefix("Device: ")) {
+            devices.push(device.trim().to_string());
+        }
+    }
+    devices
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +507,39 @@ mod tests {
         assert_eq!(pmset_batt("Now drawing from 'AC Power'\n"), None);
         let stats = "   8       0 sda 100 0 2000 0 50 0 4000 0 0 0 0\n   8       1 sda1 90 0 1800 0 40 0 3000 0 0 0 0\n";
         assert_eq!(diskstats(stats, |name| name == "sda"), (2000, 4000));
+    }
+
+    #[test]
+    fn identity_readers() {
+        let id = id("uid=501(jeff) gid=20(staff) groups=20(staff),80(admin)");
+        assert_eq!(id["uid"], "501(jeff)");
+        assert_eq!(id["groups"][1], "80(admin)");
+        assert_eq!(
+            id_name("uid=0(root) gid=0(root) groups=0(root)").as_deref(),
+            Some("root")
+        );
+        assert_eq!(
+            key_value("Model name:             Cortex-A78AE\n", "Model name").as_deref(),
+            Some("Cortex-A78AE")
+        );
+        let dns = resolv_conf("# x\nsearch a.ts.net localdomain\nnameserver 100.100.100.100\n");
+        assert_eq!(dns["nameservers"][0], "100.100.100.100");
+        assert_eq!(dns["search"][1], "localdomain");
+        let arp = arp("? (10.0.0.1) at aa:9c:6c:9c:56:f1 on en0 ifscope [ethernet]\n? (10.0.0.9) at (incomplete) on en0 ifscope [ethernet]\n? (192.168.1.2) at 2:9d:48:e4:91:35 [ether] on wlan0\n");
+        assert_eq!(arp.len(), 2);
+        assert_eq!(arp[0]["mac"], "aa:9c:6c:9c:56:f1");
+        assert_eq!(arp[1]["iface"], "wlan0");
+        let ioreg = "    \"manufacturer\" = <\"Apple Inc.\">\n    \"IOPlatformUUID\" = \"98-52\"\n";
+        assert_eq!(
+            key_value(ioreg, "manufacturer").as_deref(),
+            Some("Apple Inc.")
+        );
+        assert_eq!(key_value(ioreg, "IOPlatformUUID").as_deref(), Some("98-52"));
+        assert_eq!(
+            key_value("  BSSID : <redacted>\n  SSID : home\n", "SSID").as_deref(),
+            Some("home")
+        );
+        let ports = "Hardware Port: Ethernet\nDevice: en3\n\nHardware Port: Wi-Fi\nDevice: en0\nEthernet Address: x\n";
+        assert_eq!(macos_wifi_devices(ports), vec!["en0"]);
     }
 }

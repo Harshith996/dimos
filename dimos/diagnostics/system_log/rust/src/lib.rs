@@ -15,6 +15,7 @@
 //! Native `system_log` module: the machine's health, a high-rate ring dumped when something goes wrong, and
 //! dimos' own logs, on one stream.
 
+pub mod identity;
 pub mod log_tail;
 pub mod machine;
 pub mod module;

@@ -38,7 +38,7 @@ const JETSON_GPU_LOAD: [&str; 2] = [
 ];
 
 /// The command's stdout, or nothing if it fails or is still running after `timeout` (then it's killed).
-fn run(program: &str, args: &[&str], timeout: Duration) -> String {
+pub(crate) fn run(program: &str, args: &[&str], timeout: Duration) -> String {
     let Ok(mut child) = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -75,7 +75,7 @@ fn run(program: &str, args: &[&str], timeout: Duration) -> String {
     }
 }
 
-fn on_path(program: &str) -> bool {
+pub(crate) fn on_path(program: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }

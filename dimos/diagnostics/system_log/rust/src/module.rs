@@ -61,6 +61,9 @@ pub struct Config {
     /// Characters of each process's command line kept in "processes" records.
     #[validate(range(min = 0, max = 100000))]
     cmdline_chars: i64,
+    /// Seconds after start that the one "identity" record (host, user, MACs, addresses, ...) is published.
+    #[validate(range(min = 0.0, max = 86400.0))]
+    identity_delay_s: f64,
     /// Alert (and dump) when total CPU goes above this.
     cpu_alert_percent: f64,
     /// Alert when memory use goes above this.
@@ -100,6 +103,24 @@ impl SystemLog {
             .name("system_log".into())
             .spawn(move || Worker::new(config, output, runtime, receiver).run())
             .expect("spawn the system_log thread");
+        let (delay, timeout) = (
+            Duration::from_secs_f64(self.config.identity_delay_s),
+            Duration::from_secs_f64(self.config.command_timeout_s),
+        );
+        let output = self.system_log.clone();
+        let runtime = tokio::runtime::Handle::current();
+        std::thread::Builder::new()
+            .name("system_log_identity".into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                let msg = std_msgs::String {
+                    data: record("identity", crate::identity::read(timeout)).to_string(),
+                };
+                if let Err(error) = runtime.block_on(output.publish(&msg)) {
+                    warn!(%error, "publishing the identity record failed");
+                }
+            })
+            .expect("spawn the system_log_identity thread");
     }
 
     async fn handle_robot_health(&mut self, msg: std_msgs::String) {
@@ -372,6 +393,7 @@ mod tests {
             log_poll_s: 0.5,
             log_dir: String::new(),
             cmdline_chars: 200,
+            identity_delay_s: 30.0,
             cpu_alert_percent: 95.0,
             memory_alert_percent: 95.0,
             weak_signal_dbm: -80.0,
