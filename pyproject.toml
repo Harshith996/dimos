@@ -515,6 +515,11 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     "dim-odom>=0.4.1",
+    # ROS Lyrical's generated message modules import rosidl_pycommon and
+    # rosidl_parser, which import empy and lark at module level. The ROS debs
+    # take them from the system Python; the sealed venv has to bring its own.
+    "empy>=4",
+    "lark>=1.1.1",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",

@@ -50,7 +50,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-08T16:15:36.170883Z"
+exclude-newer = "2026-10-09T15:14:51.810329Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -3012,6 +3012,7 @@ tests-self-hosted = [
     { name = "dim-odom" },
     { name = "dimos", extra = ["apriltag", "cpu", "drone", "learning", "manipulation", "mapping", "misc", "unitree", "visualization", "web", "webrtc"] },
     { name = "einops" },
+    { name = "empy" },
     { name = "gdown" },
     { name = "googlemaps" },
     { name = "hydra-core" },
@@ -3019,6 +3020,7 @@ tests-self-hosted = [
     { name = "langchain-core" },
     { name = "langchain-openai" },
     { name = "lap" },
+    { name = "lark" },
     { name = "maturin" },
     { name = "mcap" },
     { name = "md-babel-py" },
@@ -3350,6 +3352,7 @@ tests-self-hosted = [
     { name = "dimos", extras = ["manipulation", "misc", "unitree"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
     { name = "einops", specifier = ">=0.8.1" },
+    { name = "empy", specifier = ">=4" },
     { name = "gdown", specifier = "==6.0.0" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "hydra-core", specifier = ">=1.3.0" },
@@ -3357,6 +3360,7 @@ tests-self-hosted = [
     { name = "langchain-core", specifier = "==1.3.3" },
     { name = "langchain-openai", specifier = ">=1,<2" },
     { name = "lap", specifier = ">=0.5.12" },
+    { name = "lark", specifier = ">=1.1.1" },
     { name = "maturin", specifier = ">=1.7" },
     { name = "mcap", specifier = ">=1.2.0" },
     { name = "md-babel-py", specifier = ">=1.4.0" },
@@ -3658,6 +3662,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a5/d4/8cb8a41b25138999a98286ae1562e5903c7579ec71becc05bfa1c10d571f/embreex-4.4.0-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1e3481b76df80f23128173486ac0efe55e9199fc311bc74707452b4f19951eff", size = 14589303, upload-time = "2026-04-22T19:47:28.544Z" },
     { url = "https://files.pythonhosted.org/packages/93/3d/8b393b35016909143ecac7bf7bf418f79236e1f83faf3867b5c5cb50c97f/embreex-4.4.0-cp314-cp314t-win_amd64.whl", hash = "sha256:a2fedc756a36729da6803425398aa4987b27d1d89e9fad403d8ef371fad5ca01", size = 13389585, upload-time = "2026-04-22T19:47:31.398Z" },
 ]
+
+[[package]]
+name = "empy"
+version = "4.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d1/82/b8b39f837baa80b1bf659beb64c1c8af66f2aa7437169d72a4e1fb0ed3df/empy-4.2.1.tar.gz", hash = "sha256:b831d642fca95507820b53774c051803142b8441b8c42bf800011da06ba4241b", size = 174979, upload-time = "2026-02-09T00:53:15.934Z" }
 
 [[package]]
 name = "etils"
@@ -6026,6 +6036,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/cd/04/3ba6fd224fe1994bb7fa6f0131cc73f54f5487df69a2dacd4dc02df66f78/lap-0.5.13-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:398db6cb10287e97c2f54c9f333adbee4a2e502f00744b402173a95749ee35c0", size = 1713766, upload-time = "2026-02-23T12:36:52.004Z" },
     { url = "https://files.pythonhosted.org/packages/32/57/a6b18ec8dbb0145debfa3c8dfa9f35c3e5a28e96340cd8138370d1605657/lap-0.5.13-cp314-cp314-win_amd64.whl", hash = "sha256:40ef084ff5cd10fffbac76f56de4f5c2da039af57412e19a496c263397c8ffb4", size = 1477488, upload-time = "2026-02-23T12:36:53.514Z" },
     { url = "https://files.pythonhosted.org/packages/c1/37/a23772ed1ced8d58e089f23d835857b9ae759a9f5733edc4b0c52fb393db/lap-0.5.13-cp314-cp314-win_arm64.whl", hash = "sha256:b5ef3928303c37661f887e1f8b28a381b07bcb0b9868fe911b5ef4e205f31495", size = 1467015, upload-time = "2026-02-23T12:36:54.684Z" },
+]
+
+[[package]]
+name = "lark"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/34/28fff3ab31ccff1fd4f6c7c7b0ceb2b6968d8ea4950663eadcb5720591a0/lark-1.3.1.tar.gz", hash = "sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905", size = 382732, upload-time = "2025-10-27T18:25:56.653Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/82/3d/14ce75ef66813643812f3093ab17e46d3a206942ce7376d31ec2d36229e7/lark-1.3.1-py3-none-any.whl", hash = "sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12", size = 113151, upload-time = "2025-10-27T18:25:54.882Z" },
 ]
 
 [[package]]
