@@ -21,14 +21,13 @@ from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 
-def r1pro_head_depth(**overrides: object) -> Blueprint:
+def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
     """Head depth anchored on Point-LIO's scans, tuned for the Orin; keywords override the Depth2DepthCloud config."""
     return Depth2DepthCloud.blueprint(
         **{
+            "tf_tolerance_s": tf_tolerance_s,
             # Past this the per-pixel calibration has few lidar anchors to lean on.
             "max_range_m": 6.0,
-            # The lidar mount tf comes at 5 Hz and Point-LIO's at 10 with jitter; 0.1 s dropped frames (as for the ray tracer).
-            "tf_tolerance_s": 0.25,
             # The chassis lidar never sees the floor near the robot; floor it swept a few seconds ago anchors it.
             "lidar_history_s": 6.0,
             # Kept only from the floor to just above the lidar's plane, what the lidar sees worst; dropping (not
