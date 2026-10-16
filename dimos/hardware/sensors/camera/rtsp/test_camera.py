@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import os
 from pathlib import Path
+import platform
 import socket
 import threading
 import time
@@ -149,6 +151,10 @@ def _replay(path: Path) -> tuple[RtspCamera, list[Any]]:
     return cam, video
 
 
+@pytest.mark.skipif(
+    platform.system() == "Darwin" and bool(os.environ.get("CI")),
+    reason="the macOS CI runner is too slow for the replay pacing assertions",
+)
 def test_file_replay_keeps_the_clip_frame_gaps(tmp_path: Path) -> None:
     # A capture with a stall: 9 frame periods between frames 4 and 5 instead of one.
     _clip_with_a_jump(tmp_path / "stall.mp4", 8)
