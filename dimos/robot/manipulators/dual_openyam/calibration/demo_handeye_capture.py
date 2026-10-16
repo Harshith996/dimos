@@ -43,6 +43,8 @@ from functools import partial
 import json
 import math
 from pathlib import Path
+import subprocess
+import tempfile
 import time
 from typing import Any
 
@@ -112,7 +114,54 @@ def path_to(arm: ArmModel, current: Sequence[float], target: Pose) -> list[Pose]
     return None
 
 
-def open_frames(frames_dir: Path | None, topic: str) -> FrameSource:
+OVERHEAD_SERIAL = "230322272156"
+UV = "/home/anvil/.local/bin/uv"
+
+
+class SnapFrames:
+    """Fixed-exposure frames grabbed by realsense_snap.py through uv, one camera open per call."""
+
+    def __init__(self, serial: str, exposure_us: int, keep_dir: Path | None = None) -> None:
+        self.serial, self.exposure_us, self.keep_dir = serial, exposure_us, keep_dir
+
+    def grab(self, count: int = 3, timeout_s: float = 30.0) -> list[np.ndarray]:
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                [
+                    UV,
+                    "run",
+                    "--no-project",
+                    "--with",
+                    "pyrealsense2",
+                    "--with",
+                    "numpy",
+                    "--with",
+                    "pillow",
+                    "--python",
+                    "3.12",
+                    "python",
+                    str(Path(__file__).with_name("realsense_snap.py")),
+                    self.serial,
+                    tmp,
+                    str(self.exposure_us),
+                    str(count),
+                ],
+                check=True,
+                capture_output=True,
+                timeout=max(timeout_s, 30.0),
+            )
+            return [cv2.imread(str(p)) for p in sorted(Path(tmp).glob("color_*.png"))]
+
+    def close(self) -> None:
+        pass
+
+
+def open_frames(frames_dir: Path | None, topic: str, exposure_us: int | None = None) -> FrameSource:
+    if frames_dir is None and exposure_us is not None:
+        typer.echo(
+            f"camera: fixed exposure {exposure_us} us, grabbed per pose via realsense_snap.py"
+        )
+        return SnapFrames(OVERHEAD_SERIAL, exposure_us)
     if frames_dir is not None:
         pattern = "*.png"
         for candidate in ("right_*.png", "left_*.png", "color_*.png"):
@@ -154,6 +203,11 @@ def run(
     speed_deg_s: float = typer.Option(10.0, help="Ramp speed"),
     settle_s: float = typer.Option(1.0, help="Wait at each pose before the camera looks"),
     camera_topic: str = typer.Option("color_image", help="Camera stream name"),
+    exposure_us: int | None = typer.Option(
+        1200,
+        help="Grab frames directly at this fixed exposure (the dimos camera stream is auto-only "
+        "and blows out under the rig lights); 0 = use the camera stream instead",
+    ),
     confirm_each: bool = typer.Option(
         True, "--confirm/--no-confirm", help="Ask before each pose (Enter / s skip / p park)"
     ),
@@ -180,7 +234,7 @@ def run(
     out_dir.mkdir(parents=True, exist_ok=True)
     captures_path = out_dir / f"captures_{side}.json"
     typer.echo(f"output {out_dir}")
-    frame_source = open_frames(frames, camera_topic)
+    frame_source = open_frames(frames, camera_topic, exposure_us or None)
 
     dimos = Dimos.connect()
     module: Any = dimos.JointStepTestModule
