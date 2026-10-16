@@ -60,7 +60,11 @@ class UrdfManagerConfig(ModuleConfig):
     state_history_s: float = Field(default=5.0, gt=0.0)
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
+    # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
+    # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
+    # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
+    unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
     # urdf_info is re-sent so a late subscriber gets it; nothing on these streams is latched.
     urdf_info_period_s: float = Field(default=5.0, gt=0.0)
     # Seconds between self-filter summary log lines (0 disables).
@@ -92,6 +96,8 @@ class UrdfManager(Module):
         self._last_capture: float | None = None
         self._load_scene()
         self._next_joint_tf_t = 0.0
+        # Per edge: the last transform sent (translation + rotation) and when.
+        self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
@@ -142,8 +148,27 @@ class UrdfManager(Module):
         self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
         # The scene's FK state is shared with the cloud filter's thread.
         with self._filter_lock:
-            transforms = self.joint_transforms(state)
-        self.tfbuffer.publish(*transforms)
+            transforms = self._edges_to_send(self.joint_transforms(state))
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
+    def _edges_to_send(self, transforms: list[Transform]) -> list[Transform]:
+        """The edges that moved since they were last sent, and those not sent for one keepalive period."""
+        now = time.monotonic()
+        keepalive_s = 1.0 / self.config.unchanged_tf_hz
+        due = []
+        for transform in transforms:
+            key = (transform.frame_id, transform.child_frame_id)
+            value = (*transform.translation.to_tuple(), *transform.rotation.to_tuple())
+            sent = self._sent_edges.get(key)
+            if (
+                sent is None
+                or now - sent[1] >= keepalive_s
+                or not np.allclose(value, sent[0], atol=1e-6)
+            ):
+                due.append(transform)
+                self._sent_edges[key] = (value, now)
+        return due
 
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
         """The capture with the robot's points removed, frame and point fields unchanged; None when it can't be."""
