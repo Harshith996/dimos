@@ -98,3 +98,5 @@ component.
 - Verify motor IDs and types against the physical unit before commanding large
   motions; an incorrect type scales velocity and torque incorrectly.
 - Deactivation removes motor torque, so support the arm before stopping it.
+
+- Dual OpenYAM leader teleop: [Dual OpenYAM Leader Teleop](/docs/capabilities/manipulation/dual_openyam_leader_teleop.md)

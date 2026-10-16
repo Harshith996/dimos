@@ -116,6 +116,9 @@ all_blueprints = {
     "spot": "dimos.experimental.robot.bosdyn.spot.blueprints.spot:spot",
     "spot-record": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_record:spot_record",
     "spot-replay": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",
+    "teleop-dual-openyam-leader": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop:teleop_dual_openyam_leader",
+    "teleop-dual-openyam-leader-follower": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop:teleop_dual_openyam_leader_follower",
+    "teleop-dual-openyam-leader-operator": "dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop:teleop_dual_openyam_leader_operator",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
     "teleop-hosted-xarm6": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm6",
@@ -382,5 +385,6 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "yam-leader-teleop-module": "dimos.teleop.yam_leader.teleop_module.YamLeaderTeleopModule",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
