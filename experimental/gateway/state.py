@@ -30,7 +30,7 @@ from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.skills import Skills
 
-API_VERSION = "4.0.0"
+API_VERSION = "4.1.0"
 INTROSPECT_TTL_S = 600.0
 
 
