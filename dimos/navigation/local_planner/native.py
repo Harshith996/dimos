@@ -38,9 +38,9 @@ def _default(field: str) -> Any:
 
 
 class LocalPlannerNativeConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
-    executable: str = "target/release/local_planner"
-    build_command: str | None = "cargo build --release --features module"
+    source_dir: str | None = "dimos/navigation/local_planner/rust"
+    executable: str = "result/bin/local_planner"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     cli_exclude: frozenset[str] = frozenset({"embodiment"})
 
