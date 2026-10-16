@@ -121,3 +121,31 @@ def build_dual_openyam_webxr(
 
 
 teleop_webxr_dual_openyam = autoconnect(build_dual_openyam_webxr())
+
+
+# Coordinator-only stack driven by the terminal remote
+# (dimos.robot.manipulators.dual_openyam.keyboard_jog): the WebXR IK task and
+# gripper tasks without the WebXR module, with the calibration gains on.
+keyboard_teleop_dual_openyam = autoconnect(
+    DualOpenYamCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        calibration_gains=True,
+        tasks=[
+            _dual_openyam_webxr_task,
+            TaskConfig(
+                name="left_arm_gripper",
+                type="gripper",
+                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
+            ),
+            TaskConfig(
+                name="right_arm_gripper",
+                type="gripper",
+                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
+            ),
+        ],
+    )
+)

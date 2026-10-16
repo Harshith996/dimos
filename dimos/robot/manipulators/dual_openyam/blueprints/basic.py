@@ -22,6 +22,7 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
+    calibration_gains,
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
@@ -46,6 +47,10 @@ class DualOpenYamCoordinatorConfig(ControlCoordinatorConfig):
 
     left_can_port: str | None = None
     right_can_port: str | None = None
+    # Calibration results: the gravity_fit JSON for the feed-forward, and the
+    # step-sweep gains instead of the stock 80/5 and 10/1.5.
+    inertial_overrides: str | None = None
+    calibration_gains: bool = False
 
 
 class DualOpenYamCoordinator(TeleopControlCoordinator):
@@ -58,6 +63,12 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
             dual_openyam_hardware(
                 left_can_port=self.config.left_can_port,
                 right_can_port=self.config.right_can_port,
+                inertial_overrides=self.config.inertial_overrides,
+                **(
+                    dict(zip(("kp", "kd"), calibration_gains(), strict=False))
+                    if self.config.calibration_gains
+                    else {}
+                ),
             )
         ]
         # Resolve assets at startup, using the same bounds as the planning model.

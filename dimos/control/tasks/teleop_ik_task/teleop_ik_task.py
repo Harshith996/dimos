@@ -123,6 +123,7 @@ class TeleopIKTask(PoseTargetIKTask):
         self._bindings = {binding.hand: binding for binding in config.bindings}
         self._lock = threading.Lock()
         self._hands = {binding.hand: _HandState() for binding in config.bindings}
+        self._grips = {binding.hand: False for binding in config.bindings}
         self._session_state = _SessionState.DISENGAGED
         self._session_epoch = 0
         self._last_button_update_time = 0.0
@@ -195,13 +196,21 @@ class TeleopIKTask(PoseTargetIKTask):
         }
         with self._lock:
             self._last_button_update_time = t_now
-            condition = all(grip_by_hand[hand] for hand in self._bindings)
+            # TEMP: each arm follows only its own grip; a released arm holds its pose.
+            grips = {hand: bool(grip_by_hand[hand]) for hand in self._bindings}
+            changed = grips != self._grips
+            self._grips = grips
+            condition = any(grips.values())
             if self._session_state is _SessionState.ESTOPPED:
                 return True
             if condition and self._session_state is _SessionState.DISENGAGED:
                 self._engage_locked()
             elif not condition and self._session_state is _SessionState.ENGAGED:
                 self._end_session_locked(_SessionState.DISENGAGED)
+            elif changed and self._session_state is _SessionState.ENGAGED:
+                for hand_state in self._hands.values():
+                    hand_state.controller_reference = None
+                    hand_state.robot_reference = None
         return True
 
     def _engage_locked(self) -> None:
@@ -262,8 +271,8 @@ class TeleopIKTask(PoseTargetIKTask):
             update_times = [self._last_button_update_time]
             for hand, binding in self._bindings.items():
                 hand_state = self._hands[hand]
-                current = hand_state.latest_pose
                 controller_reference = hand_state.controller_reference
+                current = hand_state.latest_pose if self._grips[hand] else controller_reference
                 robot_reference = hand_state.robot_reference
                 if current is None or controller_reference is None or robot_reference is None:
                     return None

@@ -70,6 +70,12 @@
       0.0,
       -0.141
     ],
+    "pin_tip_in_gripper_m": [
+      0.0,
+      0.0,
+      -0.156
+    ],
+    "pin_tip_note": "2026-10-16: each gripper closes on a printed block whose screw tip sits exactly 10 mm beyond the closed fingertip end, along the gripper -z; use this point for touches, hovers and the hand-eye validation against the touch grid (fingertip -0.146 minus 0.010)",
     "note": "printed fingers measure the same as stock (82-83 mm, calipers); grasp point = middle of the 10 mm pinch surface"
   },
   "table": {

@@ -14,6 +14,9 @@
 
 """Arm-only Dual OpenYAM hardware and model configuration."""
 
+import json
+from pathlib import Path
+
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
@@ -34,6 +37,9 @@ DUAL_OPENYAM_ADAPTER_TYPE = "dual_openyam_damiao"
 DUAL_OPENYAM_SIDES = ("left", "right")
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
+CALIBRATION_FILE = (
+    Path(__file__).parent / "calibration" / "dual_openyam_calibration_2026-10-15.json"
+)
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
 
@@ -49,6 +55,8 @@ def dual_openyam_hardware(
     left_can_port: str | None = None,
     right_can_port: str | None = None,
     inertial_overrides: str | None = None,
+    kp: tuple[float, ...] = _ARM_KP,
+    kd: tuple[float, ...] = _ARM_KD,
 ) -> HardwareComponent:
     """Select mock hardware or an explicitly configured dual-CAN adapter.
 
@@ -70,7 +78,16 @@ def dual_openyam_hardware(
                 inertial_overrides=inertial_overrides,
             )
         },
+        kp=kp,
+        kd=kd,
     )
+
+
+def calibration_gains() -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Per-arm (kp, kd) chosen by the step sweeps, from the calibration file."""
+    gains = json.loads(CALIBRATION_FILE.read_text())["control_gains"]["left"]
+    pairs = [gains[f"left_joint{i}"] for i in range(1, 7)]
+    return tuple(float(p[0]) for p in pairs), tuple(float(p[1]) for p in pairs)
 
 
 def dual_openyam_mock_hardware() -> HardwareComponent:
@@ -84,6 +101,8 @@ def dual_openyam_mock_hardware() -> HardwareComponent:
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
+    kp: tuple[float, ...] = _ARM_KP,
+    kd: tuple[float, ...] = _ARM_KD,
 ) -> HardwareComponent:
     return HardwareComponent(
         hardware_id=DUAL_OPENYAM_HARDWARE_ID,
@@ -98,8 +117,8 @@ def _hardware_component(
         ),
         adapter_kwargs=adapter_kwargs,
         wb_config=WholeBodyConfig(
-            kp=(*_ARM_KP, *_ARM_KP, 0.0, 0.0),
-            kd=(*_ARM_KD, *_ARM_KD, 0.0, 0.0),
+            kp=(*kp, *kp, 0.0, 0.0),
+            kd=(*kd, *kd, 0.0, 0.0),
         ),
     )
 

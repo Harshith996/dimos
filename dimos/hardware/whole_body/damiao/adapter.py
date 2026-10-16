@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+import os
 from pathlib import Path
 import sys
 from typing import Any, NoReturn
@@ -37,6 +38,9 @@ from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# TEMP: DIMOS_SKIP_GRIPPERS=1 enables the arms only; grippers stay off, uncalibrated and ignored.
+_SKIP_GRIPPERS = os.environ.get("DIMOS_SKIP_GRIPPERS") == "1"
 
 
 def apply_inertial_overrides(model: pinocchio.Model, overrides: Mapping[str, LinkInertial]) -> None:
@@ -272,7 +276,11 @@ class DamiaoWholeBodyAdapter(ABC):
             self._preflight_gravity()
             for arm in self._arms.values():
                 arm.set_mode("mit")
-            self._robot.enable()
+            if _SKIP_GRIPPERS:
+                for arm in self._arms.values():
+                    arm.enable_all()
+            else:
+                self._robot.enable()
             self._active = True
             self.read_motor_states()
             return True
@@ -330,7 +338,7 @@ class DamiaoWholeBodyAdapter(ABC):
                 for position, velocity, effort in zip(q, dq, tau, strict=True)
             )
         for name in self.gripper_joints:
-            if not self._active:
+            if not self._active or _SKIP_GRIPPERS:
                 # Gripper opening calibrates during activation; report a
                 # placeholder so read-only sessions still stream arm state.
                 states.append(MotorState(q=0.0, dq=0.0, tau=0.0))
@@ -395,8 +403,8 @@ class DamiaoWholeBodyAdapter(ABC):
                 gravity_offset += count
 
             for name in self.gripper_joints:
-                opening = commands[offset].q
-                self._grippers[name].set_opening(opening)
+                if not _SKIP_GRIPPERS:
+                    self._grippers[name].set_opening(commands[offset].q)
                 offset += 1
 
             self._robot.tick(self._runtime_config.tick_deadline_us)

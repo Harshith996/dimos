@@ -281,6 +281,7 @@ def test_blueprint_pins_recording_and_exposes_the_streams() -> None:
         "joint_gains",
         "step_events",
         "gravity_events",
+        "float_events",
     }
 
 

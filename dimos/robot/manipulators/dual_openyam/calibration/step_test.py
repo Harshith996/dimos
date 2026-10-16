@@ -21,6 +21,10 @@ states. RPCs move one joint's target by a small step so the response can be
 recorded with ``dimos run dual_openyam_step_test`` and analysed offline by
 ``step_report``; ``go_to`` ramps to any pose and ``mark`` drops a labelled
 marker (``gravity_events``) so ``gravity_fit`` can group steps by pose.
+``float_arm`` zeroes kp on one arm so it can be moved by hand against the
+adapter's gravity feed-forward alone (``float_events`` marks the recorded
+windows for ``float_report``); ``hold_arm`` re-seats the targets at the
+measured pose before the gains come back, so the arm never jumps.
 Without CAN ports the mock whole-body adapter is used.
 """
 
@@ -73,6 +77,10 @@ REST_SPEED_DEG_S = 10.0
 STOP_PARK_BUDGET_S = 4.0
 DEFAULT_ARM_KP = (*_ARM_KP, *_ARM_KP)
 DEFAULT_ARM_KD = (*_ARM_KD, *_ARM_KD)
+SIDES = ("left", "right")
+# Damping left on while an arm floats: enough to stop it coasting after a push,
+# small enough that a hand still moves it freely (untested on the rig).
+DEFAULT_FLOAT_KD = 0.5
 
 
 class StepRefusedError(ValueError):
@@ -142,6 +150,7 @@ class JointStepTestModule(Module):
     joint_gains: Out[JointState]
     step_events: Out[String]
     gravity_events: Out[String]
+    float_events: Out[String]
 
     def __init__(self, *, adapter: WholeBodyAdapter | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -164,6 +173,8 @@ class JointStepTestModule(Module):
         self._kd = list(self.config.kd)
         self._accepted_kp = list(self.config.kp)
         self._accepted_kd = list(self.config.kd)
+        # Per floating side: the (kp, kd) of its six joints before float_arm.
+        self._floating: dict[str, tuple[list[float], list[float]]] = {}
         self._gripper_hold = [0.0] * len(DUAL_OPENYAM_GRIPPER_JOINTS)
         self._measured: list[MotorState] = []
         self._ramp_goal: list[float] | None = None
@@ -222,6 +233,8 @@ class JointStepTestModule(Module):
         with self._lock:
             if self._thread is None or not self._thread.is_alive() or self._adapter is None:
                 return
+            for side in list(self._floating):
+                self._hold_locked(side)
             rest = [0.0] * len(self._target)
             travel = max(abs(t) for t in self._target)
             if travel < math.radians(1.0):
@@ -307,6 +320,11 @@ class JointStepTestModule(Module):
         stamp = time.time()
         with self._lock:
             self._measured = states
+            # A floating arm's target follows the hand, so nothing that restores
+            # gains can ever pull the arm back toward where it was floated from.
+            for side in self._floating:
+                for i in self._side_indices(side):
+                    self._target[i] = states[i].q
             self._advance_ramp(dt)
             targets = list(self._target)
             kp = list(self._kp)
@@ -416,6 +434,7 @@ class JointStepTestModule(Module):
         index = self._require_arm_joint(joint)
         with self._lock:
             self._require_running()
+            self._require_held()
             if self._ramp_goal is not None:
                 raise StepRefusedError("a go_to ramp is still running")
             check_step(
@@ -462,6 +481,7 @@ class JointStepTestModule(Module):
                 raise StepRefusedError(f"{name}: target {value} is not finite")
         with self._lock:
             self._require_running()
+            self._require_held()
             if self._ramp_goal is not None:
                 raise StepRefusedError("a go_to ramp is still running")
             goal = list(self._target)
@@ -505,6 +525,90 @@ class JointStepTestModule(Module):
         return f"marked {label}"
 
     @rpc
+    def float_arm(self, side: str, kd: float = DEFAULT_FLOAT_KD) -> str:
+        """Let one arm be moved by hand: kp=0 and ``kd`` on its six joints.
+
+        Only the adapter's gravity feed-forward and the damping act; the target
+        follows the measured pose meanwhile. Refused while a ramp runs. Calling
+        it again on a floating arm only changes kd; the saved gains stay those
+        from before the first call. Grippers are untouched.
+        """
+        self._require_side(side)
+        if not math.isfinite(kd) or not 0.0 <= kd <= MAX_KD:
+            raise StepRefusedError(f"float kd must be in 0..{MAX_KD:g}, got {kd}")
+        with self._lock:
+            self._require_running()
+            if self._ramp_goal is not None:
+                raise StepRefusedError("a go_to ramp is still running; float after it ends")
+            indices = self._side_indices(side)
+            if side not in self._floating:
+                self._floating[side] = (
+                    [self._kp[i] for i in indices],
+                    [self._kd[i] for i in indices],
+                )
+            for i in indices:
+                self._target[i] = self._measured[i].q
+                self._kp[i] = 0.0
+                self._kd[i] = float(kd)
+        logger.info("%s arm floating (kp=0 kd=%g)", side, kd)
+        return f"{side} arm floating: kp=0 kd={kd:g} on {len(indices)} joints"
+
+    @rpc
+    def hold_arm(self, side: str) -> str:
+        """Re-seat the targets at the measured pose, then restore the pre-float gains."""
+        self._require_side(side)
+        with self._lock:
+            self._require_running()
+            if side not in self._floating:
+                return f"{side} arm already held"
+            held_deg = self._hold_locked(side)
+        logger.info("%s arm held at %s deg", side, " ".join(f"{v:.1f}" for v in held_deg))
+        return f"{side} arm held at [{' '.join(f'{v:.1f}' for v in held_deg)}] deg; gains restored"
+
+    def _hold_locked(self, side: str) -> list[float]:
+        """Targets to the measured pose first, gains back second. Caller holds the lock."""
+        kp, kd = self._floating.pop(side)
+        indices = self._side_indices(side)
+        held: list[float] = []
+        for i in indices:
+            self._target[i] = self._measured[i].q
+            held.append(math.degrees(self._target[i]))
+        for i, p, d in zip(indices, kp, kd, strict=True):
+            self._kp[i] = p
+            self._kd[i] = d
+        return held
+
+    @rpc
+    def mark_float(
+        self, side: str, index: int, duration_s: float, data: dict[str, Any] | None = None
+    ) -> str:
+        """Publish a ``float_events`` marker: a recorded window starts now on ``side``.
+
+        ``float_report`` cuts the joint stream at ``t0`` for ``duration_s``.
+        """
+        self._require_side(side)
+        if not math.isfinite(duration_s) or duration_s <= 0.0:
+            raise StepRefusedError(f"duration_s must be positive, got {duration_s}")
+        with self._lock:
+            self._require_running()
+            indices = self._side_indices(side)
+            event = {
+                "side": side,
+                "index": int(index),
+                "t0": time.time(),
+                "duration_s": float(duration_s),
+                "floating": side in self._floating,
+                "kd": self._kd[indices[0]],
+                "q0_deg": {
+                    DUAL_OPENYAM_ARM_JOINTS[i]: math.degrees(self._measured[i].q) for i in indices
+                },
+                "data": dict(data or {}),
+            }
+        self.float_events.publish(String(json.dumps(event)))
+        logger.info("float window %d on %s for %.1f s", index, side, duration_s)
+        return f"marked float window {index} on {side} ({duration_s:g} s)"
+
+    @rpc
     def status(self) -> dict[str, Any]:
         """Measured and target angles (deg), gains, pose error and loop health."""
         with self._lock:
@@ -517,6 +621,7 @@ class JointStepTestModule(Module):
                 "measured_hz": round(self._measured_hz, 1),
                 "ticks": self._tick_count,
                 "ramping": self._ramp_goal is not None,
+                "floating": {side: side in self._floating for side in SIDES},
                 "joints": {
                     name: {
                         "measured_deg": math.degrees(measured[name]) if measured else None,
@@ -551,6 +656,20 @@ class JointStepTestModule(Module):
     def _require_running(self) -> None:
         if self._adapter is None or not self._measured:
             raise StepRefusedError("step test is not running (start() first)")
+
+    def _require_held(self) -> None:
+        """Steps and ramps need every arm under position control. Caller holds the lock."""
+        if self._floating:
+            floating = ", ".join(sorted(self._floating))
+            raise StepRefusedError(f"the {floating} arm is floating; hold_arm() first")
+
+    @staticmethod
+    def _require_side(side: str) -> None:
+        if side not in SIDES:
+            raise StepRefusedError(f"side must be one of {SIDES}, got {side!r}")
+
+    def _side_indices(self, side: str) -> list[int]:
+        return [i for name, i in self._arm_index.items() if name.startswith(f"{side}_")]
 
     def _measured_arm_rad(self) -> dict[str, float]:
         return {name: self._measured[i].q for name, i in self._arm_index.items()}
