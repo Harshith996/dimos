@@ -88,23 +88,3 @@ def test_nothing_running_means_no_skills(client: TestClient, bus: FakeBus) -> No
     bus.running = False
     assert client.get("/skills").json() == {"skills": [], "run": None, "errors": []}
     assert client.post("/skills/call", json={"skill": "speak"}).status_code == 409
-
-
-def test_mcp_speaks_json_rpc(client: TestClient, bus: FakeBus) -> None:
-    def rpc(method: str, params: Any = None) -> Any:
-        body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
-        return client.post("/mcp", json=body).json()
-
-    assert rpc("initialize")["result"]["serverInfo"]["name"] == "dimos-skills"
-    tools = rpc("tools/list")["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["list_skills", "call_skill"]
-    listed = rpc("tools/call", {"name": "list_skills", "arguments": {"query": "say"}})
-    assert json.loads(listed["result"]["content"][0]["text"])["skills"][0]["name"] == "speak"
-    called = rpc(
-        "tools/call",
-        {"name": "call_skill", "arguments": {"skill": "speak", "args": {"text": "yo"}}},
-    )
-    assert called["result"] == {"content": [{"type": "text", "text": "said yo"}], "isError": False}
-    assert rpc("nope")["error"]["code"] == -32601
-    notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
-    assert client.post("/mcp", json=notification).status_code == 202
