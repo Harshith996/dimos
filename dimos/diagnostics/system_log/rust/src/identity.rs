@@ -24,9 +24,15 @@ use sysinfo::{Disks, Networks, System, Users};
 use crate::machine::{on_path, run};
 use crate::parse;
 
+const ENV_ALLOWED: [&str; 6] = ["USER", "LOGNAME", "HOME", "SHELL", "TZ", "LANG"];
+
 pub fn read(timeout: Duration) -> Value {
     let run = |program: &str, args: &[&str]| run(program, args, timeout);
-    let env = |name: &str| std::env::var(name).ok();
+    // the only environment variables read, so nothing else in the environment (API keys) reaches the log
+    let env = |name: &str| {
+        assert!(ENV_ALLOWED.contains(&name), "{name} is not in ENV_ALLOWED");
+        std::env::var(name).ok()
+    };
     let id = run("id", &[]);
     let mut identity = json!({
         "hostname": System::host_name(),

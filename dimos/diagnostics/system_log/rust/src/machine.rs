@@ -402,7 +402,7 @@ impl Sampler {
                 let cmdline: String = p
                     .cmd()
                     .iter()
-                    .map(|a| a.to_string_lossy())
+                    .map(|a| parse::redact_assignment(&a.to_string_lossy()))
                     .collect::<Vec<_>>()
                     .join(" ");
                 json!({

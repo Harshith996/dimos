@@ -324,6 +324,39 @@ pub fn id(text: &str) -> Value {
     Value::Object(id)
 }
 
+/// A command-line argument with any `NAME=value` (an env var set for the command, as `env FOO=x cmd` does) or
+/// `--secret-ish=value` value replaced, so the variables and secrets a process was started with stay off the log.
+pub fn redact_assignment(arg: &str) -> String {
+    let Some((name, value)) = arg.split_once('=') else {
+        return arg.to_string();
+    };
+    if value.starts_with('=') {
+        return arg.to_string(); // a comparison ("a==b"), not an assignment
+    }
+    let flag = name.trim_start_matches('-');
+    let env_name = !name.starts_with('-')
+        && !flag.is_empty()
+        && !flag.starts_with(|c: char| c.is_ascii_digit())
+        && flag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let lower = flag.to_ascii_lowercase();
+    let secret = [
+        "key",
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "auth",
+        "credential",
+    ]
+    .iter()
+    .any(|word| lower.contains(word));
+    if env_name || secret {
+        format!("{name}=<redacted>")
+    } else {
+        arg.to_string()
+    }
+}
+
 /// The user's name from `id` ("uid=501(jeff) ...") → "jeff"
 pub fn id_name(text: &str) -> Option<String> {
     let uid = text.split_whitespace().next()?.strip_prefix("uid=")?;
@@ -522,6 +555,17 @@ mod tests {
             key_value("Model name:             Cortex-A78AE\n", "Model name").as_deref(),
             Some("Cortex-A78AE")
         );
+        assert_eq!(
+            redact_assignment("OPENAI_API_KEY=sk-abc"),
+            "OPENAI_API_KEY=<redacted>"
+        );
+        assert_eq!(
+            redact_assignment("--api-key=sk-abc"),
+            "--api-key=<redacted>"
+        );
+        assert_eq!(redact_assignment("--sample_hz=4"), "--sample_hz=4");
+        assert_eq!(redact_assignment("/usr/bin/python"), "/usr/bin/python");
+        assert_eq!(redact_assignment("a==b"), "a==b");
         let dns = resolv_conf("# x\nsearch a.ts.net localdomain\nnameserver 100.100.100.100\n");
         assert_eq!(dns["nameservers"][0], "100.100.100.100");
         assert_eq!(dns["search"][1], "localdomain");
