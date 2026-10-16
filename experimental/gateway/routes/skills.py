@@ -17,13 +17,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Body
-from fastapi.responses import JSONResponse, Response
+from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
 from experimental.gateway import responses
-from experimental.gateway.skills import MCP_PROTOCOL, MCP_TOOLS, SkillError, mcp_tool
-from experimental.gateway.state import API_VERSION, ApiError, GatewayState
+from experimental.gateway.skills import SkillError
+from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
 
@@ -49,35 +48,3 @@ async def skill_call(state: GatewayState, request: SkillCallRequest) -> dict[str
         )
     except SkillError as error:
         raise ApiError(error.status, str(error))
-
-
-@router.post("/mcp")
-async def mcp(state: GatewayState, body: Any = Body(default=None)) -> Response:
-    if not isinstance(body, dict) or not isinstance(body.get("method"), str):
-        raise ApiError(400, "a JSON-RPC 2.0 request object, with a method")
-    if "id" not in body:
-        return Response(status_code=202)
-    method, params, request_id = body["method"], body.get("params") or {}, body["id"]
-
-    def result(value: Any) -> JSONResponse:
-        return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": value})
-
-    if method == "initialize":
-        return result(
-            {
-                "protocolVersion": params.get("protocolVersion") or MCP_PROTOCOL,
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "dimos-skills", "version": API_VERSION},
-                "instructions": "The robot's skills: list_skills, then call_skill.",
-            }
-        )
-    if method == "ping":
-        return result({})
-    if method == "tools/list":
-        return result({"tools": MCP_TOOLS})
-    if method == "tools/call":
-        name, arguments = str(params.get("name")), params.get("arguments") or {}
-        text, failed = await asyncio.to_thread(mcp_tool, state.skills, name, arguments)
-        return result({"content": [{"type": "text", "text": text}], "isError": failed})
-    error = {"code": -32601, "message": f"Unknown: {method}"}
-    return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": error})
