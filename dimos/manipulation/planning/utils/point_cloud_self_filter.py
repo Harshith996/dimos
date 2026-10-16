@@ -25,7 +25,7 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -48,7 +48,8 @@ class PointCloudSelfFilter(Module):
     config: PointCloudSelfFilterConfig
 
     pointcloud: In[PointCloud2]
-    tf: In[TFMessage]
+    # IO: a subclass (UrdfManager) also publishes the joints it poses
+    tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     filtered_pointcloud: Out[PointCloud2]
 
