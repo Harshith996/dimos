@@ -395,3 +395,33 @@ def test_with_self_filter_off_no_cloud_is_filtered_or_published(
     asyncio.run(module.handle_pointcloud(_cloud([[2.0, 0.0, 0.0]])))
 
     assert published == []
+
+
+def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monkeypatch):
+    # a moving joint (shoulder) and a fixed one (tool) under it
+    urdf = _joint_robot("prismatic").replace(
+        "</robot>",
+        '<link name="tool"/><joint name="tool_mount" type="fixed"><parent link="arm"/><child link="tool"/></joint></robot>',
+    )
+    module = make_filter(urdf_xml=urdf, joint_tf_hz=1000.0, unchanged_tf_hz=4.0)
+    sent: list[set[str]] = []
+    monkeypatch.setattr(
+        module.tfbuffer,
+        "publish",
+        lambda *edges: sent.append({edge.child_frame_id for edge in edges}),
+    )
+    clock = [100.0]
+    monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
+
+    def state_at(t: float, shoulder: float) -> None:
+        clock[0] = 100.0 + t
+        module.add_joint_state(JointState(ts=t, name=["shoulder"], position=[shoulder]))
+
+    state_at(0.0, 0.3)
+    state_at(0.1, 0.4)  # the shoulder moved; the tool's edge (relative to arm) did not
+    state_at(0.2, 0.4)  # nothing moved, keepalive not due
+    state_at(
+        0.3, 0.4
+    )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
+
+    assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
