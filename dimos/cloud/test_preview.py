@@ -198,3 +198,27 @@ def test_ros2_static_tf_and_the_path_frame(tmp_path: Path) -> None:
     assert doc is not None and len(doc["scans"]) == 1
     # through tf_static, into the odometry's frame (not map's, 100 m off the path)
     assert np.allclose(points(doc, doc["map"]), [[5.0, 1.0, 0.3]], atol=0.03)
+
+
+def test_ros2_tf_static_without_tf(tmp_path: Path) -> None:
+    from dimos.memory.store.mcap import McapStore
+    from dimos.memory.store.test_mcap import ros2_cloud, ros2_odom, ros2_tf, write_ros2_mcap
+
+    path = tmp_path / "ros2.mcap"
+    write_ros2_mcap(
+        path,
+        [
+            (
+                "/tf_static",
+                "tf2_msgs/TFMessage",
+                0.0,
+                ros2_tf(0.0, "odom", "lidar_link", (5, 0, 0.3), 0.0),
+            )
+        ]
+        + [("/odometry", "nav_msgs/Odometry", 1.0 + i, ros2_odom(1.0 + i, i, 0)) for i in range(3)]
+        + [("/lidar", "sensor_msgs/PointCloud2", 1.5, ros2_cloud(1.5, "lidar_link", (1, 0, 0)))],
+    )
+    with McapStore(path=str(path)) as recording:
+        doc = preview.build(recording)
+    assert doc is not None and len(doc["scans"]) == 1
+    assert np.allclose(points(doc, doc["map"]), [[6.0, 0.0, 0.3]], atol=0.03)

@@ -64,8 +64,10 @@ class StreamTF(MultiTBuffer):
 
     @classmethod
     def from_store(cls, store: Any, stream: str = "tf") -> StreamTF | None:
-        recorded = tf_stream(store, stream)
         static = tf_stream(store, f"{stream}_static")
+        # a recording with only static transforms still has a tree (a camera's mount)
+        recorded = tf_stream(store, stream)
+        recorded = static if recorded is None else recorded
         return None if recorded is None else cls(recorded, static=static)
 
     def publish(self, *args: Transform) -> None:
