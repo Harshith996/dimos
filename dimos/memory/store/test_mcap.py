@@ -266,6 +266,22 @@ def test_ros2_unsigned_ints_keep_their_range(tmp_path: Path) -> None:
         assert [obs.data.data for obs in store.streams.count] == values
 
 
+def test_ros2_topics_folding_to_one_name_stay_apart(tmp_path: Path) -> None:
+    path = tmp_path / "ros2.mcap"
+    write_ros2_mcap(
+        path,
+        [
+            ("/cam/ir_left/count", "std_msgs/UInt32", 1.0, {"data": 1}),
+            ("/cam/ir_left_count", "std_msgs/UInt32", 2.0, {"data": 2}),
+            ("/cam/other", "std_msgs/UInt32", 3.0, {"data": 3}),
+        ],
+    )
+    with McapStore(path=str(path)) as store:
+        assert store.list_streams() == ["cam__ir_left__count", "cam__ir_left_count", "cam_other"]
+        assert store.streams.cam__ir_left__count.first().data.data == 1
+        assert store.streams.cam__ir_left_count.first().data.data == 2
+
+
 def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
     expected = Image(

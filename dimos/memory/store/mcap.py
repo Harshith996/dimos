@@ -31,6 +31,7 @@ Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
@@ -303,9 +304,17 @@ class McapStore(Store):
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
         if summary is not None and summary.statistics is not None:
+            # ROS topics folding to one slug (`a/b_c`, `a_b/c`) keep their `/` as `__` instead
+            folded = Counter(
+                _slug(t)
+                for t in {ch.topic for ch in summary.channels.values()}
+                if _dimos_wire(t) is None
+            )
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
+                if ch.topic not in name_of and folded[name] > 1 and _dimos_wire(ch.topic) is None:
+                    name = ch.topic.removeprefix("rt/").strip("/").replace("/", "__")
                 taken = self._stream_topic.get(name)
                 if taken is not None and taken != ch.topic:
                     # Two topics, one name. One port carrying two types is
