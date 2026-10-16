@@ -289,22 +289,3 @@ def explore_house(
         direct_cmd_vel_explorer.follow_points(points)
 
     return explore
-
-
-# TEMPORARY: kill whatever a dead earlier run left holding the dimsim/relay ports on the self-hosted runners.
-@pytest.fixture(scope="session", autouse=True)
-def _kill_stale_port_holders() -> None:
-    import psutil
-
-    for proc in psutil.process_iter(["pid", "username", "cmdline", "create_time"]):
-        try:
-            ports = {
-                c.laddr.port
-                for c in proc.net_connections(kind="tcp")
-                if c.status == psutil.CONN_LISTEN and c.laddr.port in (8090, 7780)
-            }
-            if ports:
-                print(f"[stale port {sorted(ports)}] killing {proc.info}", file=sys.stderr)
-                proc.kill()
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            pass
