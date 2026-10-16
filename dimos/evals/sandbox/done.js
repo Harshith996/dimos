@@ -13,38 +13,24 @@
 // limitations under the License.
 
 // The tool a sandboxed agent calls to claim the task is done. Pi validates its
-// arguments against the case's JSON schema; a valid call ends the run. An agent
-// that stops without one is reminded, a bounded number of times.
+// arguments against the case's JSON schema; a valid call ends the agent's turn. What
+// happens next (another user message, or the end) is the case's human's call.
 
 import { readFileSync } from "node:fs";
 
-/** @type {{name: string, description: string, schema: object, accepted: string, reminder: string, reminders: number}} */
+/** @type {{name: string, description: string, schema: object, accepted: string}} */
 const config = JSON.parse(
   readFileSync(new URL("./done.json", import.meta.url), "utf8"),
 );
 
 /** @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi */
 export default function (pi) {
-  let done = false;
-  let reminded = 0;
-  pi.on("agent_before_settle", (event) => {
-    if (done || event.outcome !== "completed" || reminded >= config.reminders) return;
-    reminded += 1;
-    const reminder = {
-      type: "custom_message",
-      customType: "done_reminder",
-      content: config.reminder,
-      display: true,
-    };
-    return { entries: [...event.entries, reminder], continue: true };
-  });
   pi.registerTool({
     name: config.name,
     label: "Done",
     description: config.description,
     parameters: config.schema,
     async execute() {
-      done = true;
       return {
         content: [{ type: "text", text: config.accepted }],
         details: undefined,

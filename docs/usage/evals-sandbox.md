@@ -24,8 +24,13 @@ the router fronts a blueprint in that container or a real robot.
 
 ## A case
 
+A case is data: a pydantic model that round-trips through JSON, so a suite can be a Python
+module exporting `SUITE` or a JSON file of cases (`dimos evals sandbox <suite> --json` prints
+one). The two things a case does, answering the agent and grading it, are functions it names
+with `FunctionRef("module:function", params)`; `params` are JSON keyword arguments.
+
 ```python skip
-from dimos.evals.sandbox.case import DimosRobot, SandboxCase, SandboxOutcome
+from dimos.evals.sandbox.case import DimosRobot, FunctionRef, SandboxCase, SandboxOutcome
 
 
 def evaluate(o: SandboxOutcome) -> float:
@@ -45,13 +50,14 @@ SUITE = [
             "properties": {"distance_m": {"type": "number"}},
             "required": ["distance_m"],
         },
-        evaluate=evaluate,
+        evaluate=FunctionRef(function=f"{__name__}:evaluate"),
+        human=FunctionRef(function="dimos.evals.sandbox.human:until_done", params={"times": 3}),
         timeout_s=600.0,
     ),
 ]
 ```
 
-- `prompt` is the whole user message. Describe the endpoints there.
+- `prompt` is the user's first message. Describe the endpoints there.
 - `robot=DimosRobot(args=...)` runs `dimos <args>` in the robot container with
   `DIMOS_TRANSPORT=zenoh` and every zenoh session dialing the router, so the blueprint's own
   topics (`dimos/<stream>/<msg type>`) are what the agent sees. `forward=` adds endpoints the
@@ -59,19 +65,38 @@ SUITE = [
   `tcp/127.0.0.1:7448`, which serves plain JSON/bytes topics under `robot/`.
 - `ready_key` is a zenoh key expression the robot must publish before the agent starts.
 - `done_schema` is the JSON schema of the `done` tool's arguments. Pi validates each call;
-  an invalid call is an error the agent sees and can retry, and the first valid call ends
-  the run. A run that never makes a valid call scores 0 and `evaluate` is not called.
-- `reminder` is what the agent is told, at most `reminders` times (3), when it stops without an
-  accepted `done` call, e.g. to ask a question; Pi carries on in the same session. Unset, it is
-  a plain "you have not called done yet".
-- `evaluate(o)` runs after the agent stops, with the robot and agent containers still up:
-  - `o.done`: the accepted done arguments.
+  an invalid call is an error the agent sees and can retry, and a valid call ends the agent's
+  turn. A run that never makes a valid call scores 0 and `evaluate` is not called.
+- `human` pretends to be the user. It is a generator function, `human(conversation, **params)`,
+  that the runner asks for the next message every time the agent stops. A yielded string is
+  the user's next message, in the same Pi session; returning ends the conversation. The
+  conversation, not the done tool, decides when the agent is finished:
+  - `conversation.called_done` / `conversation.done`: whether the agent's latest turn ended
+    with an accepted done call, and its arguments.
+  - `conversation.turns`, `conversation.exec("cmd")` (e.g. to try the agent's system),
+    `conversation.case_dir`.
+
+  ```python skip
+  def until_done(conversation, *, message="You have not called done yet...", times=3):
+      for _ in range(times):
+          if conversation.called_done:
+              return
+          yield message
+  ```
+
+  That is the default (`dimos.evals.sandbox.human:until_done`). `while True: yield "..."` keeps
+  the agent going until the timeout or the step budget. A human can also run what the agent
+  built and answer "that didn't work, please fix it" until it does.
+- `timeout_s` covers the whole conversation, every agent turn.
+- `evaluate(o, **params)` runs after the human ends the conversation, with the robot and agent
+  containers still up:
+  - `o.done`: the last accepted done arguments.
   - `o.recording`: every zenoh sample of the run, both directions
     (`samples(key_expr)`, `last(key_expr)`, `keys()`; `Sample.decode()` gives a dimOS message
     when the key names its type, parsed JSON, or bytes).
   - `o.exec("cmd")`: a `bash -lc` command in the agent container, returning
     `subprocess.CompletedProcess`.
-  - `o.trajectory`: the ATIF trajectory.
+  - `o.trajectory`: the ATIF trajectory, every turn, with the human's messages as user steps.
 
 `dimos/evals/sandbox/example.py` is a runnable example on a mock wheeled base.
 
@@ -88,9 +113,12 @@ dimos evals sandbox dimos.evals.sandbox.example --model gpt-5.6-luna --max-steps
 Each run writes `~/.local/state/dimos/evals/sandbox-*/`: `manifest.json`, `results.jsonl`,
 `summary.json`, and per case `trajectory.json`, `raw/` (exact model payloads), `zenoh.db`,
 `work/` (the agent's working directory, copied out before its container is removed),
-`harness/session/` (Pi's own session), `compose.json`, `containers.log` and `pi-stderr.txt`.
+`case.json` (the case as run), `harness/session/` (Pi's own session), `compose.json`, `containers.log` and `pi-stderr.txt`.
 `results.jsonl` gains a line as each case ends. The robot image is rebuilt from the
 checkout, so rebuild it after changing dimOS.
+
+`--resume <run dir> --message "..."` continues each case's session from an earlier run: a
+fresh robot, the agent's `/root/work` copied back in, and the message as its next user turn.
 
 ## A real robot
 

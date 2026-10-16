@@ -19,7 +19,7 @@ dimos evals sandbox dimos.evals.sandbox.example
 
 import json
 
-from dimos.evals.sandbox.case import DimosRobot, SandboxCase, SandboxOutcome
+from dimos.evals.sandbox.case import DimosRobot, FunctionRef, SandboxCase, SandboxOutcome
 
 PROMPT = """\
 You are connected to a mobile robot. Its only interface is a Zenoh router at tcp/robot:7447
@@ -58,7 +58,7 @@ SUITE = [
             "required": ["joint_names"],
             "additionalProperties": False,
         },
-        evaluate=evaluate,
+        evaluate=FunctionRef(function=f"{__name__}:evaluate"),
         timeout_s=600.0,
     ),
 ]

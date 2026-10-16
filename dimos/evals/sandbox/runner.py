@@ -17,19 +17,21 @@
 Per case, one docker compose project:
 
 - ``agent``: Ubuntu and Pi, nothing else. The runner starts Pi in it with the case
-  prompt and reads its JSON events.
+  prompt and reads its JSON events, then once per later turn with the human's message.
 - ``robot``: the zenoh router at ``tcp/robot:7447``, in front of a blueprint
   (:class:`DimosRobot`) or forwarding to one running elsewhere (:class:`ExternalRobot`).
 - ``recorder``: subscribes to every key on the router and writes ``zenoh.db``.
 - ``llm-proxy``: forwards Pi's model calls and saves each request and response.
 
-The run ends with an accepted call to the done tool, the timeout, or the step
-budget. Evaluate then runs while the robot and agent containers are still up.
+Each agent turn ends when Pi stops, e.g. on an accepted call to the done tool. The case's
+human then answers, and Pi carries on in the same session, until the human has nothing more
+to say, the timeout, or the step budget. Evaluate then runs while the robot and agent
+containers are still up.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 import json
@@ -53,8 +55,10 @@ from dimos.evals.constants import MAX_TOOL_SECONDS, PROVIDERS
 from dimos.evals.runner import _git_record, _write_trajectory, summarize
 from dimos.evals.sandbox.case import (
     AGENT_IMAGE,
+    KILL_AGENT_PROCESSES,
     ROBOT_ENDPOINT,
     ROBOT_IMAGE,
+    Conversation,
     DimosRobot,
     ExternalRobot,
     Robot,
@@ -63,7 +67,7 @@ from dimos.evals.sandbox.case import (
     exec_in,
 )
 from dimos.evals.sandbox.recorder import NEW_KEY, RECORDING, Recording
-from dimos.evals.types import EvalResult, Trajectory
+from dimos.evals.types import EvalResult, Step, Trajectory
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -72,11 +76,7 @@ PROXY_PORT = 8080
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
-DONE_ACCEPTED = "Done: accepted. The task is over."
-KILL_AGENT_PROCESSES = (
-    'for pid in $(pgrep -v -f "^(/sbin/docker-init|sleep infinity)"); do '
-    '[ "$pid" != "$$" ] && kill -9 "$pid"; done; true'
-)
+DONE_ACCEPTED = "Done: accepted."
 # Extra seconds the runner waits past the in-container timeout before giving up on Pi.
 TIMEOUT_GRACE_S = 15.0
 
@@ -105,11 +105,21 @@ class SandboxRunner:
         agent: SandboxAgent,
         *,
         robot: ExternalRobot | None = None,
+        resume_from: Path | None = None,
+        resume_message: str = "",
         out_dir: Path = STATE_DIR / "evals",
     ) -> None:
-        """*robot* replaces every case's robot, e.g. a real robot in place of a blueprint."""
+        """*robot* replaces every case's robot, e.g. a real robot in place of a blueprint.
+
+        *resume_from*, an earlier run's directory, continues each case's Pi session there with
+        *resume_message* as the next user turn, on a fresh robot, in a copy of its /root/work.
+        """
+        if resume_from is not None and not resume_message:
+            raise ValueError("resuming needs a message for the agent")
         self.agent = agent
         self.robot_override = robot
+        self.resume_from = resume_from
+        self.resume_message = resume_message
         self.out_dir = out_dir
         self.run_dir = out_dir
 
@@ -132,7 +142,9 @@ class SandboxRunner:
             "source": source,
             "case_ids": ids,
             "agent": asdict(self.agent),
-            "robot_override": asdict(self.robot_override) if self.robot_override else None,
+            "robot_override": self.robot_override.model_dump() if self.robot_override else None,
+            "resumed_from": str(self.resume_from) if self.resume_from else None,
+            "resume_message": self.resume_message or None,
             "code": _git_record(),
         }
         (self.run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -158,6 +170,10 @@ class SandboxRunner:
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
         compose_file = case_dir / "compose.json"
         self._write_harness(case, case_dir / "harness")
+        previous = self.resume_from / case.id if self.resume_from else None
+        if previous is not None:
+            shutil.copytree(previous / "harness" / "session", case_dir / "harness" / "session")
+        (case_dir / "case.json").write_text(case.model_dump_json(indent=2))
         compose_file.write_text(json.dumps(self._compose(robot, case_dir), indent=2))
         compose = ["docker", "compose", "-p", project, "-f", str(compose_file)]
         trajectory: Trajectory | None = None
@@ -166,13 +182,15 @@ class SandboxRunner:
             subprocess.run([*compose, "up", "-d", "--quiet-pull"], check=True, capture_output=True)
             if robot is not None:
                 self._wait_ready(compose, case)
+            if previous is not None:
+                _restore_work(compose, previous / "work", case_dir / "restored-work")
             agent_t0 = time.monotonic()
-            trajectory = self._run_pi(compose, case, case_dir)
+            trajectory = self._converse(compose, case, case_dir, exec_in(project, compose_file))
             agent_s = time.monotonic() - agent_t0
             _write_trajectory(case_dir, trajectory, [*self.agent.tools, case.done_tool])
             if robot is not None:
                 subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
-            done = accepted_done(trajectory, case.done_tool)
+            done = accepted_done(trajectory.steps, case.done_tool)
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
@@ -217,10 +235,6 @@ class SandboxRunner:
             "description": case.done_description,
             "schema": case.done_schema,
             "accepted": DONE_ACCEPTED,
-            "reminder": case.reminder
-            or f"You have not called {case.done_tool} yet. The task only counts as done "
-            f"once you call {case.done_tool} with valid arguments.",
-            "reminders": case.reminders,
         }
         (harness / "done.json").write_text(json.dumps(done))
 
@@ -293,25 +307,66 @@ class SandboxRunner:
             time.sleep(1.0)
         raise TimeoutError(f"robot not ready after {case.ready_timeout_s:.0f}s ({case.ready_key})")
 
-    def _run_pi(self, compose: list[str], case: SandboxCase, case_dir: Path) -> Trajectory:
-        agent = self.agent
+    def _converse(
+        self,
+        compose: list[str],
+        case: SandboxCase,
+        case_dir: Path,
+        exec: Callable[..., subprocess.CompletedProcess[str]],
+    ) -> Trajectory:
+        """Agent turns, each answered by the case's human, until it has nothing more to say."""
+        prompt = self.resume_message or case.prompt
         events = PiToAtif(
-            case_dir / "raw", TrajectoryBuilder(case.prompt, name="SandboxPi", model=agent.model)
+            case_dir / "raw", TrajectoryBuilder(prompt, name="SandboxPi", model=self.agent.model)
         )
+        conversation = Conversation(exec=exec, case_dir=case_dir)
+        human = case.human(conversation)
+        deadline = time.monotonic() + case.timeout_s
+        while True:
+            steps = len(events.trajectory.steps)
+            ended_by = self._turn(compose, case, case_dir, events, prompt, deadline)
+            conversation.turns += 1
+            conversation.done = accepted_done(events.trajectory.steps[steps:], case.done_tool)
+            if ended_by != "answer":
+                break
+            try:
+                prompt = next(human)
+            except StopIteration:
+                break
+            if time.monotonic() >= deadline:
+                ended_by = "timeout"
+                break
+            events.trajectory.user(prompt)
+        return events.trajectory.build(ended_by, error=events.error)  # type: ignore[arg-type]
+
+    def _turn(
+        self,
+        compose: list[str],
+        case: SandboxCase,
+        case_dir: Path,
+        events: PiToAtif,
+        prompt: str,
+        deadline: float,
+    ) -> str:
+        """One Pi run on *prompt*, continuing the case's session if it has one; how it ended."""
+        agent = self.agent
+        sessions = sorted((case_dir / "harness" / "session").glob("*.jsonl"))
+        session = ["--session", f"{HARNESS}/session/{sessions[-1].name}"] if sessions else []
+        left_s = max(1, int(deadline - time.monotonic()))
         command = [
             *compose, "exec", "-T", "agent",
-            "timeout", "-k", "5", str(int(case.timeout_s)),
+            "timeout", "-k", "5", str(left_s),
             "pi", "--mode", "json", "--model", f"{agent.provider}/{agent.model}",
-            "--thinking", agent.thinking, "--session-dir", f"{HARNESS}/session",
+            "--thinking", agent.thinking, "--session-dir", f"{HARNESS}/session", *session,
             "--tools", ",".join((*agent.tools, case.done_tool)),  # --tools gates extension tools too
             "--extension", f"{HARNESS}/runtime.js", "--extension", f"{HARNESS}/done.js",
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-            "--no-context-files", "--no-approve", case.prompt,
+            "--no-context-files", "--no-approve", prompt,
         ]  # fmt: skip
-        deadline = time.monotonic() + case.timeout_s + TIMEOUT_GRACE_S
         ended_by = "answer"
+        events.error = ""
         with (
-            (case_dir / "pi-stderr.txt").open("w") as stderr,
+            (case_dir / "pi-stderr.txt").open("a") as stderr,
             # Pi reads an open stdin as more prompt, and would wait on it forever.
             subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr
@@ -319,10 +374,10 @@ class SandboxRunner:
         ):
             assert proc.stdout is not None
             try:
-                with closing(read_pi_events(proc.stdout, deadline)) as stream:
+                with closing(read_pi_events(proc.stdout, deadline + TIMEOUT_GRACE_S)) as stream:
                     for event in stream:
                         events.append_event(event)
-                proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+                proc.wait(timeout=max(0.0, deadline + TIMEOUT_GRACE_S - time.monotonic()))
             except (TimeoutError, subprocess.TimeoutExpired):
                 ended_by = "timeout"
             except Exception as e:
@@ -330,8 +385,7 @@ class SandboxRunner:
             finally:
                 proc.kill()
                 proc.wait()
-        # Whatever the agent left running, e.g. a script still driving the robot. Not the
-        # container's init and its sleep, which keep the container up for evaluate.
+        # Whatever the agent left running, e.g. a script still driving the robot.
         subprocess.run(
             [*compose, "exec", "-T", "agent", "bash", "-c", KILL_AGENT_PROCESSES],
             capture_output=True,
@@ -344,7 +398,7 @@ class SandboxRunner:
             events.error = f"pi exit status {proc.returncode}"
         if events.error and ended_by == "answer":
             ended_by = "error"
-        return events.trajectory.build(ended_by, error=events.error)  # type: ignore[arg-type]
+        return ended_by
 
     def _result(
         self,
@@ -369,7 +423,7 @@ class SandboxRunner:
         totals = trajectory.final_metrics
         return replace(
             result,
-            final_answer=json.dumps(accepted_done(trajectory, case.done_tool)),
+            final_answer=json.dumps(accepted_done(trajectory.steps, case.done_tool)),
             steps=totals.total_steps,
             model_turns=sum(s.source == "agent" for s in trajectory.steps),
             tool_calls=sum(len(s.tool_calls or ()) for s in trajectory.steps),
@@ -382,6 +436,20 @@ class SandboxRunner:
             ended_by=trajectory.extra.ended_by,
             trajectory=str(self.run_dir / case.id / "trajectory.json"),
         )
+
+
+def _restore_work(compose: list[str], work: Path, staged: Path) -> None:
+    """Put an earlier run's /root/work back in the agent container, minus any sign of grading."""
+    shutil.copytree(work, staged, symlinks=True)
+    try:
+        log = staged / "grading-run.log"
+        if log.exists():
+            log.rename(staged / "run-output.log")
+        subprocess.run(
+            [*compose, "cp", f"{staged}/.", "agent:/root/work"], check=True, capture_output=True
+        )
+    finally:
+        shutil.rmtree(staged)
 
 
 def _robot_service(robot: Robot) -> dict[str, Any]:
@@ -399,9 +467,9 @@ def _robot_service(robot: Robot) -> dict[str, Any]:
     }
 
 
-def accepted_done(trajectory: Trajectory, tool: str) -> dict[str, Any] | None:
-    """The arguments of the first done call Pi validated and ran, None if there was none."""
-    for step in trajectory.steps:
+def accepted_done(steps: Sequence[Step], tool: str) -> dict[str, Any] | None:
+    """The arguments of the last done call Pi validated and ran, None if there was none."""
+    for step in reversed(steps):
         accepted = {
             r.source_call_id
             for r in (step.observation.results if step.observation else ())

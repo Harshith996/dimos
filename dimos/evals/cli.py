@@ -22,6 +22,7 @@ import importlib
 import inspect
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import subprocess
@@ -218,7 +219,8 @@ def _run_in_docker(
 @app.command("sandbox")
 def sandbox(
     suite: str = typer.Argument(
-        help="Dotted module exporting SUITE, a list of SandboxCase, e.g. dimos.evals.sandbox.example"
+        help="Dotted module exporting SUITE, a list of SandboxCase, e.g. "
+        "dimos.evals.sandbox.example, or a JSON file of cases"
     ),
     provider: str = typer.Option("openai", help="openai or anthropic"),
     model: str = typer.Option("gpt-5.6-luna", help="Model the agent runs on"),
@@ -231,25 +233,44 @@ def sandbox(
         "case's blueprint, e.g. --robot tcp/192.168.123.18:7447",
     ),
     case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
+    resume: Path | None = typer.Option(
+        None,
+        "--resume",
+        help="An earlier sandbox run directory: continue each case's agent session from there",
+    ),
+    message: str = typer.Option("", "--message", help="With --resume: the agent's next message"),
+    print_json: bool = typer.Option(
+        False, "--json", help="Print the (selected) cases as JSON instead of running them"
+    ),
 ) -> None:
     """Pi in an agent container, the robot behind a zenoh router in another; see evals-sandbox.md."""
+    from pydantic import TypeAdapter
+
     from dimos.evals.runner import summarize
-    from dimos.evals.sandbox.case import ExternalRobot
+    from dimos.evals.sandbox.case import ExternalRobot, SandboxCase, load_suite
     from dimos.evals.sandbox.runner import SandboxAgent, SandboxRunner
 
-    cases = importlib.import_module(suite).SUITE
+    cases = load_suite(suite)
     if case:
         unknown = set(case) - {c.id for c in cases}
         if unknown:
             raise typer.BadParameter(f"no such cases: {sorted(unknown)}", param_hint="--case")
         cases = [c for c in cases if c.id in case]
+    if print_json:
+        typer.echo(TypeAdapter(list[SandboxCase]).dump_json(cases, indent=2).decode())
+        return
     agent = SandboxAgent(
         provider=provider,  # type: ignore[arg-type]
         model=model,
         thinking=thinking,  # type: ignore[arg-type]
         max_steps=max_steps,
     )
-    runner = SandboxRunner(agent, robot=ExternalRobot(connect=tuple(robot)) if robot else None)
+    runner = SandboxRunner(
+        agent,
+        robot=ExternalRobot(connect=tuple(robot)) if robot else None,
+        resume_from=resume,
+        resume_message=message,
+    )
     results = runner.run(cases, source=suite)
     for r in results:
         status = "ERROR" if r.error else ("PASS" if r.passed else "fail")
