@@ -123,10 +123,16 @@ class _Ros2Codec:
     payload_type: type
     msg_type: type
     decode_ros: Callable[[bytes], Any]
+    # A flat dimos type that is its own LCM struct is filled directly: an LCM round
+    # trip would push ROS's unsigned ints through signed ones (a uint32 of 3e9 fails)
+    direct: bool = False
 
     def decode(self, data: bytes) -> Any:
-        lcm = _ros_to_lcm(self.decode_ros(data), lcm_msg_type(self.msg_type.msg_name))  # type: ignore[attr-defined]
-        msg = self.msg_type.lcm_decode(lcm.lcm_encode())  # type: ignore[attr-defined]
+        ros = self.decode_ros(data)
+        if self.direct:
+            return _ros_to_lcm(ros, self.msg_type)
+        twin = lcm_msg_type(self.msg_type.msg_name)  # type: ignore[attr-defined]
+        msg = self.msg_type.lcm_decode(_ros_to_lcm(ros, twin).lcm_encode())  # type: ignore[attr-defined]
         return msg if self.payload_type is self.msg_type else msg.decode()
 
 
@@ -143,7 +149,9 @@ def _ros2_codec(schema: Any) -> _Ros2Codec | None:
         return None
     # A compressed frame decodes to an Image, as the jpeg channels do
     payload = Image if msg_type.msg_name == "sensor_msgs.CompressedImage" else msg_type
-    return _Ros2Codec(payload, msg_type, decode_ros)
+    twin = lcm_msg_type(msg_type.msg_name)
+    direct = issubclass(msg_type, twin) and set(twin.__typenames__) <= _LCM_PRIMITIVES
+    return _Ros2Codec(payload, msg_type, decode_ros, direct)
 
 
 def _dimos_wire(topic: str) -> tuple[str, type] | None:

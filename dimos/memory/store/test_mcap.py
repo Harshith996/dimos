@@ -133,6 +133,7 @@ _MSGDEFS = {
     "uint8[] data\nbool is_dense",
     "sensor_msgs/CompressedImage": "std_msgs/Header header\nstring format\nuint8[] data",
     "tf2_msgs/TFMessage": "geometry_msgs/TransformStamped[] transforms",
+    "std_msgs/UInt32": "uint32 data",
     "nav_msgs/Odometry": "std_msgs/Header header\nstring child_frame_id\n"
     "geometry_msgs/PoseWithCovariance pose\ngeometry_msgs/TwistWithCovariance twist",
 }
@@ -253,6 +254,16 @@ def test_ros2_channels_decode_from_their_embedded_schema(tmp_path: Path) -> None
         )
         image = store.streams.camera_compressed.first().data  # decoded, like a jpeg channel
         assert isinstance(image, Image) and image.data.shape == (8, 8, 3)
+
+
+def test_ros2_unsigned_ints_keep_their_range(tmp_path: Path) -> None:
+    path = tmp_path / "ros2.mcap"
+    values = [0, 2**31 - 1, 2**31, 3_000_000_000, 2**32 - 1]
+    write_ros2_mcap(
+        path, [("/count", "std_msgs/UInt32", 1.0 + i, {"data": v}) for i, v in enumerate(values)]
+    )
+    with McapStore(path=str(path)) as store:
+        assert [obs.data.data for obs in store.streams.count] == values
 
 
 def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
