@@ -40,19 +40,15 @@ Modes (exactly one):
                  flake that does not build on this system simply declares no
                  check for it.
   --check-shared-deps
-                 Fail when the modules disagree on a dependency they share:
-                 a flake input (nixpkgs, crate2nix, …) locked to different
-                 revs, a nix package (gtsam, pcl, …) at versions no two
-                 modules have in common, or a crate resolved to two
-                 semver-compatible versions (tokio 1.53.1 here, 1.52.0
-                 there), which cargo would have unified in one workspace.
-                 Crate versions live in each Cargo.lock, not flake.lock, so
-                 this instantiates every module's derivation and reads its
-                 closure; nothing is built but crate2nix's Cargo.nix. Also
-                 fails where one crate version builds as several derivations
-                 because the modules enable different features, since that
-                 build is then not shared between them. Known mismatches are
-                 listed in SHARED_DEPS_EXCEPTIONS.
+                 Fail when the modules disagree on a dependency they share.
+                 Every derivation a module needs (read from its closure;
+                 nothing is built but crate2nix's Cargo.nix) is grouped by
+                 name and semver major (0.x by 0.minor), e.g. python3@3 or
+                 rust_tokio@1, and every module holding a group must hold the
+                 same versions of it. A rust_ crate must also be built with
+                 the same features, or its build is not shared. Each flake's
+                 own inputs must be locked to the same rev. A module can be
+                 excused from one group in SHARED_DEPS_EXCEPTIONS.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -608,36 +604,92 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
 
 
-# Known mismatches --check-shared-deps lets through: "input:<source>", "package:<name>",
-# "crate:<name>" (two compatible versions) or "features:<name>" (one version, several builds).
-# Drop an entry once the modules agree; the check warns about entries that no longer match.
-SHARED_DEPS_EXCEPTIONS: frozenset[str] = frozenset(
-    {
-        "features:ahash",
-        "features:anyhow",
-        "features:arrayvec",
-        "features:bitflags",
-        "features:bytemuck",
-        "features:cc",
-        "features:crc32fast",
-        "features:either",
-        "features:fastrand",
-        "features:getrandom",
-        "features:hashbrown",
-        "features:num-complex",
-        "features:num-traits",
-        "features:proc-macro2",
-        "features:regex",
-        "features:regex-automata",
-        "features:regex-syntax",
-        "features:serde_json",
-        "features:stable_deref_trait",
-        "features:syn",
-        "features:yoke",
-        "features:zerocopy",
-        "features:zerofrom",
-    }
-)
+# Known mismatches --check-shared-deps lets through, per module: "<name>@<major>" (e.g.
+# "python3@3", "rust_syn@3") or "input:<source>". Each drops that module from that one
+# comparison; the check warns about entries that no longer match anything.
+SHARED_DEPS_EXCEPTIONS: dict[str, frozenset[str]] = {
+    "dimos/experimental/memory/rust": frozenset(
+        {
+            "rust_anyhow@1",
+            "rust_cc@1",
+            "rust_crc32fast@1",
+            "rust_either@1",
+            "rust_hashbrown@0.17",
+            "rust_proc-macro2@1",
+            "rust_syn@2",
+        }
+    ),
+    "dimos/hardware/sensors/camera/realsense/rust": frozenset(
+        {
+            "docbook-xml@4",
+            "rust_anyhow@1",
+        }
+    ),
+    "dimos/hardware/sensors/camera/v4l2/rust": frozenset(
+        {
+            "rust_anyhow@1",
+            "rust_cc@1",
+        }
+    ),
+    "dimos/hardware/sensors/lidar/fastlio2/cpp": frozenset(
+        {
+            "autoconf@2",
+            "docbook-xml@4",
+            "python3@3",
+        }
+    ),
+    "dimos/mapping/dim_slam/rust": frozenset(
+        {
+            "rust_cc@1",
+        }
+    ),
+    "dimos/mapping/ray_tracing/rust": frozenset(
+        {
+            "rust_arrayvec@0.7",
+        }
+    ),
+    "dimos/navigation/local_planner/rust": frozenset(
+        {
+            "rust_serde_json@1",
+        }
+    ),
+    "dimos/navigation/trajectory_follower/fancy/rust": frozenset(
+        {
+            "rust_serde_json@1",
+        }
+    ),
+    "dimos/perception/depth2depth_cloud/rust": frozenset(
+        {
+            "rust_ahash@0.8",
+            "rust_anyhow@1",
+            "rust_bitflags@2",
+            "rust_bytemuck@1",
+            "rust_cc@1",
+            "rust_crc32fast@1",
+            "rust_either@1",
+            "rust_fastrand@2",
+            "rust_getrandom@0.3",
+            "rust_hashbrown@0.16",
+            "rust_num-complex@0.4",
+            "rust_num-traits@0.2",
+            "rust_regex-automata@0.4",
+            "rust_regex-syntax@0.8",
+            "rust_regex@1",
+            "rust_stable_deref_trait@1",
+            "rust_yoke@0.8",
+            "rust_zerocopy@0.8",
+            "rust_zerofrom@0.1",
+        }
+    ),
+    "dimos/robot/unitree/go2/dds/rust": frozenset(
+        {
+            "rust_cc@1",
+            "rust_regex-automata@0.4",
+            "rust_regex-syntax@0.8",
+            "rust_regex@1",
+        }
+    ),
+}
 
 
 def _parse_drv_name(store_path: str) -> tuple[str, str]:
@@ -647,12 +699,12 @@ def _parse_drv_name(store_path: str) -> tuple[str, str]:
     return (name[: match.start()], name[match.end() :]) if match else (name, "")
 
 
-def _semver_group(version: str) -> str:
-    """The cargo compatibility class of a version: 1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3."""
-    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+def _semver_major(version: str) -> str | None:
+    """The part of a version a breaking change bumps: 1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3."""
+    match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
     if match is None:
-        return version
-    parts = match.groups()
+        return None
+    parts = [part for part in match.groups() if part is not None]
     for index, part in enumerate(parts):
         if part != "0":
             return ".".join(parts[: index + 1])
@@ -706,24 +758,77 @@ def _where(build_dirs: set[str], total: int) -> str:
     return ", ".join(sorted(build_dirs)) if len(build_dirs) <= 3 else f"{len(build_dirs)} modules"
 
 
+def find_mismatches(
+    closures: dict[str, frozenset[str]],
+) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, set[str]]]]:
+    """What the modules disagree on, as key -> what a group of modules has -> those modules.
+
+    A key is <name>@<major> or input:<source>. Also returns everything seen, as
+    key -> module -> versions, so exceptions that match nothing can be reported.
+    """
+    seen: dict[str, dict[str, set[str]]] = {}
+    crate_builds: dict[str, dict[str, set[str]]] = {}
+    for build_dir in closures:
+        for source, rev in _direct_inputs(build_dir).items():
+            seen.setdefault(f"input:{source}", {}).setdefault(build_dir, set()).add(rev[:12])
+        for drv in closures[build_dir]:
+            name, version = _parse_drv_name(drv)
+            major = _semver_major(version)
+            # Source tarballs and patches are downloads, not packages
+            if major is None or re.search(r"\.(tar(\.\w+)?|tgz|zip|patch|diff)$", version):
+                continue
+            key = f"{name}@{major}"
+            seen.setdefault(key, {}).setdefault(build_dir, set()).add(version)
+            if name.startswith("rust_"):
+                crate_builds.setdefault(key, {}).setdefault(build_dir, set()).add(drv)
+
+    def compared(per_module: dict[str, set[str]], key: str) -> dict[str, set[str]]:
+        return {
+            build_dir: values
+            for build_dir, values in per_module.items()
+            if key not in SHARED_DEPS_EXCEPTIONS.get(build_dir, ())
+        }
+
+    failures: dict[str, dict[str, set[str]]] = {}
+    for key in sorted(seen):
+        by_versions: dict[str, set[str]] = {}
+        for build_dir, versions in compared(seen[key], key).items():
+            label = " ".join(sorted(versions, key=_version_key))
+            by_versions.setdefault(label, set()).add(build_dir)
+        if len(by_versions) > 1:
+            failures[key] = by_versions
+
+    # One crate version built as several derivations is not shared between the modules.
+    # Only compare its own features: dependents differ too, but only because of it.
+    candidates = {
+        key: compared(per_module, key)
+        for key, per_module in crate_builds.items()
+        if key not in failures
+    }
+    split = sorted(
+        {
+            drv
+            for per_module in candidates.values()
+            if len(set().union(*per_module.values())) > 1
+            for drv in set().union(*per_module.values())
+        }
+    )
+    features = _crate_features(split) if split else {}
+    for key, per_module in sorted(candidates.items()):
+        by_features: dict[str, set[str]] = {}
+        for build_dir, drvs in per_module.items():
+            for drv in drvs:
+                label = f"{_parse_drv_name(drv)[1]} [{features.get(Path(drv).name, '')}]"
+                by_features.setdefault(label, set()).add(build_dir)
+        if len(by_features) > 1:
+            failures[key] = by_features
+    return failures, seen
+
+
 def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
-    problems: dict[str, str] = {}
-    build_dirs = sorted({m.build_dir for m in modules})
-
-    input_revs: dict[str, dict[str, set[str]]] = {}
-    for build_dir in build_dirs:
-        for name, rev in _direct_inputs(build_dir).items():
-            input_revs.setdefault(name, {}).setdefault(rev, set()).add(build_dir)
-    for name, revs in sorted(input_revs.items()):
-        if len(revs) > 1:
-            where = " · ".join(
-                f"{rev[:12]} ({_where(dirs, len(build_dirs))})" for rev, dirs in revs.items()
-            )
-            problems[f"input:{name}"] = where
-
+    unique = {m.build_dir: m for m in modules}.values()
     workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
     closures: dict[str, frozenset[str]] = {}
-    unique = {m.build_dir: m for m in modules}.values()
     with ProcessPoolExecutor(max_workers=workers) as executor:
         for build_dir, closure in executor.map(_module_closure, unique):
             if closure is None:
@@ -731,73 +836,27 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
             else:
                 closures[build_dir] = closure
     _log(f"Read the closures of {len(closures)} module(s)")
+    failures, seen = find_mismatches(closures)
 
-    crate_versions: dict[tuple[str, str], dict[str, set[str]]] = {}
-    builds: dict[tuple[str, str], dict[str, set[str]]] = {}
-    packages: dict[str, dict[str, set[str]]] = {}
-    for build_dir, closure in closures.items():
-        for drv in closure:
-            name, version = _parse_drv_name(drv)
-            if name.startswith("rust_"):
-                key = (name.removeprefix("rust_"), _semver_group(version))
-                crate_versions.setdefault(key, {}).setdefault(version, set()).add(build_dir)
-                builds.setdefault((name, version), {}).setdefault(drv, set()).add(build_dir)
-            elif version and not version.endswith(".tar.gz"):
-                packages.setdefault(name, {}).setdefault(build_dir, set()).add(version)
-    crates = {crate for crate, _ in crate_versions}
-    # One closure legitimately holds several versions (bootstrap stages), so a package
-    # drifts only when two modules share no version of it. Crates vendored by a nixpkgs
-    # package look like packages too, and are left to that package.
-    for name, per_module in sorted(packages.items()):
-        version_sets = list(per_module.values())
-        if name not in crates and any(
-            a.isdisjoint(b) for i, a in enumerate(version_sets) for b in version_sets[i + 1 :]
-        ):
-            by_version: dict[str, set[str]] = {}
-            for build_dir, versions in per_module.items():
-                by_version.setdefault(" ".join(sorted(versions)), set()).add(build_dir)
-            where = " · ".join(
-                f"{v} ({_where(dirs, len(closures))})" for v, dirs in by_version.items()
-            )
-            problems[f"package:{name}"] = where
-    for (crate, group), versions in sorted(crate_versions.items()):
-        if len(versions) > 1:
-            ordered = sorted(versions.items(), key=lambda kv: _version_key(kv[0]))
-            where = " · ".join(f"{v} ({_where(dirs, len(closures))})" for v, dirs in ordered)
-            problems[f"crate:{crate}"] = f"{group}.x: {where}"
-
-    # A crate version built as several derivations is not shared; report only the
-    # ones whose own features differ, not the dependents that differ because of them.
-    split = {key: drvs for key, drvs in builds.items() if len(drvs) > 1}
-    features = _crate_features([drv for drvs in split.values() for drv in drvs]) if split else {}
-    for (name, version), drvs in sorted(split.items()):
-        by_features: dict[str, set[str]] = {}
-        for drv, dirs in drvs.items():
-            by_features.setdefault(features[Path(drv).name] or "(none)", set()).update(dirs)
-        if len(by_features) > 1:
-            where = " · ".join(
-                f"[{f}] ({_where(dirs, len(closures))})" for f, dirs in by_features.items()
-            )
-            key = f"features:{name.removeprefix('rust_')}"
-            problems[key] = (
-                f"{problems[key]} | {version} {where}" if key in problems else f"{version} {where}"
-            )
-
-    failures = {key: where for key, where in problems.items() if key not in SHARED_DEPS_EXCEPTIONS}
-    for key in sorted(SHARED_DEPS_EXCEPTIONS - problems.keys()):
-        _log(
-            f"WARN:  exception {key!r} no longer matches on {current_system()}; drop it if it matches nowhere"
+    for build_dir, keys in sorted(SHARED_DEPS_EXCEPTIONS.items()):
+        for key in sorted(keys):
+            if build_dir in closures and build_dir not in seen.get(key, {}):
+                _log(f"WARN:  exception {build_dir} {key} matches nothing on {current_system()}")
+    for key, groups in failures.items():
+        where = " · ".join(
+            f"{label} ({_where(dirs, len(closures))})" for label, dirs in groups.items()
         )
-    for key, where in sorted(failures.items()):
         _log(f"FAIL:  {key}  {where}")
     if failures:
         sys.exit(
-            f"{len(failures)} shared dependency mismatch(es). crate: in each module that lags,"
-            " cargo update -p <crate>@<old> --precise <newest>. features: enable the same"
-            " features in every module that uses the crate. input: lock it to the rev the"
-            " other modules use. Or add the key to SHARED_DEPS_EXCEPTIONS."
+            f"{len(failures)} shared dependency mismatch(es). Every module that has a"
+            " <name>@<major> must have the same versions of it (and, for a rust_ crate, build"
+            " it with the same features). Align them (cargo update -p <crate>@<old> --precise"
+            " <new>, enable the same features, lock the same input rev), or list the odd"
+            " module's key in SHARED_DEPS_EXCEPTIONS."
         )
-    _log(f"Shared dependencies agree ({len(problems)} known exception(s))")
+    excepted = sum(len(keys) for keys in SHARED_DEPS_EXCEPTIONS.values())
+    _log(f"Shared dependencies agree ({excepted} exception(s))")
 
 
 def main() -> None:
