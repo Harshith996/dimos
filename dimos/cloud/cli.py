@@ -216,7 +216,7 @@ def share(ids: list[str], to: str, yes: bool, as_json: bool) -> None:
         f"{'Shared' if yes else 'Would share'} {n} recording{'s' * (n != 1)}"
         f" with {', '.join(r['access']) or 'nobody new'}"
     )
-    typer.echo(f"  emailed: {', '.join(r['emailed']) or 'nobody'}")
+    typer.echo(f"  email to: {', '.join(r['emailed']) or 'nobody'}")
     for d, k in (r.get("not_emailed_domains") or {}).items():
         typer.echo(f"  {d}: {k} accounts, too many to email")
     if r.get("note"):
