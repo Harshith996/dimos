@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import introspect, overrides as ov, responses, robots, store
+from experimental.gateway import introspect, launches, overrides as ov, responses, robots, store
 from experimental.gateway.state import ApiError, FreshQuery, GatewayState, State
 
 router = APIRouter()
@@ -124,12 +124,44 @@ async def check_blueprint_args(state: GatewayState, name: str, request: ArgsChec
 
 @router.get("/blueprints/{name}", response_model=responses.Blueprint, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str) -> Any:
-    """A blueprint's modules (streams, RPCs, skills), its file and line, and its configurable args with the saved values."""
+    """A blueprint's modules (streams, RPCs, skills), its file and line, and its configurable args with the saved values.
+
+    While it runs from another checkout (a branch started in a terminal), its modules are read from that one, so the
+    graph has the streams and remappings that are live; `checkout` names it, and `checkoutError` says why it couldn't.
+    """
     check_name(name)
+    source = await asyncio.to_thread(running_source, state, name)
     found, config = await asyncio.gather(
-        state.introspected(["blueprint", name]), state.introspected(["config", name])
+        running_modules(state, name, source), state.introspected(["config", name])
     )
     return {**found, "config": shown_config(name, config)}
+
+
+async def running_modules(
+    state: State, name: str, source: launches.RunSource | None
+) -> dict[str, Any]:
+    if source is not None:
+        try:
+            found = await state.introspected(["blueprint", name], source=source)
+            return {**found, "checkout": str(source.checkout), "checkoutError": None}
+        except ApiError as error:
+            failed = f"reading it from {source.checkout} failed: {error}"
+            found = await state.introspected(["blueprint", name])
+            return {**found, "checkout": None, "checkoutError": failed}
+    return {
+        **await state.introspected(["blueprint", name]),
+        "checkout": None,
+        "checkoutError": None,
+    }
+
+
+def running_source(state: State, name: str) -> launches.RunSource | None:
+    """Where the live run of this blueprint came from, when that isn't the gateway's checkout."""
+    run = launches.run_of(name)
+    source = launches.run_source(str(run["run_id"])) if run else None
+    if source is None or source.checkout.resolve() == state.dimos_dir.resolve():
+        return None
+    return source
 
 
 @router.put("/blueprints/{name}/config", response_model=responses.BlueprintConfig)

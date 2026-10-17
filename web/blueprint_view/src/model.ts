@@ -32,6 +32,9 @@ export interface Blueprint {
   file: string | null;
   line: number | null;
   modules: Module[];
+  /** The live run's checkout the modules were read from, when it isn't the gateway's. */
+  checkout?: string | null;
+  checkoutError?: string | null;
 }
 
 export const reads = (stream: Stream): boolean => stream.direction !== "out";

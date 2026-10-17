@@ -156,6 +156,8 @@ class Blueprint(Body):
     line: int | None
     modules: list[BlueprintModule]
     config: BlueprintConfig
+    checkout: str | None
+    checkoutError: str | None
 
 
 class GlobalConfig(Body):

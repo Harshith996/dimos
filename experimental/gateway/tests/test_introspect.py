@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import asyncio
+from pathlib import Path
+import sys
+
+import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
-from experimental.gateway.introspect import Cache, blueprint, spec_topic
+from experimental.gateway.introspect import Cache, IntrospectError, blueprint, run_child, spec_topic
 
 
 def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
@@ -53,3 +57,16 @@ def test_the_cache_shares_a_computation_and_drops_expired_ones() -> None:
     asyncio.run(scenario())
     assert len(computed) == 3
     assert set(cache.entries) == {"a", "c"}
+
+
+def test_another_checkout_is_introspected_with_this_file_and_its_own_dimos(tmp_path: Path) -> None:
+    # a branch checkout with no gateway in it: its own dimos must be the one imported
+    robot = tmp_path / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    (tmp_path / "dimos" / "__init__.py").write_text("")
+    (robot / "__init__.py").write_text("")
+    (robot / "get_all_blueprints.py").write_text(
+        "def get_by_name(name):\n    raise LookupError(f'{name} from the branch checkout')\n"
+    )
+    with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
+        asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"], python=sys.executable))

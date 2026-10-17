@@ -28,6 +28,7 @@ from pydantic import BeforeValidator
 
 from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
+from experimental.gateway.launches import RunSource
 from experimental.gateway.skills import Skills
 from experimental.gateway.uploads import Uploads
 
@@ -55,11 +56,17 @@ class State:
     started_at: int = field(default_factory=lambda: int(time.time()))
     background: list[asyncio.Task[Any]] = field(default_factory=list)
 
-    async def introspected(self, args: list[str], stdin: Any = None) -> Any:
-        key = " ".join(args) + (repr(stdin) if stdin is not None else "")
+    async def introspected(
+        self, args: list[str], stdin: Any = None, source: RunSource | None = None
+    ) -> Any:
+        """Introspect the gateway's checkout, or the one a run's dimos came from."""
+        key = " ".join(args) + (repr(stdin) if stdin is not None else "") + repr(source or "")
+        dimos_dir, python = (source.checkout, source.python) if source else (self.dimos_dir, None)
         try:
             return await self.cache.get(
-                key, INTROSPECT_TTL_S, lambda: introspect.run_child(self.dimos_dir, args, stdin)
+                key,
+                INTROSPECT_TTL_S,
+                lambda: introspect.run_child(dimos_dir, args, stdin, python=python),
             )
         except introspect.IntrospectError as error:
             raise ApiError(500, str(error))

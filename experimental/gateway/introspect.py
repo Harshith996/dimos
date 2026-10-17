@@ -73,10 +73,15 @@ class Cache:
 
 
 async def run_child(
-    dimos_dir: Path, args: list[str], stdin: Any = None, timeout: float = 180
+    dimos_dir: Path,
+    args: list[str],
+    stdin: Any = None,
+    timeout: float = 180,
+    python: str | None = None,
 ) -> dict[str, Any]:
+    """Introspect in dimos_dir's python, or (python given: another checkout, a run's) with this file in that one."""
     child = await asyncio.create_subprocess_exec(
-        *child_command(dimos_dir),
+        *(child_command(dimos_dir) if python is None else foreign_command(python)),
         *args,
         cwd=dimos_dir,
         stdin=asyncio.subprocess.PIPE,
@@ -106,6 +111,12 @@ def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
     return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+
+
+def foreign_command(python: str) -> list[str]:
+    # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos
+    run = "import runpy, sys; sys.argv.pop(0); runpy.run_path(sys.argv[0], run_name='__main__')"
+    return [python, "-c", run, str(Path(__file__).resolve())]
 
 
 def kill_group(pid: int) -> None:

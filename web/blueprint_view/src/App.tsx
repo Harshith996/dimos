@@ -24,7 +24,14 @@ import { ConfigModal, type Saved } from "./config.tsx";
 import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
-import { type Launch, launchedWithOther, type Relaunching, relaunchLabel } from "./run.ts";
+import {
+  type Launch,
+  launchedWithOther,
+  liveRunOf,
+  type RegistryRun,
+  type Relaunching,
+  relaunchLabel,
+} from "./run.ts";
 import { CodeButton, ModuleList, ModuleView } from "./side.tsx";
 
 const FRAMED = framedByDesktop();
@@ -60,6 +67,10 @@ async function loadSaved(): Promise<Saved | null> {
 export function App() {
   const [modules, setModules] = useState<Module[] | null>(null);
   const [source, setSource] = useState<Where | null>(null);
+  const [checkout, setCheckout] = useState<{ path: string | null; error: string | null }>({
+    path: null,
+    error: null,
+  });
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -69,6 +80,8 @@ export function App() {
   const [code, setCode] = useState<Where | null>(null);
   const [layout, setLayout] = useState<LayoutId>("hierarchy");
   const [launch, setLaunch] = useState<Launch | null>(null);
+  // undefined until the first poll; a run started outside Desktop (a terminal, tmux) is live too
+  const [liveRun, setLiveRun] = useState<RegistryRun | null | undefined>(undefined);
   const [saved, setSaved] = useState<Saved | null>(null);
   const [relaunching, setRelaunching] = useState<Relaunching>(false);
   const [relaunchedPid, setRelaunchedPid] = useState<number | null>(null);
@@ -84,36 +97,54 @@ export function App() {
   useNoPagePinch(graphArea);
 
   const running = !!launch && (launch.phase === "running" || launch.phase === "starting");
+  const live = running || !!liveRun;
   const logsRun = RUN ?? launch?.runId ?? null;
 
-  useEffect(() => {
-    document.title = `${NAME} · blueprint`;
+  // the gateway reads the blueprint from the checkout its live run came from, so a new run can change it
+  const loadBlueprint = useCallback(async () => {
     const usage = getJson<{ blueprints?: { modules?: string[] }[] }>("catalog").then(
       moduleUsage,
       () => new Map(),
     );
-    (async () => {
-      try {
-        const detail = await getJson<Blueprint>(`blueprints/${encodeURIComponent(NAME)}`);
-        setSource(detail.file ? { file: detail.file, line: detail.line ?? 1 } : null);
-        await Promise.race([
-          document.fonts.ready,
-          new Promise((resolve) => setTimeout(resolve, 1500)),
-        ]);
-        setModules(detail.modules);
-        setModules(byRarity(detail.modules, await usage));
-      } catch (caught) {
-        setError(errorText(caught));
-      }
-    })();
-    loadSaved().then(setSaved);
+    try {
+      const detail = await getJson<Blueprint>(`blueprints/${encodeURIComponent(NAME)}`);
+      setSource(detail.file ? { file: detail.file, line: detail.line ?? 1 } : null);
+      setCheckout({ path: detail.checkout ?? null, error: detail.checkoutError ?? null });
+      await Promise.race([
+        document.fonts.ready,
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+      setModules(byRarity(detail.modules, await usage));
+      setError(null);
+    } catch (caught) {
+      setError(errorText(caught));
+    }
   }, []);
+
+  useEffect(() => {
+    document.title = `${NAME} · blueprint`;
+    loadBlueprint();
+    loadSaved().then(setSaved);
+  }, [loadBlueprint]);
+
+  const liveRunId = liveRun === undefined ? undefined : liveRun?.run_id ?? null;
+  const shownRunId = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (liveRunId === undefined) {
+      return;
+    }
+    if (shownRunId.current !== undefined && shownRunId.current !== liveRunId) {
+      loadBlueprint();
+    }
+    shownRunId.current = liveRunId;
+  }, [liveRunId, loadBlueprint]);
 
   const pollRuns = useCallback(async () => {
     try {
-      const answer = await getJson<{ launch: Launch | null }>("runs");
+      const answer = await getJson<{ launch: Launch | null; runs?: RegistryRun[] }>("runs");
       const mine = answer.launch?.blueprint === NAME ? answer.launch : null;
       setLaunch(mine);
+      setLiveRun(liveRunOf(answer.runs ?? [], NAME, RUN));
       setRelaunching((was) =>
         was === "starting" && mine?.pid !== relaunchedPidRef.current && mine?.phase !== "starting"
           ? false
@@ -121,6 +152,7 @@ export function App() {
       );
     } catch {
       setLaunch(null);
+      setLiveRun(null);
     }
   }, []);
   const relaunchedPidRef = useRef<number | null>(null);
@@ -179,7 +211,7 @@ export function App() {
     return byTopic;
   }, [rateRowsHeard]);
   const extras = useMemo(() => {
-    if (!running || !modules) {
+    if (!live || !modules) {
       return [];
     }
     const wired = new Set(modules.flatMap((m) => m.streams.map(topicOf)));
@@ -189,7 +221,7 @@ export function App() {
         rateRowsHeard.find((row) => String(row.topic).replace(/^\/+/, "") === topic)?.type ?? "",
       ).replace(/\//g, "."),
     }));
-  }, [running, modules, rates, rateRowsHeard]);
+  }, [live, modules, rates, rateRowsHeard]);
 
   const open = (name: string | null) => {
     setSelected(name);
@@ -242,10 +274,12 @@ export function App() {
     );
   };
 
-  const phase = !launch
-    ? "not running"
-    : running
+  const phase = running
     ? launch.phase
+    : liveRun
+    ? "running"
+    : !launch
+    ? "not running"
     : launch.phase === "failed"
     ? "failed"
     : "last run";
@@ -264,6 +298,9 @@ export function App() {
               small
               muted
               tone={phase === "running" ? "ok" : phase === "failed" ? "warn" : undefined}
+              title={!running && liveRun
+                ? `started outside Desktop (pid ${liveRun.pid}, ${liveRun.run_id})`
+                : undefined}
             >
               {phase}
             </Text>
@@ -362,14 +399,24 @@ export function App() {
             extras={showExtras ? extras : []}
             layout={layout}
             spot={spot}
-            rates={running ? rates : null}
+            rates={live ? rates : null}
             onModule={open}
             onTopic={(topic) => setPinnedTopic((was) => was === topic ? null : topic)}
             onHover={setGraphHover}
           >
             <div className="graph-head">
               <Label>Module graph</Label>
-              {running && <Badge tone="ok">live</Badge>}
+              {live && <Badge tone="ok">live</Badge>}
+              {checkout.path && (
+                <Text small muted title="the live run's checkout, which the graph is read from">
+                  from {checkout.path}
+                </Text>
+              )}
+              {checkout.error && (
+                <Text small tone="warn" title={checkout.error}>
+                  not the live run's checkout
+                </Text>
+              )}
             </div>
             {extras.length > 0 && (
               <details id="extras">

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +22,10 @@ import pytest
 import yaml
 
 from dimos.core.global_config import GlobalConfig
+from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
-from experimental.gateway.state import API_VERSION, State
+from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
     "default": None,
@@ -163,6 +165,67 @@ def test_module_config_round_trip(client: TestClient, introspected: list[Any]) -
     refused = client.put("/blueprints/demo/config", json={"overrides": {"camera": {"fps": "fast"}}})
     assert refused.status_code == 400
     assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
+
+
+def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
+    client: TestClient, state: State, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = home / "dimos_branch"
+    (branch / ".venv" / "bin").mkdir(parents=True)
+    (branch / "pyproject.toml").write_text('[project]\nname = "dimos"\n')
+    read_from: list[Any] = []
+
+    async def fake(args: list[str], stdin: Any = None, source: Any = None) -> Any:
+        if args[0] == "config":
+            return CONFIG
+        read_from.append(source and source.checkout)
+        if source is not None and "broken" in str(source.run_id):
+            raise ApiError(500, "ImportError: no get_by_name")
+        stream = "lidar_with_robot" if source else "lidar"
+        streams = [
+            {
+                "name": "lidar",
+                "type": "x.PointCloud2",
+                "direction": "in",
+                "wire": stream,
+                "topic": None,
+            }
+        ]
+        modules: list[dict[str, Any]] = [
+            {"name": "mapper", "class": "x.Mapper", "doc": "", "summary": "", "streams": streams}
+            | {"rpcs": [], "skills": [], "file": None, "line": None}
+        ]
+        return {"name": args[1], "file": None, "line": None, "modules": modules}
+
+    monkeypatch.setattr(state, "introspected", fake)
+
+    def wire_shown() -> tuple[str, Any, Any]:
+        found = client.get("/blueprints/demo").json()
+        return found["modules"][0]["streams"][0]["wire"], found["checkout"], found["checkoutError"]
+
+    assert wire_shown() == ("lidar", None, None)
+
+    def started_from(program: Path, run_id: str) -> RunEntry:
+        entry = RunEntry(
+            run_id=run_id,
+            pid=os.getpid(),
+            blueprint="demo",
+            started_at="2026-01-01T12:00:00+00:00",
+            log_dir="/tmp/x",
+            original_argv=[str(program), "run", "demo"],
+        )
+        entry.save()
+        return entry
+
+    from_gateway = started_from(state.dimos_dir / ".venv" / "bin" / "dimos", "20260101-120000-demo")
+    assert wire_shown() == ("lidar", None, None)
+    from_gateway.remove()
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120001-demo")
+    assert wire_shown() == ("lidar_with_robot", str(branch), None)
+    assert read_from[-1] == branch
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120002-broken")
+    wire, checkout, error = wire_shown()
+    assert (wire, checkout) == ("lidar", None) and "ImportError" in error
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
