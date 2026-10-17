@@ -117,9 +117,9 @@ the later sim2 integration, not this policy PR. The driver's
 
 For example, send `JointState(name=["g1/left_shoulder_pitch"], position=[0.2])`
 to `/g1/position_command`. `c.set_upper_body(positions)` sets a complete
-14-element arm reference in DDS order. These update encoder references
-directly; there is no coordinator trajectory interpolation or speed limiting.
-`c.clear_upper_body()` restores the default arm references.
+14-element arm reference in DDS order. The controller limits these encoder
+reference changes to 1 rad/s per joint, starting from measured arm positions.
+`c.clear_upper_body()` returns to the default arm references at the same rate.
 `set_vr_3point()` retains its existing wrist/head reference
 contract; a generic Cartesian command stream is not implemented here.
 

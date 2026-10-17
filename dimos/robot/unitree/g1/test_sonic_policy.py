@@ -236,8 +236,7 @@ async def test_standard_inputs_drive_policy_and_publish_measured_state(connectio
     assert connection._controller._policy.set_velocity.call_args.args == pytest.approx(
         (0.3, 0.1, 0.2)
     )
-    expected = DEFAULT_ANGLES_DDS[15:].copy()
-    expected[0] = 0.7
+    expected = [0.02, 0.02, 0.0, 0.02, 0.0, 0.0, 0.0, 0.02, -0.02, 0.0, 0.02, 0.0, 0.0, 0.0]
     np.testing.assert_allclose(
         connection._controller._policy.set_upper_body.call_args.args[0], expected
     )
@@ -254,6 +253,31 @@ async def test_standard_inputs_drive_policy_and_publish_measured_state(connectio
         )
     np.testing.assert_allclose(
         connection._controller._policy.set_upper_body.call_args.args[0], expected
+    )
+
+
+def test_arm_references_ramp_from_feedback_and_retarget_without_jumps(connection):
+    _arm(connection)
+    _step(connection, 3.02, positions=0.4)
+    targets = [0.9, -0.1] + [0.43] * 12
+    connection.set_upper_body(targets)
+    _step(connection, 3.04, positions=0.4)
+    np.testing.assert_allclose(
+        connection._controller._policy.set_upper_body.call_args.args[0],
+        [0.42, 0.38] + [0.42] * 12,
+    )
+
+    connection.set_upper_body(targets)
+    _step(connection, 3.06, positions=0.4)
+    np.testing.assert_allclose(
+        connection._controller._policy.set_upper_body.call_args.args[0],
+        [0.44, 0.36] + [0.43] * 12,
+    )
+
+    connection.clear_upper_body()
+    _step(connection, 3.08, positions=0.4)
+    np.testing.assert_allclose(
+        connection._controller._policy.set_upper_body.call_args.args[0][:2], [0.42, 0.34]
     )
 
 

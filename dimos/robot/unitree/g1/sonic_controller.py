@@ -61,6 +61,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# Match the former coordinator's arm-reference limit, in radians per second.
+_ARM_REFERENCE_VELOCITY_LIMIT = 1.0
+
 
 class SonicControllerConfig(BaseConfig):
     encoder_onnx: Path = Field(
@@ -125,6 +128,7 @@ class SonicController:
         self._joint_names_list = list(self.config.joint_names)
         self._default_29 = DEFAULT_ANGLES_DDS.copy()
         self._arm_reference = self._default_29[15:].copy()
+        self._arm_reference_output: NDArray[np.float32] | None = None
         self._cached_q_29 = self._default_29.copy()
         self._cached_dq_29 = np.zeros(NUM_JOINTS, dtype=np.float32)
         self._state_seen = False
@@ -442,6 +446,15 @@ class SonicController:
         q_29 = self._cached_q_29.copy()
         dq_29 = self._cached_dq_29.copy()
 
+        if self._arm_reference_output is not None:
+            max_delta = (
+                _ARM_REFERENCE_VELOCITY_LIMIT * self.config.decimation / self.config.tick_rate
+            )
+            self._arm_reference_output += np.clip(
+                self._arm_reference - self._arm_reference_output, -max_delta, max_delta
+            )
+            self._policy.set_upper_body(self._arm_reference_output.copy())
+
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         quat = np.asarray(imu.quaternion, dtype=np.float64)
         gravity = self._projected_gravity(imu.quaternion)
@@ -603,7 +616,8 @@ class SonicController:
             if not np.isfinite(positions).all():
                 raise ValueError("Arm references must be finite")
             self._arm_reference = np.asarray(positions, dtype=np.float32)
-            self._policy.set_upper_body(self._arm_reference.copy())
+            if self._arm_reference_output is None:
+                self._arm_reference_output = self._cached_q_29[15:].copy()
             return True
 
     def clear_upper_body(self) -> None:
@@ -732,6 +746,7 @@ class SonicController:
             self._last_cmd_time = 0.0
         self._policy.reset()
         self._arm_reference = self._default_29[15:].copy()
+        self._arm_reference_output = None
         self._tick_count = 0
         self._policy_durations_ms.clear()
         self._policy_intervals_ms.clear()
