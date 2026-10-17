@@ -160,7 +160,7 @@ repos:
         name: native modules share their dependencies (nix)
         entry: python3 bin/native-modules --check-shared-deps
         language: system
-        files: (^|/)(Cargo\.lock|Cargo\.toml|flake\.lock|flake\.nix)$
+        files: (^|/)(Cargo\.lock|Cargo\.toml|flake\.lock|flake\.nix)$|^bin/(native-modules|shared-deps-exceptions\.json)$
         pass_filenames: false
 
       - id: deno-fmt

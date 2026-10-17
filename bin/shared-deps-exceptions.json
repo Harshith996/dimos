@@ -1,0 +1,63 @@
+{
+  "dimos/experimental/memory/rust": [
+    "rust_anyhow@1",
+    "rust_cc@1",
+    "rust_crc32fast@1",
+    "rust_either@1",
+    "rust_hashbrown@0.17",
+    "rust_proc-macro2@1",
+    "rust_syn@2"
+  ],
+  "dimos/hardware/sensors/camera/realsense/rust": [
+    "docbook-xml@4",
+    "rust_anyhow@1"
+  ],
+  "dimos/hardware/sensors/camera/v4l2/rust": [
+    "rust_anyhow@1",
+    "rust_cc@1"
+  ],
+  "dimos/hardware/sensors/lidar/fastlio2/cpp": [
+    "autoconf@2",
+    "docbook-xml@4",
+    "python3@3"
+  ],
+  "dimos/mapping/dim_slam/rust": [
+    "rust_cc@1"
+  ],
+  "dimos/mapping/ray_tracing/rust": [
+    "rust_arrayvec@0.7"
+  ],
+  "dimos/navigation/local_planner/rust": [
+    "rust_serde_json@1"
+  ],
+  "dimos/navigation/trajectory_follower/fancy/rust": [
+    "rust_serde_json@1"
+  ],
+  "dimos/perception/depth2depth_cloud/rust": [
+    "rust_ahash@0.8",
+    "rust_anyhow@1",
+    "rust_bitflags@2",
+    "rust_bytemuck@1",
+    "rust_cc@1",
+    "rust_crc32fast@1",
+    "rust_either@1",
+    "rust_fastrand@2",
+    "rust_getrandom@0.3",
+    "rust_hashbrown@0.16",
+    "rust_num-complex@0.4",
+    "rust_num-traits@0.2",
+    "rust_regex-automata@0.4",
+    "rust_regex-syntax@0.8",
+    "rust_regex@1",
+    "rust_stable_deref_trait@1",
+    "rust_yoke@0.8",
+    "rust_zerocopy@0.8",
+    "rust_zerofrom@0.1"
+  ],
+  "dimos/robot/unitree/go2/dds/rust": [
+    "rust_cc@1",
+    "rust_regex-automata@0.4",
+    "rust_regex-syntax@0.8",
+    "rust_regex@1"
+  ]
+}
