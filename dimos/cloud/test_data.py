@@ -480,3 +480,23 @@ def test_share_resolves_prefixes_and_dry_runs_by_default(
         "/v1/data/unshare",
         {"ids": ["abc123" + "0" * 26], "to": "", "everyone": True, "dry_run": True},
     )
+
+
+@pytest.mark.parametrize("cmd", ["share", "unshare"])
+@pytest.mark.parametrize("yes", [False, True])
+def test_share_cli_dry_runs_unless_yes(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch, cmd: str, yes: bool
+) -> None:
+    from typer.testing import CliRunner
+
+    from dimos.cli.commands.data import data_app
+    from dimos.cloud import cli
+
+    cloud, t, db = env
+    t.uploads = {"abc123" + "0" * 26: {}}
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    args = [cmd, "abc", "--to", "a@x.io", "--json"] + (["--yes"] if yes else [])
+    r = CliRunner().invoke(data_app, args)
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.output)["dry_run"] is (not yes)
+    assert t.sent[1]["dry_run"] is (not yes)
