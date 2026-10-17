@@ -1,5 +1,5 @@
-// The blueprint view: ?name=<blueprint> (&run=<run id>, &view=logs). The top bar runs it, the side lists its
-// modules and topic rates, the graph shows how they connect.
+// The blueprint view: ?name=<blueprint> (&run=<run id>, &view=logs, &hidden=1). The top bar runs it, the side lists its
+// modules and topic rates, the graph shows how they connect. Hidden (Desktop preloading it), it loads once and polls nothing.
 import {
   Badge,
   Button,
@@ -13,6 +13,7 @@ import {
   TopBar,
   type TopicRate,
   useDesktopChrome,
+  useDesktopVisible,
   useEscape,
 } from "dimos-react";
 import { GraphControls, type GraphViewHandle, type LayoutId } from "dimos-react/graph";
@@ -76,7 +77,8 @@ export function App() {
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [showExtras, setShowExtras] = useState(false);
   const [dialog, setDialog] = useState<"config" | "logs" | null>(null);
-  const chrome = useDesktopChrome();
+  const chrome = useDesktopChrome({ pausable: true });
+  const visible = useDesktopVisible();
   const graph = useRef<GraphViewHandle>(null);
   const [graphArea, setGraphArea] = useState<HTMLElement | null>(null);
   useNoPagePinch(graphArea);
@@ -127,7 +129,16 @@ export function App() {
   busyRef.current = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
 
   useEffect(() => {
-    pollRuns().then(() => VIEW === "logs" && setDialog("logs"));
+    if (VIEW === "logs") {
+      pollRuns().then(() => setDialog("logs"));
+    }
+  }, [pollRuns]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    pollRuns();
     let tick = 0;
     const timer = setInterval(() => {
       tick += 1;
@@ -136,9 +147,12 @@ export function App() {
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [pollRuns]);
+  }, [pollRuns, visible]);
 
   useEffect(() => {
+    if (!visible) {
+      return;
+    }
     const poll = async () => {
       try {
         const answer = await getJson<RatesAnswer>("../api/topics/rates");
@@ -153,7 +167,7 @@ export function App() {
     poll();
     const timer = setInterval(poll, 2000);
     return () => clearInterval(timer);
-  }, []);
+  }, [visible]);
 
   // Hz per topic (without its leading slash), and the live topics no module here is wired to
   const rates = useMemo(() => {
@@ -387,6 +401,7 @@ export function App() {
         <LogsModal
           runId={logsRun}
           title={NAME}
+          paused={!visible}
           onClose={() => setDialog(null)}
         />
       )}

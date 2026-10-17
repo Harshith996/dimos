@@ -1,6 +1,6 @@
 {
   "imports": {
-    "dimos-react": "jsr:@robotics/dimos-react@^0.2.0"
+    "dimos-react": "jsr:@robotics/dimos-react@^0.2.1"
   },
   "compilerOptions": {
     "lib": [
