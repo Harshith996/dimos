@@ -40,15 +40,8 @@ Modes (exactly one):
                  flake that does not build on this system simply declares no
                  check for it.
   --check-shared-deps
-                 Fail when the modules disagree on a dependency they share.
-                 Every derivation a module needs (read from its closure;
-                 nothing is built but crate2nix's Cargo.nix) is grouped by
-                 name and semver major (0.x by 0.minor), e.g. python3@3 or
-                 rust_tokio@1, and every module holding a group must hold the
-                 same versions of it. A rust_ crate must also be built with
-                 the same features, or its build is not shared. Each flake's
-                 own inputs must be locked to the same rev. A module can be
-                 excused from one group in SHARED_DEPS_EXCEPTIONS.
+                 Fail when modules hold different versions (or rust features)
+                 of a shared name@major, or lock a shared input differently.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -429,6 +422,7 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
     lines = [
         f"salt {MARKER_SALT}",
         f"script {_git_object_hash('bin/native-modules')}",
+        f"exceptions {_git_object_hash('bin/shared-deps-exceptions.json')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
         *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
@@ -604,245 +598,27 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
 
 
-# Known mismatches --check-shared-deps lets through, per module: "<name>@<major>" (e.g.
-# "python3@3", "rust_syn@3") or "input:<source>". Each drops that module from that one
-# comparison; the check warns about entries that no longer match anything.
-SHARED_DEPS_EXCEPTIONS: dict[str, frozenset[str]] = {
-    "dimos/experimental/memory/rust": frozenset(
-        {
-            "rust_anyhow@1",
-            "rust_cc@1",
-            "rust_crc32fast@1",
-            "rust_either@1",
-            "rust_hashbrown@0.17",
-            "rust_proc-macro2@1",
-            "rust_syn@2",
-        }
-    ),
-    "dimos/hardware/sensors/camera/realsense/rust": frozenset(
-        {
-            "docbook-xml@4",
-            "rust_anyhow@1",
-            "rust_bitflags@2",
-            "rust_cc@1",
-            "rust_crc32fast@1",
-            "rust_crossbeam-channel@0.5",
-            "rust_crossbeam-deque@0.8",
-            "rust_crossbeam-epoch@0.9",
-            "rust_crossbeam-queue@0.3",
-            "rust_crossbeam-utils@0.8",
-            "rust_crossbeam@0.8",
-            "rust_find-msvc-tools@0.1",
-            "rust_indexmap@2",
-            "rust_lru-slab@0.1",
-            "rust_mio@1",
-            "rust_pest@2",
-            "rust_pest_derive@2",
-            "rust_pest_generator@2",
-            "rust_pest_meta@2",
-            "rust_proc-macro-error-attr3@3",
-            "rust_proc-macro-error3@3",
-            "rust_quinn-proto@0.11",
-            "rust_quinn@0.11",
-            "rust_rcgen@0.14",
-            "rust_rustls@0.23",
-            "rust_serde_with@3",
-            "rust_serde_with_macros@3",
-            "rust_smallvec@1",
-            "rust_syn@2",
-            "rust_syn@3",
-            "rust_tinyvec@1",
-            "rust_toml@1",
-            "rust_toml_edit@0.25",
-            "rust_wide@1",
-            "rust_yoke-derive@0.8",
-            "rust_zerocopy@0.8",
-            "rust_zerofrom-derive@0.1",
-        }
-    ),
-    "dimos/hardware/sensors/camera/v4l2/rust": frozenset(
-        {
-            "rust_anyhow@1",
-            "rust_bitflags@2",
-            "rust_cc@1",
-            "rust_crc32fast@1",
-            "rust_crossbeam-channel@0.5",
-            "rust_crossbeam-deque@0.8",
-            "rust_crossbeam-epoch@0.9",
-            "rust_crossbeam-queue@0.3",
-            "rust_crossbeam-utils@0.8",
-            "rust_crossbeam@0.8",
-            "rust_find-msvc-tools@0.1",
-            "rust_indexmap@2",
-            "rust_lru-slab@0.1",
-            "rust_mio@1",
-            "rust_pest@2",
-            "rust_pest_derive@2",
-            "rust_pest_generator@2",
-            "rust_pest_meta@2",
-            "rust_quinn-proto@0.11",
-            "rust_quinn@0.11",
-            "rust_rustls@0.23",
-            "rust_serde_with@3",
-            "rust_serde_with_macros@3",
-            "rust_smallvec@1",
-            "rust_syn@2",
-            "rust_syn@3",
-            "rust_tinyvec@1",
-            "rust_toml@1",
-            "rust_toml_edit@0.25",
-            "rust_wide@1",
-            "rust_yoke-derive@0.8",
-            "rust_zerocopy@0.8",
-            "rust_zerofrom-derive@0.1",
-        }
-    ),
-    "dimos/hardware/sensors/lidar/fastlio2/cpp": frozenset(
-        {
-            "autoconf@2",
-            "docbook-xml@4",
-            "python3@3",
-        }
-    ),
-    "dimos/mapping/dim_slam/rust": frozenset(
-        {
-            "rust_bitflags@2",
-            "rust_cc@1",
-            "rust_chacha20@0.10",
-            "rust_cpufeatures@0.3",
-            "rust_crc32fast@1",
-            "rust_crossbeam-channel@0.5",
-            "rust_crossbeam-deque@0.8",
-            "rust_crossbeam-epoch@0.9",
-            "rust_crossbeam-queue@0.3",
-            "rust_crossbeam-utils@0.8",
-            "rust_crossbeam@0.8",
-            "rust_find-msvc-tools@0.1",
-            "rust_flate2@1",
-            "rust_indexmap@2",
-            "rust_lru-slab@0.1",
-            "rust_mio@1",
-            "rust_pest@2",
-            "rust_pest_derive@2",
-            "rust_pest_generator@2",
-            "rust_pest_meta@2",
-            "rust_proc-macro-error-attr3@3",
-            "rust_proc-macro-error3@3",
-            "rust_quinn-proto@0.11",
-            "rust_quinn@0.11",
-            "rust_rand@0.8",
-            "rust_rcgen@0.14",
-            "rust_rustls@0.23",
-            "rust_serde_with@3",
-            "rust_serde_with_macros@3",
-            "rust_smallvec@1",
-            "rust_syn@2",
-            "rust_syn@3",
-            "rust_tinyvec@1",
-            "rust_toml@1",
-            "rust_toml_edit@0.25",
-            "rust_wide@1",
-            "rust_yoke-derive@0.8",
-            "rust_zerocopy@0.8",
-            "rust_zerofrom-derive@0.1",
-        }
-    ),
-    "dimos/mapping/ray_tracing/rust": frozenset(
-        {
-            "rust_arrayvec@0.7",
-        }
-    ),
-    "dimos/navigation/local_planner/rust": frozenset(
-        {
-            "rust_cfg-if@1",
-            "rust_serde_json@1",
-            "rust_syn@3",
-            "rust_unicode-ident@1",
-        }
-    ),
-    "dimos/navigation/trajectory_follower/fancy/rust": frozenset(
-        {
-            "rust_cfg-if@1",
-            "rust_serde_json@1",
-            "rust_syn@3",
-            "rust_unicode-ident@1",
-        }
-    ),
-    "dimos/perception/depth2depth_cloud/rust": frozenset(
-        {
-            "rust_ahash@0.8",
-            "rust_anyhow@1",
-            "rust_bitflags@2",
-            "rust_bytemuck@1",
-            "rust_cc@1",
-            "rust_crc32fast@1",
-            "rust_crossbeam-channel@0.5",
-            "rust_crossbeam-deque@0.8",
-            "rust_crossbeam-epoch@0.9",
-            "rust_crossbeam-queue@0.3",
-            "rust_crossbeam-utils@0.8",
-            "rust_crossbeam@0.8",
-            "rust_either@1",
-            "rust_fastrand@2",
-            "rust_find-msvc-tools@0.1",
-            "rust_getrandom@0.3",
-            "rust_hashbrown@0.16",
-            "rust_indexmap@2",
-            "rust_lru-slab@0.1",
-            "rust_mio@1",
-            "rust_num-complex@0.4",
-            "rust_num-traits@0.2",
-            "rust_pest@2",
-            "rust_pest_derive@2",
-            "rust_pest_generator@2",
-            "rust_pest_meta@2",
-            "rust_quinn-proto@0.11",
-            "rust_quinn@0.11",
-            "rust_regex-automata@0.4",
-            "rust_regex-syntax@0.8",
-            "rust_regex@1",
-            "rust_rustls@0.23",
-            "rust_serde_with@3",
-            "rust_serde_with_macros@3",
-            "rust_smallvec@1",
-            "rust_stable_deref_trait@1",
-            "rust_syn@2",
-            "rust_syn@3",
-            "rust_tinyvec@1",
-            "rust_toml@1",
-            "rust_toml_edit@0.25",
-            "rust_wide@1",
-            "rust_yoke-derive@0.8",
-            "rust_yoke@0.8",
-            "rust_zerocopy@0.8",
-            "rust_zerofrom-derive@0.1",
-            "rust_zerofrom@0.1",
-        }
-    ),
-    "dimos/robot/unitree/go2/dds/rust": frozenset(
-        {
-            "rust_cc@1",
-            "rust_cfg-if@1",
-            "rust_find-msvc-tools@0.1",
-            "rust_regex-automata@0.4",
-            "rust_regex-syntax@0.8",
-            "rust_regex@1",
-            "rust_syn@3",
-            "rust_unicode-ident@1",
-        }
-    ),
-}
+# module dir -> keys (e.g. "python3@3") that module is left out of comparing
+SHARED_DEPS_EXCEPTIONS_FILE = REPO_ROOT / "bin" / "shared-deps-exceptions.json"
+
+
+@lru_cache(maxsize=1)
+def shared_deps_exceptions() -> dict[str, frozenset[str]]:
+    return {
+        build_dir: frozenset(keys)
+        for build_dir, keys in json.loads(SHARED_DEPS_EXCEPTIONS_FILE.read_text()).items()
+    }
 
 
 def _parse_drv_name(store_path: str) -> tuple[str, str]:
-    """Split `/nix/store/<hash>-rust_tokio-1.53.1.drv` into ("rust_tokio", "1.53.1") as builtins.parseDrvName does."""
+    """Same split as builtins.parseDrvName."""
     name = Path(store_path).name[33:].removesuffix(".drv")
     match = re.search(r"-(?=[^a-zA-Z])", name)
     return (name[: match.start()], name[match.end() :]) if match else (name, "")
 
 
 def _semver_major(version: str) -> str | None:
-    """The part of a version a breaking change bumps: 1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3."""
+    """1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3"""
     match = re.match(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
     if match is None:
         return None
@@ -854,7 +630,7 @@ def _semver_major(version: str) -> str | None:
 
 
 def _version_key(version: str) -> tuple[int, int, int, bool, str]:
-    """Semver order: 1.0.0-rc.1 sorts before 1.0.0, and +build metadata is ignored."""
+    """Semver order (1.0.0-rc.1 < 1.0.0)."""
     match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]*))?", version)
     if match is None:
         return (0, 0, 0, False, version)
@@ -863,7 +639,7 @@ def _version_key(version: str) -> tuple[int, int, int, bool, str]:
 
 
 def _module_closure(module: DiscoveredModule) -> tuple[str, frozenset[str] | None]:
-    """Every derivation a module's build depends on, or None if it does not build on this system."""
+    """Every .drv the module's build needs, or None if it doesn't build on this system."""
     systems = _declared_systems(module)
     if systems is not None and current_system() not in systems:
         return module.build_dir, None
@@ -874,7 +650,7 @@ def _module_closure(module: DiscoveredModule) -> tuple[str, frozenset[str] | Non
 
 
 def _direct_inputs(build_dir: str) -> dict[str, str]:
-    """A flake's own inputs (not its inputs' inputs), keyed by source, and the rev each is locked to; `follows` are skipped."""
+    """source -> locked rev for a flake's direct, non-follows inputs."""
     lock = json.loads((REPO_ROOT / build_dir / "flake.lock").read_text())
     nodes = lock["nodes"]
     pins = {}
@@ -903,11 +679,7 @@ def _where(build_dirs: set[str], total: int) -> str:
 def find_mismatches(
     closures: dict[str, frozenset[str]],
 ) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, set[str]]]]:
-    """What the modules disagree on, as key -> what a group of modules has -> those modules.
-
-    A key is <name>@<major> or input:<source>. Also returns everything seen, as
-    key -> module -> versions, so exceptions that match nothing can be reported.
-    """
+    """Mismatches as key -> versions -> modules, plus key -> module -> versions for all keys."""
     seen: dict[str, dict[str, set[str]]] = {}
     crate_builds: dict[str, dict[str, set[str]]] = {}
     for build_dir in closures:
@@ -916,7 +688,7 @@ def find_mismatches(
         for drv in closures[build_dir]:
             name, version = _parse_drv_name(drv)
             major = _semver_major(version)
-            # Source tarballs and patches are downloads, not packages
+            # skip downloads (source tarballs, patches)
             if major is None or re.search(r"\.(tar(\.\w+)?|tgz|zip|patch|diff)$", version):
                 continue
             key = f"{name}@{major}"
@@ -928,7 +700,7 @@ def find_mismatches(
         return {
             build_dir: values
             for build_dir, values in per_module.items()
-            if key not in SHARED_DEPS_EXCEPTIONS.get(build_dir, ())
+            if key not in shared_deps_exceptions().get(build_dir, ())
         }
 
     failures: dict[str, dict[str, set[str]]] = {}
@@ -940,8 +712,7 @@ def find_mismatches(
         if len(by_versions) > 1:
             failures[key] = by_versions
 
-    # One crate version built as several derivations is not shared between the modules.
-    # Only compare its own features: dependents differ too, but only because of it.
+    # Compare a crate's own features; its dependents' drvs differ only as a consequence
     candidates = {
         key: compared(per_module, key)
         for key, per_module in crate_builds.items()
@@ -980,7 +751,7 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
     _log(f"Read the closures of {len(closures)} module(s)")
     failures, seen = find_mismatches(closures)
 
-    for build_dir, keys in sorted(SHARED_DEPS_EXCEPTIONS.items()):
+    for build_dir, keys in sorted(shared_deps_exceptions().items()):
         for key in sorted(keys):
             if build_dir in closures and build_dir not in seen.get(key, {}):
                 _log(f"WARN:  exception {build_dir} {key} matches nothing on {current_system()}")
@@ -991,13 +762,10 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
         _log(f"FAIL:  {key}  {where}")
     if failures:
         sys.exit(
-            f"{len(failures)} shared dependency mismatch(es). Every module that has a"
-            " <name>@<major> must have the same versions of it (and, for a rust_ crate, build"
-            " it with the same features). Align them (cargo update -p <crate>@<old> --precise"
-            " <new>, enable the same features, lock the same input rev), or list the odd"
-            " module's key in SHARED_DEPS_EXCEPTIONS."
+            f"{len(failures)} shared dependency mismatch(es): align them, or add the odd"
+            " module's key to bin/shared-deps-exceptions.json"
         )
-    excepted = sum(len(keys) for keys in SHARED_DEPS_EXCEPTIONS.values())
+    excepted = sum(len(keys) for keys in shared_deps_exceptions().values())
     _log(f"Shared dependencies agree ({excepted} exception(s))")
 
 
