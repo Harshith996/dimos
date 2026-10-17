@@ -26,6 +26,7 @@ from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_GRIPPER_JOINTS,
 )
+from dimos.spec.utils import spec_structural_compliance
 from dimos.teleop.yam_leader.teleop_module import (
     YamLeaderTeleopModule,
     YamLeaderTeleopModuleConfig,
@@ -100,3 +101,18 @@ def test_follower_blueprint_dials_the_router_and_takes_can_ports() -> None:
     )
     kwargs = parsed.module_kwargs("ControlCoordinator")
     assert (kwargs["left_can_port"], kwargs["right_can_port"]) == ("follower_l", "follower_r")
+
+
+def test_leader_links_to_the_coordinator_through_an_optional_control_spec() -> None:
+    blueprint = leader_teleop.teleop_dual_openyam_leader
+    leader = next(a for a in blueprint.active_blueprints if a.module is YamLeaderTeleopModule)
+    (ref,) = [ref for ref in leader.module_refs if ref.name == "_control"]
+    assert ref.optional is True
+    assert spec_structural_compliance(DualOpenYamCoordinator, ref.spec)
+    assert not spec_structural_compliance(ManipulationModule, ref.spec)
+    operator = next(
+        a
+        for a in leader_teleop.teleop_dual_openyam_leader_operator.active_blueprints
+        if a.module is YamLeaderTeleopModule
+    )
+    assert any(ref.name == "_control" and ref.optional for ref in operator.module_refs)

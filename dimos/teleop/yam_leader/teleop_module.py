@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 import sys
 import threading
 import time
-from typing import Annotated
+from typing import Annotated, Protocol
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -31,11 +32,17 @@ else:
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, STATE_DIR
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.spec.utils import Spec
 from dimos.teleop.openarm_mini.calibration import (
     OpenArmMiniCalibration,
     OpenArmMiniCalibrationError,
@@ -52,7 +59,10 @@ from dimos.teleop.yam_leader.mapping import (
     YamLeaderSide,
     YamLeaderSideCommand,
     combine_side_commands,
+    low_pass_alpha,
     map_side_readings,
+    smooth_positions,
+    streamed_trajectory,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -60,6 +70,12 @@ logger = setup_logger()
 
 YAM_LEADER_STATE_DIR = STATE_DIR / "teleop" / "yam_leader"
 YAM_LEADER_UNCONFIGURED_PORT = ""
+
+
+class YamLeaderControlSpec(Spec, Protocol):
+    """Coordinator operation the leader uses to stream targets as trajectories."""
+
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult: ...
 
 
 def default_calibration_path(side: YamLeaderSide) -> Path:
@@ -100,6 +116,13 @@ class YamLeaderTeleopModuleConfig(ModuleConfig):
     gripper_travel_radians: float = Field(default=1.0, gt=0.0)
     authority_active: bool = True
     enabled_sides: Annotated[tuple[YamLeaderSide, ...], Field(min_length=1)] | None = None
+    # First-order low-pass on the mapped arm targets; None passes readings through.
+    command_filter_cutoff_hz: float | None = 6.0
+    # With a coordinator link, each tick streams a two-point trajectory from the
+    # last target to the new one over this horizon, so the trajectory task keeps
+    # interpolating from its own last command instead of restarting from the
+    # measured position every sample. None streams joint_command instead.
+    trajectory_horizon_s: float | None = 0.04
 
     @model_validator(mode="after")
     def _validate_sides(self) -> Self:
@@ -107,6 +130,10 @@ class YamLeaderTeleopModuleConfig(ModuleConfig):
             self.enabled_sides
         ):
             raise ValueError("enabled_sides must not contain duplicate sides")
+        if self.command_filter_cutoff_hz is not None and self.command_filter_cutoff_hz <= 0.0:
+            raise ValueError("command_filter_cutoff_hz must be positive or None")
+        if self.trajectory_horizon_s is not None and self.trajectory_horizon_s <= 0.0:
+            raise ValueError("trajectory_horizon_s must be positive or None")
         return self
 
     def calibration_path(self, side: YamLeaderSide) -> Path:
@@ -140,8 +167,12 @@ class YamLeaderTeleopModule(Module):
     """Publish follower joint targets and gripper openings read from YAM leaders.
 
     Outputs:
-        - joint_command: JointState of the enabled arms' six joints each
+        - joint_command: JointState of the enabled arms' six joints each, used
+          when no coordinator link is wired or trajectory_horizon_s is None
         - left_gripper_command / right_gripper_command: Float32 opening, 1 = open
+
+    With a coordinator link (any module exposing execute_trajectory, wired by
+    the blueprint) arm targets stream as two-point trajectories instead.
     """
 
     config: YamLeaderTeleopModuleConfig  # type: ignore[assignment]
@@ -150,11 +181,16 @@ class YamLeaderTeleopModule(Module):
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
 
+    _control: YamLeaderControlSpec | None = None
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._buses: dict[YamLeaderSide, YamLeaderReader] = {}
         self._previous_positions_by_side: dict[YamLeaderSide, dict[str, float]] = {}
+        self._filtered_by_joint: dict[str, float] = {}
+        self._last_sent_by_joint: dict[str, float] = {}
         self._last_read_error: str | None = None
+        self._last_stream_error: str | None = None
         self._teleop_connected = False
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -221,7 +257,10 @@ class YamLeaderTeleopModule(Module):
             bus.disconnect()
         self._buses = {}
         self._previous_positions_by_side = {}
+        self._filtered_by_joint = {}
+        self._last_sent_by_joint = {}
         self._last_read_error = None
+        self._last_stream_error = None
         self._teleop_connected = False
 
     def get_current_commands(self) -> list[YamLeaderSideCommand] | None:
@@ -250,7 +289,44 @@ class YamLeaderTeleopModule(Module):
             return None
         self._last_read_error = None
         self._previous_positions_by_side = previous
-        return commands
+        return self._filtered(commands)
+
+    def _filtered(self, commands: list[YamLeaderSideCommand]) -> list[YamLeaderSideCommand]:
+        """Low-pass the mapped arm targets; the jump guard already saw the raw values."""
+        config = self.leader_config
+        if config.command_filter_cutoff_hz is None:
+            return commands
+        alpha = low_pass_alpha(config.command_filter_cutoff_hz, config.tick_period_s)
+        filtered: list[YamLeaderSideCommand] = []
+        for command in commands:
+            positions = smooth_positions(self._filtered_by_joint, command.positions_by_joint, alpha)
+            self._filtered_by_joint.update(positions)
+            filtered.append(replace(command, positions_by_joint=positions))
+        return filtered
+
+    def stream_trajectory(self, joint_state: JointState) -> bool:
+        """Send the arm targets as a trajectory; False when joint_command should carry them."""
+        control = self._control
+        horizon = self.leader_config.trajectory_horizon_s
+        if control is None or horizon is None:
+            return False
+        positions = dict(zip(joint_state.name, joint_state.position, strict=True))
+        last_sent = self._last_sent_by_joint or None
+        result = control.execute_trajectory(streamed_trajectory(last_sent, positions, horizon))
+        if last_sent is not None and not _accepted(result):
+            # The task completed between ticks and our anchor no longer matched
+            # the measured start; slew from the measured position this tick.
+            result = control.execute_trajectory(streamed_trajectory(None, positions, horizon))
+        if _accepted(result):
+            self._last_sent_by_joint = positions
+            self._last_stream_error = None
+            return True
+        self._last_sent_by_joint = {}
+        message = "no result" if result is None else f"{result.status.name}: {result.message}"
+        if message != self._last_stream_error:
+            logger.warning("YAM leader trajectory rejected; streaming joint_command: %s", message)
+            self._last_stream_error = message
+        return False
 
     def get_current_command(self) -> JointState | None:
         commands = self.get_current_commands()
@@ -263,7 +339,9 @@ class YamLeaderTeleopModule(Module):
         commands = self.get_current_commands()
         if commands is None or self._stop_event.is_set():
             return
-        self.joint_command.publish(combine_side_commands(commands))
+        joint_state = combine_side_commands(commands)
+        if not self.stream_trajectory(joint_state):
+            self.joint_command.publish(joint_state)
         outputs: Mapping[YamLeaderSide, Out[Float32]] = {
             "left": self.left_gripper_command,
             "right": self.right_gripper_command,
@@ -280,3 +358,7 @@ class YamLeaderTeleopModule(Module):
                 logger.exception("Unexpected YAM leader polling worker error")
             next_tick += self.leader_config.tick_period_s
             self._stop_event.wait(max(0.0, next_tick - time.monotonic()))
+
+
+def _accepted(result: TrajectoryExecutionResult | None) -> bool:
+    return result is not None and result.status == TrajectoryExecutionStatus.ACCEPTED

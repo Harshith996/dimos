@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 import pytest
 
 from dimos.robot.manipulators.dual_openyam.joints import (
@@ -22,7 +24,10 @@ from dimos.teleop.yam_leader.mapping import (
     YAM_FOLLOWER_JOINT_LIMITS,
     YAM_LEADER_MOTORS,
     combine_side_commands,
+    low_pass_alpha,
     map_side_readings,
+    smooth_positions,
+    streamed_trajectory,
     yam_follower_joint_names,
 )
 
@@ -96,3 +101,44 @@ def test_combine_keeps_left_then_right_order() -> None:
     assert list(joint_state.name) == [*DUAL_OPENYAM_LEFT_ARM_JOINTS, *DUAL_OPENYAM_RIGHT_ARM_JOINTS]
     assert joint_state.position[0] == pytest.approx(0.1)
     assert joint_state.position[6] == pytest.approx(0.9)
+
+
+def test_low_pass_alpha_rises_with_cutoff_and_period() -> None:
+    slow = low_pass_alpha(2.0, 0.02)
+    fast = low_pass_alpha(6.0, 0.02)
+    assert 0.0 < slow < fast < 1.0
+    assert low_pass_alpha(6.0, 0.04) > fast
+    assert low_pass_alpha(6.0, 0.02) == pytest.approx(0.02 / (1.0 / (2.0 * math.pi * 6.0) + 0.02))
+    with pytest.raises(ValueError):
+        low_pass_alpha(0.0, 0.02)
+    with pytest.raises(ValueError):
+        low_pass_alpha(6.0, 0.0)
+
+
+def test_smooth_positions_passes_the_first_sample_then_blends() -> None:
+    first = smooth_positions(None, {"a": 1.0, "b": 2.0}, 0.5)
+    assert first == {"a": 1.0, "b": 2.0}
+    blended = smooth_positions(first, {"a": 3.0, "b": 2.0, "c": 9.0}, 0.5)
+    assert blended == {"a": 2.0, "b": 2.0, "c": 9.0}
+    assert smooth_positions(first, {"a": 3.0}, 1.0) == {"a": 3.0}
+    with pytest.raises(ValueError):
+        smooth_positions(first, {"a": 3.0}, 0.0)
+
+
+def test_streamed_trajectory_is_one_point_until_a_target_was_sent() -> None:
+    target = {"left_joint1": 0.2, "right_joint1": -0.1}
+    first = streamed_trajectory(None, target, 0.04)
+    assert first.joint_names == ["left_joint1", "right_joint1"]
+    assert len(first.points) == 1 and first.points[0].positions == [0.2, -0.1]
+    assert first.points[0].time_from_start == 0.0
+
+    partial = streamed_trajectory({"left_joint1": 0.0}, target, 0.04)
+    assert len(partial.points) == 1
+
+    second = streamed_trajectory({"left_joint1": 0.0, "right_joint1": 0.0}, target, 0.04)
+    assert [point.time_from_start for point in second.points] == [0.0, 0.04]
+    assert second.points[0].positions == [0.0, 0.0]
+    assert second.points[1].positions == [0.2, -0.1]
+    assert second.points[1].velocities == [0.0, 0.0]
+    with pytest.raises(ValueError):
+        streamed_trajectory(None, target, 0.0)

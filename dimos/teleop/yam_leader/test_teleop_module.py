@@ -20,12 +20,17 @@ from typing import Any
 
 import pytest
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_LEFT_ARM_JOINTS,
     DUAL_OPENYAM_RIGHT_ARM_JOINTS,
 )
 from dimos.teleop.openarm_mini.calibration import OpenArmMiniCalibration
 from dimos.teleop.yam_leader import teleop_module
+from dimos.teleop.yam_leader.mapping import low_pass_alpha
 from dimos.teleop.yam_leader.teleop_module import (
     YAM_LEADER_STATE_DIR,
     YamLeaderTeleopModule,
@@ -53,6 +58,35 @@ class _FakeBus:
 class _FailingBus(_FakeBus):
     def read_positions(self) -> dict[str, float]:
         raise RuntimeError("bus read failed")
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.messages: list[Any] = []
+
+    def publish(self, message: Any) -> None:
+        self.messages.append(message)
+
+
+class _FakeControl:
+    """Records streamed trajectories and answers with the queued statuses."""
+
+    def __init__(self, *statuses: TrajectoryExecutionStatus) -> None:
+        self.statuses = list(statuses)
+        self.trajectories: list[Any] = []
+
+    def execute_trajectory(self, trajectory: Any) -> TrajectoryExecutionResult:
+        self.trajectories.append(trajectory)
+        status = self.statuses.pop(0) if self.statuses else TrajectoryExecutionStatus.ACCEPTED
+        return TrajectoryExecutionResult(status, status.name)
+
+
+def _wire_outputs(module: YamLeaderTeleopModule) -> tuple[_Recorder, _Recorder, _Recorder]:
+    joints, left, right = _Recorder(), _Recorder(), _Recorder()
+    module.joint_command = joints  # type: ignore[assignment]
+    module.left_gripper_command = left  # type: ignore[assignment]
+    module.right_gripper_command = right  # type: ignore[assignment]
+    return joints, left, right
 
 
 def _write_calibration(path: Path, side: str) -> Path:
@@ -190,3 +224,111 @@ def test_missing_calibration_fails_connect_and_closes_opened_buses(
     finally:
         module.stop()
     assert left.disconnected
+
+
+def test_trajectory_mode_anchors_each_target_to_the_last_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    right = _FakeBus(_readings())
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": right})
+    control = _FakeControl()
+    with _connected(_config(tmp_path, command_filter_cutoff_hz=None)) as module:
+        module._control = control
+        joints, left, right_gripper = _wire_outputs(module)
+        module.tick()
+        right.readings = _readings(joint_1=0.3)
+        module.tick()
+
+    first, second = control.trajectories
+    assert len(first.points) == 1 and first.points[0].time_from_start == 0.0
+    assert [point.time_from_start for point in second.points] == [0.0, 0.04]
+    assert second.points[0].positions == first.points[0].positions
+    assert second.joint_names == [*DUAL_OPENYAM_LEFT_ARM_JOINTS, *DUAL_OPENYAM_RIGHT_ARM_JOINTS]
+    right_index = second.joint_names.index(DUAL_OPENYAM_RIGHT_ARM_JOINTS[0])
+    assert second.points[1].positions[right_index] == pytest.approx(0.3)
+    assert joints.messages == []
+    assert len(left.messages) == 2 and len(right_gripper.messages) == 2
+
+
+def test_rejected_anchor_falls_back_to_one_point_then_re_anchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())})
+    control = _FakeControl(
+        TrajectoryExecutionStatus.ACCEPTED,
+        TrajectoryExecutionStatus.START_STATE_MISMATCH,
+        TrajectoryExecutionStatus.ACCEPTED,
+        TrajectoryExecutionStatus.ACCEPTED,
+    )
+    with _connected(_config(tmp_path, command_filter_cutoff_hz=None)) as module:
+        module._control = control
+        joints, _, _ = _wire_outputs(module)
+        module.tick()
+        module.tick()
+        module.tick()
+
+    assert [len(t.points) for t in control.trajectories] == [1, 2, 1, 2]
+    assert joints.messages == []
+
+
+def test_unserved_trajectory_rpc_falls_back_to_the_joint_command_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())})
+    control = _FakeControl(
+        TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
+        TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
+    )
+    with _connected(_config(tmp_path)) as module:
+        module._control = control
+        joints, _, _ = _wire_outputs(module)
+        module.tick()
+        module.tick()
+
+    assert [len(t.points) for t in control.trajectories] == [1, 1]
+    assert len(joints.messages) == 2
+    assert module._last_sent_by_joint == {}
+
+
+def test_joint_command_stream_without_a_control_link_or_horizon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())})
+    with _connected(_config(tmp_path)) as module:
+        joints, _, _ = _wire_outputs(module)
+        module.tick()
+    assert len(joints.messages) == 1
+
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())})
+    control = _FakeControl()
+    with _connected(_config(tmp_path, trajectory_horizon_s=None)) as module:
+        module._control = control
+        joints, _, _ = _wire_outputs(module)
+        module.tick()
+    assert len(joints.messages) == 1 and control.trajectories == []
+
+
+def test_command_filter_blends_toward_new_readings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    left = _FakeBus(_readings())
+    _patch_buses(monkeypatch, {"left": left, "right": _FakeBus(_readings())})
+    config = _config(tmp_path, command_filter_cutoff_hz=6.0, tick_period_s=0.02)
+    alpha = low_pass_alpha(6.0, 0.02)
+    with _connected(config) as module:
+        first = module.get_current_command()
+        left.readings = _readings(joint_1=0.6)
+        second = module.get_current_command()
+        third = module.get_current_command()
+
+    assert first is not None and second is not None and third is not None
+    index = list(first.name).index(DUAL_OPENYAM_LEFT_ARM_JOINTS[0])
+    assert first.position[index] == pytest.approx(0.1)
+    assert second.position[index] == pytest.approx(0.1 + alpha * 0.5)
+    assert third.position[index] == pytest.approx(
+        second.position[index] + alpha * (0.6 - second.position[index])
+    )
+    with pytest.raises(ValueError):
+        _config(tmp_path, command_filter_cutoff_hz=0.0)
+    with pytest.raises(ValueError):
+        _config(tmp_path, trajectory_horizon_s=-1.0)

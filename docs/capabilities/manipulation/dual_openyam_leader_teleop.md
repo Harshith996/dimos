@@ -75,6 +75,30 @@ that command, which is the intended response to a leader segment flipping
 past a limit while being handled. The follower trajectory task caps every
 joint at 2 rad/s.
 
+## Smooth streaming
+
+On one machine the leader module is linked to the coordinator and streams
+each tick as a two-point trajectory from the last target to the new one over
+`trajectory_horizon_s` (default 0.04 s, two ticks). A single streamed point
+completes within a tick whenever the hand moves slowly, and the next point
+then restarts from the measured position, which lags the command by the
+motors' tracking error; that restart every 20 ms is a ratchet the operator
+feels. With two points the task interpolates from its own last command while
+it is executing, so there is no restart. A rejected anchor (the task went
+idle and the measured start drifted past its 0.05 rad tolerance) falls back
+to a single point for that tick. The mapped targets also pass a first-order
+low-pass at `command_filter_cutoff_hz` (default 6 Hz, `None` to disable):
+
+```bash
+dimos run teleop-dual-openyam-leader --port-right /dev/ttyACM0 \
+  --yamleaderteleopmodule.trajectory-horizon-s 0.04 \
+  --yamleaderteleopmodule.command-filter-cutoff-hz 6
+```
+
+Without a coordinator link (the split operator blueprint) or with
+`trajectory_horizon_s` set to `None`, targets go out on `joint_command` as
+before.
+
 ## Before enabling the follower
 
 - Start with the followers at their zero pose so the first streamed target is
