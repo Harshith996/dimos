@@ -35,17 +35,22 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+import rerun.blueprint as rrb
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.camera.zed.compat import ZEDCamera
 from dimos.mapping.costmapper import CostMapper
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
@@ -99,6 +104,7 @@ _MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 g1_joints = make_humanoid_joints("g1")
 _G1_NUM_MOTORS = len(g1_joints)
 
+_cameras: tuple[Blueprint, ...] = ()
 _simulation_address: Path | None
 _imu_remap: tuple[type[Module], str, str]
 
@@ -185,6 +191,22 @@ if global_config.simulation == "mujoco":
 else:
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
+    # Provisional calibration for this G1's taped ZED mount, 2026-10-18.
+    # Recalibrate if the camera moves; this is relative to PointLio's sensor frame.
+    _cameras = (
+        ZEDCamera.blueprint(
+            camera_name="zed",
+            base_frame_id="mid360_link",
+            base_transform=Transform(
+                translation=Vector3(0.373277743, -0.188743309, 0.094542521),
+                rotation=Quaternion(0.995914799, -0.030543936, 0.081046887, -0.025537892),
+            ),
+            enable_tracking=False,
+            image_flip=True,
+            depth_mode="NEURAL_LIGHT",
+        ),
+    )
+
     _backend = G1WholeBodyConnection.blueprint(command_timeout_seconds=COMMAND_TIMEOUT_SECONDS)
     _simulation_address = None
     _imu_remap = (G1WholeBodyConnection, "imu", "low_level_imu")
@@ -265,6 +287,19 @@ def _render_real_costmap(grid: Any) -> Any:
     return g1_costmap(grid, z_offset=_g1_real_ground_z() + 0.02)
 
 
+def _zed_rerun_blueprint() -> Any:
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial3DView(origin="world", name="Map"),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="world/color_image", name="ZED colour"),
+                rrb.Spatial2DView(origin="world/depth_image", name="ZED depth"),
+            ),
+            column_shares=[2, 1],
+        ),
+    )
+
+
 _costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _render_real_costmap
 _remappings = [
     *_nav_remap,
@@ -278,9 +313,11 @@ unitree_g1_sonic_wbc = (
         _backend,
         _policy,
         _nav_stack,
+        *_cameras,
         vis_module(
             viewer_backend=global_config.viewer,
             rerun_config={
+                **({"blueprint": _zed_rerun_blueprint} if _cameras else {}),
                 "tf_axes": 0.5,
                 "static": scene_package_static_entities(
                     global_config.scene_package if global_config.simulation == "mujoco" else None
