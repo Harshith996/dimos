@@ -683,21 +683,29 @@ SHARED_DEPS_EXCEPTIONS: frozenset[str] = frozenset(
 def _parse_drv_name(store_path: str) -> tuple[str, str]:
     """Split `/nix/store/<hash>-rust_tokio-1.53.1.drv` into ("rust_tokio", "1.53.1") as builtins.parseDrvName does."""
     name = Path(store_path).name[33:].removesuffix(".drv")
-    match = re.search(r"-(?=\d)", name)
+    match = re.search(r"-(?=[^a-zA-Z])", name)
     return (name[: match.start()], name[match.end() :]) if match else (name, "")
 
 
 def _semver_group(version: str) -> str:
     """The cargo compatibility class of a version: 1.53.1 -> 1, 0.8.4 -> 0.8, 0.0.3 -> 0.0.3."""
-    parts = re.split(r"[.+-]", version)[:3]
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None:
+        return version
+    parts = match.groups()
     for index, part in enumerate(parts):
         if part != "0":
             return ".".join(parts[: index + 1])
     return ".".join(parts)
 
 
-def _version_key(version: str) -> tuple[int, ...]:
-    return tuple(int(part) for part in re.findall(r"\d+", version.split("+")[0]))
+def _version_key(version: str) -> tuple[int, int, int, bool, str]:
+    """Semver order: 1.0.0-rc.1 sorts before 1.0.0, and +build metadata is ignored."""
+    match = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-([^+]*))?", version)
+    if match is None:
+        return (0, 0, 0, False, version)
+    major, minor, patch, pre = match.groups()
+    return (int(major), int(minor), int(patch), pre is None, pre or "")
 
 
 def _module_closure(module: DiscoveredModule) -> tuple[str, frozenset[str] | None]:
