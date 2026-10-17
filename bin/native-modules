@@ -49,9 +49,10 @@ Modes (exactly one):
                  Crate versions live in each Cargo.lock, not flake.lock, so
                  this instantiates every module's derivation and reads its
                  closure; nothing is built but crate2nix's Cargo.nix. Also
-                 warns where one crate version still builds as several
-                 derivations because the modules enable different features,
-                 since that build is then not shared between them.
+                 fails where one crate version builds as several derivations
+                 because the modules enable different features, since that
+                 build is then not shared between them. Known mismatches are
+                 listed in SHARED_DEPS_EXCEPTIONS.
   --record-links Print `result-symlink store-path` per built module. The
                  publish job stores this in the marker cache entry so consumers
                  can materialise binaries without evaluating anything.
@@ -607,8 +608,67 @@ def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
     return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
 
 
-# Crates allowed to resolve to more than one compatible version across modules, e.g. {"syn"}
-SHARED_DEPS_ALLOWED: frozenset[str] = frozenset()
+# Known mismatches --check-shared-deps lets through: "input:<source>", "package:<name>",
+# "crate:<name>" (two compatible versions) or "features:<name>" (one version, several builds).
+# Drop an entry once the modules agree; the check warns about entries that no longer match.
+SHARED_DEPS_EXCEPTIONS: frozenset[str] = frozenset(
+    {
+        "crate:bitflags",
+        "crate:cc",
+        "crate:cfg-if",
+        "crate:crc32fast",
+        "crate:crossbeam",
+        "crate:crossbeam-channel",
+        "crate:crossbeam-deque",
+        "crate:crossbeam-epoch",
+        "crate:crossbeam-queue",
+        "crate:crossbeam-utils",
+        "crate:find-msvc-tools",
+        "crate:indexmap",
+        "crate:lru-slab",
+        "crate:mio",
+        "crate:pest",
+        "crate:pest_derive",
+        "crate:pest_generator",
+        "crate:pest_meta",
+        "crate:quinn",
+        "crate:quinn-proto",
+        "crate:rustls",
+        "crate:serde_with",
+        "crate:serde_with_macros",
+        "crate:smallvec",
+        "crate:syn",
+        "crate:tinyvec",
+        "crate:toml",
+        "crate:toml_edit",
+        "crate:unicode-ident",
+        "crate:wide",
+        "crate:yoke-derive",
+        "crate:zerocopy",
+        "crate:zerofrom-derive",
+        "features:ahash",
+        "features:anyhow",
+        "features:arrayvec",
+        "features:bytemuck",
+        "features:cc",
+        "features:crc32fast",
+        "features:either",
+        "features:fastrand",
+        "features:getrandom",
+        "features:hashbrown",
+        "features:num-complex",
+        "features:num-traits",
+        "features:proc-macro2",
+        "features:regex",
+        "features:regex-automata",
+        "features:regex-syntax",
+        "features:serde_json",
+        "features:stable_deref_trait",
+        "features:syn",
+        "features:yoke",
+        "features:zerofrom",
+    }
+)
 
 
 def _parse_drv_name(store_path: str) -> tuple[str, str]:
@@ -670,7 +730,7 @@ def _where(build_dirs: set[str], total: int) -> str:
 
 
 def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
-    problems: list[str] = []
+    problems: dict[str, str] = {}
     build_dirs = sorted({m.build_dir for m in modules})
 
     input_revs: dict[str, dict[str, set[str]]] = {}
@@ -682,7 +742,7 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
             where = " · ".join(
                 f"{rev[:12]} ({_where(dirs, len(build_dirs))})" for rev, dirs in revs.items()
             )
-            problems.append(f"flake input {name}: {where}")
+            problems[f"input:{name}"] = where
 
     workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
     closures: dict[str, frozenset[str]] = {}
@@ -722,12 +782,12 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
             where = " · ".join(
                 f"{v} ({_where(dirs, len(closures))})" for v, dirs in by_version.items()
             )
-            problems.append(f"package {name}: {where}")
+            problems[f"package:{name}"] = where
     for (crate, group), versions in sorted(crate_versions.items()):
-        if len(versions) > 1 and crate not in SHARED_DEPS_ALLOWED:
+        if len(versions) > 1:
             ordered = sorted(versions.items(), key=lambda kv: _version_key(kv[0]))
             where = " · ".join(f"{v} ({_where(dirs, len(closures))})" for v, dirs in ordered)
-            problems.append(f"crate {crate} {group}.x: {where}")
+            problems[f"crate:{crate}"] = f"{group}.x: {where}"
 
     # A crate version built as several derivations is not shared; report only the
     # ones whose own features differ, not the dependents that differ because of them.
@@ -741,19 +801,26 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
             where = " · ".join(
                 f"[{f}] ({_where(dirs, len(closures))})" for f, dirs in by_features.items()
             )
-            _log(
-                f"WARN:  {name.removeprefix('rust_')} {version} not shared, features differ: {where}"
+            key = f"features:{name.removeprefix('rust_')}"
+            problems[key] = (
+                f"{problems[key]} | {version} {where}" if key in problems else f"{version} {where}"
             )
 
-    for problem in problems:
-        _log(f"FAIL:  {problem}")
-    if problems:
-        sys.exit(
-            f"{len(problems)} shared dependency mismatch(es). For a crate, in each module that"
-            " lags: cargo update -p <crate>@<old> --precise <newest>. For a flake input:"
-            " nix flake update <input>, or lock it to the rev the other modules use."
+    failures = {key: where for key, where in problems.items() if key not in SHARED_DEPS_EXCEPTIONS}
+    for key in sorted(SHARED_DEPS_EXCEPTIONS - problems.keys()):
+        _log(
+            f"WARN:  exception {key!r} no longer matches on {current_system()}; drop it if it matches nowhere"
         )
-    _log("Shared dependencies agree")
+    for key, where in sorted(failures.items()):
+        _log(f"FAIL:  {key}  {where}")
+    if failures:
+        sys.exit(
+            f"{len(failures)} shared dependency mismatch(es). crate: in each module that lags,"
+            " cargo update -p <crate>@<old> --precise <newest>. features: enable the same"
+            " features in every module that uses the crate. input: lock it to the rev the"
+            " other modules use. Or add the key to SHARED_DEPS_EXCEPTIONS."
+        )
+    _log(f"Shared dependencies agree ({len(problems)} known exception(s))")
 
 
 def main() -> None:
@@ -782,7 +849,7 @@ def main() -> None:
     mode.add_argument(
         "--check-shared-deps",
         action="store_true",
-        help="fail when modules lock a shared flake input or crate to different versions",
+        help="fail when modules lock or build a shared dependency differently",
     )
     mode.add_argument(
         "--record-links",
