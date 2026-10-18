@@ -59,6 +59,9 @@ struct OdomSourceConfig {
     pose_variances: Covariance,
     twist_variances: Covariance,
     realign_after_seconds: f64,
+    still_variance: f64,
+    still_speed: f64,
+    still_angular_speed: f64,
 }
 
 /// One IMU, identified by the frame its samples carry.
@@ -226,6 +229,9 @@ impl DimSlam {
                     pose_variances: source.pose_variances.to_array(),
                     twist_variances: source.twist_variances.to_array(),
                     realign_after_seconds: source.realign_after_seconds,
+                    still_variance: source.still_variance,
+                    still_speed: source.still_speed,
+                    still_angular_speed: source.still_angular_speed,
                 })
                 .collect(),
             planar: self.config.planar,

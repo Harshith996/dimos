@@ -331,6 +331,10 @@ WHEEL_SOURCE = SourceConfig(
     child_frame_id="base_link",
     kind="twist",
     twist_variances=Covariance(x=5e-4, y=5e-4, yaw=6e-4),
+    # Wheels at rest read exactly zero; standing, the pose then settles instead of following Point-LIO's mm of noise.
+    still_variance=1e-6,
+    still_speed=1e-3,
+    still_angular_speed=1e-3,
 )
 
 

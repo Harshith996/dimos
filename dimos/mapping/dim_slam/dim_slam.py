@@ -129,6 +129,10 @@ class SourceConfig(BaseModel):
     twist_variances: Covariance = Field(default_factory=Covariance)
     # pose only: re-align a source to the fused pose after it is rejected this long; 0 never re-aligns.
     realign_after_seconds: float = 0.0
+    # Zero-velocity update: a twist at or under these (m/s, rad/s) is fused as standing still; 0 variance disables.
+    still_variance: float = 0.0
+    still_speed: float = 0.0
+    still_angular_speed: float = 0.0
 
 
 class DimSlamConfig(NativeModuleConfig):
