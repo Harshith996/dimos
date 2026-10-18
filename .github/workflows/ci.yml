@@ -332,8 +332,8 @@ jobs:
 
       - name: Run pre-commit
         env:
-          # fmt is checked in the rust job, lint and shared deps in cachix-build
-          SKIP: cargo-fmt,native-module-lint,native-shared-deps
+          # fmt is checked in the rust job, lint in cachix-build
+          SKIP: cargo-fmt,native-module-lint
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files --verbose
