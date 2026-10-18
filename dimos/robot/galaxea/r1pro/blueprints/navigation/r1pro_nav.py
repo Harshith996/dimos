@@ -67,6 +67,8 @@ r1pro_nav = autoconnect(
         odom_frame_id=R1PRO_WHEEL_ODOM_FRAME,
         enable_wrist_color=False,
         enable_imu=False,
+        # Head depth reads only the left eye.
+        head_right=False,
     ).remappings([(R1ProConnection, "odometry", "slam_sources")]),
     r1pro_fused_odometry().remappings([(PointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.

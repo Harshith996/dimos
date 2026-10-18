@@ -173,20 +173,27 @@ def _zenoh_transport(
     )
 
 
-def _head_cameras() -> list[Blueprint]:
-    """Both head eyes and their intrinsics; see ``head_cameras``."""
-    return [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint(), HeadCameraInfo.blueprint()]
+def _head_cameras(head_right: bool) -> list[Blueprint]:
+    """The head eyes and their intrinsics; see ``head_cameras``."""
+    eyes = (
+        [HeadLeftCamera.blueprint(), HeadRightCamera.blueprint()]
+        if head_right
+        else [HeadLeftCamera.blueprint()]
+    )
+    return [*eyes, HeadCameraInfo.blueprint()]
 
 
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
+    head_right: bool = True,
     **connection: Any,
 ) -> Blueprint:
     """R1ProConnection, ControlCoordinator and the head cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
-    velocity); transports and remappings stay identical either way.
+    velocity); transports and remappings stay identical either way. ``head_right``
+    off leaves the right head eye unread.
     Other keyword args are ``R1ProConnectionConfig`` fields.
     """
     resolved_tasks = (
@@ -206,7 +213,7 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(**connection),
-            *_head_cameras(),
+            *_head_cameras(head_right),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 # UrdfManager and the arm planner each spent ~40% of a core receiving it at 100 Hz.
