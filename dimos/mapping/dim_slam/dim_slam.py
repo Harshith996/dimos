@@ -119,18 +119,15 @@ class SourceConfig(BaseModel):
     drifting source's covariance describes its accumulated drift rather than the delta
     being fused, so a fixed value is usually the right answer."""
 
-    # The transform this source's estimates carry: each message's header.frame_id and
-    # child_frame_id. Both halves are needed because two sources can share a parent.
+    # The transform each message carries (header.frame_id -> child_frame_id); two sources can share a parent.
     parent_frame_id: str = ""
     child_frame_id: str = ""
-    # pose: a pose that does not drift (lidar-inertial odometry). twist: only the twist is used
-    # (wheels). pose_delta: a pose that drifts, fused by its message-to-message motion.
+    # pose: a pose that does not drift (lidar odometry); twist: twist only (wheels); pose_delta: a drifting pose.
     kind: Literal["pose", "twist", "pose_delta"] = "pose_delta"
     pose_variances: Covariance = Field(default_factory=Covariance)
     # Body frame.
     twist_variances: Covariance = Field(default_factory=Covariance)
-    # pose only: a source rejected this long without a break is re-aligned to the fused pose;
-    # 0 never re-aligns.
+    # pose only: re-align a source to the fused pose after it is rejected this long; 0 never re-aligns.
     realign_after_seconds: float = 0.0
 
 
@@ -187,8 +184,7 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # Empty predicts by constant velocity instead (see process_noise), seeded level at the
-    # origin from the first source message.
+    # Empty predicts by constant velocity instead (see process_noise).
     imus: list[ImuConfig] = Field(default_factory=list)
     # m/s^2. Why is gravity a config?
     # 1) different IMUs have different bias
@@ -208,9 +204,7 @@ class DimSlamConfig(NativeModuleConfig):
     odom_sources: list[SourceConfig] = Field(default_factory=list)
     # A ground body: z, roll and pitch held at zero, sources fused in x, y and yaw only.
     planar: bool = False
-    # Body twist [vx vy vz wx wy wz]: above zero is a soft zero-velocity measurement of that
-    # axis with this variance, fused with every source message (vy for a base that cannot
-    # slide sideways); zero leaves it free.
+    # Per body-twist axis, the variance of a soft zero-velocity measurement fused with every source message; 0 is free.
     zero_velocity_variances: Covariance = Field(default_factory=Covariance)
 
     @model_validator(mode="after")

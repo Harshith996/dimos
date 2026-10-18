@@ -151,8 +151,7 @@ struct DimSlam {
     slam: Option<Arc<Mutex<Slam>>>,
 }
 
-/// The core plus the data clock: the newest input stamp and when it arrived, so the timer
-/// can run on the inputs' clock, live or replayed.
+/// The core plus the newest input stamp and when it arrived: the timer runs on the inputs' clock, live or replayed.
 struct Slam {
     core: DimSlamCore,
     newest_stamp: Option<(i64, Instant)>,

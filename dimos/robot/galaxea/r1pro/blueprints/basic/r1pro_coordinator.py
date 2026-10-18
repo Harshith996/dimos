@@ -331,12 +331,7 @@ WHEEL_SOURCE = SourceConfig(
 
 
 def r1pro_fused_odometry() -> Blueprint:
-    """Point-LIO (carried to base_link) and wheel odometry into dimSLAM, which owns odom -> base_link.
-
-    Needs ``r1pro_control(odom_frame_id=R1PRO_WHEEL_ODOM_FRAME)`` with its ``odometry`` remapped to ``slam_sources``.
-    No cameras or IMUs: cuVSLAM on the head stereo would compete with Point-LIO for the Orin's cores. To add them, set
-    ``cameras`` and remap ``dimslam_image``/``dimslam_camera_info`` onto the head stereo streams.
-    """
+    """Point-LIO and wheel odometry (``r1pro_control`` odometry remapped to ``slam_sources``) into dimSLAM, which owns odom -> base_link."""
     return autoconnect(
         r1pro_lidar_odometry(mount_under_base=True),
         DimSlam.blueprint(
