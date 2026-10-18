@@ -99,7 +99,18 @@ class InitialStds(BaseModel):
     position: float = 0.01
     velocity: float = 0.1
     rotation: float = 0.05
+    # Without an IMU only.
+    angular_velocity: float = 0.1
     bias: float = 0.05
+
+
+class ProcessNoise(BaseModel):
+    """How fast the body's velocity can change unannounced; only used without an IMU."""
+
+    # m/s^2/sqrt(Hz).
+    linear_acceleration: float = 1.0
+    # rad/s^2/sqrt(Hz).
+    angular_acceleration: float = 1.0
 
 
 class SourceConfig(BaseModel):
@@ -109,13 +120,18 @@ class SourceConfig(BaseModel):
     being fused, so a fixed value is usually the right answer."""
 
     # The transform this source's estimates carry: each message's header.frame_id and
-    # child_frame_id. Both halves are needed because two sources can share a parent. Every
-    # source is fused as filter-anchored deltas, so the parent only tells sources apart.
+    # child_frame_id. Both halves are needed because two sources can share a parent.
     parent_frame_id: str = ""
     child_frame_id: str = ""
+    # pose: a pose that does not drift (lidar-inertial odometry). twist: only the twist is used
+    # (wheels). pose_delta: a pose that drifts, fused by its message-to-message motion.
+    kind: Literal["pose", "twist", "pose_delta"] = "pose_delta"
     pose_variances: Covariance = Field(default_factory=Covariance)
     # Body frame.
     twist_variances: Covariance = Field(default_factory=Covariance)
+    # pose only: a source rejected this long without a break is re-aligned to the fused pose;
+    # 0 never re-aligns.
+    realign_after_seconds: float = 0.0
 
 
 class DimSlamConfig(NativeModuleConfig):
@@ -162,7 +178,7 @@ class DimSlamConfig(NativeModuleConfig):
     # Off when something downstream owns odom -> output_frame_id.
     publish_tf: bool = True
 
-    # The filter itself steps at the IMU rate; this is only how often it emits.
+    # Output cadence, on a timer: each output is the filter predicted to its own stamp.
     publish_rate: float = 50.0
     replay_buffer_seconds: float = 0.5
     # Outlier gate in variance units, per measurement dimension. Smaller is more
@@ -171,15 +187,15 @@ class DimSlamConfig(NativeModuleConfig):
     # Caps the filter's own state rather than an incoming reading. 0 disables it.
     max_position_m: float = 10000.0
 
-    # Empty disables inertial propagation: the filter is seeded level at the origin, and
-    # each source's deltas are blended by inverse variance among the sources heard from in
-    # the last 0.5 s.
+    # Empty predicts by constant velocity instead (see process_noise), seeded level at the
+    # origin from the first source message.
     imus: list[ImuConfig] = Field(default_factory=list)
     # m/s^2. Why is gravity a config?
     # 1) different IMUs have different bias
     # 2) gravity changes with latitude by a non-trivial amount for IMUs (0.05 m/s^2)
     initial_gravity_estimate: float = 9.8
     initial_stds: InitialStds = Field(default_factory=InitialStds)
+    process_noise: ProcessNoise = Field(default_factory=ProcessNoise)
 
     # Trust in the tracker's pose, per SourceConfig semantics; the module registers the
     # tracker as a fusion source itself, so it never appears in `odom_sources`. The tracker
@@ -190,10 +206,12 @@ class DimSlamConfig(NativeModuleConfig):
     # One entry per external source (wheel odometry, ...), matched against each message's
     # header.frame_id and child_frame_id.
     odom_sources: list[SourceConfig] = Field(default_factory=list)
-    # A virtual zero-twist measurement applied with every source message, for the
-    # directions the platform cannot move in. Above zero pulls that dimension toward
-    # zero with this variance; zero leaves it free.
-    per_dimension_error_variance: Covariance = Field(default_factory=Covariance)
+    # A ground body: z, roll and pitch held at zero, sources fused in x, y and yaw only.
+    planar: bool = False
+    # Body twist [vx vy vz wx wy wz]: above zero is a soft zero-velocity measurement of that
+    # axis with this variance, fused with every source message (vy for a base that cannot
+    # slide sideways); zero leaves it free.
+    zero_velocity_variances: Covariance = Field(default_factory=Covariance)
 
     @model_validator(mode="after")
     def _multisensor_lists_its_rig(self) -> DimSlamConfig:
