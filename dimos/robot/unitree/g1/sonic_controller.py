@@ -56,6 +56,7 @@ from dimos.robot.unitree.g1.control_safety import (
     check_joint_velocities,
     damping_commands,
 )
+from dimos.robot.unitree.g1.jetson_clocks import require_jetson_clocks
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
 from dimos.utils.logging_config import setup_logger
 
@@ -162,12 +163,17 @@ class SonicController:
         with self._fault_lock:
             return self._fault_reason
 
+    def _require_hardware_clocks(self) -> None:
+        if self.config.simulation_address is None:
+            require_jetson_clocks()
+
     def start(self) -> bool:
         """Load models and start the policy clock; return whether newly started."""
         if self.fault_reason is not None:
             raise RuntimeError("SONIC damping stop is latched; restart the stack to recover")
         if self._active:
             return False
+        self._require_hardware_clocks()
         paths = (self.config.encoder_onnx, self.config.decoder_onnx, self.config.planner_onnx)
         missing = [str(path) for path in paths if not path.is_file()]
         if missing:
@@ -635,10 +641,10 @@ class SonicController:
                 raise RuntimeError("Deactivate the policy before requesting activation")
             if self._read_state(time.perf_counter()) is None:
                 raise RuntimeError("Waiting for joint and IMU feedback")
-            # arm() validates the ramp before changing either activation or dry-run state.
+            # arm() validates the ramp and clocks before changing either state.
             accepted = self.arm(ramp_seconds)
             if accepted:
-                self.set_dry_run(False)
+                self._update_dry_run(False)
             return accepted
 
     def arm(self, ramp_seconds: float | None = None) -> bool:
@@ -661,6 +667,7 @@ class SonicController:
                 or self._arm_pending
             ):
                 return False
+            self._require_hardware_clocks()
             self._arming_duration = (
                 self.config.default_ramp_seconds if ramp_seconds is None else ramp_seconds
             )
@@ -703,6 +710,8 @@ class SonicController:
                 SonicControlState.CONTROL,
             )
             should_reactivate = was_armed if reactivate is None else bool(reactivate)
+            if self._active and should_reactivate:
+                self._require_hardware_clocks()
 
             self._control_state = (
                 SonicControlState.UNARMED if self._active else SonicControlState.STOPPED
@@ -729,9 +738,17 @@ class SonicController:
             new_val = bool(enabled)
             if new_val == self._dry_run:
                 return
-            self._dry_run = new_val
-            self._last_dry_run_log_t = 0.0
-            logger.info("G1SonicPolicyModule dry_run changed", connection="g1", dry_run=new_val)
+            if not new_val:
+                self._require_hardware_clocks()
+            self._update_dry_run(new_val)
+
+    def _update_dry_run(self, enabled: bool) -> None:
+        """Update under _control_lock, after the caller has checked hardware clocks."""
+        if enabled == self._dry_run:
+            return
+        self._dry_run = enabled
+        self._last_dry_run_log_t = 0.0
+        logger.info("G1SonicPolicyModule dry_run changed", connection="g1", dry_run=enabled)
 
     def status(self) -> dict[str, Any]:
         with self._control_lock:

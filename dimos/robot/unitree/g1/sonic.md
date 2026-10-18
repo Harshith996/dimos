@@ -59,6 +59,39 @@ prerequisites only. JetPack 5 requires CUDA 11.8 with its compatibility driver
 and cuDNN 8; JetPack 6 requires CUDA 12.6 and cuDNN 9.
 Hardware starts unarmed with policy outputs in dry-run.
 
+On the Jetson, install the clock service once from the checkout:
+
+```bash
+sudo bash bin/hardware/g1/install-jetson-clocks
+```
+
+This applies NVIDIA's `jetson_clocks` now and at each boot, after
+`nvpmodel.service` restores the selected power mode. It locks CPU, GPU and EMC
+clocks to the maximum allowed by that mode. It preserves the selected power mode
+and fan policy. The service runs as root; DimOS runs as your normal user. It does
+not start or restart the robot stack and needs no passwordless sudo rule.
+
+Power mode and clock locking are separate: selecting MAXN alone still permits
+dynamic clock scaling. A manual `sudo jetson_clocks` lasts until reboot (or a
+clock-setting change). On the current Orin NX G1 with MAXN, locking clocks took
+the standing inference benchmark with ZED running from roughly 45.6 Hz to 50 Hz.
+This is a timing measurement, not a validation of walking stability.
+
+Check the service after a reboot with:
+
+```bash
+systemctl status dimos-jetson-clocks.service --no-pager
+```
+
+`active (exited)` is expected for this one-shot service. SONIC independently reads
+the CPU/GPU frequency limits before hardware startup, arming, reactivation and
+switching off dry-run. Unlocked or unreadable limits reject the operation with
+the command to fix it; simulation and non-Jetson hosts skip the check. The check
+does not run in the policy loop. It verifies configured CPU/GPU locks, not the
+power budget, EMC, thermal throttling or inference deadlines. A lower power mode
+can still be too slow with locked clocks; choose and validate the mode for the
+specific robot. An `active` service alone does not prove clocks were left locked.
+
 On a configured G1, start the stack with:
 
 ```bash
