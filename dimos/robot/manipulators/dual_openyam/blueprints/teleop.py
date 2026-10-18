@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
+"""WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller.
+
+The headset shows the egocentric camera above the workspace and a wrist camera
+beside each arm; pick the webcams per instance, e.g.
+`--left-wrist-camera.device=/dev/v4l/by-id/...`.
+"""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -37,9 +42,13 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
-from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.camera import TeleopCamera
+from dimos.teleop.webxr.extensions import DualArmVideoTeleopModule
 
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
+EGOCENTRIC_CAMERA = "egocentric_camera"
+LEFT_WRIST_CAMERA = "left_wrist_camera"
+RIGHT_WRIST_CAMERA = "right_wrist_camera"
 
 _dual_openyam_webxr_pink = PinkKinematicsConfig(
     dt=0.01,
@@ -76,9 +85,12 @@ _dual_openyam_webxr_tasks = {
 def build_dual_openyam_webxr(
     *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
 ) -> Blueprint:
-    """Compose dual-arm teleop with deployment-specific visualization."""
+    """Compose dual-arm teleop, headset camera panels, and deployment-specific visualization."""
     return autoconnect(
-        ArmTeleopModule.blueprint(zero_button="B"),
+        DualArmVideoTeleopModule.blueprint(zero_button="B"),
+        TeleopCamera.blueprint(instance_name=EGOCENTRIC_CAMERA),
+        TeleopCamera.blueprint(instance_name=LEFT_WRIST_CAMERA),
+        TeleopCamera.blueprint(instance_name=RIGHT_WRIST_CAMERA),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
@@ -107,10 +119,13 @@ def build_dual_openyam_webxr(
         ),
     ).remappings(
         [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+            (DualArmVideoTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (DualArmVideoTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (DualArmVideoTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (DualArmVideoTeleopModule, "right_gripper_command", "right_gripper_command"),
+            (EGOCENTRIC_CAMERA, "color_image", "egocentric_image"),
+            (LEFT_WRIST_CAMERA, "color_image", "left_wrist_image"),
+            (RIGHT_WRIST_CAMERA, "color_image", "right_wrist_image"),
         ]
     )
 

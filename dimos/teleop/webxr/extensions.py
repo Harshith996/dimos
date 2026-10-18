@@ -19,14 +19,13 @@ Available subclasses:
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the headset over /ws
+    - DualArmVideoTeleopModule: ArmTeleopModule + egocentric and wrist camera panels
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
 """
 
-import asyncio
 import threading
+import time
 from typing import Any
-
-from fastapi import WebSocket
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
@@ -44,45 +43,41 @@ from dimos.teleop.webxr.controller_types import (
     Hand,
     WebXRControllerState,
 )
-from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
+from dimos.teleop.webxr.module import CameraPanel, WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-async def _ws_send_jpeg(ws: WebSocket, data: bytes) -> None:
-    try:
-        await ws.send_bytes(data)
-    except Exception:
-        # Client closed or write failed — drop the frame; the base /ws
-        # disconnect handler evicts the dead client.
-        pass
+def _encode_panel_frame(panel: int, msg: Image, quality: int, max_width: int) -> bytes:
+    """One headset video message: the panel index byte, then the JPEG."""
+    if max_width > 0:
+        msg, _ = msg.resize_to_fit(max_width, msg.height)
+    return bytes([panel]) + msg.to_jpeg_bytes(quality=quality)
 
 
-def _push_jpeg(module: WebXRTeleopModule, msg: Image, quality: int) -> None:
-    """JPEG-encode an Image and push it to all of module's connected /ws clients.
+def _push_jpeg(
+    module: WebXRTeleopModule,
+    msg: Image,
+    *,
+    quality: int,
+    panel: int = 0,
+    max_width: int = 0,
+) -> None:
+    """JPEG-encode a camera frame and push it to the connected headset client.
 
-    Runs on the RX thread; sends are scheduled on the asyncio loop captured by
-    WebXRTeleopModule when the first client connected.
+    Called from auto-bound handlers on the module loop; their latest-only
+    mailbox drops frames that arrive while an earlier one is still encoding.
     """
-    # Snapshot clients under the lock to avoid concurrent set mutation from
-    # the uvicorn thread. Skip the encode entirely if nobody is listening.
-    loop = module._ws_loop
-    if loop is None:
+    # Skip the encode entirely if nobody is listening.
+    if not module._has_clients():
         return
-    with module._clients_lock:
-        clients = tuple(module._connected_clients)
-    if not clients:
-        return
-
     try:
-        jpeg = msg.to_jpeg_bytes(quality=quality)
+        data = _encode_panel_frame(panel, msg, quality, max_width)
     except Exception:
-        logger.exception("Failed to encode camera frame")
+        logger.exception("Failed to encode camera frame", panel=panel)
         return
-
-    for ws in clients:
-        asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
+    module._broadcast_bytes(data)
 
 
 class TwistTeleopConfig(WebXRTeleopConfig):
@@ -301,11 +296,83 @@ class VideoArmTeleopModule(ArmTeleopModule):
     """
 
     config: VideoArmTeleopConfig
+    camera_panels = (CameraPanel("color_image", "center"),)
 
     color_image: In[Image]
 
     async def handle_color_image(self, msg: Image) -> None:
-        _push_jpeg(self, msg, self.config.video_jpeg_quality)
+        _push_jpeg(self, msg, quality=self.config.video_jpeg_quality)
+
+
+class DualArmVideoTeleopConfig(WebXRTeleopConfig):
+    """Configuration for DualArmVideoTeleopModule."""
+
+    video_jpeg_quality: int = 70
+    # Frames wider than this are downscaled before encoding; 0 sends the source size.
+    video_max_width: int = 640
+    # Per-panel cap on frames pushed to the headset; 0 pushes every frame.
+    video_max_fps: float = 0.0
+
+
+_EGOCENTRIC_PANEL, _LEFT_WRIST_PANEL, _RIGHT_WRIST_PANEL = range(3)
+
+
+class DualArmVideoTeleopModule(ArmTeleopModule):
+    """ArmTeleopModule + egocentric and wrist camera panels in the headset.
+
+    Each camera input is JPEG-encoded and pushed over /ws tagged with its
+    panel index. The client floats the egocentric view in a large center panel
+    above the workspace and each wrist view in a smaller panel on that arm's
+    side, turned toward the operator.
+
+    Inputs:
+        - egocentric_image: In[Image] (scene camera, center panel)
+        - left_wrist_image: In[Image] (left wrist camera, left panel)
+        - right_wrist_image: In[Image] (right wrist camera, right panel)
+
+    Outputs: as ArmTeleopModule.
+    """
+
+    config: DualArmVideoTeleopConfig
+    camera_panels = (
+        CameraPanel("egocentric", "center"),
+        CameraPanel("left_wrist", "left"),
+        CameraPanel("right_wrist", "right"),
+    )
+
+    egocentric_image: In[Image]
+    left_wrist_image: In[Image]
+    right_wrist_image: In[Image]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # Only touched from the module loop, where the auto-bound handlers run.
+        self._panel_next_push_at: dict[int, float] = {}
+
+    async def handle_egocentric_image(self, msg: Image) -> None:
+        self._push_panel(_EGOCENTRIC_PANEL, msg)
+
+    async def handle_left_wrist_image(self, msg: Image) -> None:
+        self._push_panel(_LEFT_WRIST_PANEL, msg)
+
+    async def handle_right_wrist_image(self, msg: Image) -> None:
+        self._push_panel(_RIGHT_WRIST_PANEL, msg)
+
+    def _push_panel(self, panel: int, msg: Image) -> None:
+        """Apply the per-panel frame-rate cap, then encode and push the frame."""
+        max_fps = self.config.video_max_fps
+        if max_fps > 0:
+            now = time.monotonic()
+            if now < self._panel_next_push_at.get(panel, 0.0):
+                return
+            self._panel_next_push_at[panel] = now + 1.0 / max_fps
+        _push_jpeg(
+            self,
+            msg,
+            quality=self.config.video_jpeg_quality,
+            panel=panel,
+            max_width=self.config.video_max_width,
+        )
 
 
 class Go2TeleopConfig(WebXRTeleopConfig):
@@ -333,6 +400,7 @@ class Go2TeleopModule(WebXRTeleopModule):
     """
 
     config: Go2TeleopConfig
+    camera_panels = (CameraPanel("color_image", "center"),)
 
     color_image: In[Image]
     cmd_vel: Out[Twist]
@@ -367,4 +435,4 @@ class Go2TeleopModule(WebXRTeleopModule):
         return True
 
     async def handle_color_image(self, msg: Image) -> None:
-        _push_jpeg(self, msg, self.config.video_jpeg_quality)
+        _push_jpeg(self, msg, quality=self.config.video_jpeg_quality)
