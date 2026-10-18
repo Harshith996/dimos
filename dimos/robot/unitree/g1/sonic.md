@@ -32,8 +32,8 @@ the policy, planner and observation configuration. The 13 example motion clips
 come from a pinned NVIDIA deployment revision. `--check` performs no downloads.
 SONIC v1.1 is the single supported policy bundle.
 
-MuJoCo starts in the SONIC pose and waits for a complete control command before
-advancing physics. Simulation arms automatically. Commands from a second shell:
+sim2 starts MuJoCo in the SONIC pose and waits for a complete control command
+before advancing physics. Simulation arms automatically. Commands from a second shell:
 
 ```bash
 dimos --transport zenoh shell
@@ -157,11 +157,12 @@ arm inputs condition the policy rather than independently controlling motors.
 The policy module exposes streams and RPCs and delegates to `SonicController` in
 `sonic_controller.py`. That controller owns the 50 Hz loop, pose ramp and fault
 latch; `SonicPipeline` handles model inference. `G1WholeBodyConnection` owns real
-motor IO and its independent 500 Hz publisher. MuJoCo uses the existing
-shared-memory whole-body adapter. SONIC sends no motor commands before its models load.
+motor IO and its independent 500 Hz publisher. In simulation, sim2's
+`WholeBodyConnection` delivers the same typed feedback and command streams
+through a coherent shared-memory device. Its command timeout and controller-fault
+input latch damping until restart. SONIC sends no motor commands before its models load.
 
-SONIC has no sim2 dependency. Migrating its simulated motor backend belongs in
-the later sim2 integration, not this policy PR. The driver's
+The driver's
 `controller_fault: In[String]` accepts faults from any motor controller;
 `G1SonicPolicyModule.controller_fault` supplies that signal for SONIC.
 
@@ -221,3 +222,62 @@ motor-publisher safeguards, inference semantics and blueprint composition.
 Models and hardware IO are mocked. The blueprint tests import optional simulation
 dependencies but do not load assets or start hardware. They do not establish
 physical walking stability or hardware safety.
+
+
+## Desktop and sim2 integration
+
+The `pim/feat/sonic-desktop-sim2` branch combines current `main`, the standalone
+SONIC stack, the Desktop gateway and Jeff's `jeff/feat/sim2_world_builder` work.
+The existing SONIC PR branches remain separate from this integration branch.
+The companion Controller changes are published at
+[Nabla7/dim-controller, feat/policy-control](https://github.com/Nabla7/dim-controller/tree/feat/policy-control).
+
+Use this checkout as Desktop's DimOS installation. Install the matching Controller
+and Jeff's World Builder in Desktop:
+
+```bash
+dimos-desktop install github.com/Nabla7/dim-controller --ref feat/policy-control
+dimos-desktop install github.com/jeff-hykin/dim-world-builder --ref main
+```
+
+In Launcher's G1 section, select **G1 SONIC whole-body control**, then
+**Simulator**. The default world is sim2's logistics scene. Controller receives
+camera, depth, lidar, joint state and world-frame TF directly. Simulation starts
+balancing automatically; **Stop walking** keeps balancing, **Deactivate** holds
+the measured pose, and **Damping stop** latches until the stack is restarted.
+The simulated robot can fall when balancing is deactivated.
+This branch does not open an additional MuJoCo or Rerun viewer window.
+
+For an exported World Builder world, install its Python package into this
+checkout's environment and compose its scene publisher with SONIC. For example,
+using the repository's navigation course:
+
+```bash
+git clone https://github.com/jeff-hykin/dim-world-builder ../dim-world-builder
+uv pip install --python .venv/bin/python --no-deps -e ../dim-world-builder/examples/nav_test_course
+source .venv/bin/activate
+MUJOCO_GL=egl dimos --transport zenoh --simulation mujoco \
+  --scene-package ../dim-world-builder/examples/nav_test_course \
+  run unitree-g1-sonic-wbc nav-test-course.scene-data
+```
+
+`MUJOCO_GL=egl` selects headless GPU rendering on a Linux NVIDIA workstation.
+For your own export, use its folder and the `<package>.scene-data` name in its
+`pyproject.toml`. The folder supplies `scene.xml` and `scene.json`; the scene-data
+component supplies Controller's **Simulated world** layer. Named spawn points,
+scripted movers, cameras and lidar use Jeff's sim2 implementation.
+Desktop discovers the individual blueprint names in a composed run so policy
+controls and velocity routing remain available.
+
+`SimulationModule.status()` reports physics time, the robot's position and
+whether it is waiting for the first control command. Its `reset()` changes the
+physical world only; it does not clear a latched SONIC fault or reset policy
+history. Restart the stack for a complete reset. Pausing physics while the
+policy is running causes its feedback watchdog to stop control.
+
+Local integration validation on 2026-10-18 used an RTX 5090, the actual SONIC v1.1
+CUDA models and the navigation-course export. The policy maintained a 20.0 ms
+mean interval, with 1.38 ms mean inference and 2.07 ms p95 during the sampled
+window. RGB, depth, lidar and the 13-body scene description arrived over Zenoh;
+Desktop's lifecycle API passed deactivate, reactivate and damping-stop checks.
+This is a simulation smoke test, not validation of stairs, slopes or the physical G1.

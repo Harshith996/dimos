@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 GR00T device configuration. Policies remain in ControlCoordinator."""
+"""G1 device configurations for the GR00T and SONIC policies."""
 
+from dataclasses import replace
 from pathlib import Path
 
+from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS, SONIC_KD, SONIC_KP
 from dimos.robot.unitree.g1.control_config import (
     G1_GROOT_HOME,
     G1_GROOT_KD,
@@ -76,4 +78,17 @@ G1_GROOT_MID360 = G1_GROOT.with_sensor(
         excluded_meshes=("head_link",),
         imu=Imu("lidar_imu", "mid360_link"),
     )
+)
+
+
+# SONIC shares the GEAR robot geometry, but its rest pose and motor gains differ
+# from GR00T. Keep joint ordering identical to the real G1 motor stream.
+G1_SONIC = replace(
+    G1_GROOT,
+    joints=tuple(
+        replace(joint, home=float(home), kp=kp, kd=kd)
+        for joint, home, kp, kd in zip(
+            G1_GROOT.joints, DEFAULT_ANGLES_DDS, SONIC_KP, SONIC_KD, strict=True
+        )
+    ),
 )

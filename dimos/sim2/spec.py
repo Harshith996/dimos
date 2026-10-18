@@ -133,6 +133,7 @@ class WorldConfig:
     robots: dict[str, RobotInstance]
     timestep: float = 0.005
     snapshot_hz: float = 60.0
+    wait_for_control: bool = False
 
     def __post_init__(self) -> None:
         if not self.robots or any(not name or "/" in name for name in self.robots):

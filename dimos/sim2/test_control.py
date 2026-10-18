@@ -21,6 +21,8 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
+from dimos.hardware.whole_body.spec import MotorCommand
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.connections.whole_body import WholeBodyConnection
 from dimos.sim2.control.interface import descriptor
 from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
@@ -34,7 +36,7 @@ def connection():
         model=Path("unused.xml"),
         root_body="base",
         control=ControlInterface.WHOLE_BODY,
-        joints=(Joint("joint", "joint", "motor", home=0.25),),
+        joints=(Joint("joint", "joint", "motor", home=0.25, kd=2.0),),
         sensors=(Imu("imu", "imu"),),
     )
     module = WholeBodyConnection(definition=definition, address="test/robot", robot_id="robot")
@@ -160,3 +162,57 @@ def test_overwritten_slot_is_busy_not_returned_as_feedback(channel):
     struct.pack_into("<Q", channel._buffer, slot, 0)
     with pytest.raises(BlockingIOError, match="coherent observation"):
         channel.read_observation(retries=1)
+
+
+@pytest.mark.parametrize("trigger", ["timeout", "controller-fault", "invalid-command"])
+def test_stream_stop_latches_damping_and_rejects_later_commands(
+    connection, mocker, monkeypatch, trigger
+):
+    monkeypatch.setattr(connection.config, "command_source", "stream")
+    mocker.patch("dimos.sim2.connections.whole_body.time.monotonic", return_value=10.0)
+    write = mocker.patch.object(connection._device, "write_motor_commands", return_value=True)
+    fault = mocker.patch.object(connection.fault, "publish")
+    command = MotorCommandArray(q=[0.2], dq=[0], kp=[10], kd=[2], tau=[0])
+    connection._command(command)
+    if trigger == "timeout":
+        connection._check_command_timeout(11.0)
+    elif trigger == "controller-fault":
+        connection._latch_fault("operator stop")
+    else:
+        write.side_effect = [ValueError("expected 1 motor command"), True]
+        connection._command(
+            MotorCommandArray(q=[0.2, 0.2], dq=[0, 0], kp=[10, 10], kd=[2, 2], tau=[0, 0])
+        )
+
+    write.assert_called_with([MotorCommand(q=0, dq=0, kd=2)])
+    before = write.call_count
+    connection._command(command)
+    assert write.call_count == before
+    assert fault.call_count == 1
+    assert fault.call_args.args[0].data
+
+
+def test_stream_watchdog_waits_for_the_first_command(connection, monkeypatch, mocker):
+    monkeypatch.setattr(connection.config, "command_source", "stream")
+    fault = mocker.patch.object(connection.fault, "publish")
+    connection._check_command_timeout(1000.0)
+    fault.assert_not_called()
+
+
+def test_stalled_physics_is_not_republished_as_fresh_feedback(connection, monkeypatch, mocker):
+    monkeypatch.setattr(connection.config, "command_source", "stream")
+    mocker.patch("dimos.sim2.connections.whole_body.time.time", return_value=20.0)
+    mocker.patch.object(
+        connection._device,
+        "sample",
+        return_value=ChannelFrame(FrameMetadata(1, 1, 1, 0, 1), {"wall_time": np.array([10.0])}),
+    )
+    mocker.patch.object(connection._device, "write_motor_commands", return_value=True)
+    mocker.patch.object(connection._stop, "wait", side_effect=lambda _: connection._stop.set())
+    joints = mocker.patch.object(connection.motor_states, "publish")
+    fault = mocker.patch.object(connection.fault, "publish")
+
+    connection._publish()
+
+    joints.assert_not_called()
+    assert fault.call_args.args[0].data == "sim2 physics feedback timeout"

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -46,10 +47,14 @@ def simulation(
     sim_id: str = "sim",
     viewer: bool = True,
     timestep: float = 0.005,
+    command_source: Literal["coordinator", "stream"] = "coordinator",
+    wait_for_control: bool = False,
 ) -> Simulation:
     modules = [
         SimulationModule.blueprint(
-            world=WorldConfig(scene=scene, robots=robots, timestep=timestep),
+            world=WorldConfig(
+                scene=scene, robots=robots, timestep=timestep, wait_for_control=wait_for_control
+            ),
             sim_id=sim_id,
             viewer=viewer,
         )
@@ -82,6 +87,7 @@ def simulation(
                 address=f"{sim_id}/{robot_id}",
                 robot_id=robot_id,
                 rate_hz=imu.rate_hz,
+                command_source=command_source,
             )
             ports = ("motor_command", "motor_states", "imu", "odom")
         else:

@@ -23,7 +23,7 @@ import pytest
 
 from dimos.hardware.whole_body.spec import MotorCommand
 from dimos.robot.manipulators.xarm.sim2 import XARM7
-from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360
+from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360, G1_SONIC
 from dimos.sim2.control.adapters import ManipulatorAdapter, WholeBodyAdapter
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene import scene_path
@@ -40,12 +40,13 @@ pytestmark = pytest.mark.mujoco
 def runtime():
     worlds = []
 
-    def create(robot, robot_id, scene, xyz, timestep=0.005):
+    def create(robot, robot_id, scene, xyz, timestep=0.005, wait_for_control=False):
         world = SimulationRuntime(
             WorldConfig(
                 scene_path(None, scene),
                 {robot_id: RobotInstance(robot, xyz=xyz)},
                 timestep=timestep,
+                wait_for_control=wait_for_control,
             ),
             uuid4().hex,
         )
@@ -223,3 +224,26 @@ def test_two_robots_have_independent_channels_and_mounts():
         assert world.data.cam_xpos[right] - world.data.cam_xpos[left] == pytest.approx((2, 0, 0))
     finally:
         world.close()
+
+
+def test_sonic_world_waits_for_commands_at_start_and_after_reset(runtime, device):
+    world = runtime(G1_SONIC, "g1", "logistics.xml", (0, 0, 0.793), wait_for_control=True)
+    client = device(world, "g1", WholeBodyAdapter)
+    pose = world.data.qpos.copy()
+    for _ in range(4):
+        world.step()
+    assert world.data.time == 0
+    np.testing.assert_array_equal(world.data.qpos, pose)
+    commands = [MotorCommand(q=j.home, dq=0, kp=j.kp, kd=j.kd) for j in G1_SONIC.joints]
+    assert client.write_motor_commands(commands)
+    world.step()
+    assert world.data.time == pytest.approx(0.005)
+
+    world.reset()
+    world.step()
+    assert world.data.time == 0
+    assert world.waiting_for_control
+    client.sample()
+    assert client.write_motor_commands(commands)
+    world.step()
+    assert world.data.time == pytest.approx(0.005)

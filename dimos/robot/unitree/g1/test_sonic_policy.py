@@ -452,20 +452,20 @@ def test_stopping_sonic_latches_damping(connection):
     assert connection.reset_runtime_state(reactivate=True) is False
 
 
-@pytest.mark.self_hosted
 @pytest.mark.parametrize("viewer", ["none", "rerun"])
 @pytest.mark.parametrize(
     "simulation, backend, perception",
     [
-        (
+        pytest.param(
             "",
             "G1WholeBodyConnection",
             {"ZEDCamera", "PointLio", "RayTracingVoxelMap", "CostMapper"},
+            marks=pytest.mark.self_hosted,
         ),
-        ("mujoco", "MujocoSimModule", {"VoxelGridMapper", "CostMapper"}),
+        ("mujoco", "SimulationModule", {"VoxelGridMapper", "CostMapper", "SimRGBDCameraModule"}),
     ],
 )
-def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
+def test_blueprint_routes_policy_commands_without_coordinator(
     monkeypatch, mocker, simulation, backend, perception, viewer
 ):
     monkeypatch.setattr(global_config, "simulation", simulation)
@@ -484,9 +484,6 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
     assert not {"SonicCoordinator", "ControlCoordinator"} & modules
     assert not {"RerunBridgeModule", "RerunWebSocketServer", "WebsocketVisModule"} & modules
     assert perception <= modules
-    assert all(
-        not atom.module.__module__.startswith("dimos.sim2") for atom in blueprint.active_blueprints
-    )
     assert blueprint.remapping_map[(G1SonicPolicyModule.name, "base_command")] == "cmd_vel"
     assert (
         blueprint.transport_map[("cmd_vel", Twist)].channel == "dimos/cmd_vel/geometry_msgs.Twist"
@@ -496,3 +493,30 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
         "dimos/g1/position_command/sensor_msgs.JointState"
     )
     assert ("joint_command", JointState) not in blueprint.transport_map
+
+
+async def test_sim2_streams_activate_without_hardware_clock_checks(
+    connection, clock_check, monkeypatch, mocker
+):
+    monkeypatch.setattr(connection.config, "simulation_address", None)
+    monkeypatch.setattr(connection.config, "simulated", True)
+    clock_check.side_effect = RuntimeError("hardware clock check reached")
+    commands = mocker.patch.object(connection.motor_command, "publish")
+    faults = mocker.patch.object(connection.controller_fault, "publish")
+    connection.start()
+    await connection.handle_motor_states(
+        JointState(position=[0.0] * 29, velocity=[0.0] * 29, effort=[0.0] * 29)
+    )
+    await connection.handle_low_level_imu(Imu(orientation=Quaternion(0, 0, 0, 1)))
+
+    assert connection.activate(ramp_seconds=0)
+    connection._controller._step(connection._controller._feedback_at)
+    assert connection.status()["simulation"] is True
+    assert connection.status()["dry_run"] is False
+    assert commands.call_args.args[0].q == pytest.approx(DEFAULT_ANGLES_DDS.tolist())
+    clock_check.assert_not_called()
+
+    connection.halt_robot()
+    assert faults.call_args.args[0].data == "operator stop"
+    with pytest.raises(RuntimeError, match="latched"):
+        connection.activate()

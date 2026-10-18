@@ -38,12 +38,10 @@ from typing import Any, cast
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
-from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.transport import ZenohTransport
-from dimos.hardware.sensors.camera.zed.compat import ZEDCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -58,35 +56,11 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.control_safety import COMMAND_TIMEOUT_SECONDS
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
-from dimos.simulation.scenes.catalog import resolve_scene_package
-from dimos.utils.data import LfsPath
 
 _G1_REAL_NAV_VOXEL_RESOLUTION = 0.08
 _G1_NAV_ROTATION_DIAMETER = 0.8
 _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 assert G1.width_clearance is not None
-_MUJOCO_LIDAR_CAMERAS = (
-    "lidar_front_camera",
-    "lidar_left_camera",
-    "lidar_right_camera",
-)
-_MUJOCO_LIDAR_KWARGS: dict[str, Any] = {
-    "camera_name": _MUJOCO_LIDAR_CAMERAS[0],
-    "mujoco_lidar_camera_names": list(_MUJOCO_LIDAR_CAMERAS),
-    "width": 320,
-    "height": 240,
-    "fps": 2,
-    "enable_color": False,
-    "enable_depth": False,
-    "enable_pointcloud": True,
-    "pointcloud_fps": 1.0,
-    "enable_mujoco_lidar": True,
-    "mujoco_lidar_geom_groups": [2, 3],
-    "mujoco_lidar_raycast_width": 64,
-    "mujoco_lidar_raycast_height": 32,
-    "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
-}
-
 # Download models explicitly with dimos-sonic-models; blueprint discovery
 # must not contact model hosts or materialize the old LFS archive.
 _SONIC_RELEASE_DIR = sonic_model_directory()
@@ -95,82 +69,44 @@ _SONIC_PLANNER_PATH = (
     Path(_env_planner) if _env_planner else _SONIC_RELEASE_DIR / "planner_sonic.onnx"
 )
 
-_MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
 g1_joints = make_humanoid_joints("g1")
-_G1_NUM_MOTORS = len(g1_joints)
 
 _cameras: tuple[Blueprint, ...] = ()
-_simulation_address: Path | None
 _imu_remap: tuple[type[Module], str, str]
 
 if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-sonic-wbc only supports --simulation mujoco")
 
 if global_config.simulation == "mujoco":
-    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-    from dimos.simulation.engines.robot_sim_binding import (
-        RobotSimSpec,
-        mjcf_joint_names_from_hardware,
-    )
-
-    _g1_sim_joints = tuple(g1_joints)
-    _g1_sim_spec = RobotSimSpec(
-        robot_id="g1",
-        hardware_joints=_g1_sim_joints,
-        root_body_names=("pelvis",),
-        root_joint_names=("floating_base_joint",),
-        require_floating_base=True,
-        model_joint_names=mjcf_joint_names_from_hardware(_g1_sim_joints),
-        imu_gyro_names=(
-            "imu-pelvis-angular-velocity",
-            "imu-torso-angular-velocity",
-            "imu-angular-velocity",
-            "gyro_pelvis",
-            "imu_gyro",
-        ),
-        imu_accel_names=(
-            "imu-pelvis-linear-acceleration",
-            "imu-torso-linear-acceleration",
-            "imu-linear-acceleration",
-            "accelerometer_pelvis",
-            "imu_accel",
-        ),
-        require_imu=True,
-    )
-
     from dimos.mapping.voxels.module import VoxelGridMapper
+    from dimos.robot.unitree.g1.sim2 import G1_SONIC
+    from dimos.sim2.blueprint import simulation
+    from dimos.sim2.connections.whole_body import WholeBodyConnection
+    from dimos.sim2.scene import scene_path, scene_robot
+    from dimos.sim2.spec import RobotInstance
 
-    _scene_package = resolve_scene_package(global_config.scene_package)
-    _scene_kwargs: dict[str, Any] = {}
-    if _scene_package is not None:
-        if _scene_package.mujoco_scene_path is None:
-            raise ValueError(f"Scene package has no MuJoCo scene: {_scene_package.metadata_path}")
-        _scene_kwargs = {
-            "scene_xml": _scene_package.mujoco_scene_path,
-            "robot_mjcf": _MJCF_PATH,
-            "robot_root_body": "pelvis",
-            "scene_entities": _scene_package.entities,
-        }
-
-    _backend = MujocoSimModule.blueprint(
-        address=_MJCF_PATH,
-        headless=True,
-        dof=_G1_NUM_MOTORS,
-        inject_legacy_assets=True,
-        robot_sim_spec=_g1_sim_spec,
-        reset_joint_positions=DEFAULT_ANGLES_DDS.tolist(),
-        wait_for_control_command=True,
-        **_MUJOCO_LIDAR_KWARGS,
-        **_scene_kwargs,
+    _scene = scene_path(global_config.scene_package, "logistics.xml")
+    # Default scene has no authored spawn; preserve lazy asset loading during discovery.
+    _robot = (
+        RobotInstance(G1_SONIC, xyz=(0.0, 0.0, G1_SONIC.spawn_height))
+        if global_config.scene_package in (None, "none")
+        else scene_robot(_scene, G1_SONIC, default=(0.0, 0.0, 0.0))
     )
-    _simulation_address = _MJCF_PATH
-    _imu_remap = (MujocoSimModule, "imu", "low_level_imu")
+    _backend = simulation(
+        scene=_scene,
+        robots={"g1": _robot},
+        sim_id="g1-sonic",
+        viewer=False,
+        command_source="stream",
+        wait_for_control=True,
+    ).blueprint
+    _imu_remap = (WholeBodyConnection, "imu", "low_level_imu")
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
     _default_ramp_seconds = 0.0
     _decimation = 1
-    _n_workers = 2
+    _n_workers = 6
     _nav_stack = autoconnect(
         VoxelGridMapper.blueprint(emit_every=1),
         CostMapper.blueprint(
@@ -182,8 +118,12 @@ if global_config.simulation == "mujoco":
         ),
         MovementManager.blueprint(),
     )
-    _nav_remap = [(VoxelGridMapper, "lidar", "pointcloud")]
+    _nav_remap = [
+        (VoxelGridMapper, "lidar", "pointcloud"),
+        (WholeBodyConnection, "fault", "g1_fault"),
+    ]
 else:
+    from dimos.hardware.sensors.camera.zed.compat import ZEDCamera
     from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
     # Provisional calibration for this G1's taped ZED mount, 2026-10-18.
@@ -203,7 +143,6 @@ else:
     )
 
     _backend = G1WholeBodyConnection.blueprint(command_timeout_seconds=COMMAND_TIMEOUT_SECONDS)
-    _simulation_address = None
     _imu_remap = (G1WholeBodyConnection, "imu", "low_level_imu")
     _tick_rate = 50.0
     _auto_arm = False
@@ -241,7 +180,7 @@ _policy = G1SonicPolicyModule.blueprint(
     encoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx",
     decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
     planner_onnx=_SONIC_PLANNER_PATH,
-    simulation_address=_simulation_address,
+    simulated=global_config.simulation == "mujoco",
     joint_names=g1_joints,
     tick_rate=_tick_rate,
     auto_arm=_auto_arm,

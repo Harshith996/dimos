@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whole-body device streams; SHM remains the current coordinator command path."""
+"""Whole-body feedback and optional policy command streams for sim2."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import threading
 import time
 from typing import Any, Literal
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -33,6 +34,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.control.adapters import WholeBodyAdapter
 from dimos.sim2.spec import RobotConfig
@@ -48,6 +50,8 @@ class WholeBodyConnectionConfig(ModuleConfig):
     robot_id: str
     rate_hz: float = 50.0
     command_source: Literal["coordinator", "stream"] = "coordinator"
+    command_timeout_seconds: float = Field(default=0.15, gt=0.0, allow_inf_nan=False)
+    feedback_timeout_seconds: float = Field(default=0.15, gt=0.0, allow_inf_nan=False)
 
 
 class WholeBodyConnection(Module):
@@ -56,6 +60,8 @@ class WholeBodyConnection(Module):
     # policy's 150 ms watchdog
     dedicated_worker = True
     motor_command: In[MotorCommandArray]
+    controller_fault: In[String]
+    fault: Out[String]
     motor_states: Out[JointState]
     imu: Out[Imu]
     odom: Out[PoseStamped]
@@ -70,6 +76,9 @@ class WholeBodyConnection(Module):
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._command_lock = threading.RLock()
+        self._last_command_at: float | None = None
+        self._fault_reason: str | None = None
 
     @rpc
     def start(self) -> None:
@@ -77,30 +86,59 @@ class WholeBodyConnection(Module):
         self._device.connect()
         if self.config.command_source == "stream":
             self.register_disposable(Disposable(self.motor_command.subscribe(self._command)))
+            self.register_disposable(
+                Disposable(self.controller_fault.subscribe(lambda msg: self._latch_fault(msg.data)))
+            )
         self._stop.clear()
         self._thread = threading.Thread(target=self._publish, daemon=True)
         self._thread.start()
 
     def _command(self, msg: MotorCommandArray) -> None:
-        self._device.write_motor_commands(
-            [
-                MotorCommand(*row)
-                for row in zip(
-                    msg.q,
-                    msg.dq,
-                    msg.kp,
-                    msg.kd,
-                    msg.tau,
-                    strict=True,
+        with self._command_lock:
+            if self._fault_reason is not None:
+                return
+            try:
+                accepted = self._device.write_motor_commands(
+                    [
+                        MotorCommand(*row)
+                        for row in zip(msg.q, msg.dq, msg.kp, msg.kd, msg.tau, strict=True)
+                    ]
                 )
-            ]
-        )
+                if not accepted:
+                    raise RuntimeError("sim2 rejected motor commands")
+                self._last_command_at = time.monotonic()
+            except Exception as exc:
+                self._latch_fault(str(exc))
+
+    def _latch_fault(self, reason: str) -> None:
+        with self._command_lock:
+            if self._fault_reason is not None:
+                return
+            self._fault_reason = (reason or "sim2 controller fault")[:256]
+            self._device.write_motor_commands(
+                [
+                    MotorCommand(q=0.0, dq=0.0, kd=joint.kd)
+                    for joint in self.config.definition.joints
+                ]
+            )
+            self.fault.publish(String(self._fault_reason))
+            logger.error("sim2 damping stop latched; restart required", reason=self._fault_reason)
+
+    def _check_command_timeout(self, now: float) -> None:
+        with self._command_lock:
+            if (
+                self.config.command_source == "stream"
+                and self._last_command_at is not None
+                and now - self._last_command_at >= self.config.command_timeout_seconds
+            ):
+                self._latch_fault("sim2 motor command timeout")
 
     def _publish(self) -> None:
         make_current_thread_periodic(1.0 / self.config.rate_hz)
         try:
             while not self._stop.is_set():
                 before = time.monotonic()
+                self._check_command_timeout(before)
                 try:
                     frame = self._device.sample()
                 except BlockingIOError:
@@ -110,6 +148,13 @@ class WholeBodyConnection(Module):
                     continue
                 v = frame.values
                 ts = float(v["wall_time"][0])
+                if (
+                    self.config.command_source == "stream"
+                    and time.time() - ts >= self.config.feedback_timeout_seconds
+                ):
+                    self._latch_fault("sim2 physics feedback timeout")
+                    self._stop.wait(1.0 / self.config.rate_hz)
+                    continue
                 self.motor_states.publish(
                     JointState(
                         name=[j.name for j in self.config.definition.joints],

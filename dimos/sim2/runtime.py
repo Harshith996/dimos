@@ -73,6 +73,7 @@ class SimulationRuntime:
         self.tick = 0
         self._closed = False
         self.paused = False
+        self.waiting_for_control = config.wait_for_control
         self._bodies = {
             key: self.model.body(e.body).id for key, e in self.description.entities.items()
         }
@@ -223,6 +224,7 @@ class SimulationRuntime:
 
     def _finish_change(self) -> SceneState:
         self.episode += 1
+        self.waiting_for_control = self.config.wait_for_control
         self.snapshots.set_episode(self.episode)
         mujoco.mj_forward(self.model, self.data)
         for binding in self.robots.values():
@@ -364,6 +366,14 @@ class SimulationRuntime:
         with self.lock:
             if self.paused:
                 return
+            if self.waiting_for_control:
+                for binding in self.robots.values():
+                    action = binding.channel.read_action()
+                    if action is None or action.metadata.episode_id != self.episode:
+                        # Publish the stationary initial state while controllers load.
+                        self._publish(force_snapshot=True)
+                        return
+                self.waiting_for_control = False
             for binding in self.robots.values():
                 self._apply(binding)
             self.movers.apply(self.data)

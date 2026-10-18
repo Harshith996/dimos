@@ -77,6 +77,8 @@ class SonicControllerConfig(BaseConfig):
         default_factory=lambda: sonic_model_directory() / "planner_sonic.onnx"
     )
     simulation_address: Path | None = None
+    # sim2 uses the same typed motor streams as the hardware connection.
+    simulated: bool = False
     joint_names: list[str] = Field(
         default_factory=lambda: make_humanoid_joints("g1"), min_length=29, max_length=29
     )
@@ -164,7 +166,7 @@ class SonicController:
             return self._fault_reason
 
     def _require_hardware_clocks(self) -> None:
-        if self.config.simulation_address is None:
+        if not self.config.simulated and self.config.simulation_address is None:
             require_jetson_clocks()
 
     def start(self) -> bool:
@@ -390,8 +392,8 @@ class SonicController:
             if self._adapter is not None:
                 self._write_commands(damping_commands(NUM_JOINTS))
             elif self._fault_reason is not None:
-                # The DDS module owns takeover and the final latch. An ordinary
-                # damping MotorCommandArray here could itself trigger takeover.
+                # The motor connection owns the final latch. On hardware, an
+                # ordinary damping command here could itself trigger takeover.
                 self._publish_fault(String(self._fault_reason))
 
     def _compute_policy(self, t_now: float, imu: IMUState) -> list[float] | None:
@@ -764,7 +766,7 @@ class SonicController:
                 "control_state": control_state.value,
                 "dry_run": self._dry_run,
                 "fault_reason": self.fault_reason,
-                "simulation": self._adapter is not None,
+                "simulation": self.config.simulated or self._adapter is not None,
                 "model": self.config.encoder_onnx.parent.name,
                 "feedback_timeout_ms": self.config.feedback_timeout * 1000.0,
             }

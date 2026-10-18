@@ -197,10 +197,10 @@ robots:
         title: Go2 remote driving
         description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker.
         recommended_config: *robot_ip_only
-      go2-localize-live:
-        title: Go2 localize (recording)
-        description: A Go2 recording looped as a live feed, with localization behind an agent skill.
-        recommended_config: [{global: replay_db}, {global: robot_ip}]
+      go2-localize:
+        title: Go2 object localization
+        description: Localize objects from camera and lidar while driving, with an MCP agent interface.
+        recommended_config: [{global: robot_ip}]
       go2-dds:
         title: 'Go2 over DDS'
         description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
@@ -276,6 +276,15 @@ robots:
           choices:
           - {label: Robot, set: {simulation: ''}}
           - {label: Simulator, set: {simulation: mujoco}}
+        - global: robot_ip
+          when: {simulation: ''}
+      unitree-g1-sonic-wbc:
+        title: G1 SONIC whole-body control
+        description: SONIC balancing, walking and motion clips, on the G1 or in a sim2 world. Use Controller for policy activation and driving.
+        recommended_config:
+        - *robot_or_simulator
+        - global: scene_package
+          when: {simulation: mujoco}
         - global: robot_ip
           when: {simulation: ''}
       unitree-g1-joystick:
