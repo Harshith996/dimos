@@ -624,6 +624,23 @@ class SonicController:
         with self._control_lock:
             self.set_upper_body(DEFAULT_ANGLES_DDS[15:].tolist())
 
+    def activate(self, ramp_seconds: float | None = None) -> bool:
+        """Request live control atomically, after checking feedback and lifecycle state."""
+        with self._control_lock:
+            if self.fault_reason is not None:
+                raise RuntimeError("SONIC damping stop is latched; restart the stack to recover")
+            if not self._active:
+                raise RuntimeError("SONIC is not running")
+            if self._control_state is not SonicControlState.UNARMED or self._arm_pending:
+                raise RuntimeError("Deactivate the policy before requesting activation")
+            if self._read_state(time.perf_counter()) is None:
+                raise RuntimeError("Waiting for joint and IMU feedback")
+            # arm() validates the ramp before changing either activation or dry-run state.
+            accepted = self.arm(ramp_seconds)
+            if accepted:
+                self.set_dry_run(False)
+            return accepted
+
     def arm(self, ramp_seconds: float | None = None) -> bool:
         with self._control_lock:
             if ramp_seconds is not None and (not math.isfinite(ramp_seconds) or ramp_seconds < 0):
@@ -730,7 +747,21 @@ class SonicController:
                 "control_state": control_state.value,
                 "dry_run": self._dry_run,
                 "fault_reason": self.fault_reason,
+                "simulation": self._adapter is not None,
+                "model": self.config.encoder_onnx.parent.name,
+                "feedback_timeout_ms": self.config.feedback_timeout * 1000.0,
             }
+            now = time.perf_counter()
+            with self._feedback_lock:
+                snap["feedback_received"] = (
+                    self._state_seen if self._adapter is not None else self._feedback is not None
+                )
+                snap["feedback_age_ms"] = (
+                    (now - self._feedback_at) * 1000.0 if self._feedback is not None else None
+                )
+                snap["imu_age_ms"] = (
+                    (now - self._imu_at) * 1000.0 if self._imu_feedback is not None else None
+                )
             if self._pipeline is not None:
                 snap.update(self._pipeline.snapshot())
             snap["reference_source"] = "stream" if snap.get("stream_active") else "planner"

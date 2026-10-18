@@ -101,6 +101,57 @@ def test_dry_run_republishes_hold_while_policy_runs(connection):
     assert connection._controller._policy.step.call_count == 2
 
 
+def test_activate_enables_live_control_and_preserves_the_pose_ramp(connection):
+    connection.start()
+    connection.set_dry_run(True)
+
+    assert connection.activate()
+    assert connection.status()["arm_pending"]
+    assert connection.status()["dry_run"] is False
+    assert _step(connection, 10.0, positions=0.4) == pytest.approx([0.4] * 29)
+    assert _step(connection, 13.0) == pytest.approx(DEFAULT_ANGLES_DDS.tolist())
+    assert _step(connection, 13.02) == [1.0] * 29
+
+
+@pytest.mark.parametrize("ramp", [-1.0, float("nan")])
+def test_rejected_activation_does_not_disable_dry_run(connection, ramp):
+    connection.start()
+    connection.set_dry_run(True)
+
+    with pytest.raises(ValueError):
+        connection.activate(ramp)
+
+    state = connection.status()
+    assert state["dry_run"] is True
+    assert state["arm_pending"] is False
+
+
+def test_activation_requires_feedback_and_cannot_clear_a_fault(connection, mocker):
+    connection.start()
+    connection.set_dry_run(True)
+    mocker.patch.object(connection._controller._adapter, "has_motor_states", return_value=False)
+
+    with pytest.raises(RuntimeError, match="Waiting for joint"):
+        connection.activate()
+    assert connection.status()["dry_run"] is True
+    assert connection.status()["arm_pending"] is False
+
+    connection.halt_robot()
+    with pytest.raises(RuntimeError, match="latched"):
+        connection.activate()
+    assert connection.status()["control_state"] == "fault"
+
+
+def test_activate_does_not_change_an_already_armed_dry_run(connection):
+    _arm(connection)
+    connection.set_dry_run(True)
+
+    with pytest.raises(RuntimeError, match="Deactivate"):
+        connection.activate()
+
+    assert connection.status()["dry_run"] is True
+
+
 def test_runtime_reset_clears_velocity_and_repeats_the_measured_pose_ramp(connection):
     _arm(connection)
     connection.set_velocity_command(0.5, 0.0, 0.0, t_now=3.0)
