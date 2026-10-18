@@ -73,9 +73,27 @@ not start or restart the robot stack and needs no passwordless sudo rule.
 
 Power mode and clock locking are separate: selecting MAXN alone still permits
 dynamic clock scaling. A manual `sudo jetson_clocks` lasts until reboot (or a
-clock-setting change). On the current Orin NX G1 with MAXN, locking clocks took
-the standing inference benchmark with ZED running from roughly 45.6 Hz to 50 Hz.
-This is a timing measurement, not a validation of walking stability.
+clock-setting change).
+
+In the 2026-10-18 Orin NX G1 deployment trial, MAXN was already selected. A
+publisher-free inference harness used synthetic standing feedback for 250 steps,
+with ZED HD720 at 15 FPS, NEURAL LIGHT depth and DimOS Desktop running; Rerun was
+disabled. The same harness before and after locking clocks measured:
+
+| Metric | Dynamic clocks | Locked clocks |
+| --- | ---: | ---: |
+| Effective rate | 45.58 Hz | 50.00 Hz |
+| Mean inference step | 15.54 ms | 8.29 ms |
+| p95 inference step | 28.19 ms | 13.75 ms |
+| Maximum inference step | 33.93 ms | 18.65 ms |
+
+GPU clocks were mostly 510 MHz before and fixed at 918 MHz afterward; CPU limits
+were locked to 1,984 MHz. The policy's 50 Hz target gives each step 20 ms. These
+numbers measure the deployed inference workload, not this PR's complete blueprint
+or physical motion. The harness sent no motor commands. After locking, the
+maximum standing start-to-start interval was still 27.36 ms, and a separate
+synthetic turning workload had a 36.31 ms maximum inference step. Clock locking
+does not establish walking stability or guarantee every control deadline.
 
 Check the service after a reboot with:
 
