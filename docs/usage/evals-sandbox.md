@@ -152,6 +152,13 @@ stays in its container.
 dimos evals sandbox dimos.evals.sandbox.go2_store --robot-on-host --max-steps 2000
 ```
 
+On Linux with an NVIDIA GPU and the NVIDIA Container Toolkit, `--robot-gpu` keeps the robot
+in its container and gives that container the GPU (`gpus: all`, with graphics, for Vulkan):
+
+```bash skip
+dimos evals sandbox dimos.evals.sandbox.go2_store --robot-gpu --max-steps 2000
+```
+
 ## What the agent can and cannot see
 
 - It has a shell as root in its own container, internet access, and the provider key its

@@ -237,6 +237,11 @@ def sandbox(
         "--robot-on-host",
         help="Run each case's robot blueprint on this machine, e.g. for its GPU, not in a container",
     ),
+    robot_gpu: bool = typer.Option(
+        False,
+        "--robot-gpu",
+        help="Give the robot container this machine's NVIDIA GPUs (NVIDIA Container Toolkit)",
+    ),
     case: list[str] = typer.Option([], "--case", help="Run only these case IDs"),
     resume: Path | None = typer.Option(
         None,
@@ -274,6 +279,7 @@ def sandbox(
         agent,
         robot=ExternalRobot(connect=tuple(robot)) if robot else None,
         robot_on_host=robot_on_host,
+        robot_gpu=robot_gpu,
         resume_from=resume,
         resume_message=message,
     )

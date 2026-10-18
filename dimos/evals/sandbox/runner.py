@@ -120,6 +120,7 @@ class SandboxRunner:
         *,
         robot: ExternalRobot | None = None,
         robot_on_host: bool = False,
+        robot_gpu: bool = False,
         resume_from: Path | None = None,
         resume_message: str = "",
         out_dir: Path = STATE_DIR / "evals",
@@ -129,6 +130,9 @@ class SandboxRunner:
         *robot_on_host* runs each case's blueprint on this machine instead of in the robot
         container, e.g. for its GPU (Docker on a Mac has none); the agent stays contained.
 
+        *robot_gpu* gives the robot container this machine's NVIDIA GPUs (NVIDIA Container
+        Toolkit), with graphics, so a sim's camera renders on one instead of on the CPU.
+
         *resume_from*, an earlier run's directory, continues each case's Pi session there with
         *resume_message* as the next user turn, on a fresh robot, in a copy of its /root/work.
         """
@@ -137,6 +141,7 @@ class SandboxRunner:
         self.agent = agent
         self.robot_override = robot
         self.robot_on_host = robot_on_host
+        self.robot_gpu = robot_gpu
         self.resume_from = resume_from
         self.resume_message = resume_message
         self.out_dir = out_dir
@@ -301,6 +306,13 @@ class SandboxRunner:
             service = _robot_service(robot, case_dir)
             service["command"] = owned(*service["command"])  # its recording, too
             services["robot"] = {"image": robot.image, "init": True, **service}
+            if self.robot_gpu:
+                # Graphics as well as compute: a sim's camera renders through Vulkan.
+                services["robot"]["gpus"] = "all"
+                services["robot"]["environment"] = {
+                    **services["robot"].get("environment", {}),
+                    "NVIDIA_DRIVER_CAPABILITIES": "all",
+                }
         return {"services": services}
 
     def _wait_ready(self, compose: list[str], case: SandboxCase) -> None:
