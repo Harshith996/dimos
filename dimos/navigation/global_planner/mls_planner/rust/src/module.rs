@@ -634,11 +634,14 @@ impl Worker {
     /// Carry the graph and the active goal through a warp.
     fn apply_warp(&self, planner: &mut Planner, warp: &Warp, viz: &mut RegionViz) {
         let started = Instant::now();
-        let mut goal = self.active_goal.lock().expect("goal mutex");
-        let mut held: Vec<Xyz> = goal.iter().copied().collect();
+        // The lock is not held through the warp, so a click lands meanwhile.
+        // A goal set during the warp is already in the new frame and stays.
+        let before = *self.active_goal.lock().expect("goal mutex");
+        let mut held: Vec<Xyz> = before.iter().copied().collect();
         let report = planner.apply_warp(warp, &mut held, &self.config);
-        if let Some(moved) = held.first() {
-            *goal = Some(*moved);
+        let mut goal = self.active_goal.lock().expect("goal mutex");
+        if *goal == before {
+            *goal = held.first().copied();
         }
         drop(goal);
         viz.mark_all();

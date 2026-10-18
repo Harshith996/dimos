@@ -60,7 +60,7 @@ fn extract_points(points: &Bound<'_, PyAny>) -> PyResult<Vec<(f32, f32, f32)>> {
 }
 
 fn check_records(records: &[u8], size: usize) -> PyResult<()> {
-    if records.len() % size != 0 {
+    if !records.len().is_multiple_of(size) {
         return Err(PyValueError::new_err(format!(
             "{} bytes is not a whole number of {size}-byte records",
             records.len()

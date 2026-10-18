@@ -560,6 +560,33 @@ impl Warp {
         self.anchors.len()
     }
 
+    /// The same correction as one fast-reform graph over every keyframe, with
+    /// no tiling or time windows, the reference the tiled warp approximates.
+    pub fn graph_delta(&self) -> fast_reform::GraphDelta3D {
+        fast_reform::GraphDelta3D {
+            nodes: self
+                .anchors
+                .iter()
+                .enumerate()
+                .map(|(i, a)| fast_reform::Node {
+                    id: i as u64,
+                    ts: a.ts,
+                    position: a.position,
+                })
+                .collect(),
+            transforms: self
+                .anchors
+                .iter()
+                .map(|a| fast_reform::Transform {
+                    translation: a.correction.translation,
+                    rotation: a.correction.rotation,
+                })
+                .collect(),
+            blend_sigma: self.sigma,
+            blend_time_sigma: self.time_sigma,
+        }
+    }
+
     /// The tile a ground position falls in.
     pub fn tile(&self, x: f32, y: f32) -> Tile {
         tile_of(x as f64, y as f64, self.reach)
