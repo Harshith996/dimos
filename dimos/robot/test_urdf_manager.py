@@ -370,6 +370,20 @@ def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only
     assert decoded.data == cube
 
 
+def test_an_empty_mesh_request_sends_urdf_info_right_away(make_filter, monkeypatch):
+    module = make_filter()
+    sent: list[String] = []
+    monkeypatch.setattr(module.urdf_info, "publish", sent.append)
+    monkeypatch.setattr(
+        module.mesh_info, "publish", lambda mesh: pytest.fail("no mesh for an empty request")
+    )
+
+    asyncio.run(module.handle_mesh_request(String("")))
+    asyncio.run(module.handle_mesh_request(String("")))  # within 0.2 s: dropped
+
+    assert [message.data for message in sent] == [module._urdf_xml]
+
+
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_captures_drop(
     make_filter: Callable[..., UrdfManager],
 ) -> None:
