@@ -53,15 +53,15 @@ def viewpoint(
 
     Returns the tool tip's pose, 4x4, in the frame of ``center``.
     """
-    center = np.asarray(center, dtype=np.float64)
-    eye = center + distance * np.array(
+    middle = np.asarray(center, dtype=np.float64)
+    eye = middle + distance * np.array(
         [
             math.cos(elevation) * math.cos(bearing),
             math.cos(elevation) * math.sin(bearing),
             math.sin(elevation),
         ]
     )
-    forward = (center - eye) / np.linalg.norm(center - eye)
+    forward = (middle - eye) / np.linalg.norm(middle - eye)
     # Image rows level with the table: X across the view, horizontal.
     right = np.cross(forward, [0.0, 0.0, 1.0])
     right /= np.linalg.norm(right)
@@ -126,7 +126,7 @@ def back_away(
     return -(tip @ camera_from_tip)[:3, 2] * distance
 
 
-def bearing_of(center: Sequence[float], camera: Sequence[float]) -> float:
+def bearing_of(center: Sequence[float], camera: Sequence[float] | NDArray[np.float64]) -> float:
     """Direction (radians, as in ``viewpoint``) from the object to a camera position."""
     return math.atan2(camera[1] - center[1], camera[0] - center[0])
 

@@ -357,7 +357,10 @@ class PickAndPlaceModule(Module):
             return None if blocked is None else _status(blocked)
 
         def tip_now() -> Any:
-            return pose_to_matrix(self._manipulation.get_state().groups[group].end_effector_pose)
+            pose = self._manipulation.get_state().groups[group].end_effector_pose
+            if pose is None:
+                raise RuntimeError(f"No tool tip pose for {group} while looking around")
+            return pose_to_matrix(pose)
 
         facts = look_around.look(
             (box.center.x, box.center.y, box.center.z),
@@ -381,7 +384,8 @@ class PickAndPlaceModule(Module):
                 back = look_around.back_away(
                     tip_now(), camera_from_tip, self.config.scan_view_distance / 3.0
                 )
-                self._manipulation.move_linear(*back.tolist(), group, check_collision=False)
+                dx, dy, dz = (float(v) for v in back)
+                self._manipulation.move_linear(dx, dy, dz, group, check_collision=False)
                 returned = self._return_to_scan_pose(group)
             if returned is not None:
                 facts["stopped"] = _status(returned)
