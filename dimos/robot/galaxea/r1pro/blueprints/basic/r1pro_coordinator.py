@@ -303,6 +303,8 @@ def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
             sensor_frame_id=lidar_frame,
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
+            # Every 6th raw point (default 3): half the cloud for the self-filter, ray tracer and depth anchors.
+            point_filter_num=6,
         ).remappings([(PointLio, "odometry", "pointlio_odometry")]),
         R1ProLio.blueprint(mount_under_base=mount_under_base),
     ).remappings(
