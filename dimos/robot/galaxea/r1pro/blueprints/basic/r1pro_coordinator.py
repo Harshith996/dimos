@@ -340,6 +340,8 @@ def r1pro_fused_odometry() -> Blueprint:
             odom_sources=[POINTLIO_SOURCE, WHEEL_SOURCE],
             planar=True,
             process_noise=ProcessNoise(linear_acceleration=2.0, angular_acceleration=1.0),
+            # No tracker runs, and JetPack 6.0's CUDA 12.2 lacks symbols the Orin SDK (12.6) needs: load the SDK's own.
+            extra_env={"LD_LIBRARY_PATH": ""},
         ),
         PoseFromOdometry.blueprint(),
     ).remappings(
