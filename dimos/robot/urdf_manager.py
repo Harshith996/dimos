@@ -85,7 +85,7 @@ class UrdfManager(Module):
     coordinator_joint_state: In[JointState]
     filtered_pointcloud: Out[PointCloud2]
     # The URDF XML, its meshes named package://<package>/<path>?hash=<sha256>; a mesh_request for one of those names gets
-    # the file on mesh_info unless its ?hash= is already the current one (a client's cached copy is fresh).
+    # the file on mesh_info, unless it carries &have=<sha256> of the current file (a client's cached copy is fresh).
     urdf_info: Out[String]
     mesh_request: In[String]
     mesh_info: Out[MeshFile]
@@ -129,7 +129,7 @@ class UrdfManager(Module):
             logger.warning(f"mesh_request for {request.data!r}, which is not a mesh in urdf_info")
             return
         path, digest = mesh
-        if parse_qs(query).get("hash", [""])[0] == digest:
+        if parse_qs(query).get("have", [""])[0] == digest:
             return
         data = await asyncio.to_thread(path.read_bytes)
         self.mesh_info.publish(MeshFile(f"{name}?hash={digest}", data))

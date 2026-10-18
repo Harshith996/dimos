@@ -359,16 +359,13 @@ def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only
 
     assert f'filename="{name}"' in module._urdf_xml
     assert str(tmp_path) not in module._urdf_xml
-    # no hash and a stale hash get the file; the current hash (a fresh cached copy) and a filesystem path get nothing
-    for request in (
-        "package://box/meshes/cube.stl",
-        "package://box/meshes/cube.stl?hash=0",
-        name,
-        str(urdf),
-    ):
+    # the name as urdf_info gives it, with or without its hash, or with a stale have= gets the file; have= of the
+    # current file (a fresh cached copy) and a filesystem path get nothing
+    plain = "package://box/meshes/cube.stl"
+    for request in (name, plain, f"{name}&have=0", f"{name}&have={name.split('=')[1]}", str(urdf)):
         asyncio.run(module.handle_mesh_request(String(request)))
 
-    assert [mesh.uri for mesh in sent] == [name, name]
+    assert [mesh.uri for mesh in sent] == [name, name, name]
     decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
     assert decoded.data == cube
 
