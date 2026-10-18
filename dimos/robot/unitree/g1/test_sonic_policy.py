@@ -380,14 +380,23 @@ def test_stopping_sonic_latches_damping(connection):
 
 
 @pytest.mark.self_hosted
+@pytest.mark.parametrize("viewer", ["none", "rerun"])
 @pytest.mark.parametrize(
-    "simulation, backend", [("", "G1WholeBodyConnection"), ("mujoco", "MujocoSimModule")]
+    "simulation, backend, perception",
+    [
+        (
+            "",
+            "G1WholeBodyConnection",
+            {"ZEDCamera", "PointLio", "RayTracingVoxelMap", "CostMapper"},
+        ),
+        ("mujoco", "MujocoSimModule", {"VoxelGridMapper", "CostMapper"}),
+    ],
 )
 def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
-    monkeypatch, mocker, simulation, backend
+    monkeypatch, mocker, simulation, backend, perception, viewer
 ):
     monkeypatch.setattr(global_config, "simulation", simulation)
-    monkeypatch.setattr(global_config, "viewer", "none")
+    monkeypatch.setattr(global_config, "viewer", viewer)
     monkeypatch.setattr(global_config, "scene_package", None)
     monkeypatch.setattr(global_config, "transport", "zenoh")
     mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
@@ -400,6 +409,8 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
     assert "MovementManager" in modules
     assert backend in modules
     assert not {"SonicCoordinator", "ControlCoordinator"} & modules
+    assert not {"RerunBridgeModule", "RerunWebSocketServer", "WebsocketVisModule"} & modules
+    assert perception <= modules
     assert all(
         not atom.module.__module__.startswith("dimos.sim2") for atom in blueprint.active_blueprints
     )

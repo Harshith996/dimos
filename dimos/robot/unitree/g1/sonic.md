@@ -18,7 +18,7 @@ uv sync --extra control --extra cuda --extra sim \
 source .venv/bin/activate
 dimos-sonic-models
 dimos-sonic-models --check
-dimos --transport zenoh --simulation mujoco --viewer none run unitree-g1-sonic-wbc
+dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
 ```
 
 The CPU and GPU ONNX Runtime distributions share the same Python package;
@@ -58,12 +58,25 @@ installs the matching ONNX Runtime and model assets; `--check` checks system
 prerequisites only. JetPack 5 requires CUDA 11.8 with its compatibility driver
 and cuDNN 8; JetPack 6 requires CUDA 12.6 and cuDNN 9.
 Hardware starts unarmed with policy outputs in dry-run.
-After checking startup and feedback, the hardware activation RPCs are:
+
+On a configured G1, start the stack with:
+
+```bash
+dimos --transport zenoh run unitree-g1-sonic-wbc
+```
+
+Use the Controller app in DimOS Desktop for the camera, map, robot state and
+policy controls. Desktop receives these streams directly over Zenoh. This
+blueprint includes no Rerun bridge, Rerun WebSocket server or legacy web
+visualization module, including when an old launch command supplies `--viewer rerun`.
+No Rerun viewer flags or viewer tunnels are needed.
+
+After checking startup and feedback, use **Activate policy** in Desktop, or
+the equivalent hardware activation RPC:
 
 ```python
 c = app.G1SonicPolicyModule
-c.set_dry_run(False)
-c.arm()
+c.activate()
 ```
 
 This standalone wiring has not been validated on physical hardware.
