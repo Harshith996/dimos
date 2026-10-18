@@ -62,6 +62,8 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     until(output_has(client, "secret k1"))
     launch = client.get("/runs").json()["launch"]
     assert "--n-workers=4" in launch["output"] and "--replay" in launch["output"]
+    assert "--viewer=none" in launch["output"].splitlines()[0]
+    assert "--rerun" not in launch["output"].splitlines()[0]
     assert f"run --run-id {launch['runId']} demo" in launch["output"].splitlines()[0]
     assert "k1" not in launch["output"].splitlines()[0]
     assert launch["overrides"]["typesafe_api_key"] == ov.HIDDEN

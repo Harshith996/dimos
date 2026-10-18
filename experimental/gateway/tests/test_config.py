@@ -130,7 +130,7 @@ def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, ho
     assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
     shown = client.get("/global-config").json()
     assert "robot_ip" in shown["schema"]["properties"]
-    assert shown["defaults"]["rerun_open"] == "none"
+    assert shown["defaults"]["viewer"] == "none"
 
 
 def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:

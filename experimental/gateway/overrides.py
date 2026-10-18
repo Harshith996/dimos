@@ -26,7 +26,7 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 SECRET_WORDS = ("secret", "token", "password", "passwd")
 STRUCTURED = ("global", "modules", "secrets")
-LAUNCH_GLOBAL_DEFAULTS: dict[str, Any] = {"rerun_open": "none", "rerun_web": True}
+LAUNCH_GLOBAL_DEFAULTS: dict[str, Any] = {"viewer": "none"}
 
 
 @dataclass
