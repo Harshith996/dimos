@@ -98,7 +98,6 @@ class UrdfManager(Module):
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
-        self._fk_state: tuple[tuple[str, ...], tuple[float, ...]] | None = None
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
@@ -147,15 +146,6 @@ class UrdfManager(Module):
         if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
             return
         self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
-        # A standing robot repeats its state: skip the FK until an edge's keepalive is due.
-        fk_state = (tuple(state.name), tuple(state.position))
-        oldest_sent = min((sent for _, sent in self._sent_edges.values()), default=0.0)
-        if (
-            fk_state == self._fk_state
-            and time.monotonic() < oldest_sent + 1.0 / self.config.unchanged_tf_hz
-        ):
-            return
-        self._fk_state = fk_state
         # The scene's FK state is shared with the cloud filter's thread.
         with self._filter_lock:
             transforms = self._edges_to_send(self.joint_transforms(state))
