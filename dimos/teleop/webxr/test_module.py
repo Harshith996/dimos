@@ -13,19 +13,23 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 import json
 import logging
 from types import SimpleNamespace
 from typing import Any, cast
 
+import cv2
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import numpy as np
 import pytest
 import pytest_mock
 
+from dimos.core.stream import Transport
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
@@ -35,8 +39,14 @@ from dimos.teleop.webxr.controller_types import (
     ThumbstickState,
     WebXRControllerState,
 )
-from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
-from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
+from dimos.teleop.webxr.extensions import (
+    ArmTeleopModule,
+    DualArmVideoTeleopModule,
+    Go2TeleopModule,
+    HandTeleopModule,
+    VideoArmTeleopModule,
+)
+from dimos.teleop.webxr.module import CameraPanel, WebXRTeleopModule, _ws_send_bytes, _ws_send_text
 
 
 @pytest.mark.parametrize("state", ["unavailable", "empty", "tracking"])
@@ -527,6 +537,7 @@ def test_default_webxr_config_does_not_request_body_tracking(
             "requiredFeatures": ["local-floor"],
             "optionalFeatures": ["hand-tracking"],
         },
+        "camera_panels": [],
     }
 
 
@@ -562,6 +573,7 @@ def test_enabled_webxr_config_requests_body_tracking(
                 "requiredFeatures": required_features,
                 "optionalFeatures": optional_features,
             },
+            "camera_panels": [],
         }
     finally:
         module.stop()
@@ -900,3 +912,186 @@ def test_invalid_episode_document_keeps_the_previous_hud_state(module, mocker, d
     module._on_episode_status(String(document))
     assert module._latest_episode_status == _episode_status()
     broadcast.assert_not_called()
+
+
+@pytest.fixture
+def make_video_module() -> Iterator[Callable[..., DualArmVideoTeleopModule]]:
+    modules: list[DualArmVideoTeleopModule] = []
+
+    def make(**kwargs: Any) -> DualArmVideoTeleopModule:
+        module = DualArmVideoTeleopModule(**kwargs)
+        modules.append(module)
+        return module
+
+    yield make
+    for module in modules:
+        module.stop()
+
+
+def _frame(width: int = 64, height: int = 48) -> Image:
+    return Image.from_numpy(
+        np.full((height, width, 3), 128, dtype=np.uint8), format=ImageFormat.RGB
+    )
+
+
+def _run_on_module_loop(module: WebXRTeleopModule, coroutine: Coroutine[Any, Any, None]) -> None:
+    assert module._loop is not None
+    asyncio.run_coroutine_threadsafe(coroutine, module._loop).result(timeout=5)
+
+
+def _decode_panel_frame(message: bytes) -> tuple[int, Any]:
+    jpeg = message[1:]
+    assert jpeg[:2] == b"\xff\xd8"
+    return message[0], cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+
+
+def test_video_modules_advertise_their_camera_panels(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+) -> None:
+    module = make_video_module()
+
+    assert module._webxr_client_config()["camera_panels"] == [
+        {"name": "egocentric", "slot": "center"},
+        {"name": "left_wrist", "slot": "left"},
+        {"name": "right_wrist", "slot": "right"},
+    ]
+    assert VideoArmTeleopModule.camera_panels == (CameraPanel("color_image", "center"),)
+    assert Go2TeleopModule.camera_panels == (CameraPanel("color_image", "center"),)
+
+
+def test_panel_frames_are_tagged_with_their_panel_index(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module(video_max_width=0)
+    mocker.patch.object(module, "_has_clients", return_value=True)
+    broadcast = mocker.patch.object(module, "_broadcast_bytes")
+
+    _run_on_module_loop(module, module.handle_egocentric_image(_frame()))
+    _run_on_module_loop(module, module.handle_left_wrist_image(_frame()))
+    _run_on_module_loop(module, module.handle_right_wrist_image(_frame()))
+
+    frames = [_decode_panel_frame(call.args[0]) for call in broadcast.call_args_list]
+    assert [panel for panel, _ in frames] == [0, 1, 2]
+    assert all(decoded.shape == (48, 64, 3) for _, decoded in frames)
+
+
+def test_panel_frames_are_not_encoded_without_a_client(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module()
+    encode = mocker.patch("dimos.teleop.webxr.extensions._encode_panel_frame")
+    broadcast = mocker.patch.object(module, "_broadcast_bytes")
+
+    _run_on_module_loop(module, module.handle_egocentric_image(_frame()))
+
+    encode.assert_not_called()
+    broadcast.assert_not_called()
+
+
+def test_panel_frames_are_downscaled_to_the_configured_width(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module(video_max_width=32)
+    mocker.patch.object(module, "_has_clients", return_value=True)
+    broadcast = mocker.patch.object(module, "_broadcast_bytes")
+
+    _run_on_module_loop(module, module.handle_egocentric_image(_frame(64, 48)))
+
+    _, decoded = _decode_panel_frame(broadcast.call_args.args[0])
+    assert decoded.shape == (24, 32, 3)
+
+
+def test_panel_frame_rate_cap_is_applied_per_panel(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module(video_max_fps=10.0)
+    mocker.patch.object(module, "_has_clients", return_value=True)
+    broadcast = mocker.patch.object(module, "_broadcast_bytes")
+    clock = mocker.patch("dimos.teleop.webxr.extensions.time")
+    clock.monotonic.side_effect = [0.0, 0.05, 0.0, 0.11]
+
+    _run_on_module_loop(module, module.handle_left_wrist_image(_frame()))
+    _run_on_module_loop(module, module.handle_left_wrist_image(_frame()))
+    _run_on_module_loop(module, module.handle_right_wrist_image(_frame()))
+    _run_on_module_loop(module, module.handle_left_wrist_image(_frame()))
+
+    assert [call.args[0][0] for call in broadcast.call_args_list] == [1, 2, 1]
+
+
+def test_websocket_binary_message_is_sent(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    ws = mocker.MagicMock()
+    ws.send_bytes = mocker.AsyncMock()
+
+    assert module._loop is not None
+    asyncio.run_coroutine_threadsafe(_ws_send_bytes(ws, b"\x00jpeg"), module._loop).result(
+        timeout=5
+    )
+
+    ws.send_bytes.assert_awaited_once_with(b"\x00jpeg")
+
+
+def test_broadcast_bytes_targets_the_connected_client(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    ws = mocker.MagicMock()
+    ws.send_bytes = mocker.AsyncMock()
+    module._ws_loop = module._loop
+    assert module._client_connected(ws) is True
+
+    module._broadcast_bytes(b"\x02frame")
+    # The loop runs tasks in scheduling order, so once this later task has
+    # finished the send scheduled above has been awaited.
+    _run_on_module_loop(module, asyncio.sleep(0))
+
+    ws.send_bytes.assert_awaited_once_with(b"\x02frame")
+
+
+class _LocalTransport(Transport[Image]):
+    """In-process transport so start() can bind the image handlers without a daemon."""
+
+    def __init__(self) -> None:
+        self._callbacks: list[Callable[[Image], Any]] = []
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        self._callbacks.clear()
+
+    def subscribe(
+        self, callback: Callable[[Image], Any], selfstream: Any = None
+    ) -> Callable[[], None]:
+        self._callbacks.append(callback)
+        return lambda: self._callbacks.remove(callback)
+
+    def broadcast(self, selfstream: Any, value: Image) -> None:
+        for callback in list(self._callbacks):
+            callback(value)
+
+
+def test_panel_frame_reaches_the_websocket_client(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module(video_max_width=0)
+    for stream in (module.egocentric_image, module.left_wrist_image, module.right_wrist_image):
+        stream.transport = _LocalTransport()
+    mocker.patch("dimos.teleop.webxr.module.RobotWebInterface")
+    mocker.patch.object(module, "_start_server")
+    mocker.patch.object(module, "_start_control_loop")
+    module.start()
+    app = _setup_test_app(module, mocker)
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as websocket:
+        module.left_wrist_image.transport.publish(_frame())
+        message = websocket.receive_bytes()
+
+    panel, decoded = _decode_panel_frame(message)
+    assert panel == 1
+    assert decoded.shape == (48, 64, 3)

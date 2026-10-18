@@ -16,9 +16,14 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
+    EGOCENTRIC_CAMERA,
+    LEFT_WRIST_CAMERA,
+    RIGHT_WRIST_CAMERA,
     build_dual_openyam_webxr,
     teleop_webxr_dual_openyam,
 )
+from dimos.teleop.webxr.camera import TeleopCamera
+from dimos.teleop.webxr.extensions import DualArmVideoTeleopModule
 
 
 def test_visualization_configuration_preserves_teleop_composition(mocker):
@@ -55,3 +60,30 @@ def test_visualization_configuration_preserves_teleop_composition(mocker):
     )
     assert parsed.module_kwargs(updated.name)["visualization"]["host"] == "127.0.0.1"
     download.assert_not_called()
+
+
+def test_headset_cameras_feed_their_panels() -> None:
+    cameras = {
+        atom.name: atom
+        for atom in teleop_webxr_dual_openyam.blueprints
+        if atom.module is TeleopCamera
+    }
+    assert set(cameras) == {EGOCENTRIC_CAMERA, LEFT_WRIST_CAMERA, RIGHT_WRIST_CAMERA}
+    assert all(atom.kwargs == {"instance_name": atom.name} for atom in cameras.values())
+    [video] = [
+        atom
+        for atom in teleop_webxr_dual_openyam.blueprints
+        if atom.module is DualArmVideoTeleopModule
+    ]
+    panel_inputs = {stream.name for stream in video.streams if stream.direction == "in"}
+    remapped = {teleop_webxr_dual_openyam.remapping_map[(name, "color_image")] for name in cameras}
+    assert remapped == {"egocentric_image", "left_wrist_image", "right_wrist_image"}
+    assert remapped <= panel_inputs
+
+    parsed = BlueprintConfigParser(teleop_webxr_dual_openyam).parse(
+        ["--left-wrist-camera.device", "/dev/v4l/by-id/usb-left", "--video-max-fps", "15"],
+        environ={},
+    )
+    assert parsed.module_kwargs(LEFT_WRIST_CAMERA)["device"] == "/dev/v4l/by-id/usb-left"
+    assert parsed.module_kwargs(RIGHT_WRIST_CAMERA) == {}
+    assert parsed.module_kwargs(video.name)["video_max_fps"] == 15

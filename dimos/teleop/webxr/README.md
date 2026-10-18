@@ -27,6 +27,7 @@ dimos run teleop-webxr-piper   # Piper
 dimos run teleop-webxr-a1z     # A1Z with mock hardware
 dimos run teleop-webxr-dual    # Mixed XArm6 + Piper, one task per arm
 dimos run teleop-webxr-openarm # OpenArm, bimanual IK + planner/Viser + mock hardware
+dimos run teleop-webxr-dual-openyam # Dual OpenYAM + egocentric and wrist camera panels
 ```
 
 Select a CAN interface explicitly to control real A1Z hardware:
@@ -96,6 +97,41 @@ disconnecting the control client releases held buttons immediately. Lifecycle
 consumers should subscribe to the edge streams instead of detecting edges from
 raw levels independently.
 
+## Headset camera panels
+
+Video modules push camera frames to the headset over the same `/ws` socket:
+one binary message per frame, a leading byte indexing the module's
+`camera_panels` followed by the JPEG. `/teleop/config` lists those panels with
+a layout slot, and the client floats them in passthrough, placed once per
+session relative to the operator's starting position and heading:
+
+| Slot | Camera | Placement |
+|------|--------|-----------|
+| `center` | scene / egocentric | large, above the workspace |
+| `left`, `right` | wrist | smaller, beside that arm, turned toward the operator |
+
+Panel borders show state: a wrist panel turns green while that controller's
+grip is held, the center panel turns red while an episode is recording, and a
+panel goes gray when its camera has not delivered a frame for two seconds. A
+panel without a camera shows a dark blank.
+
+`VideoArmTeleopModule` and `Go2TeleopModule` fill the center panel from
+`color_image`. `DualArmVideoTeleopModule` adds `egocentric_image`,
+`left_wrist_image`, and `right_wrist_image`; `teleop-webxr-dual-openyam` feeds
+them from three `TeleopCamera` webcams picked per instance:
+
+```bash
+dimos run teleop-webxr-dual-openyam \
+  --left-can-port can0 --right-can-port can1 \
+  --egocentric-camera.device /dev/v4l/by-id/<scene-camera> \
+  --left-wrist-camera.device /dev/v4l/by-id/<left-wrist-camera> \
+  --right-wrist-camera.device /dev/v4l/by-id/<right-wrist-camera>
+```
+
+`device` also takes an OpenCV index. `--video-max-width` and `--video-max-fps`
+on the teleop module bound the headset uplink; see `DualArmVideoTeleopConfig`
+for defaults.
+
 ## Subclassing
 
 | Method | Purpose |
@@ -140,8 +176,9 @@ stop arriving, so these diagnostics do not detect a disconnected or silent clien
 ```
 webxr/
 ├── module.py             # Base module
-├── extensions.py         # ArmTeleop, TwistTeleop
+├── extensions.py         # ArmTeleop, TwistTeleop, video panel modules
+├── camera.py             # TeleopCamera: webcam for one headset panel
 ├── controller_types.py   # WebXRControllerState, Buttons
 ├── blueprints.py
-└── web/static/index.html # WebXR client
+└── web/static/           # WebXR client (index.html, teleop.js)
 ```

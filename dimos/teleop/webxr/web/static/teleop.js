@@ -21,25 +21,49 @@ const sessionModeSupport = new Map();
 const handSelectActive = new Map();
 const GRIPPER_PINCH_DISTANCE_METERS = 0.04;
 
-// Video panel state
-const videoEl = document.getElementById('videoFeed');
-let videoTex = null;
+// Camera panels. /teleop/config lists them (camera_panels) in wire order; a
+// binary /ws message is one byte of panel index followed by a JPEG. The panels
+// are world-locked: placed once per session relative to the operator's level
+// starting pose (position and heading only, so looking down at the arms while
+// connecting does not drop them to the floor).
 let quadProgram = null;
 let quadVbo = null;
 let quadAttribs = null;
 let quadUniforms = null;
-let videoReady = false;  // true after first frame loads
-let videoDirty = false;  // true when a new JPEG has finished decoding
-let videoAspect = 1.0;   // cached at load time — see videoEl.onload
-let prevBlobUrl = null;  // revoked when the next-next blob arrives
-const videoModelMatrix = new Float32Array(16);
+let solidProgram = null;
+let solidAttribs = null;
+let solidUniforms = null;
+let panels = [];
+let panelsPlaced = false;
+const panelAnchorMatrix = new Float32Array(16);
+const gripHeld = { left: false, right: false };
 const hudModelMatrix = new Float32Array(16);
 const hudLocalMatrix = new Float32Array(16);
 
-const PANEL_POS_X = 0.0;
-const PANEL_POS_Y = 1.4;   // ~eye height
-const PANEL_POS_Z = -1.5;  // 1.5m in front of starting position
-const PANEL_HEIGHT = 0.9;
+// Offsets from the level anchor in meters (x right, y up, z forward is
+// negative). yawDeg turns a side panel in toward the operator; tiltDeg leans a
+// raised panel's face down toward them. height is the image height.
+const PANEL_LAYOUT = {
+    // Egocentric view: large, centered above the workspace.
+    center: { x: 0.0, y: 0.38, z: -1.6, yawDeg: 0, tiltDeg: 10, height: 0.62 },
+    // Wrist views: smaller, beside their arm.
+    left: { x: -1.0, y: 0.24, z: -1.45, yawDeg: 34, tiltDeg: 6, height: 0.42 },
+    right: { x: 1.0, y: 0.24, z: -1.45, yawDeg: -34, tiltDeg: 6, height: 0.42 },
+};
+const PANEL_BORDER_METERS = 0.012;
+const PANEL_DEFAULT_ASPECT = 16 / 9;
+const PANEL_STALE_MS = 2000;
+// Border colors (RGBA 0-1). Wrist panels follow their controller's grip, the
+// center panel follows episode recording, and any panel without fresh frames
+// goes gray.
+const BORDER_COLORS = {
+    idle: [0.78, 0.82, 0.86, 0.9],
+    engaged: [0.22, 0.83, 0.33, 1.0],
+    live: [0.96, 0.65, 0.14, 1.0],
+    recording: [1.0, 0.23, 0.19, 1.0],
+    stale: [0.45, 0.47, 0.5, 0.8],
+};
+const PANEL_BLANK_COLOR = [0.03, 0.05, 0.08, 0.75];
 
 // Collection HUD state. The panel is anchored below the initial headset pose
 // and remains fixed in the local-floor scene.
@@ -92,7 +116,7 @@ function setupWebSocket() {
 
         setStatus('Connecting to server...');
         ws = new WebSocket(wsUrl);
-        ws.binaryType = 'blob';
+        ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
             hudOffline = false;
@@ -110,19 +134,14 @@ function setupWebSocket() {
             hudDirty = true;
             if (xrSession) setStatus('WebSocket closed');
         };
-        // Defer revoking the previous blob URL by one message — revoking
-        // immediately after setting src can race with the browser's load
-        // on some engines, briefly dropping naturalWidth to 0.
         ws.onmessage = (e) => {
             if (typeof e.data === 'string') {
                 handleServerMessage(e.data);
                 return;
             }
-            if (!(e.data instanceof Blob)) return;
-            const newUrl = URL.createObjectURL(e.data);
-            if (prevBlobUrl) URL.revokeObjectURL(prevBlobUrl);
-            prevBlobUrl = videoEl.src.startsWith('blob:') ? videoEl.src : null;
-            videoEl.src = newUrl;
+            if (!(e.data instanceof ArrayBuffer) || e.data.byteLength < 2) return;
+            const bytes = new Uint8Array(e.data);
+            receivePanelFrame(bytes[0], bytes.subarray(1));
         };
     });
 }
@@ -137,13 +156,36 @@ function initGL() {
         throw new Error('WebGL not supported');
     }
     gl.clearColor(0, 0, 0, 0); // Transparent background for passthrough
-    initVideoPanel();
+    initQuadPipelines();
+    initCameraPanels(webXRClientConfig.camera_panels ?? []);
     initCollectionHud();
 }
 
-// Compile one textured-quad pipeline for the world-locked video and HUD.
-function initVideoPanel() {
-    const vsSrc = `
+function compileShader(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        throw new Error('Shader compile failed: ' + gl.getShaderInfoLog(sh));
+    }
+    return sh;
+}
+
+function linkProgram(vsSrc, fsSrc) {
+    const program = gl.createProgram();
+    gl.attachShader(program, compileShader(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(program, compileShader(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error('Program link failed: ' + gl.getProgramInfoLog(program));
+    }
+    return program;
+}
+
+// One textured-quad pipeline for the camera panels and HUD, and one
+// solid-color pipeline for panel borders and blank panels. Both share a quad.
+function initQuadPipelines() {
+    const quadVsSrc = `
         attribute vec2 a_pos;
         attribute vec2 a_uv;
         uniform mat4 u_proj;
@@ -155,32 +197,42 @@ function initVideoPanel() {
                         * vec4(a_pos.x, a_pos.y, 0.0, 1.0);
             v_uv = a_uv;
         }`;
-    const fsSrc = `
+    const texturedFsSrc = `
         precision mediump float;
         varying vec2 v_uv;
         uniform sampler2D u_tex;
         void main() {
             gl_FragColor = texture2D(u_tex, v_uv);
         }`;
+    const solidFsSrc = `
+        precision mediump float;
+        uniform vec4 u_color;
+        void main() {
+            gl_FragColor = u_color;
+        }`;
 
-    const compile = (type, src) => {
-        const sh = gl.createShader(type);
-        gl.shaderSource(sh, src);
-        gl.compileShader(sh);
-        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-            throw new Error('Shader compile failed: ' + gl.getShaderInfoLog(sh));
-        }
-        return sh;
+    quadProgram = linkProgram(quadVsSrc, texturedFsSrc);
+    quadAttribs = {
+        pos: gl.getAttribLocation(quadProgram, 'a_pos'),
+        uv:  gl.getAttribLocation(quadProgram, 'a_uv'),
     };
-    const vs = compile(gl.VERTEX_SHADER, vsSrc);
-    const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
-    quadProgram = gl.createProgram();
-    gl.attachShader(quadProgram, vs);
-    gl.attachShader(quadProgram, fs);
-    gl.linkProgram(quadProgram);
-    if (!gl.getProgramParameter(quadProgram, gl.LINK_STATUS)) {
-        throw new Error('Program link failed: ' + gl.getProgramInfoLog(quadProgram));
-    }
+    quadUniforms = {
+        proj:  gl.getUniformLocation(quadProgram, 'u_proj'),
+        view:  gl.getUniformLocation(quadProgram, 'u_view'),
+        model: gl.getUniformLocation(quadProgram, 'u_model'),
+        tex:   gl.getUniformLocation(quadProgram, 'u_tex'),
+    };
+
+    solidProgram = linkProgram(quadVsSrc, solidFsSrc);
+    solidAttribs = {
+        pos: gl.getAttribLocation(solidProgram, 'a_pos'),
+    };
+    solidUniforms = {
+        proj:  gl.getUniformLocation(solidProgram, 'u_proj'),
+        view:  gl.getUniformLocation(solidProgram, 'u_view'),
+        model: gl.getUniformLocation(solidProgram, 'u_model'),
+        color: gl.getUniformLocation(solidProgram, 'u_color'),
+    };
 
     // Quad as TRIANGLE_STRIP: x, y, u, v. v=0 at top of quad +
     // UNPACK_FLIP_Y_WEBGL=false → image displays upright.
@@ -193,30 +245,7 @@ function initVideoPanel() {
     quadVbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-
-    quadAttribs = {
-        pos: gl.getAttribLocation(quadProgram, 'a_pos'),
-        uv:  gl.getAttribLocation(quadProgram, 'a_uv'),
-    };
-    quadUniforms = {
-        proj:  gl.getUniformLocation(quadProgram, 'u_proj'),
-        view:  gl.getUniformLocation(quadProgram, 'u_view'),
-        model: gl.getUniformLocation(quadProgram, 'u_model'),
-        tex:   gl.getUniformLocation(quadProgram, 'u_tex'),
-    };
-
-    videoTex = createTexture();
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-
-    // Cache aspect here — naturalWidth can transiently drop to 0
-    // between loads, which would collapse the panel to 1:1.
-    videoEl.onload = () => {
-        videoReady = true;
-        videoDirty = true;
-        if (videoEl.naturalHeight) {
-            videoAspect = videoEl.naturalWidth / videoEl.naturalHeight;
-        }
-    };
 }
 
 function createTexture() {
@@ -229,11 +258,77 @@ function createTexture() {
     return texture;
 }
 
-function uploadVideoTexture() {
-    gl.bindTexture(gl.TEXTURE_2D, videoTex);
-    gl.texImage2D(
-        gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, videoEl
-    );
+function initCameraPanels(configuredPanels) {
+    for (const panel of panels) {
+        gl.deleteTexture(panel.texture);
+        panel.bitmap?.close();
+    }
+    panels = [];
+    panelsPlaced = false;
+    configuredPanels.forEach((configured, index) => {
+        const layout = PANEL_LAYOUT[configured.slot];
+        if (!layout) {
+            console.warn(`Ignoring camera panel ${configured.name}: unknown slot ${configured.slot}`);
+            return;
+        }
+        panels[index] = {
+            index,
+            name: configured.name,
+            slot: configured.slot,
+            layout,
+            texture: createTexture(),
+            aspect: PANEL_DEFAULT_ASPECT,
+            hasFrame: false,
+            lastFrameMs: 0,
+            decoding: false,
+            pendingBlob: null,  // newest undecoded frame; older ones are dropped
+            bitmap: null,       // decoded frame awaiting texture upload
+            localMatrix: new Float32Array(16),
+            modelMatrix: new Float32Array(16),
+            borderLocalMatrix: new Float32Array(16),
+            borderModelMatrix: new Float32Array(16),
+        };
+    });
+}
+
+function receivePanelFrame(panelIndex, jpegBytes) {
+    const panel = panels[panelIndex];
+    if (!panel) return;
+    panel.pendingBlob = new Blob([jpegBytes], { type: 'image/jpeg' });
+    if (!panel.decoding) decodePendingFrames(panel);
+}
+
+// Decode off the render loop, always skipping to the newest frame so a slow
+// decode never builds a backlog of stale video.
+async function decodePendingFrames(panel) {
+    panel.decoding = true;
+    while (panel.pendingBlob) {
+        const blob = panel.pendingBlob;
+        panel.pendingBlob = null;
+        try {
+            const bitmap = await createImageBitmap(blob);
+            panel.bitmap?.close();
+            panel.bitmap = bitmap;
+            panel.lastFrameMs = performance.now();
+        } catch (error) {
+            console.warn(`Dropping undecodable ${panel.name} frame`, error);
+        }
+    }
+    panel.decoding = false;
+}
+
+function uploadPanelFrames() {
+    for (const panel of panels) {
+        const bitmap = panel.bitmap;
+        if (!bitmap) continue;
+        panel.bitmap = null;
+        gl.bindTexture(gl.TEXTURE_2D, panel.texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, bitmap);
+        if (bitmap.height) panel.aspect = bitmap.width / bitmap.height;
+        bitmap.close();
+        panel.hasFrame = true;
+        if (panelsPlaced) updatePanelMatrices(panel);
+    }
 }
 
 function setModelMatrix(matrix, halfWidth, halfHeight, x, y, z) {
@@ -241,6 +336,44 @@ function setModelMatrix(matrix, halfWidth, halfHeight, x, y, z) {
     matrix[0] = halfWidth;
     matrix[5] = halfHeight;
     matrix[10] = 1;
+    matrix[12] = x;
+    matrix[13] = y;
+    matrix[14] = z;
+    matrix[15] = 1;
+}
+
+// Column-major T(x, y, z) * Ry(yaw) * Rx(tilt) * S(halfWidth, halfHeight, 1).
+// Positive yaw turns the quad's face toward +x; positive tilt leans it down.
+function setPanelMatrix(matrix, halfWidth, halfHeight, x, y, z, yawDeg, tiltDeg) {
+    const yaw = yawDeg * Math.PI / 180;
+    const tilt = tiltDeg * Math.PI / 180;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const ct = Math.cos(tilt), st = Math.sin(tilt);
+    matrix.fill(0);
+    matrix[0] = cy * halfWidth;
+    matrix[1] = 0;
+    matrix[2] = -sy * halfWidth;
+    matrix[4] = sy * st * halfHeight;
+    matrix[5] = ct * halfHeight;
+    matrix[6] = cy * st * halfHeight;
+    matrix[8] = sy * ct;
+    matrix[9] = -st;
+    matrix[10] = cy * ct;
+    matrix[12] = x;
+    matrix[13] = y;
+    matrix[14] = z;
+    matrix[15] = 1;
+}
+
+// Column-major T(x, y, z) * Ry(yaw): a level frame with the operator's heading.
+function setLevelAnchorMatrix(matrix, yaw, x, y, z) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    matrix.fill(0);
+    matrix[0] = c;
+    matrix[2] = -s;
+    matrix[5] = 1;
+    matrix[8] = s;
+    matrix[10] = c;
     matrix[12] = x;
     matrix[13] = y;
     matrix[14] = z;
@@ -259,27 +392,45 @@ function multiplyMatrices(out, left, right) {
     }
 }
 
-function updateVideoModelMatrix() {
-    const halfH = PANEL_HEIGHT * 0.5;
-    setModelMatrix(
-        videoModelMatrix,
-        halfH * videoAspect,
-        halfH,
-        PANEL_POS_X,
-        PANEL_POS_Y,
-        PANEL_POS_Z,
+function placeCameraPanels(pose) {
+    const m = pose.transform.matrix;
+    // The headset looks down its -z axis; m[8..10] is that axis in world
+    // space, so this is the heading with pitch and roll discarded.
+    const yaw = Math.atan2(m[8], m[10]);
+    setLevelAnchorMatrix(panelAnchorMatrix, yaw, m[12], m[13], m[14]);
+    panelsPlaced = true;
+    for (const panel of panels) updatePanelMatrices(panel);
+}
+
+function updatePanelMatrices(panel) {
+    const { x, y, z, yawDeg, tiltDeg, height } = panel.layout;
+    const halfHeight = height * 0.5;
+    const halfWidth = halfHeight * panel.aspect;
+    setPanelMatrix(panel.localMatrix, halfWidth, halfHeight, x, y, z, yawDeg, tiltDeg);
+    setPanelMatrix(
+        panel.borderLocalMatrix,
+        halfWidth + PANEL_BORDER_METERS,
+        halfHeight + PANEL_BORDER_METERS,
+        x, y, z, yawDeg, tiltDeg,
     );
+    multiplyMatrices(panel.modelMatrix, panelAnchorMatrix, panel.localMatrix);
+    multiplyMatrices(panel.borderModelMatrix, panelAnchorMatrix, panel.borderLocalMatrix);
+}
+
+function bindQuad(program, attribs, withUv) {
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+    gl.enableVertexAttribArray(attribs.pos);
+    gl.vertexAttribPointer(attribs.pos, 2, gl.FLOAT, false, 16, 0);
+    if (withUv) {
+        gl.enableVertexAttribArray(attribs.uv);
+        gl.vertexAttribPointer(attribs.uv, 2, gl.FLOAT, false, 16, 8);
+    }
 }
 
 function renderTexturedQuad(view, viewport, texture, modelMatrix, viewMatrix) {
     gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-    gl.useProgram(quadProgram);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
-    gl.enableVertexAttribArray(quadAttribs.pos);
-    gl.vertexAttribPointer(quadAttribs.pos, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(quadAttribs.uv);
-    gl.vertexAttribPointer(quadAttribs.uv,  2, gl.FLOAT, false, 16, 8);
+    bindQuad(quadProgram, quadAttribs, true);
 
     gl.uniformMatrix4fv(quadUniforms.proj, false, view.projectionMatrix);
     gl.uniformMatrix4fv(quadUniforms.view, false, viewMatrix);
@@ -292,14 +443,47 @@ function renderTexturedQuad(view, viewport, texture, modelMatrix, viewMatrix) {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 
-function renderVideoPanel(view, viewport) {
-    renderTexturedQuad(
-        view,
-        viewport,
-        videoTex,
-        videoModelMatrix,
-        view.transform.inverse.matrix,
-    );
+function renderSolidQuad(view, viewport, color, modelMatrix, viewMatrix) {
+    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+    bindQuad(solidProgram, solidAttribs, false);
+
+    gl.uniformMatrix4fv(solidUniforms.proj, false, view.projectionMatrix);
+    gl.uniformMatrix4fv(solidUniforms.view, false, viewMatrix);
+    gl.uniformMatrix4fv(solidUniforms.model, false, modelMatrix);
+    gl.uniform4fv(solidUniforms.color, color);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function panelBorderColor(panel, nowMs) {
+    if (hudOffline || !panel.hasFrame || nowMs - panel.lastFrameMs > PANEL_STALE_MS) {
+        return BORDER_COLORS.stale;
+    }
+    if (panel.slot === 'center') {
+        return episodeStatus?.state === 'recording' ? BORDER_COLORS.recording : BORDER_COLORS.live;
+    }
+    return gripHeld[panel.slot] ? BORDER_COLORS.engaged : BORDER_COLORS.idle;
+}
+
+// Border first, then the frame (or a dark blank while waiting for one).
+// Depth testing stays off, so draw order is paint order.
+function renderCameraPanels(view, viewport) {
+    if (!panelsPlaced) return;
+    const viewMatrix = view.transform.inverse.matrix;
+    const nowMs = performance.now();
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    for (const panel of panels) {
+        renderSolidQuad(
+            view, viewport, panelBorderColor(panel, nowMs), panel.borderModelMatrix, viewMatrix,
+        );
+        if (panel.hasFrame) {
+            renderTexturedQuad(view, viewport, panel.texture, panel.modelMatrix, viewMatrix);
+        } else {
+            renderSolidQuad(view, viewport, PANEL_BLANK_COLOR, panel.modelMatrix, viewMatrix);
+        }
+    }
+    gl.disable(gl.BLEND);
 }
 
 function handleServerMessage(data) {
@@ -559,6 +743,8 @@ function processTracking(time, frame) {
             for (let i = 0; i < buttonCount; i++) {
                 buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
             }
+            // The grip is the arm deadman; the wrist panel on this side shows it.
+            gripHeld[handedness] = buttons[1] === 1;
 
             sendJoy(handedness, axes, buttons);
         }
@@ -588,19 +774,16 @@ function onXRFrame(time, frame) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-    // Keep rendering the existing texture between loads to avoid blinking.
-    if (videoReady && videoDirty && videoEl.naturalWidth) {
-        uploadVideoTexture();
-        videoDirty = false;
-    }
-    if (videoReady) updateVideoModelMatrix();
+    // Textures keep their last frame between uploads, so panels never blink.
+    uploadPanelFrames();
     updateHudTexture();
     const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
+        if (!panelsPlaced) placeCameraPanels(pose);
         if (!hudPlaced) placeCollectionHud(pose);
         for (const view of pose.views) {
             const viewport = glLayer.getViewport(view);
-            if (videoReady) renderVideoPanel(view, viewport);
+            renderCameraPanels(view, viewport);
             renderCollectionHud(view, viewport);
         }
     }
@@ -632,6 +815,7 @@ async function startWebXRSession(clientConfig) {
 
         xrSession = session;
         hudPlaced = false;
+        panelsPlaced = false;
         lastSendTime = 0;
 
         // Setup WebGL layer
@@ -660,7 +844,10 @@ async function startWebXRSession(clientConfig) {
         session.addEventListener('end', () => {
             setStatus('WebXR session ended');
             handSelectActive.clear();
+            gripHeld.left = false;
+            gripHeld.right = false;
             hudPlaced = false;
+            panelsPlaced = false;
             xrSession = null;
             xrBodyRefSpace = null;
             xrBodyRefSpaceType = null;

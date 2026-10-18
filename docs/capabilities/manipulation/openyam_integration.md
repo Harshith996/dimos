@@ -79,6 +79,23 @@ dimos run teleop-webxr-dual-openyam \
 Linux interfaces must already be configured for classical CAN at 1 Mbit/s.
 The native macOS transport configures the adapter bitrate directly.
 
+### Headset cameras
+
+The headset shows the egocentric camera in a large panel above the workspace
+and each wrist camera in a smaller panel beside its arm. Pick the webcams per
+panel; a camera left unset only blanks its panel:
+
+```bash
+dimos run teleop-webxr-dual-openyam \
+  --left-can-port can0 --right-can-port can1 \
+  --egocentric-camera.device /dev/v4l/by-id/<scene-camera> \
+  --left-wrist-camera.device /dev/v4l/by-id/<left-wrist-camera> \
+  --right-wrist-camera.device /dev/v4l/by-id/<right-wrist-camera>
+```
+
+See the [WebXR README](/dimos/teleop/webxr/README.md) for the panel layout,
+border colors, and uplink limits.
+
 ## Hardware topology
 
 | Motor | Send ID | Reply ID | Type |

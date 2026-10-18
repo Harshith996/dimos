@@ -22,6 +22,7 @@ deltas, and publishes PoseStamped commands.
 """
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 import json
 import logging
@@ -29,7 +30,7 @@ import math
 from pathlib import Path
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any, ClassVar, Literal, TypeVar
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
@@ -68,6 +69,25 @@ async def _ws_send_text(ws: WebSocket, data: str) -> None:
         # The receive loop removes disconnected clients. Outbound status
         # updates should not disrupt teleoperation while that happens.
         pass
+
+
+async def _ws_send_bytes(ws: WebSocket, data: bytes) -> None:
+    try:
+        await ws.send_bytes(data)
+    except Exception:
+        # As above: a dropped video frame must not disrupt teleoperation.
+        pass
+
+
+PanelSlot = Literal["center", "left", "right"]
+
+
+@dataclass(frozen=True)
+class CameraPanel:
+    """One headset video panel; the client lays it out by `slot`."""
+
+    name: str
+    slot: PanelSlot
 
 
 @dataclass
@@ -110,6 +130,10 @@ class WebXRTeleopModule(Module):
     """
 
     config: WebXRTeleopConfig
+
+    # Headset video panels in wire order: a pushed frame is one byte indexing
+    # this tuple followed by the JPEG. Video subclasses declare their panels.
+    camera_panels: ClassVar[tuple[CameraPanel, ...]] = ()
 
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
@@ -232,6 +256,9 @@ class WebXRTeleopModule(Module):
                 "requiredFeatures": required_features,
                 "optionalFeatures": optional_features,
             },
+            "camera_panels": [
+                {"name": panel.name, "slot": panel.slot} for panel in self.camera_panels
+            ],
         }
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
@@ -306,15 +333,26 @@ class WebXRTeleopModule(Module):
             if was_connected:
                 self._reset_controller_state()
 
+    def _has_clients(self) -> bool:
+        with self._clients_lock:
+            return bool(self._connected_clients)
+
     def _broadcast_text(self, data: str) -> None:
         """Schedule a text message for the active WebXR client."""
+        self._broadcast(lambda ws: _ws_send_text(ws, data))
+
+    def _broadcast_bytes(self, data: bytes) -> None:
+        """Schedule a binary message (a tagged camera frame) for the active WebXR client."""
+        self._broadcast(lambda ws: _ws_send_bytes(ws, data))
+
+    def _broadcast(self, send: Callable[[WebSocket], Coroutine[Any, Any, None]]) -> None:
         loop = self._ws_loop
         if loop is None:
             return
         with self._clients_lock:
             clients = tuple(self._connected_clients)
         for ws in clients:
-            asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
+            asyncio.run_coroutine_threadsafe(send(ws), loop)
 
     def _on_episode_status(self, message: String) -> None:
         try:
