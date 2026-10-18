@@ -572,6 +572,18 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
 
+      - name: Blueprint view type-check
+        working-directory: web/blueprint_view
+        run: deno task check
+
+      - name: Blueprint view vitest
+        working-directory: web/blueprint_view
+        run: deno task test
+
+      - name: Blueprint view build
+        working-directory: web/blueprint_view
+        run: deno task build
+
       # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
@@ -708,7 +720,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
       - name: Native module e2e tests
         if: steps.native-marker.outputs.cache-hit == 'true'
@@ -970,7 +982,7 @@ jobs:
           for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
           pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
+        run: uv run pytest --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
@@ -1125,7 +1137,7 @@ jobs:
         # heavier scenes (`apt`). Software X via xvfb is not enough.
         env:
           DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
+        run: uv run pytest --cov=dimos/ --cov=experimental/gateway/ --junitxml=junit.xml -m self_hosted_large
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
