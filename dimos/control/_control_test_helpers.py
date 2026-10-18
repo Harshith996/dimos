@@ -46,6 +46,7 @@ class RecordingTask(BaseControlTask):
         self.joint_command_calls: list[tuple[Any, float]] = []
         self.buttons_calls: list[Any] = []
         self.gripper_calls: list[tuple[Any, float]] = []
+        self.arm_posture_calls: list[tuple[str, Any, float]] = []
 
     def claim(self) -> ResourceClaim:
         return ResourceClaim(joints=self._joints)
@@ -85,6 +86,14 @@ class RecordingTask(BaseControlTask):
 
     def on_buttons(self, msg: Any) -> bool:
         self.buttons_calls.append(msg)
+        return True
+
+    def on_left_arm_posture(self, msg: Any, t_now: float) -> bool:
+        self.arm_posture_calls.append(("left", msg, t_now))
+        return True
+
+    def on_right_arm_posture(self, msg: Any, t_now: float) -> bool:
+        self.arm_posture_calls.append(("right", msg, t_now))
         return True
 
     def on_teleop_buttons(self, msg: Any, t_now: float) -> bool:

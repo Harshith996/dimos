@@ -11,8 +11,6 @@ import { captureBody } from "./webxr_body.mjs";
 let ws = null;
 let xrSession = null;
 let xrRefSpace = null;
-let xrBodyRefSpace = null;
-let xrBodyRefSpaceType = null;
 let gl = null;
 let lastSendTime = 0;
 const sendInterval = 1000 / 80; // ~80Hz target
@@ -750,13 +748,15 @@ function processTracking(time, frame) {
         }
     }
 
+    // Body joints share the controllers' reference space, so the server can
+    // combine them (the operator's forearm direction steers the robot elbow).
     if (webXRClientConfig.body_tracking_mode !== 'off') {
-        const joints = captureBody(frame, xrBodyRefSpace);
+        const joints = captureBody(frame, xrRefSpace);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'body_tracking_snapshot',
                 capture_time_s: (performance.timeOrigin + time) / 1000,
-                frame_id: xrBodyRefSpaceType,
+                frame_id: 'local-floor',
                 joints,
             }));
         }
@@ -827,17 +827,6 @@ async function startWebXRSession(clientConfig) {
         // Get reference space
         xrRefSpace = await session.requestReferenceSpace('local-floor');
 
-        if (clientConfig.body_tracking_mode !== 'off') {
-            try {
-                xrBodyRefSpace = await session.requestReferenceSpace('bounded-floor');
-                xrBodyRefSpaceType = 'bounded-floor';
-            } catch (error) {
-                console.warn('bounded-floor unavailable; using local-floor for body poses', error);
-                xrBodyRefSpace = xrRefSpace;
-                xrBodyRefSpaceType = 'local-floor';
-            }
-        }
-
         setStatus(`WebXR active (${session.mode})`);
 
         // Session event handlers
@@ -849,8 +838,6 @@ async function startWebXRSession(clientConfig) {
             hudPlaced = false;
             panelsPlaced = false;
             xrSession = null;
-            xrBodyRefSpace = null;
-            xrBodyRefSpaceType = null;
             window.disconnect();
         });
 

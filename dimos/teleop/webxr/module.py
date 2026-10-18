@@ -241,8 +241,6 @@ class WebXRTeleopModule(Module):
         optional_features = ["hand-tracking"]
         session_modes = ["immersive-ar", "immersive-vr"]
 
-        if self.config.body_tracking_mode != "off":
-            optional_features.append("bounded-floor")
         if self.config.body_tracking_mode == "optional":
             optional_features.append("body-tracking")
         elif self.config.body_tracking_mode == "required":
@@ -276,9 +274,13 @@ class WebXRTeleopModule(Module):
         except ValidationError as exc:
             logger.warning("Dropping malformed WebXR body snapshot", error=str(exc))
             return False
+        self._on_body_snapshot(snapshot)
+        return True
+
+    def _on_body_snapshot(self, snapshot: BodyTrackingSnapshot) -> None:
+        """Publish a body snapshot; subclasses derive operator arm postures from it."""
         self.body_tracking.publish(snapshot)
         self._log_body_tracking(snapshot)
-        return True
 
     def _log_body_tracking(self, snapshot: BodyTrackingSnapshot) -> None:
         joints = snapshot.joints

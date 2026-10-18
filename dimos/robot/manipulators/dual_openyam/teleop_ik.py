@@ -41,6 +41,8 @@ class DualOpenYamPinkPoseTargetSolver(PinkPoseTargetSolver):
         tasks = super()._create_tasks(configuration, target_frames)
 
         for frame_name in target_frames:
+            if frame_name in self.hint_frames:
+                continue
             frame_task = tasks[f"frame/{frame_name}"]
             frame_task.set_position_cost(_FRAME_POSITION_COST)
             frame_task.set_orientation_cost(_FRAME_ORIENTATION_COST)

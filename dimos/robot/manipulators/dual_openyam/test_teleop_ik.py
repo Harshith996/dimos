@@ -14,6 +14,7 @@
 
 """Objective tests for Dual OpenYAM WebXR teleoperation."""
 
+import attrs
 import numpy as np
 import pytest
 
@@ -77,3 +78,69 @@ def test_webxr_solver_matches_a1z_target_tracking_speed() -> None:
         ]
     )
     assert progress >= 0.09
+
+
+_ELBOW_FRAME = "left_link3"
+_ALL_FRAMES = (*_TARGET_FRAMES, _ELBOW_FRAME)
+
+
+def _elbow_solver() -> DualOpenYamPinkPoseTargetSolver:
+    config = attrs.evolve(
+        _solver()._control_config, hint_frames=(_ELBOW_FRAME,), hint_position_cost=2.0
+    )
+    return DualOpenYamPinkPoseTargetSolver(config)
+
+
+def _home_state() -> JointState:
+    return JointState(name=dual_openyam_arm_joints("left"), position=DUAL_OPENYAM_HOME_PER_ARM)
+
+
+@pytest.mark.self_hosted
+def test_elbow_hint_is_a_position_only_task_below_the_hand() -> None:
+    solver = _elbow_solver()
+    state = _home_state()
+    targets = solver.frame_poses(state, _ALL_FRAMES)
+
+    assert solver.step(targets, state, 0.01) is not None
+    context = next(iter(solver._control_contexts.values()))
+    assert context.tasks is not None
+    assert list(context.tasks[f"frame/{_ELBOW_FRAME}"].cost) == [2.0, 2.0, 2.0, 0.0, 0.0, 0.0]
+    assert list(context.tasks["frame/left_grasp_frame"].cost) == [8.0, 8.0, 8.0, 2.0, 2.0, 2.0]
+
+    assert solver.step(targets, state, 0.01, inactive_frames=frozenset({_ELBOW_FRAME})) is not None
+    assert list(context.tasks[f"frame/{_ELBOW_FRAME}"].cost) == [0.0] * 6
+
+
+@pytest.mark.self_hosted
+def test_elbow_hint_bends_the_arm_toward_the_operator_without_losing_the_hand() -> None:
+    solver = _elbow_solver()
+    initial = solver.frame_poses(_home_state(), _ALL_FRAMES)
+    elbow = initial[_ELBOW_FRAME]
+    targets = {
+        **initial,
+        _ELBOW_FRAME: PoseStamped(
+            frame_id=elbow.frame_id,
+            position=[elbow.position.x, elbow.position.y + 0.15, elbow.position.z],
+            orientation=elbow.orientation,
+        ),
+    }
+
+    def settle(inactive: frozenset[str]) -> dict[str, PoseStamped]:
+        solver.reset()
+        state = _home_state()
+        for _ in range(50):
+            command = solver.step(targets, state, 0.01, inactive_frames=inactive)
+            assert command is not None
+            state = command
+        return solver.frame_poses(state, _ALL_FRAMES)
+
+    steered = settle(frozenset())
+    ignored = settle(frozenset({_ELBOW_FRAME}))
+
+    hand_error = np.linalg.norm(
+        steered["left_grasp_frame"].position.to_numpy()
+        - initial["left_grasp_frame"].position.to_numpy()
+    )
+    assert steered[_ELBOW_FRAME].position.y - elbow.position.y > 0.001
+    assert hand_error < 0.01
+    assert abs(ignored[_ELBOW_FRAME].position.y - elbow.position.y) < 0.0005

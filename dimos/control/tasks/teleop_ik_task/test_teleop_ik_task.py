@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.teleop.webxr.body_tracking import ArmPosture
 from dimos.teleop.webxr.controller_types import Buttons
 
 
@@ -49,10 +50,12 @@ def _robot_model() -> RobotModelConfig:
 def _binding(
     hand: str,
     frame: str,
+    elbow: str | None = None,
 ) -> TeleopHandBinding:
     return TeleopHandBinding(
         hand=cast("OperatorHand", hand),
         target_frame=frame,
+        elbow_frame=elbow,
     )
 
 
@@ -74,6 +77,15 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
         ),
         "right_tool": PoseStamped(
             position=Vector3(-1.0, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        # Elbows sit 0.3 m above their tools, so a hint scales the forearm to 0.3 m.
+        "left_elbow": PoseStamped(
+            position=Vector3(1.0, 0.0, 0.3),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        "right_elbow": PoseStamped(
+            position=Vector3(-1.0, 0.0, 0.3),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         ),
     }
@@ -416,3 +428,106 @@ def test_factory_constructs_fresh_custom_solver_for_each_task() -> None:
     assert second._solver is _CustomPoseTargetSolver.instances[1]
     assert first._solver is not second._solver
     assert _CustomPoseTargetSolver.instances[0].received_config == first._config
+
+
+def _posture(
+    hand: str,
+    wrist: tuple[float, float, float],
+    elbow: tuple[float, float, float],
+) -> ArmPosture:
+    return ArmPosture(ts=1.0, hand=cast("OperatorHand", hand), wrist=wrist, elbow=elbow)
+
+
+def test_operator_forearm_places_the_elbow_hint(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "teleop",
+        _config((_binding("right", "right_tool", "right_elbow"),)),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(right=True), 1.0)
+    task.on_right_cartesian_command(_pose(0.5), 1.0)
+    assert task.on_right_arm_posture(_posture("right", (0.0, 0.0, 0.0), (0.0, 0.6, 0.8)), 1.0)
+
+    assert task.compute(_state()) is not None
+
+    targets = solver.step.call_args.args[0]
+    hand = targets["right_tool"].position
+    elbow = targets["right_elbow"].position
+    # The operator's forearm points (0, 0.6, 0.8); scaled by the robot's 0.3 m
+    # elbow-to-hand distance that is an offset of (0, 0.18, 0.24) from the hand.
+    assert (elbow.x, elbow.y, elbow.z) == pytest.approx((hand.x, hand.y + 0.18, hand.z + 0.24))
+    assert solver.step.call_args.kwargs["inactive_frames"] == frozenset()
+
+
+def test_elbow_hint_is_inactive_without_fresh_body_tracking(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "teleop",
+        _config((_binding("right", "right_tool", "right_elbow"),), timeout=0.5),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(right=True), 1.0)
+    task.on_right_cartesian_command(_pose(0.5), 1.0)
+    assert task.compute(_state()) is not None
+    assert solver.step.call_args.kwargs["inactive_frames"] == {"right_elbow"}
+    reference = solver.step.call_args.args[0]["right_elbow"].position
+    assert (reference.x, reference.y, reference.z) == (-1.0, 0.0, 0.3)
+
+    task.on_right_arm_posture(_posture("right", (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)), 1.0)
+    task.on_right_cartesian_command(_pose(0.5), 1.1)
+    assert task.compute(_state(1.1)) is not None
+    assert solver.step.call_args.kwargs["inactive_frames"] == frozenset()
+
+    task.on_teleop_buttons(_buttons(right=True), 1.7)
+    task.on_right_cartesian_command(_pose(0.5), 1.7)
+    assert task.compute(_state(1.7)) is not None
+    assert solver.step.call_args.kwargs["inactive_frames"] == {"right_elbow"}
+
+
+def test_arm_posture_is_ignored_without_an_elbow_binding(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "teleop",
+        _config((_binding("right", "right_tool"),)),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(right=True), 1.0)
+    task.on_right_cartesian_command(_pose(0.5), 1.0)
+
+    assert not task.on_right_arm_posture(_posture("right", (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)), 1.0)
+    assert not task.on_left_arm_posture(_posture("left", (0.0, 0.0, 0.0), (0.0, 0.0, 1.0)), 1.0)
+    assert task.compute(_state()) is not None
+
+    assert set(solver.step.call_args.args[0]) == {"right_tool"}
+    assert solver.step.call_args.kwargs["inactive_frames"] == frozenset()
+
+
+def test_elbow_frame_must_differ_from_the_hand_frame(mocker: MockerFixture) -> None:
+    with pytest.raises(ValueError, match="hint frames must differ"):
+        TeleopIKTask(
+            "teleop",
+            _config((_binding("right", "right_tool", "right_tool"),)),
+            solver=_solver(mocker),
+        )
+
+
+def test_factory_passes_elbow_bindings_and_hint_cost(mocker: MockerFixture) -> None:
+    mocker.patch.object(PinkPoseTargetSolver, "__init__", return_value=None)
+    cfg = TaskConfig(
+        name="teleop",
+        type="teleop_ik",
+        joint_names=["robot/left", "robot/right"],
+        params={
+            "robot_model": _robot_model(),
+            "bindings": [
+                {"hand": "left", "target_frame": "left_tool", "elbow_frame": "left_elbow"}
+            ],
+            "hint_position_cost": 2.0,
+        },
+    )
+
+    task = create_task(cfg, hardware={})
+
+    assert task._config.hint_frames == ("left_elbow",)
+    assert task._config.hint_position_cost == 2.0

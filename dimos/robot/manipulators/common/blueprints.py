@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -39,6 +39,8 @@ class TeleopBinding(TypedDict):
 
     hand: str
     target_frame: str
+    # Robot frame at the elbow, steered by the operator's forearm direction.
+    elbow_frame: NotRequired[str]
 
 
 def trajectory_task(

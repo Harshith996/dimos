@@ -156,6 +156,28 @@ The WebSocket carries two frame formats. Controller poses and joystick state use
 binary LCM messages. When body tracking is enabled, every sampled frame includes
 a JSON body-tracking heartbeat. A `null` joint map means the body source is
 unavailable; an empty map means the source resolved no joints for that frame.
+Body joints are captured in the same `local-floor` space as the controllers so
+the two can be combined.
+
+## Arm posture from body tracking
+
+Hand-pose teleop alone has no notion of the operator's arm: the IK picks any
+joint configuration that reaches the hand target. With the WebXR body-tracking
+module (`body_tracking_mode="optional"` on the teleop module; Meta Quest
+Browser 32+ ships it as an experimental feature), `ArmTeleopModule` also
+publishes `left_arm_posture` and `right_arm_posture`: the operator's wrist,
+elbow, and shoulder positions in the robot frame, taken from the
+`<side>-hand-wrist`, `<side>-arm-lower`, and `<side>-arm-upper` body joints.
+
+A `TeleopIKTask` binding with an `elbow_frame` consumes them. At engagement the
+task measures the robot's elbow-to-hand distance; every tick it scales the
+operator's wrist-to-elbow direction by that distance and attaches it to the
+hand target as a position-only Pink task at `hint_position_cost`, below the
+hand pose costs. The robot elbow therefore follows the operator's forearm
+direction while the hand target keeps priority. When body tracking drops out
+the hint's weight falls to zero, and hand-only teleop continues unchanged.
+`teleop-webxr-dual-openyam` binds `left_link3` and `right_link3`, the OpenYAM
+elbow joints.
 
 The PICO demo requires body tracking. Enable standard DimOS debug logging to
 inspect incoming snapshots:

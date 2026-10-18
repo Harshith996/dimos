@@ -16,7 +16,9 @@
 
 The headset shows the egocentric camera above the workspace and a wrist camera
 beside each arm; pick the webcams per instance, e.g.
-`--left-wrist-camera.device=/dev/v4l/by-id/...`.
+`--left-wrist-camera.device=/dev/v4l/by-id/...`. With headset body tracking,
+the operator's forearm direction steers each robot elbow so the arm's posture
+follows the operator's arm, not only the hand.
 """
 
 from dimos.control.coordinator import TaskConfig
@@ -69,13 +71,24 @@ _dual_openyam_webxr_tasks = {
         joint_names=dual_openyam_arm_joints(side),
         priority=20,
         solver_type=DualOpenYamPinkPoseTargetSolver,
-        bindings=[{"hand": side, "target_frame": f"{side}_grasp_frame"}],
+        bindings=[
+            {
+                "hand": side,
+                "target_frame": f"{side}_grasp_frame",
+                # link3 sits at the elbow joint; the operator's forearm places it.
+                "elbow_frame": f"{side}_link3",
+            }
+        ],
         params={
             "pink": _dual_openyam_webxr_pink,
             "timeout": 0.5,
             "max_command_tracking_error_deg": 10.0,
             "max_joint_velocity_rad_s": 2.0,
             "joint_command_filter_cutoff_hz": 30.0,
+            # The elbow hint trades evenly with wrist orientation (2.0) and
+            # defers to hand position (8.0), so posture follows the operator
+            # without pulling the gripper off its target.
+            "hint_position_cost": 2.0,
         },
     )
     for side in DUAL_OPENYAM_SIDES
@@ -87,7 +100,11 @@ def build_dual_openyam_webxr(
 ) -> Blueprint:
     """Compose dual-arm teleop, headset camera panels, and deployment-specific visualization."""
     return autoconnect(
-        DualArmVideoTeleopModule.blueprint(zero_button="B"),
+        DualArmVideoTeleopModule.blueprint(
+            zero_button="B",
+            # Quest body tracking supplies the operator's elbows when available.
+            body_tracking_mode="optional",
+        ),
         TeleopCamera.blueprint(instance_name=EGOCENTRIC_CAMERA),
         TeleopCamera.blueprint(instance_name=LEFT_WRIST_CAMERA),
         TeleopCamera.blueprint(instance_name=RIGHT_WRIST_CAMERA),

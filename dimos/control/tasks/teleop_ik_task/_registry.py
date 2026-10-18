@@ -21,5 +21,7 @@ TASK_CONSUMES = {
         "left_cartesian_command": ("on_left_cartesian_command", "direct"),
         "right_cartesian_command": ("on_right_cartesian_command", "direct"),
         "teleop_buttons": ("on_teleop_buttons", "broadcast"),
+        "left_arm_posture": ("on_left_arm_posture", "direct"),
+        "right_arm_posture": ("on_right_arm_posture", "direct"),
     },
 }

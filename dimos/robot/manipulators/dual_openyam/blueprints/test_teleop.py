@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTaskParams
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -87,3 +88,29 @@ def test_headset_cameras_feed_their_panels() -> None:
     assert parsed.module_kwargs(LEFT_WRIST_CAMERA)["device"] == "/dev/v4l/by-id/usb-left"
     assert parsed.module_kwargs(RIGHT_WRIST_CAMERA) == {}
     assert parsed.module_kwargs(video.name)["video_max_fps"] == 15
+
+
+def test_operator_elbows_steer_the_arms() -> None:
+    [coordinator] = [
+        atom for atom in teleop_webxr_dual_openyam.blueprints if atom.name == "ControlCoordinator"
+    ]
+    teleop_tasks = [task for task in coordinator.kwargs["tasks"] if task.type == "teleop_ik"]
+    assert len(teleop_tasks) == 2
+    for task in teleop_tasks:
+        params = TeleopIKTaskParams.model_validate(task.params)
+        [binding] = params.bindings
+        side = binding.hand.value
+        assert binding.target_frame == f"{side}_grasp_frame"
+        assert binding.elbow_frame == f"{side}_link3"
+        assert params.hint_position_cost == 2.0
+
+    [video] = [
+        atom
+        for atom in teleop_webxr_dual_openyam.blueprints
+        if atom.module is DualArmVideoTeleopModule
+    ]
+    assert video.kwargs["body_tracking_mode"] == "optional"
+    assert {stream.name for stream in coordinator.streams if stream.direction == "in"} >= {
+        "left_arm_posture",
+        "right_arm_posture",
+    }
