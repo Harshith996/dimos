@@ -282,8 +282,6 @@ impl Planner {
         let pool = Arc::clone(&self.pool);
         pool.install(|| {
             let voxel_size = config.voxel_size;
-            let clearance = config.headroom_cells();
-
             self.voxel_map.clear();
             for &p in points {
                 self.voxel_map.insert(voxelize(p, voxel_size));
@@ -292,19 +290,22 @@ impl Planner {
                 let now = times.now;
                 times.by_key = self.voxel_map.iter().map(|&k| (k, now)).collect();
             }
-
-            let mut surface: Vec<VoxelKey> = Vec::new();
-            extract_surfaces(
-                &self.voxel_map,
-                clearance,
-                config.closing_passes(),
-                &mut self.by_col,
-                &mut surface,
-            );
-            build_surface_lookup(&surface, &mut self.graph.surface_lookup);
-
-            self.rebuild_graph(config);
+            self.rebuild_from_voxels(config);
         });
+    }
+
+    /// Re-derive surfaces, cells, nodes and edges from the whole voxel map.
+    fn rebuild_from_voxels(&mut self, config: &Config) {
+        let mut surface: Vec<VoxelKey> = Vec::new();
+        extract_surfaces(
+            &self.voxel_map,
+            config.headroom_cells(),
+            config.closing_passes(),
+            &mut self.by_col,
+            &mut surface,
+        );
+        build_surface_lookup(&surface, &mut self.graph.surface_lookup);
+        self.rebuild_graph(config);
     }
 
     /// Update planner artifacts within a local region instead of rebuilding

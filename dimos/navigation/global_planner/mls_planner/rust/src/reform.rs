@@ -311,6 +311,9 @@ pub struct ReformParams {
     /// A keyframe whose correction moves its surroundings less than this
     /// waits for a later closure.
     pub min_shift_m: f64,
+    /// Past this fraction of the map's voxels moving, the planner rebuilds
+    /// its graph from the warped voxels rather than repair around them all.
+    pub rebuild_fraction: f64,
 }
 
 /// A keyframe as the map holds it.
@@ -400,7 +403,9 @@ impl ReformState {
             let a = self.applied.get_mut(id).expect("inserted above");
             a.pose = correction.compose(&a.pose);
         }
-        Some(Warp::new(anchors, sigma, time_sigma, reach))
+        let mut warp = Warp::new(anchors, sigma, time_sigma, reach);
+        warp.rebuild_fraction = params.rebuild_fraction;
+        Some(warp)
     }
 }
 
@@ -512,6 +517,7 @@ pub struct Warp {
     sigma: f64,
     time_sigma: f64,
     reach: f64,
+    rebuild_fraction: f64,
 }
 
 impl Warp {
@@ -530,6 +536,7 @@ impl Warp {
             sigma,
             time_sigma,
             reach,
+            rebuild_fraction: 1.0,
         };
         // A moved anchor reaches the tiles around its own. A tile too far from
         // every anchor falls back to its nearest ones, see affects_tile.
@@ -542,6 +549,10 @@ impl Warp {
             }
         }
         warp
+    }
+
+    pub fn rebuild_fraction(&self) -> f64 {
+        self.rebuild_fraction
     }
 
     pub fn sigma(&self) -> f64 {
@@ -807,6 +818,7 @@ mod tests {
             blend_sigma_m: 1.0,
             blend_time_sigma_s: 1.0,
             min_shift_m: 0.02,
+            rebuild_fraction: 1.0,
         }
     }
 

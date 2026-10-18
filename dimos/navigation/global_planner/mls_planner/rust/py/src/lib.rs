@@ -361,7 +361,8 @@ impl MLSPlanner {
     /// each). `held` points warp along and come back in the result. Returns
     /// None when no keyframe moved past min_shift_m, else a dict of what the
     /// warp did and cost.
-    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04))]
+    #[pyo3(signature = (records, held = Vec::new(), blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(
         &mut self,
         py: Python<'py>,
@@ -370,6 +371,7 @@ impl MLSPlanner {
         blend_sigma_m: f64,
         blend_time_sigma_s: f64,
         min_shift_m: f64,
+        rebuild_fraction: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         check_records(&records, 68)?;
         let msg = record_cloud(LOOP_EVENT_FIELDS, records);
@@ -378,6 +380,7 @@ impl MLSPlanner {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
+            rebuild_fraction,
         };
         let started = std::time::Instant::now();
         let Some(warp) = self.reform.closure(&moved, &params) else {
@@ -402,6 +405,7 @@ impl MLSPlanner {
         out.set_item("surface_removed", report.surface_removed)?;
         out.set_item("nodes_moved", report.nodes_moved)?;
         out.set_item("nodes", report.nodes)?;
+        out.set_item("rebuilt", report.rebuilt)?;
         out.set_item("keyframes", warp.keyframes())?;
         out.set_item("keyframes_moved", warp.moved_keyframes())?;
         out.set_item("sigma", warp.sigma())?;

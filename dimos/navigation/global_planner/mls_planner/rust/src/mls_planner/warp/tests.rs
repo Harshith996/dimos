@@ -39,11 +39,20 @@ fn params() -> ReformParams {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 0.0,
         min_shift_m: 0.02,
+        rebuild_fraction: 1.0,
     }
 }
 
 /// A warp that applies `correction` to the keyframes `pick` keeps.
 fn warp_of(correction: Pose, pick: impl Fn(&KeyframeRecord) -> bool) -> Warp {
+    warp_with(correction, pick, params())
+}
+
+fn warp_with(
+    correction: Pose,
+    pick: impl Fn(&KeyframeRecord) -> bool,
+    params: ReformParams,
+) -> Warp {
     let kfs = keyframes();
     let mut state = ReformState::default();
     state.add_keyframes(&kfs);
@@ -55,7 +64,7 @@ fn warp_of(correction: Pose, pick: impl Fn(&KeyframeRecord) -> bool) -> Warp {
             delta: correction,
         })
         .collect();
-    state.closure(&moved, &params()).expect("keyframes moved")
+    state.closure(&moved, &params).expect("keyframes moved")
 }
 
 fn shift(x: f64, y: f64) -> Pose {
@@ -198,4 +207,39 @@ fn voxel_times_follow_the_voxels_through_a_warp() {
     let times = p.voxel_times.as_ref().unwrap();
     assert_eq!(times.by_key.len(), p.voxel_count());
     assert!(p.voxel_keys().all(|k| times.get(&k) == 10.0));
+}
+
+#[test]
+fn a_warp_that_moves_most_of_the_map_rebuilds_and_matches_a_rebuild() {
+    let cfg = test_config();
+    let all = big_world();
+    let mut warped = Planner::new(cfg.worker_threads);
+    warped.update_global_map(&all, &cfg);
+    let (start, goal) = ((0.5, 0.5, 0.05), (7.5, 7.5, 0.05));
+    assert!(!warped.plan_or_truncate(start, goal, &cfg).is_empty());
+
+    let rebuild = ReformParams {
+        rebuild_fraction: 0.25,
+        ..params()
+    };
+    let mut held = [goal];
+    let report = warped.apply_warp(
+        &warp_with(shift(0.8, 0.3), |_| true, rebuild),
+        &mut held,
+        &cfg,
+    );
+    assert!(report.rebuilt, "{report:?}");
+    assert!((held[0].0 - 8.3).abs() < 1e-4 && (held[0].1 - 7.8).abs() < 1e-4);
+    assert_eq!(warped.last_path.as_ref().unwrap().0, held[0]);
+
+    let moved: Vec<(f32, f32, f32)> = all.iter().map(|p| (p.0 + 0.8, p.1 + 0.3, p.2)).collect();
+    let mut rebuilt = Planner::new(cfg.worker_threads);
+    rebuilt.update_global_map(&moved, &cfg);
+    assert_eq!(voxel_set(&warped), voxel_set(&rebuilt));
+    assert_eq!(surface_set(&warped), surface_set(&rebuilt));
+    assert_eq!(node_count(&warped), node_count(&rebuilt));
+}
+
+fn node_count(p: &Planner) -> usize {
+    p.graph().nodes.len()
 }

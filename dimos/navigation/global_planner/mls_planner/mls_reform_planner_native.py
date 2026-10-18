@@ -37,6 +37,11 @@ class MLSReformPlannerNativeConfig(MLSPlannerNativeConfig):
     # A keyframe whose correction moves its surroundings less than this waits
     # for a later closure. Half a voxel moves no voxel.
     reform_min_shift_m: float = 0.04
+    # Past this fraction of the voxels moving in one closure, the graph is
+    # rebuilt from the warped voxels instead of repaired around them: a loop
+    # closure moves most of the map, and repairing nearly all of it costs ~3x a
+    # rebuild (huge_loop_pointlio, reform_bench.py).
+    reform_rebuild_fraction: float = 0.25
 
 
 class MLSReformPlannerNative(MLSPlannerNative):

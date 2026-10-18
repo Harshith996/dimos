@@ -34,6 +34,9 @@ pub struct WarpReport {
     pub surface_removed: usize,
     pub nodes_moved: usize,
     pub nodes: usize,
+    /// Whether so much moved that the graph was rebuilt from the warped
+    /// voxels instead of repaired, re-placing every node.
+    pub rebuilt: bool,
     pub warp_ms: f64,
     pub voxel_ms: f64,
     pub surface_ms: f64,
@@ -43,6 +46,9 @@ pub struct WarpReport {
 impl Planner {
     /// Carry the planner through a warp. `held` are points the caller keeps in
     /// the map frame, such as the active goal, warped in place alongside.
+    /// When more than the warp's rebuild fraction of the voxels change,
+    /// repairing around all of them costs more than a rebuild, so the graph
+    /// is rebuilt from the warped voxels instead.
     pub fn apply_warp(
         &mut self,
         warp: &Warp,
@@ -153,6 +159,24 @@ impl Planner {
             *cells = keys;
         }
 
+        let moved_count = voxels
+            .par_iter()
+            .zip(moved_voxels.par_iter())
+            .filter(|(k, w)| voxelize((w[0], w[1], w[2]), vs) != **k)
+            .count();
+        if moved_count as f64 > warp.rebuild_fraction() * self.voxel_map.len() as f64 {
+            let stage = Instant::now();
+            self.rekey_voxels(&voxels, moved_voxels, vs);
+            report.voxels_moved = moved_count;
+            report.voxel_ms = ms_since(stage);
+            let stage = Instant::now();
+            self.rebuild_from_voxels(config);
+            report.graph_ms = ms_since(stage);
+            report.rebuilt = true;
+            report.nodes = self.graph.nodes.len();
+            return report;
+        }
+
         let stage = Instant::now();
         let edits = self.warp_voxels(&voxels, moved_voxels, vs, &mut report);
         report.voxel_ms = ms_since(stage);
@@ -189,6 +213,39 @@ impl Planner {
         report.graph_ms = ms_since(stage);
         report.nodes = self.graph.nodes.len();
         report
+    }
+
+    /// Move every warped voxel to its new key at once, for a rebuild: each
+    /// leaves its old key and lands in the new one with its time.
+    fn rekey_voxels(&mut self, voxels: &[VoxelKey], warped: &[[f32; 3]], vs: f32) {
+        let landed: Vec<VoxelKey> = warped
+            .par_iter()
+            .map(|w| voxelize((w[0], w[1], w[2]), vs))
+            .collect();
+        let times: Vec<f32> = match &self.voxel_times {
+            Some(t) => voxels
+                .iter()
+                .map(|k| t.by_key.get(k).copied().unwrap_or(f32::NAN))
+                .collect(),
+            None => Vec::new(),
+        };
+        for k in voxels {
+            self.voxel_map.remove(k);
+        }
+        self.voxel_map.extend(landed.iter().copied());
+        if let Some(t) = &mut self.voxel_times {
+            for k in voxels {
+                t.by_key.remove(k);
+            }
+            for (k, time) in landed.into_iter().zip(times) {
+                if time.is_finite() {
+                    t.by_key
+                        .entry(k)
+                        .and_modify(|e| *e = e.min(time))
+                        .or_insert(time);
+                }
+            }
+        }
     }
 
     /// The surface cell a point sits on: the voxel under it, else its own.

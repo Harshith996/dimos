@@ -655,6 +655,7 @@ impl Worker {
             voxels_warped = report.voxels_warped,
             voxels_moved = report.voxels_moved,
             nodes_moved = report.nodes_moved,
+            rebuilt = report.rebuilt,
             "Loop closure applied in place."
         );
     }
