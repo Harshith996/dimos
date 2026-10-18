@@ -208,6 +208,8 @@ def r1pro_control(
             *_head_cameras(),
             ControlCoordinator.blueprint(
                 tick_rate=100,
+                # UrdfManager and the arm planner each spent ~40% of a core receiving it at 100 Hz.
+                joint_state_hz=30.0,
                 hardware=[
                     HardwareComponent(
                         hardware_id="r1pro",
