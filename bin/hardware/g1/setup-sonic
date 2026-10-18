@@ -127,4 +127,6 @@ JetPack $SONIC_JETPACK SONIC environment is ready. Before each run:
 
 Use this environment's dimos directly; uv run can replace the GPU wheel.
 This setup does not install system packages or change the Jetson power/clocks.
+SONIC requires locked CPU/GPU clocks on Jetson. Install the boot service once:
+  sudo bash $REPO_ROOT/bin/hardware/g1/install-jetson-clocks
 EOF

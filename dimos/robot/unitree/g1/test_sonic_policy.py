@@ -32,8 +32,13 @@ from dimos.robot.unitree.g1.control_safety import damping_commands
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 
 
+@pytest.fixture
+def clock_check(mocker):
+    return mocker.patch("dimos.robot.unitree.g1.sonic_controller.require_jetson_clocks")
+
+
 @pytest_asyncio.fixture
-async def connection(mocker, tmp_path):
+async def connection(mocker, tmp_path, clock_check):
     model = tmp_path / "model.onnx"
     model.touch()
     pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline").return_value
@@ -99,6 +104,73 @@ def test_dry_run_republishes_hold_while_policy_runs(connection):
     assert first == second == ramp
     assert first != [1.0] * 29
     assert connection._controller._policy.step.call_count == 2
+
+
+def test_hardware_start_rejects_unlocked_clocks_before_loading_models(
+    connection, clock_check, monkeypatch, mocker
+):
+    monkeypatch.setattr(connection.config, "simulation_address", None)
+    clock_check.side_effect = RuntimeError("SONIC requires locked Jetson CPU/GPU clocks")
+    pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline")
+    publish = mocker.patch.object(connection.motor_command, "publish")
+
+    with pytest.raises(RuntimeError, match="requires locked Jetson"):
+        connection.start()
+
+    assert connection.status()["active"] is False
+    pipeline.assert_not_called()
+    publish.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["arm", "live", "reactivate"])
+def test_unlocked_clocks_reject_activation_without_changing_control_state(
+    connection, clock_check, monkeypatch, operation
+):
+    connection.start()
+    connection.set_dry_run(True)
+    # Keep fake feedback IO but exercise the hardware clock prerequisite.
+    monkeypatch.setattr(connection.config, "simulation_address", None)
+    clock_check.side_effect = RuntimeError("SONIC requires locked Jetson CPU/GPU clocks")
+
+    with pytest.raises(RuntimeError, match="requires locked Jetson"):
+        if operation == "arm":
+            connection.arm()
+        elif operation == "live":
+            connection.set_dry_run(False)
+        else:
+            connection.reset_runtime_state(reactivate=True)
+
+    state = connection.status()
+    assert state["control_state"] == "unarmed"
+    assert state["arm_pending"] is False
+    assert state["dry_run"] is True
+    assert state["fault_reason"] is None
+    connection._controller._adapter.write_motor_commands.assert_not_called()
+
+
+def test_simulation_skips_jetson_clock_requirements(connection, clock_check):
+    clock_check.side_effect = RuntimeError("unlocked clocks")
+    connection.start()
+    connection.set_dry_run(True)
+
+    connection.set_dry_run(False)
+    assert connection.arm()
+    assert connection.reset_runtime_state(reactivate=True)
+    assert connection.status()["dry_run"] is False
+    clock_check.assert_not_called()
+
+
+def test_clock_changes_do_not_block_deactivation_or_stop(connection, clock_check, monkeypatch):
+    _arm(connection)
+    monkeypatch.setattr(connection.config, "simulation_address", None)
+    clock_check.side_effect = RuntimeError("unlocked clocks")
+
+    connection.set_dry_run(True)
+    assert connection.reset_runtime_state(reactivate=False)
+    assert connection.status()["control_state"] == "unarmed"
+    assert connection.halt_robot()
+    assert connection.status()["fault_reason"] == "operator stop"
+    clock_check.assert_not_called()
 
 
 def test_runtime_reset_clears_velocity_and_repeats_the_measured_pose_ramp(connection):

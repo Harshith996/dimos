@@ -58,6 +58,58 @@ installs the matching ONNX Runtime and model assets; `--check` checks system
 prerequisites only. JetPack 5 requires CUDA 11.8 with its compatibility driver
 and cuDNN 8; JetPack 6 requires CUDA 12.6 and cuDNN 9.
 Hardware starts unarmed with policy outputs in dry-run.
+
+On the Jetson, install the clock service once from the checkout:
+
+```bash
+sudo bash bin/hardware/g1/install-jetson-clocks
+```
+
+This applies NVIDIA's `jetson_clocks` now and at each boot, after
+`nvpmodel.service` restores the selected power mode. It locks CPU, GPU and EMC
+clocks to the maximum allowed by that mode. It preserves the selected power mode
+and fan policy. The service runs as root; DimOS runs as your normal user. It does
+not start or restart the robot stack and needs no passwordless sudo rule.
+
+Power mode and clock locking are separate: selecting MAXN alone still permits
+dynamic clock scaling. A manual `sudo jetson_clocks` lasts until reboot (or a
+clock-setting change).
+
+In the 2026-10-18 Orin NX G1 deployment trial, MAXN was already selected. A
+publisher-free inference harness used synthetic standing feedback for 250 steps,
+with ZED HD720 at 15 FPS, NEURAL LIGHT depth and DimOS Desktop running; Rerun was
+disabled. The same harness before and after locking clocks measured:
+
+| Metric | Dynamic clocks | Locked clocks |
+| --- | ---: | ---: |
+| Effective rate | 45.58 Hz | 50.00 Hz |
+| Mean inference step | 15.54 ms | 8.29 ms |
+| p95 inference step | 28.19 ms | 13.75 ms |
+| Maximum inference step | 33.93 ms | 18.65 ms |
+
+GPU clocks were mostly 510 MHz before and fixed at 918 MHz afterward; CPU limits
+were locked to 1,984 MHz. The policy's 50 Hz target gives each step 20 ms. These
+numbers measure the deployed inference workload, not this PR's complete blueprint
+or physical motion. The harness sent no motor commands. After locking, the
+maximum standing start-to-start interval was still 27.36 ms, and a separate
+synthetic turning workload had a 36.31 ms maximum inference step. Clock locking
+does not establish walking stability or guarantee every control deadline.
+
+Check the service after a reboot with:
+
+```bash
+systemctl status dimos-jetson-clocks.service --no-pager
+```
+
+`active (exited)` is expected for this one-shot service. SONIC independently reads
+the CPU/GPU frequency limits before hardware startup, arming, reactivation and
+switching off dry-run. Unlocked or unreadable limits reject the operation with
+the command to fix it; simulation and non-Jetson hosts skip the check. The check
+does not run in the policy loop. It verifies configured CPU/GPU locks, not the
+power budget, EMC, thermal throttling or inference deadlines. A lower power mode
+can still be too slow with locked clocks; choose and validate the mode for the
+specific robot. An `active` service alone does not prove clocks were left locked.
+
 After checking startup and feedback, the hardware activation RPCs are:
 
 ```python
