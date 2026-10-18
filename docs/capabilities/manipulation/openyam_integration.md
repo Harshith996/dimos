@@ -96,6 +96,25 @@ dimos run teleop-webxr-dual-openyam \
 See the [WebXR README](/dimos/teleop/webxr/README.md) for the panel layout,
 border colors, and uplink limits.
 
+### Record episodes
+
+`learning-collect-webxr-dual-openyam` adds the episode monitor and a recorder
+that captures all three cameras, the joint state, and the episode markers.
+Press B to start and save a take and Y to discard it; the zero-pose reset is
+on A in this blueprint. Export saved episodes as a LeRobot dataset with the
+shipped config:
+
+```bash
+dimos run learning-collect-webxr-dual-openyam
+dimos dataprep build \
+  --source ~/.local/state/dimos/recordings/session_dual_openyam_<ts>.db \
+  --config dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json \
+  --output data/datasets/dual_openyam
+```
+
+See the [imitation learning guide](/dimos/imitation/README.md) for the full
+collection workflow.
+
 ## Hardware topology
 
 | Motor | Send ID | Reply ID | Type |

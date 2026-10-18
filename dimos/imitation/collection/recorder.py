@@ -21,6 +21,8 @@ coordinator publishes `coordinator_joint_state`.
 
 The recorded stream names match what DataPrep reads: `color_image`
 and `coordinator_joint_state` (observation), `status` (episode segmentation).
+Robots with other cameras subclass `EpisodeRecorder` and declare their own
+image ports.
 """
 
 from __future__ import annotations
@@ -41,12 +43,11 @@ class CollectionRecorderConfig(RecorderConfig):
     stream_codecs: dict[str, str] = {"status": "json"}
 
 
-class CollectionRecorder(Recorder):
-    """Records the streams DataPrep consumes from a teleop session."""
+class EpisodeRecorder(Recorder):
+    """Records joint state and episode segmentation; subclasses add camera ports."""
 
     config: CollectionRecorderConfig
 
-    color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
     status: In[String]  # episode start/save/discard segmentation
 
@@ -59,3 +60,9 @@ class CollectionRecorder(Recorder):
         if name in self.config.poseless_streams:
             return None
         return await super()._resolve_pose(name, msg, ts)
+
+
+class CollectionRecorder(EpisodeRecorder):
+    """Records the streams DataPrep consumes from a single-camera teleop session."""
+
+    color_image: In[Image]  # observation (camera)

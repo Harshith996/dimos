@@ -25,9 +25,14 @@ dimos --simulation run learning-collect-webxr-xarm7
 
 # Piper on real hardware
 dimos run learning-collect-webxr-piper
+
+# Dual OpenYAM with its egocentric and wrist cameras
+dimos run learning-collect-webxr-dual-openyam
 ```
 
-This brings up teleop, a RealSense (real only), the episode monitor, and the
+This brings up teleop, the cameras (a RealSense on real xArm/Piper hardware;
+the three headset cameras on Dual OpenYAM, selected as described in the
+[WebXR README](/dimos/teleop/webxr/README.md)), the episode monitor, and the
 recorder, all wired together.
 
 ### Controls (WebXR)
@@ -58,7 +63,9 @@ prints one line per transition:
 
 A new timestamped file per run (nothing is overwritten). It records three
 streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+start/save/discard markers). The Dual OpenYAM recorder captures
+`egocentric_image`, `left_wrist_image`, and `right_wrist_image` in place of
+`color_image`.
 
 The exact path is printed when the recorder starts — note it for the next step.
 
@@ -80,6 +87,20 @@ Use `dimos dataprep inspect data/recordings/session.db` to inspect a recording,
 or `dimos dataprep inspect data/datasets/session.hdf5` to inspect the output.
 Saved episodes are validated before export; discarded and unfinished episodes
 are excluded. HDF5 export requires an episode task label.
+
+For Dual OpenYAM a ready-made LeRobot config ships with the robot package. It
+maps the three cameras to `observation.images.{egocentric,left_wrist,right_wrist}`
+and the 14 joints to `observation.state` and `action`:
+
+```bash
+dimos dataprep build \
+  --source ~/.local/state/dimos/recordings/session_dual_openyam_<ts>.db \
+  --config dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json \
+  --output data/datasets/dual_openyam
+```
+
+Its image shapes follow the `TeleopCamera` defaults; adjust them if you change
+the capture size.
 
 See the [offline dataset guide](/dimos/imitation/dataprep/README.md) for an executable config
 example, Python quality-inspection API, alignment rules, and output provenance.
@@ -106,6 +127,9 @@ example, Python quality-inspection API, alignment rules, and output provenance.
 - **Sim vs real camera** — under `--simulation` the MuJoCo camera supplies
   `color_image`; on real hardware a RealSense does. The blueprint picks the
   right one automatically.
+- **Dual OpenYAM controls** — the grips are the arm deadman, **B** toggles
+  recording, **Y** discards, and the zero-pose reset is on **A** instead of its
+  usual **B**.
 - **Action semantics are explicit**: the example config uses measured joint-state
   snapshots. To train on accepted targets, record their command stream and use
   `source_kind="joint_position_updates"`; this reconstructs sparse targets

@@ -29,6 +29,11 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
+from dimos.robot.manipulators.dual_openyam.collection import (
+    DUAL_OPENYAM_COLLECTION_STREAMS,
+    DualOpenYamCollectionRecorder,
+)
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -77,4 +82,17 @@ learning_collect_webxr_piper = autoconnect(
     EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
     teleop_webxr_piper,
     *_camera_if_real(),
+)
+
+
+# Dual OpenYAM with its three headset cameras. B and Y start, save, and discard
+# episodes, so the arms' zero-pose reset moves from B to A. Export with
+# `dimos dataprep build --config dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json`.
+learning_collect_webxr_dual_openyam = autoconnect(
+    DualOpenYamCollectionRecorder.blueprint(
+        db_path=_session_db("dual_openyam"),
+        poseless_streams=list(DUAL_OPENYAM_COLLECTION_STREAMS),
+    ),
+    EpisodeMonitorModule.blueprint(task="Teleoperate the Dual OpenYAM"),
+    build_dual_openyam_webxr(zero_button="A"),
 )

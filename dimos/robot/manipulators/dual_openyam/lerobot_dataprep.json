@@ -1,0 +1,122 @@
+{
+  "source": "data/recordings/session_dual_openyam.db",
+  "episodes": {
+    "extractor": "episode_status",
+    "status_stream": "status"
+  },
+  "observation": {
+    "egocentric": {
+      "stream": "egocentric_image",
+      "field": "data",
+      "dtype": "video",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ]
+    },
+    "left_wrist": {
+      "stream": "left_wrist_image",
+      "field": "data",
+      "dtype": "video",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ]
+    },
+    "right_wrist": {
+      "stream": "right_wrist_image",
+      "field": "data",
+      "dtype": "video",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ]
+    },
+    "state": {
+      "stream": "coordinator_joint_state",
+      "field": "position",
+      "dtype": "float32",
+      "shape": [
+        14
+      ],
+      "names": [
+        "left_joint1",
+        "left_joint2",
+        "left_joint3",
+        "left_joint4",
+        "left_joint5",
+        "left_joint6",
+        "right_joint1",
+        "right_joint2",
+        "right_joint3",
+        "right_joint4",
+        "right_joint5",
+        "right_joint6",
+        "left_arm/gripper",
+        "right_arm/gripper"
+      ]
+    }
+  },
+  "action": {
+    "action": {
+      "stream": "coordinator_joint_state",
+      "field": "position",
+      "dtype": "float32",
+      "shape": [
+        14
+      ],
+      "names": [
+        "left_joint1",
+        "left_joint2",
+        "left_joint3",
+        "left_joint4",
+        "left_joint5",
+        "left_joint6",
+        "right_joint1",
+        "right_joint2",
+        "right_joint3",
+        "right_joint4",
+        "right_joint5",
+        "right_joint6",
+        "left_arm/gripper",
+        "right_arm/gripper"
+      ]
+    }
+  },
+  "sync": {
+    "anchor": "egocentric",
+    "rate_hz": 15.0,
+    "tolerance_ms": 35.0
+  },
+  "quality": {
+    "mode": "strict",
+    "max_alignment_error_ms": 35.0,
+    "max_camera_gap_ms": 150.0
+  },
+  "output": {
+    "format": "lerobot",
+    "path": "data/datasets/dual_openyam",
+    "metadata": {
+      "robot": "dual_openyam",
+      "repo_id": "dimos/dual-openyam"
+    }
+  }
+}
