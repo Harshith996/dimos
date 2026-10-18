@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 import numpy as np
 import pytest
@@ -32,7 +31,6 @@ from dimos.robot.galaxea.r1pro.lio import (
     base_odometry,
     base_pose,
     mount_transforms,
-    set_affinity,
 )
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config, render_cloud
 
@@ -79,13 +77,6 @@ def test_r1prolio_publishes_base_link_pose() -> None:
         assert published[0].position == base_pose(lidar_odometry(), lio._lidar_to_base).position
     finally:
         lio.stop()
-
-
-@pytest.mark.skipif(not hasattr(os, "sched_setaffinity"), reason="Linux only")
-def test_set_affinity_pins_every_thread() -> None:
-    cores = os.sched_getaffinity(0)
-    set_affinity(os.getpid(), cores)
-    assert os.sched_getaffinity(0) == cores
 
 
 @pytest.mark.parametrize("frame_id", ["lidar_pointlio_link", HEAD_LEFT_FRAME, "other"])
@@ -138,4 +129,4 @@ def test_dimslam_takes_pointlio_and_wheels_and_alone_drives_the_planners() -> No
     assert topic_users("in", "slam_sources") == {DimSlam.__name__}
     assert topic_users("out", "chassis_odom") <= {"PoseFromOdometry", "R1ProConnection"}
     # Off tf, so dimSLAM's odom -> base_link is base_link's only parent.
-    assert "R1ProPointLio" not in topic_users("out", "tf")
+    assert "PointLio" not in topic_users("out", "tf")

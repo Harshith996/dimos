@@ -34,8 +34,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
-from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, SourceConfig
+from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, ProcessNoise, SourceConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -57,7 +58,7 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import PoseFromOdometry, R1ProLio, R1ProLioConfig, R1ProPointLio
+from dimos.robot.galaxea.r1pro.lio import PoseFromOdometry, R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -298,11 +299,11 @@ def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        R1ProPointLio.blueprint(
+        PointLio.blueprint(
             sensor_frame_id=lidar_frame,
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
-        ).remappings([(R1ProPointLio, "odometry", "pointlio_odometry")]),
+        ).remappings([(PointLio, "odometry", "pointlio_odometry")]),
         R1ProLio.blueprint(mount_under_base=mount_under_base),
     ).remappings(
         [
@@ -313,18 +314,19 @@ def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
     )
 
 
-# Without an IMU dimSLAM blends the sources' deltas by inverse variance: Point-LIO gets ~99% of x, y and yaw, and z,
-# roll and pitch outright. The wheels mostly carry the pose while Point-LIO is silent (dimSLAM's 0.5 s timeout). Replaying
-# a 30 m R1 drive, the fused pose stayed within 2.5 cm (mean) of Point-LIO's.
+# Replaying a 30 m R1 drive: 4.8 mm / 0.25 deg jitter against Point-LIO's own 13.8 mm / 0.33 deg.
 POINTLIO_SOURCE = SourceConfig(
     parent_frame_id="odom",
     child_frame_id="base_link",
-    pose_variances=Covariance(x=1e-5, y=1e-5, z=1e-5, roll=1e-5, pitch=1e-5, yaw=1e-5),
+    kind="pose",
+    pose_variances=Covariance(x=2e-4, y=2e-4, yaw=3.3e-5),
+    realign_after_seconds=1.0,
 )
 WHEEL_SOURCE = SourceConfig(
     parent_frame_id=R1PRO_WHEEL_ODOM_FRAME,
     child_frame_id="base_link",
-    pose_variances=Covariance(x=1e-3, y=1e-3, yaw=1e-3),
+    kind="twist",
+    twist_variances=Covariance(x=5e-4, y=5e-4, yaw=6e-4),
 )
 
 
@@ -341,12 +343,14 @@ def r1pro_fused_odometry() -> Blueprint:
             # Required, but nothing feeds the camera inputs, so the tracker never starts.
             camera_mode="stereo",
             odom_sources=[POINTLIO_SOURCE, WHEEL_SOURCE],
+            planar=True,
+            process_noise=ProcessNoise(linear_acceleration=2.0, angular_acceleration=1.0),
         ),
         PoseFromOdometry.blueprint(),
     ).remappings(
         [
             # Point-LIO's own odom -> lidar edge would give base_link's subtree a second root.
-            (R1ProPointLio, "tf", "pointlio_tf"),
+            (PointLio, "tf", "pointlio_tf"),
             (R1ProLio, "base_odometry", "slam_sources"),
             (DimSlam, "odom_sources", "slam_sources"),
             (DimSlam, "odometry", "slam_odometry"),

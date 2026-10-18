@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -41,7 +42,6 @@ from dimos.robot.galaxea.r1pro.config import (
 )
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
-from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
@@ -68,7 +68,7 @@ r1pro_nav = autoconnect(
         enable_wrist_color=False,
         enable_imu=False,
     ).remappings([(R1ProConnection, "odometry", "slam_sources")]),
-    r1pro_fused_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
+    r1pro_fused_odometry().remappings([(PointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
     UrdfManager.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
