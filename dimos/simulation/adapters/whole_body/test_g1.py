@@ -15,9 +15,10 @@
 from pathlib import Path
 import threading
 import time
+from typing import Any
 import uuid
 
-from dimos.hardware.whole_body.spec import WholeBodyAdapter
+from dimos.hardware.whole_body.spec import MotorCommand, WholeBodyAdapter
 import dimos.simulation.adapters.whole_body.g1 as g1_mod
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
 from dimos.simulation.engines import mujoco_shm
@@ -59,3 +60,22 @@ def test_sim_g1_adapter_rejects_stale_state(monkeypatch) -> None:
         heartbeat.join()
         adapter.disconnect()
         writer.cleanup()
+
+
+def test_sim_g1_adapter_rejects_commands_until_activated(mocker: Any) -> None:
+    shm_class = mocker.patch("dimos.simulation.adapters.whole_body.g1.ManipShmReader")
+    shm = shm_class.wait_for_live.return_value
+    shm.is_ready.return_value = True
+    adapter = SimMujocoG1WholeBodyAdapter(address=Path("unused.xml"))
+
+    try:
+        assert adapter.connect()
+        commands = [MotorCommand(q=0.1, kp=10.0, kd=1.0)] * 29
+
+        assert adapter.write_motor_commands(commands) is False
+        assert adapter.activate()
+        assert adapter.write_motor_commands(commands) is True
+
+        shm.write_pd_tau_command.assert_called_once()
+    finally:
+        adapter.disconnect()
