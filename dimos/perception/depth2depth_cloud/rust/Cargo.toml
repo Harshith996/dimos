@@ -56,3 +56,7 @@ codegen-units = 1
 
 [profile.dev]
 debug = 0
+
+# zenoh 1.10.1 plus upstream's startup-deadlock fix (eclipse-zenoh/zenoh issue 2581), which no release has yet.
+[patch.crates-io]
+zenoh = { git = "https://github.com/jeff-hykin/zenoh-vendor", tag = "zenoh-1.10.1-patch.2" }
