@@ -88,7 +88,8 @@ r1pro_nav = autoconnect(
         max_range=10.0,
         # Live, heavier head depth fell ~10 s behind; skipping stale clouds means it never works through a queue.
         max_cloud_age_s=1.0,
-        emit_every=1,
+        # Every 2nd cloud (~7 Hz with head depth) is plenty for MLS, which rebuilt its surface on each one at ~32% of a core.
+        emit_every=2,
         global_emit_every=50,
         support_min=4,
         worker_threads=3,
