@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -63,3 +64,9 @@ def webxr_to_robot(
         ts=pose_stamped.ts,
         frame_id=pose_stamped.frame_id,
     )
+
+
+def webxr_point_to_robot(point: Sequence[float]) -> tuple[float, float, float]:
+    """WebXR position -> robot frame, without the per-hand yaw applied to poses."""
+    robot = WEBXR_TO_ROBOT_FRAME[:3, :3] @ np.asarray(point, dtype=np.float64)
+    return (float(robot[0]), float(robot[1]), float(robot[2]))

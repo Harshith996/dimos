@@ -86,6 +86,18 @@ dimos run teleop-webxr-dual-openyam \
 See the [WebXR README](/dimos/teleop/webxr/README.md) for the panel layout,
 border colors, and uplink limits.
 
+### Arm posture
+
+With body tracking enabled in the headset browser (Meta Quest Browser 32 and
+later list WebXR body tracking as an experimental feature), the operator's
+forearm direction steers each robot elbow: `left_link3` and `right_link3`
+follow the wrist-to-elbow direction of the matching arm as a low-weight Pink
+task, so the arm's posture mirrors the operator's instead of being whatever
+configuration reaches the hand. Without body tracking the hint is inert and
+teleop is hand-pose only. The weighting lives in the teleop blueprint
+(`hint_position_cost`); see the [WebXR README](/dimos/teleop/webxr/README.md)
+for the mechanism.
+
 ## Hardware topology
 
 | Motor | Send ID | Reply ID | Type |

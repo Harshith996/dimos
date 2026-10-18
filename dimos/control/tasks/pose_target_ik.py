@@ -39,6 +39,7 @@ from dimos.control.task import (
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
+    _frame_task_key,
     _get_frame_id,
     _PinkRobotContext,
     _PinkSolverCore,
@@ -157,11 +158,11 @@ def _nonnegative_finite(
     value: float,
 ) -> None:
     if not math.isfinite(value) or value < 0.0:
-        label = (
-            "feedback tolerance"
-            if attribute.name == "feedback_limit_tolerance"
-            else "command limit margin"
-        )
+        label = {
+            "feedback_limit_tolerance": "feedback tolerance",
+            "command_limit_margin": "command limit margin",
+            "hint_position_cost": "hint position cost",
+        }[attribute.name]
         raise ValueError(f"PoseTargetIKTask requires a non-negative finite {label}")
 
 
@@ -179,6 +180,14 @@ class PoseTargetIKTaskConfig:
     target_frames: tuple[str, ...] = attrs.field(
         converter=string_tuple_converter,
         validator=_validate_unique_names,
+    )
+    # Frames pulled toward a position with a low weight so the pose targets
+    # keep priority; teleop uses them to steer the elbow from body tracking.
+    hint_frames: tuple[str, ...] = attrs.field(default=(), converter=string_tuple_converter)
+    hint_position_cost: float = attrs.field(
+        default=1.0,
+        converter=float,
+        validator=_nonnegative_finite,
     )
     pink: PinkKinematicsConfig = attrs.field(factory=PinkKinematicsConfig)
     priority: int = attrs.field(default=10, converter=int)
@@ -214,6 +223,12 @@ class PoseTargetIKTaskConfig:
         validator=_nonnegative_finite,
     )
 
+    def __attrs_post_init__(self) -> None:
+        if len(set(self.hint_frames)) != len(self.hint_frames):
+            raise ValueError("PoseTargetIKTask requires unique hint frames")
+        if set(self.hint_frames) & set(self.target_frames):
+            raise ValueError("PoseTargetIKTask hint frames must differ from its target frames")
+
 
 class PoseTargetIKTaskParams(BaseConfig):
     """Serialized configuration shared by streaming pose-target tasks.
@@ -233,6 +248,7 @@ class PoseTargetIKTaskParams(BaseConfig):
     max_command_tracking_error_deg: float = 10.0
     feedback_limit_tolerance: float = 1e-3
     command_limit_margin: float = 1e-4
+    hint_position_cost: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -242,6 +258,8 @@ class FrameTargetSnapshot:
     targets: Mapping[str, PoseStamped]
     last_update_time: float
     extra_joint_positions: Mapping[str, float] = field(default_factory=dict)
+    # Hint frames whose data is missing this tick; their task weight drops to zero.
+    inactive_frames: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -277,16 +295,49 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         self._command_state_generation = 0
         self._validate_frame_targets(
             config.robot_model,
-            config.target_frames,
+            (*config.target_frames, *config.hint_frames),
             config.joint_names,
             config.command_limit_margin,
         )
+
+    @property
+    def hint_frames(self) -> frozenset[str]:
+        """Frames steered by position only, below the pose targets."""
+        return frozenset(self._control_config.hint_frames)
+
+    def _create_tasks(
+        self,
+        configuration: pink.Configuration,
+        target_frames: tuple[str, ...],
+    ) -> dict[str, pink.Task]:
+        tasks = super()._create_tasks(configuration, target_frames)
+        for frame_name in target_frames:
+            if frame_name in self.hint_frames:
+                task = tasks[_frame_task_key(frame_name)]
+                task.set_position_cost(self._control_config.hint_position_cost)
+                task.set_orientation_cost(0.0)
+        return tasks
+
+    def _update_hint_costs(
+        self,
+        tasks: Mapping[str, pink.Task],
+        frame_names: Sequence[str],
+        inactive_frames: Iterable[str],
+    ) -> None:
+        """Silence hint frames without fresh data instead of rebuilding the task stack."""
+        inactive = set(inactive_frames)
+        for frame_name in frame_names:
+            if frame_name not in self.hint_frames:
+                continue
+            cost = 0.0 if frame_name in inactive else self._control_config.hint_position_cost
+            tasks[_frame_task_key(frame_name)].set_position_cost(cost)
 
     def step(
         self,
         frame_targets: Mapping[str, PoseStamped],
         measured_state: JointState,
         dt: float,
+        inactive_frames: frozenset[str] = frozenset(),
     ) -> JointState | None:
         """Advance the persistent command trajectory by one bounded QP step."""
         with self._command_state_lock:
@@ -311,6 +362,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             joint_velocity_limits_rad_s=self._control_config.joint_velocity_limits_rad_s,
             joint_command_filter_cutoff_hz=self._control_config.joint_command_filter_cutoff_hz,
             command_increment_history=command_increment_history,
+            inactive_frames=inactive_frames,
         )
         with self._command_state_lock:
             if self._command_state_generation != generation:
@@ -354,6 +406,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         joint_velocity_limits_rad_s: Mapping[str, float] | None = None,
         joint_command_filter_cutoff_hz: float | None = None,
         command_increment_history: Sequence[NDArray[np.float64]] = (),
+        inactive_frames: Iterable[str] = (),
     ) -> _StreamingStepResult:
         """Perform one feedback-bounded Pink update for the control loop."""
         if not frame_targets:
@@ -401,6 +454,7 @@ class PinkPoseTargetSolver(_PinkSolverCore):
             control_context.tasks = self._build_task_stack(configuration, frame_names)
         tasks = control_context.tasks
         self._update_frame_task_targets(tasks, targets)
+        self._update_hint_costs(tasks, frame_names, inactive_frames)
         self._update_current_posture_target(tasks, configuration)
         self._step_configuration(
             configuration=configuration,
@@ -700,7 +754,12 @@ class PoseTargetIKTask(BaseControlTask):
             self._reset_command_state()
             return None
         try:
-            result = self._solver.step(snapshot.targets, measured_state, state.dt)
+            result = self._solver.step(
+                snapshot.targets,
+                measured_state,
+                state.dt,
+                inactive_frames=snapshot.inactive_frames,
+            )
         except PinkJointLimitError as exc:
             warning_key = (exc.joint_name, exc.boundary)
             last_warning = self._feedback_limit_warning_times.get(warning_key)

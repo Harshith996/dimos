@@ -48,3 +48,32 @@ class BodyTrackingSnapshot(BaseModel):
     capture_time_s: _FiniteFloat
     frame_id: _NonEmptyString
     joints: dict[_NonEmptyString, BodyJointPose] | None
+
+
+class ArmPosture(BaseModel):
+    """One operator arm's joint positions in the robot frame, from body tracking.
+
+    The wrist and elbow fix the forearm direction that teleop IK uses as an
+    elbow hint; the shoulder is carried for consumers that want the upper arm.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ts: _FiniteFloat
+    hand: Literal["left", "right"]
+    wrist: tuple[_FiniteFloat, _FiniteFloat, _FiniteFloat]
+    elbow: tuple[_FiniteFloat, _FiniteFloat, _FiniteFloat]
+    shoulder: tuple[_FiniteFloat, _FiniteFloat, _FiniteFloat] | None = None
+
+
+# WebXR body-tracking joints describing each arm, in preference order. The
+# wrist prefers the hand skeleton's wrist and falls back to the forearm twist
+# joint beside it; "<side>-arm-upper" sits at the shoulder joint.
+ARM_BODY_JOINTS: dict[str, dict[str, tuple[str, ...]]] = {
+    side: {
+        "shoulder": (f"{side}-arm-upper",),
+        "elbow": (f"{side}-arm-lower",),
+        "wrist": (f"{side}-hand-wrist", f"{side}-hand-wrist-twist"),
+    }
+    for side in ("left", "right")
+}

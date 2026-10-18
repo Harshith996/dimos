@@ -548,13 +548,13 @@ def test_default_webxr_config_does_not_request_body_tracking(
             "optional",
             ["immersive-ar", "immersive-vr"],
             ["local-floor"],
-            ["hand-tracking", "bounded-floor", "body-tracking"],
+            ["hand-tracking", "body-tracking"],
         ),
         (
             "required",
             ["immersive-ar"],
             ["local-floor", "body-tracking"],
-            ["hand-tracking", "bounded-floor"],
+            ["hand-tracking"],
         ),
     ],
 )

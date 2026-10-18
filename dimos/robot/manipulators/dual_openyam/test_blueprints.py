@@ -75,12 +75,16 @@ def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None
         return_value={
             "left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
             "right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "left_link3": PoseStamped(position=[0.3, 0.2, 0.5]),
+            "right_link3": PoseStamped(position=[0.3, -0.2, 0.5]),
         },
     )
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
         "step",
-        side_effect=lambda targets, seed, dt: JointState(name=seed.name, position=[0.01] * 6),
+        side_effect=lambda targets, seed, dt, **kwargs: JointState(
+            name=seed.name, position=[0.01] * 6
+        ),
     )
     mocker.patch.object(TickLoop, "start")
     coordinator = DualOpenYamCoordinator(publish_joint_state=False, **kwargs)

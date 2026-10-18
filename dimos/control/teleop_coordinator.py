@@ -19,6 +19,7 @@ from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.teleop.webxr.body_tracking import ArmPosture
 from dimos.teleop.webxr.controller_types import Buttons
 
 
@@ -31,3 +32,7 @@ class TeleopControlCoordinator(ControlCoordinator):
     right_gripper_command: In[Float32]
     teleop_buttons: In[Buttons]
     ee_twist_command: In[TwistStamped]
+    # Operator arm joints from headset body tracking; teleop IK uses the
+    # forearm direction as an elbow hint.
+    left_arm_posture: In[ArmPosture]
+    right_arm_posture: In[ArmPosture]

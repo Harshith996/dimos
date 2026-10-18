@@ -37,6 +37,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.teleop.utils.teleop_transforms import webxr_point_to_robot
+from dimos.teleop.webxr.body_tracking import ARM_BODY_JOINTS, ArmPosture, BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     BUTTON_ALIASES,
     Buttons,
@@ -128,6 +130,38 @@ class TwistTeleopModule(WebXRTeleopModule):
             self.right_twist.publish(twist)
 
 
+def arm_posture_from_body(snapshot: BodyTrackingSnapshot, hand: Hand) -> ArmPosture | None:
+    """Pick one arm's joints out of a body snapshot and express them in the robot frame.
+
+    Returns None while the body source is unavailable or the arm's elbow and
+    wrist are not both resolved.
+    """
+    joints = snapshot.joints
+    if not joints:
+        return None
+    side = hand.name.lower()
+    names = ARM_BODY_JOINTS[side]
+
+    def first(candidates: tuple[str, ...]) -> tuple[float, float, float] | None:
+        for name in candidates:
+            joint = joints.get(name)
+            if joint is not None:
+                return webxr_point_to_robot(joint.position)
+        return None
+
+    elbow = first(names["elbow"])
+    wrist = first(names["wrist"])
+    if elbow is None or wrist is None:
+        return None
+    return ArmPosture(
+        ts=snapshot.capture_time_s,
+        hand="left" if hand is Hand.LEFT else "right",
+        wrist=wrist,
+        elbow=elbow,
+        shoulder=first(names["shoulder"]),
+    )
+
+
 class ArmTeleopModule(WebXRTeleopModule):
     """Quest arm input that leaves engagement to the coordinator task.
 
@@ -139,16 +173,23 @@ class ArmTeleopModule(WebXRTeleopModule):
     control task owns controller-to-robot reference capture so one task can
     establish a coherent reference for both arms.
 
+    With body tracking enabled, each body snapshot also yields the operator's
+    arm joints per hand so the task can steer the robot elbow.
+
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
         - teleop_buttons: Buttons (inherited)
         - left_gripper_command: Float32 normalized opening
         - right_gripper_command: Float32 normalized opening
+        - left_arm_posture: ArmPosture operator arm joints in the robot frame
+        - right_arm_posture: ArmPosture operator arm joints in the robot frame
     """
 
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
+    left_arm_posture: Out[ArmPosture]
+    right_arm_posture: Out[ArmPosture]
 
     _manipulation: ManipulationSpec | None = None
 
@@ -178,6 +219,14 @@ class ArmTeleopModule(WebXRTeleopModule):
         plan = self._manipulation.plan_to_joints(targets)
         if plan.plan is not None:
             self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
+
+    def _on_body_snapshot(self, snapshot: BodyTrackingSnapshot) -> None:
+        super()._on_body_snapshot(snapshot)
+        outputs = {Hand.LEFT: self.left_arm_posture, Hand.RIGHT: self.right_arm_posture}
+        for hand, output in outputs.items():
+            posture = arm_posture_from_body(snapshot, hand)
+            if posture is not None:
+                output.publish(posture)
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
         """Return the current absolute controller pose."""

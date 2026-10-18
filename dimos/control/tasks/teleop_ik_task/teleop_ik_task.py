@@ -23,6 +23,7 @@ import threading
 from typing import TYPE_CHECKING
 
 import attrs
+import numpy as np
 
 from dimos.control.task import CoordinatorState
 from dimos.control.tasks.pose_target_ik import (
@@ -37,7 +38,10 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.service.spec import BaseConfig
+from dimos.teleop.webxr.body_tracking import ArmPosture
 from dimos.teleop.webxr.controller_types import Buttons
 
 if TYPE_CHECKING:
@@ -52,6 +56,10 @@ class OperatorHand(str, Enum):
     RIGHT = "right"
 
 
+# A tracked forearm shorter than this is a tracking glitch, not a direction.
+_MIN_FOREARM_LENGTH_M = 0.05
+
+
 def _binding_tuple_converter(
     values: Iterable[TeleopHandBinding],
 ) -> tuple[TeleopHandBinding, ...]:
@@ -60,10 +68,16 @@ def _binding_tuple_converter(
 
 @attrs.frozen(slots=False)
 class TeleopHandBinding:
-    """Bind one operator hand to one robot frame."""
+    """Bind one operator hand to one robot frame.
+
+    With ``elbow_frame`` set, the operator's forearm direction from body
+    tracking places that robot frame, so the arm's posture follows the
+    operator's instead of only its hand.
+    """
 
     hand: OperatorHand = attrs.field(converter=OperatorHand)
     target_frame: str
+    elbow_frame: str | None = None
 
 
 @attrs.frozen(slots=False)
@@ -82,6 +96,7 @@ class TeleopIKTaskConfig:
     max_command_tracking_error_deg: float = 10.0
     feedback_limit_tolerance: float = 1e-3
     command_limit_margin: float = 1e-4
+    hint_position_cost: float = 1.0
 
     def __attrs_post_init__(self) -> None:
         if not 1 <= len(self.bindings) <= 2:
@@ -100,6 +115,11 @@ class _HandState:
     last_update_time: float = 0.0
     controller_reference: PoseStamped | None = None
     robot_reference: PoseStamped | None = None
+    latest_posture: ArmPosture | None = None
+    posture_update_time: float = 0.0
+    # Robot elbow pose and elbow-to-target distance captured at engagement.
+    elbow_reference: PoseStamped | None = None
+    forearm_length: float = 0.0
 
 
 class _SessionState(Enum):
@@ -132,6 +152,12 @@ class TeleopIKTask(PoseTargetIKTask):
                 joint_names=config.joint_names,
                 robot_model=config.robot_model,
                 target_frames=tuple(binding.target_frame for binding in config.bindings),
+                hint_frames=tuple(
+                    binding.elbow_frame
+                    for binding in config.bindings
+                    if binding.elbow_frame is not None
+                ),
+                hint_position_cost=config.hint_position_cost,
                 pink=config.pink,
                 priority=config.priority,
                 timeout=config.timeout,
@@ -187,6 +213,26 @@ class TeleopIKTask(PoseTargetIKTask):
             state.last_update_time = t_now
         return True
 
+    def on_left_arm_posture(self, msg: ArmPosture, t_now: float) -> bool:
+        """Store the latest left arm joints from body tracking."""
+        return self._on_arm_posture(OperatorHand.LEFT, msg, t_now)
+
+    def on_right_arm_posture(self, msg: ArmPosture, t_now: float) -> bool:
+        """Store the latest right arm joints from body tracking."""
+        return self._on_arm_posture(OperatorHand.RIGHT, msg, t_now)
+
+    def _on_arm_posture(self, hand: OperatorHand, msg: ArmPosture, t_now: float) -> bool:
+        binding = self._bindings.get(hand)
+        if binding is None or binding.elbow_frame is None:
+            return False
+        with self._lock:
+            if self._session_state is _SessionState.ESTOPPED:
+                return False
+            state = self._hands[hand]
+            state.latest_posture = msg
+            state.posture_update_time = t_now
+        return True
+
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition."""
         grip_by_hand = {
@@ -222,6 +268,8 @@ class TeleopIKTask(PoseTargetIKTask):
             hand_state.last_update_time = 0.0
             hand_state.controller_reference = None
             hand_state.robot_reference = None
+            hand_state.elbow_reference = None
+            hand_state.forearm_length = 0.0
 
     def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
         with self._lock:
@@ -237,6 +285,11 @@ class TeleopIKTask(PoseTargetIKTask):
 
         if needs_capture:
             frame_names = [binding.target_frame for binding in self._teleop_config.bindings]
+            frame_names.extend(
+                binding.elbow_frame
+                for binding in self._teleop_config.bindings
+                if binding.elbow_frame is not None
+            )
             robot_poses = self.current_frame_poses(state, frame_names)
             if robot_poses is None:
                 return None
@@ -251,6 +304,15 @@ class TeleopIKTask(PoseTargetIKTask):
                     hand_state = self._hands[hand]
                     hand_state.controller_reference = hand_state.latest_pose
                     hand_state.robot_reference = robot_poses[binding.target_frame]
+                    if binding.elbow_frame is not None:
+                        elbow = robot_poses[binding.elbow_frame]
+                        hand_state.elbow_reference = elbow
+                        hand_state.forearm_length = float(
+                            np.linalg.norm(
+                                hand_state.robot_reference.position.to_numpy()
+                                - elbow.position.to_numpy()
+                            )
+                        )
 
         with self._lock:
             if (
@@ -259,7 +321,9 @@ class TeleopIKTask(PoseTargetIKTask):
             ):
                 return None
             targets: dict[str, PoseStamped] = {}
+            inactive: set[str] = set()
             update_times = [self._last_button_update_time]
+            frame_id = self._teleop_config.robot_model.base_pose.frame_id
             for hand, binding in self._bindings.items():
                 hand_state = self._hands[hand]
                 current = hand_state.latest_pose
@@ -268,16 +332,55 @@ class TeleopIKTask(PoseTargetIKTask):
                 if current is None or controller_reference is None or robot_reference is None:
                     return None
                 delta = current - controller_reference
+                target_position = robot_reference.position + delta.position
                 targets[binding.target_frame] = PoseStamped(
-                    frame_id=self._teleop_config.robot_model.base_pose.frame_id,
-                    position=robot_reference.position + delta.position,
+                    frame_id=frame_id,
+                    position=target_position,
                     orientation=delta.orientation * robot_reference.orientation,
                 )
                 update_times.append(hand_state.last_update_time)
+                if binding.elbow_frame is not None:
+                    elbow_position, active = self._elbow_target_locked(
+                        hand_state, target_position, state.t_now
+                    )
+                    targets[binding.elbow_frame] = PoseStamped(
+                        frame_id=frame_id,
+                        position=elbow_position,
+                        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    )
+                    if not active:
+                        inactive.add(binding.elbow_frame)
             return FrameTargetSnapshot(
                 targets=targets,
                 last_update_time=min(update_times),
+                inactive_frames=frozenset(inactive),
             )
+
+    def _elbow_target_locked(
+        self, hand_state: _HandState, wrist_target: Vector3, t_now: float
+    ) -> tuple[Vector3, bool]:
+        """Place the robot elbow along the operator's forearm direction.
+
+        The operator's wrist-to-elbow direction, measured in the robot frame,
+        is scaled by the robot's own elbow-to-target distance and attached to
+        the hand target. Without fresh body tracking the elbow reference is
+        returned inactive, so the hint carries no weight.
+        """
+        posture = hand_state.latest_posture
+        reference = hand_state.elbow_reference
+        fallback = reference.position if reference is not None else wrist_target
+        if posture is None or reference is None or hand_state.forearm_length <= 0.0:
+            return fallback, False
+        if t_now - hand_state.posture_update_time > self._teleop_config.timeout:
+            return fallback, False
+        forearm = np.asarray(posture.elbow, dtype=np.float64) - np.asarray(
+            posture.wrist, dtype=np.float64
+        )
+        length = float(np.linalg.norm(forearm))
+        if length < _MIN_FOREARM_LENGTH_M:
+            return fallback, False
+        target = wrist_target.to_numpy() + hand_state.forearm_length * forearm / length
+        return Vector3(float(target[0]), float(target[1]), float(target[2])), True
 
     def _on_target_timeout(self) -> None:
         with self._lock:
@@ -300,6 +403,7 @@ class TeleopHandBindingParams(BaseConfig):
 
     hand: OperatorHand
     target_frame: str
+    elbow_frame: str | None = None
 
 
 class TeleopIKTaskParams(PoseTargetIKTaskParams):
@@ -319,6 +423,7 @@ def create_task(
         TeleopHandBinding(
             hand=binding.hand,
             target_frame=binding.target_frame,
+            elbow_frame=binding.elbow_frame,
         )
         for binding in params.bindings
     )
@@ -336,6 +441,7 @@ def create_task(
         max_command_tracking_error_deg=params.max_command_tracking_error_deg,
         feedback_limit_tolerance=params.feedback_limit_tolerance,
         command_limit_margin=params.command_limit_margin,
+        hint_position_cost=params.hint_position_cost,
     )
     return TeleopIKTask(
         cfg.name,

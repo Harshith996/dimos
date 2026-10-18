@@ -383,3 +383,50 @@ def test_measured_frame_poses_follow_measured_joints_not_the_target(mocker: Mock
 def test_measured_frame_poses_are_empty_without_full_feedback(mocker: MockerFixture) -> None:
     task = _Task(_config(), _solver(mocker), _snapshot())
     assert task.measured_frame_poses(_state(positions={"arm/a": 0.2})) == {}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"hint_frames": ("elbow", "elbow")}, "unique hint frames"),
+        ({"hint_frames": ("tool",)}, "differ from its target frames"),
+        ({"hint_position_cost": -1.0}, "hint position cost"),
+    ],
+)
+def test_hint_frame_configuration_is_validated(overrides: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        PoseTargetIKTaskConfig(
+            joint_names=("arm/a", "arm/b"),
+            robot_model=_robot_model(),
+            target_frames=("tool",),
+            **overrides,
+        )
+
+
+def test_compute_passes_inactive_hint_frames_to_the_solver(mocker: MockerFixture) -> None:
+    solver = mocker.Mock(spec=PinkPoseTargetSolver)
+    solver.step.return_value = JointState(name=["arm/a", "arm/b"], position=[0.1, 0.2])
+    snapshot = FrameTargetSnapshot(
+        targets={"tool": PoseStamped(), "elbow": PoseStamped()},
+        last_update_time=1.0,
+        inactive_frames=frozenset({"elbow"}),
+    )
+    task = _Task(
+        PoseTargetIKTaskConfig(
+            joint_names=("arm/a", "arm/b"),
+            robot_model=_robot_model(),
+            target_frames=("tool",),
+            hint_frames=("elbow",),
+        ),
+        solver,
+        snapshot,
+    )
+    state = CoordinatorState(
+        joints=JointStateSnapshot(joint_positions={"arm/a": 0.0, "arm/b": 0.0}),
+        t_now=1.0,
+        dt=0.01,
+    )
+
+    assert task.compute(state) is not None
+
+    assert solver.step.call_args.kwargs["inactive_frames"] == frozenset({"elbow"})
