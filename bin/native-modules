@@ -756,15 +756,40 @@ def check_shared_deps(modules: tuple[DiscoveredModule, ...]) -> None:
             if build_dir in closures and build_dir not in seen.get(key, {}):
                 _log(f"WARN:  exception {build_dir} {key} matches nothing on {current_system()}")
     for key, groups in failures.items():
-        where = " · ".join(
-            f"{label} ({_where(dirs, len(closures))})" for label, dirs in groups.items()
-        )
-        _log(f"FAIL:  {key}  {where}")
+        # The biggest group is the reference; every other module gets told how to match it
+        canonical = max(groups, key=lambda label: (len(groups[label]), label))
+        lines = [f"FAIL:  {key}", f"  {canonical}: {', '.join(sorted(groups[canonical]))}"]
+        for label, dirs in groups.items():
+            if label == canonical:
+                continue
+            lines.append(f"  {label}: {', '.join(sorted(dirs))}")
+            for build_dir in sorted(dirs):
+                name = key.split("@")[0]
+                if name.startswith("rust_") and "[" not in label and " " not in label + canonical:
+                    crate = name.removeprefix("rust_")
+                    lines.append(
+                        f"    fix: (cd {build_dir} && cargo update -p {crate}@{label} --precise {canonical})"
+                    )
+                elif "[" in label:
+                    have, want = (
+                        set(x.split("[", 1)[1].rstrip("]").split()) for x in (label, canonical)
+                    )
+                    crate = name.removeprefix("rust_")
+                    if want - have:
+                        lines.append(
+                            f"    fix: enable {crate} features {sorted(want - have)} in {build_dir}"
+                        )
+                    if have - want:
+                        lines.append(
+                            f"    fix: {build_dir} enables extra {crate} features {sorted(have - want)};"
+                            " enable them in the other modules too, or stop enabling them here"
+                        )
+                lines.append(
+                    f'    or add "{key}" under "{build_dir}" in bin/shared-deps-exceptions.json'
+                )
+        _log("\n".join(lines))
     if failures:
-        sys.exit(
-            f"{len(failures)} shared dependency mismatch(es): align them, or add the odd"
-            " module's key to bin/shared-deps-exceptions.json"
-        )
+        sys.exit(f"{len(failures)} shared dependency mismatch(es)")
     excepted = sum(len(keys) for keys in shared_deps_exceptions().values())
     _log(f"Shared dependencies agree ({excepted} exception(s))")
 
