@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.constants import DATASETS_DIR
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
     learning_collect_webxr_dual_openyam,
@@ -26,6 +27,7 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModule,
     EpisodeMonitorModuleConfig,
 )
+from dimos.imitation.collection.lerobot_export import LeRobotExportModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
@@ -35,6 +37,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.dual_openyam.collection import (
     DUAL_OPENYAM_CAMERA_STREAMS,
+    LEROBOT_DATAPREP_CONFIG,
     DualOpenYamCollectionRecorder,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
@@ -134,9 +137,9 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
 
 def test_dual_openyam_recorder_captures_every_camera_panel() -> None:
     blueprint = learning_collect_webxr_dual_openyam
-    recorder = blueprint.active_blueprints[0]
+    recorder = blueprint.active_blueprints[1]
     assert recorder.module is DualOpenYamCollectionRecorder
-    assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
+    assert blueprint.active_blueprints[2].module is EpisodeMonitorModule
     assert recorder.kwargs["poseless_streams"] == [
         *DUAL_OPENYAM_CAMERA_STREAMS,
         AGGREGATE,
@@ -168,3 +171,22 @@ def test_dual_openyam_zero_reset_keeps_clear_of_the_episode_buttons() -> None:
 
     assert teleop.kwargs["zero_button"] == "A"
     assert teleop.kwargs["zero_button"] not in episode_buttons
+
+
+def test_dual_openyam_exports_the_session_it_records() -> None:
+    blueprint = learning_collect_webxr_dual_openyam
+    exporter, recorder = blueprint.active_blueprints[:2]
+    assert exporter.module is LeRobotExportModule
+    assert exporter.kwargs["source"] == recorder.kwargs["db_path"]
+    assert exporter.kwargs["dataprep_config"] == LEROBOT_DATAPREP_CONFIG
+    assert exporter.kwargs["dataset_path"].parent == DATASETS_DIR
+    assert exporter.kwargs["dataset_path"].name.startswith("dual_openyam_")
+
+    teleop = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ArmTeleopModule)
+    )
+    status = next(stream for stream in exporter.streams if stream.name == "status")
+    export_status = next(stream for stream in teleop.streams if stream.name == "export_status")
+    assert status.direction == "in"
+    assert export_status.direction == "in"
+    assert "B" in teleop.kwargs["hud_hint"] and "Y" in teleop.kwargs["hud_hint"]

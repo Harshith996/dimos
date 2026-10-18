@@ -25,9 +25,15 @@ import numpy as np
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode import EpisodeEvent, EpisodeStatus, RecordingState
-from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
-from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
+from dimos.imitation.collection.episode import (
+    EpisodeEvent,
+    EpisodeStatus,
+    ExportStatus,
+    RecordingState,
+)
+from dimos.imitation.collection.lerobot_export import LeRobotExportModule
+from dimos.imitation.dataprep.build import inspect_dataset
+from dimos.imitation.dataprep.schema import DataPrepConfig
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
@@ -120,10 +126,22 @@ def recorder(tmp_path: Path) -> Iterator[DualOpenYamCollectionRecorder]:
     recorder.stop()
 
 
+@pytest.fixture
+def exporter(tmp_path: Path) -> Iterator[LeRobotExportModule]:
+    exporter = LeRobotExportModule(
+        source=tmp_path / "session.db",
+        dataprep_config=LEROBOT_DATAPREP_CONFIG,
+        dataset_path=tmp_path / "dataset",
+    )
+    exporter.status.transport = _DirectTransport()
+    yield exporter
+    exporter.stop()
+
+
 @pytest.mark.self_hosted
 @pytest.mark.skipif_no_turbojpeg
 def test_recorded_episodes_export_as_a_lerobot_dataset(
-    tmp_path: Path, recorder: DualOpenYamCollectionRecorder
+    tmp_path: Path, recorder: DualOpenYamCollectionRecorder, exporter: LeRobotExportModule
 ) -> None:
     config = _config()
     rate = config.sync.rate_hz
@@ -180,16 +198,22 @@ def test_recorded_episodes_export_as_a_lerobot_dataset(
         )
     recorder.stop()
 
-    dataset = run_dataprep(
-        config.model_copy(
-            update={
-                "source": str(tmp_path / "session.db"),
-                "output": OutputConfig(
-                    format="lerobot", path=tmp_path / "dataset", metadata=config.output.metadata
-                ),
-            }
-        )
+    # The exporter rebuilds the dataset from the recording when a save lands.
+    exports: list[ExportStatus] = []
+    exporter.export_status.subscribe(
+        lambda message: exports.append(ExportStatus.from_json(message.data))
     )
+    exporter.start()
+    exporter.status.transport.publish(_status(takes[-1][0] + 1.0, "save", "idle", saved, discarded))
+    wait_until(
+        lambda: bool(exports) and exports[-1].state in ("done", "failed"),
+        timeout=120.0,
+        interval=0.05,
+        message="LeRobot export did not finish",
+    )
+    assert exports[-1].state == "done", exports[-1].error
+    assert exports[-1].episodes == 2
+    dataset = tmp_path / "dataset"
 
     info = json.loads((dataset / "meta" / "info.json").read_text())
     image_features = {key for key in info["features"] if key.startswith("observation.images.")}

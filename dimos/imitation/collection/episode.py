@@ -21,6 +21,7 @@ from pydantic import BaseModel, FiniteFloat
 
 EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
 RecordingState: TypeAlias = Literal["idle", "recording"]
+ExportState: TypeAlias = Literal["idle", "exporting", "done", "failed"]
 
 
 class EpisodeStatus(BaseModel):
@@ -56,3 +57,20 @@ class EpisodeStatus(BaseModel):
         schema["properties"]["schema_version"] = {"type": "integer", "const": 1}
         schema["required"].append("schema_version")
         return schema
+
+
+class ExportStatus(BaseModel):
+    """Progress of the dataset export that follows saved episodes."""
+
+    ts: FiniteFloat
+    state: ExportState
+    dataset: str
+    episodes: int = 0  # episodes in the dataset after the last successful export
+    error: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(self.model_dump(mode="json"), allow_nan=False)
+
+    @classmethod
+    def from_json(cls, data: str) -> ExportStatus:
+        return cls.model_validate_json(data)

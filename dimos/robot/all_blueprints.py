@@ -282,6 +282,7 @@ all_modules = {
     "joystick-module": "dimos.robot.unitree.b1.joystick_module.JoystickModule",
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
+    "le-robot-export-module": "dimos.imitation.collection.lerobot_export.LeRobotExportModule",
     "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",
     "lidar-window-relocalization": "dimos.mapping.relocalization.lidar.module.LidarWindowRelocalization",
     "local-map-relocalization": "dimos.mapping.relocalization.lidar.module.LocalMapRelocalization",

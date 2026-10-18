@@ -86,14 +86,16 @@ def build_dual_openyam_webxr(
     *,
     visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
     zero_button: str | None = "B",
+    hud_hint: str | None = None,
 ) -> Blueprint:
     """Compose dual-arm teleop, headset camera panels, and deployment-specific visualization.
 
     `zero_button` is the Quest button that moves both arms to the zero joint
-    pose; stacks that give B another job (episode recording) pick a free one.
+    pose; stacks that give B another job (episode recording) pick a free one
+    and describe their button map in `hud_hint`, shown on the headset HUD.
     """
     return autoconnect(
-        DualArmVideoTeleopModule.blueprint(zero_button=zero_button),
+        DualArmVideoTeleopModule.blueprint(zero_button=zero_button, hud_hint=hud_hint),
         TeleopCamera.blueprint(instance_name=EGOCENTRIC_CAMERA),
         TeleopCamera.blueprint(instance_name=LEFT_WRIST_CAMERA),
         TeleopCamera.blueprint(instance_name=RIGHT_WRIST_CAMERA),

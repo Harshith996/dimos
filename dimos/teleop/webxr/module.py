@@ -44,7 +44,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus, ExportStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
@@ -108,6 +108,8 @@ class WebXRTeleopConfig(ModuleConfig):
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
+    # One line of operator guidance for the headset HUD, e.g. the button map.
+    hud_hint: str | None = None
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
     zero_button: str | None = None
 
@@ -142,6 +144,7 @@ class WebXRTeleopModule(Module):
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
     status: In[String]
+    export_status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -184,6 +187,7 @@ class WebXRTeleopModule(Module):
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
+        self._latest_export_status: ExportStatus | None = None
         self._body_report_started_at: float | None = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
@@ -259,6 +263,7 @@ class WebXRTeleopModule(Module):
             "camera_panels": [
                 {"name": panel.name, "slot": panel.slot} for panel in self.camera_panels
             ],
+            "hud_hint": self.config.hud_hint,
         }
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
@@ -322,8 +327,11 @@ class WebXRTeleopModule(Module):
             self._reset_controller_state()
         with self._lock:
             status = self._latest_episode_status
+            export = self._latest_export_status
         if status is not None:
             self._broadcast_text(self._encode_episode_status(status))
+        if export is not None:
+            self._broadcast_text(self._encode_export_status(export))
         return True
 
     def _client_disconnected(self, ws: WebSocket) -> None:
@@ -373,11 +381,31 @@ class WebXRTeleopModule(Module):
         )
         return json.dumps(payload, separators=(",", ":"))
 
+    def _on_export_status(self, message: String) -> None:
+        try:
+            status = ExportStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid export status JSON", exc_info=True)
+            return
+        with self._lock:
+            self._latest_export_status = status
+        self._broadcast_text(self._encode_export_status(status))
+
+    @staticmethod
+    def _encode_export_status(status: ExportStatus) -> str:
+        payload = status.model_dump(mode="json")
+        payload["type"] = "export_status"
+        return json.dumps(payload, separators=(",", ":"))
+
     @rpc
     def build(self) -> None:
         super().build()
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
+        if self.export_status.connection is not None or self.export_status._transport is not None:
+            self.register_disposable(
+                Disposable(self.export_status.subscribe(self._on_export_status))
+            )
 
     @rpc
     def start(self) -> None:

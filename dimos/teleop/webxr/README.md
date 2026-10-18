@@ -115,6 +115,12 @@ grip is held, the center panel turns red while an episode is recording, and a
 panel goes gray when its camera has not delivered a frame for two seconds. A
 panel without a camera shows a dark blank.
 
+A compact HUD card sits below the center panel whenever a collection stack
+publishes episode status or the module is configured with a `hud_hint` (one
+line of operator guidance such as the button map). It shows the recording
+state with a blinking `REC` timer, the hint, the task label, take counters,
+and dataset export progress from `export_status`.
+
 `VideoArmTeleopModule` and `Go2TeleopModule` fill the center panel from
 `color_image`. `DualArmVideoTeleopModule` adds `egocentric_image`,
 `left_wrist_image`, and `right_wrist_image`; `teleop-webxr-dual-openyam` feeds

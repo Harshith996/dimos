@@ -27,7 +27,7 @@ import pytest
 import pytest_mock
 
 from dimos.core.stream import Transport
-from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus, ExportStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Joy import Joy
@@ -263,6 +263,56 @@ def test_connected_client_receives_latest_episode_status(
     payload = json.loads(broadcast.call_args.args[0])
     assert payload["type"] == "episode_status"
     assert payload["episodes_saved"] == 12
+
+
+def _export_status() -> ExportStatus:
+    return ExportStatus(ts=200.0, state="done", dataset="/tmp/datasets/dual_openyam_1", episodes=3)
+
+
+def test_export_status_is_cached_and_broadcast(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+
+    module._on_export_status(String(_export_status().to_json()))
+
+    assert module._latest_export_status == _export_status()
+    assert json.loads(broadcast.call_args.args[0]) == {
+        "type": "export_status",
+        "ts": 200.0,
+        "state": "done",
+        "dataset": "/tmp/datasets/dual_openyam_1",
+        "episodes": 3,
+        "error": None,
+    }
+
+
+def test_connected_client_receives_latest_export_status(
+    module: WebXRTeleopModule,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module._latest_export_status = _export_status()
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+
+    assert module._client_connected(mocker.MagicMock()) is True
+
+    payload = json.loads(broadcast.call_args.args[0])
+    assert payload["type"] == "export_status"
+    assert payload["episodes"] == 3
+
+
+def test_build_subscribes_to_export_status(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    module.export_status._transport = mocker.MagicMock()
+    subscribe = mocker.patch.object(
+        module.export_status, "subscribe", return_value=mocker.MagicMock()
+    )
+
+    module.build()
+
+    subscribe.assert_called_once_with(module._on_export_status)
 
 
 def test_connected_client_without_episode_status_does_not_show_collection_hud(
@@ -538,7 +588,16 @@ def test_default_webxr_config_does_not_request_body_tracking(
             "optionalFeatures": ["hand-tracking"],
         },
         "camera_panels": [],
+        "hud_hint": None,
     }
+
+
+def test_hud_hint_is_exposed_to_the_client() -> None:
+    module = WebXRTeleopModule(hud_hint="B start/save · Y discard")
+    try:
+        assert module._webxr_client_config()["hud_hint"] == "B start/save · Y discard"
+    finally:
+        module.stop()
 
 
 @pytest.mark.parametrize(
@@ -574,6 +633,7 @@ def test_enabled_webxr_config_requests_body_tracking(
                 "optionalFeatures": optional_features,
             },
             "camera_panels": [],
+            "hud_hint": None,
         }
     finally:
         module.stop()

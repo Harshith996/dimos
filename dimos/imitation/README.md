@@ -88,19 +88,17 @@ or `dimos dataprep inspect data/datasets/session.hdf5` to inspect the output.
 Saved episodes are validated before export; discarded and unfinished episodes
 are excluded. HDF5 export requires an episode task label.
 
-For Dual OpenYAM a ready-made LeRobot config ships with the robot package. It
-maps the three cameras to `observation.images.{egocentric,left_wrist,right_wrist}`
-and the 14 joints to `observation.state` and `action`:
-
-```bash
-dimos dataprep build \
-  --source ~/.local/state/dimos/recordings/session_dual_openyam_<ts>.db \
-  --config dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json \
-  --output data/datasets/dual_openyam
-```
-
-Its image shapes follow the `TeleopCamera` defaults; adjust them if you change
-the capture size.
+Dual OpenYAM exports for you: `learning-collect-webxr-dual-openyam` runs a
+`LeRobotExportModule` that rebuilds the LeRobot dataset every time you save an
+episode, into `datasets/dual_openyam_<ts>` next to the `recordings/` directory
+(the repo root in a checkout, the state directory when installed). The headset
+HUD shows the export progress and the episode count. Pass
+`--export-on-save false` to export only once, at shutdown. The config it uses,
+`dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json`, maps the three
+cameras to `observation.images.{egocentric,left_wrist,right_wrist}` and the 14
+joints to `observation.state` and `action`; it works with `dimos dataprep
+build --config` too. Its image shapes follow the `TeleopCamera` defaults, so
+adjust them if you change the capture size.
 
 See the [offline dataset guide](/dimos/imitation/dataprep/README.md) for an executable config
 example, Python quality-inspection API, alignment rules, and output provenance.
@@ -129,7 +127,9 @@ example, Python quality-inspection API, alignment rules, and output provenance.
   right one automatically.
 - **Dual OpenYAM controls** — the grips are the arm deadman, **B** toggles
   recording, **Y** discards, and the zero-pose reset is on **A** instead of its
-  usual **B**.
+  usual **B**. The headset HUD below the center camera panel shows the state
+  (`READY`, a blinking red `REC 00:07`, `SAVED`), this button map, the task,
+  take counters, and LeRobot export progress.
 - **Action semantics are explicit**: the example config uses measured joint-state
   snapshots. To train on accepted targets, record their command stream and use
   `source_kind="joint_position_updates"`; this reconstructs sparse targets

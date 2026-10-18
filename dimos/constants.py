@@ -33,11 +33,13 @@ if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
     RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
+    DATASETS_DIR = DIMOS_PROJECT_ROOT / "datasets"
     DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
+    DATASETS_DIR = STATE_DIR / "datasets"
     DOWNLOADS_DIR = STATE_DIR / "downloads"
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
