@@ -27,6 +27,7 @@ from fastapi import Depends, Query, Request
 from pydantic import BeforeValidator
 
 from experimental.gateway import events, introspect, store
+from experimental.gateway.control import Controls
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.skills import Skills
 from experimental.gateway.uploads import Uploads
@@ -49,6 +50,7 @@ class State:
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
     skills: Skills = field(default_factory=Skills)
+    controls: Controls = field(default_factory=Controls)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
     listed: list[dict[str, Any]] | None = None
     exit: Callable[[], None] = lambda: os._exit(0)

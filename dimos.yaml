@@ -31,6 +31,12 @@ provides:
     Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   endpoints:
     - method: GET
+      path: control
+      description: The running motion controller's lifecycle, feedback health and available operator actions
+    - method: POST
+      path: control/actions
+      description: Activate, deactivate, stop walking or latch damping for an explicitly identified run and controller
+    - method: GET
       path: info
       description: Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process
     - method: POST
