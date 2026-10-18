@@ -33,13 +33,15 @@ from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
-from dimos.agents.base_agent import BaseAgent, BaseAgentConfig
+from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.utils.logging_config import setup_logger
 
@@ -81,7 +83,8 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     )
 
 
-class AgentConfig(BaseAgentConfig):
+class AgentConfig(ModuleConfig):
+    mcp_server_url: str | None = "http://localhost:9990/mcp"  # None: no tools
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
@@ -91,6 +94,7 @@ class AgentConfig(BaseAgentConfig):
 class Agent(BaseAgent):
     config: AgentConfig
 
+    mcp: McpClient | None
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
@@ -103,6 +107,7 @@ class Agent(BaseAgent):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self.mcp = McpClient(self.config.mcp_server_url) if self.config.mcp_server_url else None
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()
@@ -136,10 +141,10 @@ class Agent(BaseAgent):
             return
         self._message_queue.put(HumanMessage(content=f"[tool:{tool_name}] {text}"))
 
-    def _fetch_tools(self) -> list[StructuredTool]:
-        raw_tools = self.mcp.list_tools()
+    def _fetch_tools(self, mcp: McpClient) -> list[StructuredTool]:
+        raw_tools = mcp.list_tools()
         self._tool_registry = {t["name"]: t for t in raw_tools}
-        tools = [self._mcp_tool_to_langchain(t) for t in raw_tools]
+        tools = [self._mcp_tool_to_langchain(mcp, t) for t in raw_tools]
 
         if not tools:
             logger.warning("No tools found from MCP server.")
@@ -149,13 +154,13 @@ class Agent(BaseAgent):
 
         return tools
 
-    def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
+    def _mcp_tool_to_langchain(self, mcp: McpClient, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
         def call_tool(**kwargs: Any) -> str:
-            result = self.mcp.call_tool(name, kwargs)
+            result = mcp.call_tool(name, kwargs)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -196,7 +201,7 @@ class Agent(BaseAgent):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
-        self._agent_tools = self._fetch_tools()
+        self._agent_tools = [] if self.mcp is None else self._fetch_tools(self.mcp)
         self._rebuild_agent()
         with self._lock:
             if not self._thread.is_alive():
@@ -230,6 +235,8 @@ class Agent(BaseAgent):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        if self.mcp is not None:
+            self.mcp.close()
         super().stop()
 
     @rpc
@@ -275,7 +282,7 @@ class Agent(BaseAgent):
             )
             return
 
-        if tool_name not in self._tool_registry:
+        if self.mcp is None or tool_name not in self._tool_registry:
             self._message_queue.put(
                 HumanMessage(f"Continuation failed: tool '{tool_name}' not found")
             )

@@ -112,7 +112,8 @@ def agent(mocker: MockerFixture) -> Iterator[Agent]:
 
 
 def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
-    tools = agent._fetch_tools()
+    assert agent.mcp is not None
+    tools = agent._fetch_tools(agent.mcp)
 
     assert len(tools) == 2
     assert tools[0].name == "add"
@@ -120,7 +121,8 @@ def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
 
 
 def test_tool_invocation_via_mcp(agent: Agent) -> None:
-    tools = agent._fetch_tools()
+    assert agent.mcp is not None
+    tools = agent._fetch_tools(agent.mcp)
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
@@ -252,3 +254,19 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
         configured_agent.set_trace_dir(None)
         assert init.call_args.kwargs["trace_dir"] is None
         assert create_agent.call_count == 2
+
+
+def test_agent_without_mcp_server_has_no_tools() -> None:
+    agent = Agent(mcp_server_url=None, model="gpt-4o")
+    agent._thread = MagicMock()
+    agent._thread.is_alive.return_value = True
+
+    with (
+        patch("langchain.agents.create_agent") as create_agent,
+        patch("dimos.agents.agent.init_model"),
+    ):
+        agent.on_system_modules([])
+
+    assert agent.mcp is None
+    assert create_agent.call_args.kwargs["tools"] == []
+    agent.stop()
