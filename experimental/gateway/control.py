@@ -135,7 +135,7 @@ class Controls:
         if expected_run is not None and run.run_id != expected_run:
             raise ControlError(409, "The robot stack changed. Refresh its state before acting")
         # This adapter's supported blueprint explicitly requires Zenoh.
-        if run.blueprint != "unitree-g1-sonic-wbc":
+        if "unitree-g1-sonic-wbc" not in (run.cli_args or [run.blueprint]):
             return None
         with self._discovery_lock:
             if self._target is not None and self._target.run_id == run.run_id:

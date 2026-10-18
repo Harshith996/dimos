@@ -170,3 +170,15 @@ def test_unknown_actions_are_rejected_before_contacting_robot(client, controller
     response = client.post("/control/actions", json=request("reset-fault"))
     assert response.status_code == 400
     bus.call.assert_not_called()
+
+
+def test_world_scene_composition_keeps_sonic_controls(client, controller):
+    _, _, _, runs = controller
+    runs[0].blueprint = "unitree-g1-sonic-wbc-workshop.scene-data"
+    runs[0].cli_args = ["unitree-g1-sonic-wbc", "workshop.scene-data"]
+
+    response = client.get("/control")
+
+    assert response.status_code == 200
+    assert response.json()["can_activate"] is True
+    assert response.json()["controller"]["name"] == "SONIC"
