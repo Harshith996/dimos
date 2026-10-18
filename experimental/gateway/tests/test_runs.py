@@ -152,6 +152,7 @@ def test_runs_lists_the_registry(client: TestClient) -> None:
             "run_id": "20260101-120000-demo",
             "pid": os.getpid(),
             "blueprint": "demo",
+            "blueprints": ["demo"],
             "started_at": "2026-01-01T12:00:00+00:00",
             "log_dir": "/tmp/x",
         }
@@ -179,3 +180,20 @@ def test_run_log_pages_and_tails(client: TestClient, home: Path) -> None:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
     tail = client.get(f"/runs/latest/log?after={page['offset']}").json()
     assert [r["event"] for r in tail["records"]] == ["later"]
+
+
+def test_composed_run_exposes_component_blueprints_for_controller_discovery(client, mocker):
+    entry = RunEntry(
+        "composed",
+        1,
+        "unitree-g1-sonic-wbc-workshop.scene-data",
+        "now",
+        "/tmp/log",
+        cli_args=["unitree-g1-sonic-wbc", "workshop.scene-data"],
+    )
+    mocker.patch.object(launches, "list_runs", return_value=[entry])
+
+    run = client.get("/runs").json()["runs"][0]
+
+    assert run["blueprints"] == ["unitree-g1-sonic-wbc", "workshop.scene-data"]
+    assert run["run_id"] == "composed"

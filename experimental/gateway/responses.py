@@ -347,6 +347,7 @@ class RunEntry(Body):
     run_id: str
     pid: int
     blueprint: str
+    blueprints: list[str]
     started_at: str
     log_dir: str
 

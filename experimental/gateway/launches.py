@@ -78,7 +78,13 @@ def launch_log() -> Path:
 
 def registry_runs() -> list[dict[str, Any]]:
     keys = ("run_id", "pid", "blueprint", "started_at", "log_dir")
-    runs = [{key: getattr(entry, key) for key in keys} for entry in list_runs(alive_only=True)]
+    runs = [
+        {
+            **{key: getattr(entry, key) for key in keys},
+            "blueprints": entry.cli_args or [entry.blueprint],
+        }
+        for entry in list_runs(alive_only=True)
+    ]
     return sorted(runs, key=lambda run: str(run["run_id"]), reverse=True)
 
 
