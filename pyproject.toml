@@ -153,6 +153,7 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
+    "httpx",  # dimos.agents.llm_trace: the evals model proxy, in the sandbox robot image
     # >=0.1.7: the 0.1.6 linux-aarch64 wheel shipped a 32-bit armv7 vec0.so
     # (wrong ELF class), which fails to load on aarch64. Fixed from 0.1.7 on.
     "sqlite-vec>=0.1.7",
