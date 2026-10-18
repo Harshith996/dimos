@@ -23,6 +23,8 @@ class MjModel:
     @classmethod
     def from_xml_path(cls, path: str) -> MjModel: ...
     @classmethod
+    def from_binary_path(cls, path: str) -> MjModel: ...
+    @classmethod
     def from_xml_string(cls, xml: str, assets: dict[str, bytes] | None = ...) -> MjModel: ...
 
 class MjData:
@@ -37,6 +39,7 @@ class MjData:
 
 class MjSpec:
     meshdir: str
+    texturedir: str
     worldbody: Any
     # The MjSpec editing API is large (add_mesh, add_body, attach, …); rare
     # accesses are Any, same approach as MjModel.
@@ -60,14 +63,51 @@ class Renderer:
         camera: int | str | Any = ...,
         scene_option: MjvOption | None = ...,
     ) -> None: ...
-    def render(self) -> NDArray[np.uint8]: ...
+    def render(self) -> NDArray[Any]: ...
     def enable_depth_rendering(self) -> None: ...
+    def disable_depth_rendering(self) -> None: ...
     def close(self) -> None: ...
 
 # --- top-level functions ----------------------------------------------
 
 def mj_forward(model: MjModel, data: MjData) -> None: ...
+def mj_objectVelocity(
+    model: MjModel,
+    data: MjData,
+    objtype: int,
+    objid: int,
+    result: NDArray[np.float64],
+    flg_local: int,
+) -> None: ...
 def mj_step(model: MjModel, data: MjData, nstep: int = ...) -> None: ...
+def mj_resetData(model: MjModel, data: MjData) -> None: ...
+def mj_stateSize(model: MjModel, spec: int) -> int: ...
+def mj_getState(model: MjModel, data: MjData, state: NDArray[np.float64], spec: int) -> None: ...
+def mj_setState(model: MjModel, data: MjData, state: NDArray[np.float64], spec: int) -> None: ...
+def mj_differentiatePos(
+    model: MjModel,
+    qvel: NDArray[np.float64],
+    dt: float,
+    qpos1: NDArray[np.float64],
+    qpos2: NDArray[np.float64],
+) -> None: ...
+def mj_integratePos(
+    model: MjModel, qpos: NDArray[np.float64], qvel: NDArray[np.float64], dt: float
+) -> None: ...
+def mj_multiRay(
+    model: MjModel,
+    data: MjData,
+    pnt: NDArray[np.float64],
+    vec: NDArray[np.float64],
+    geomgroup: NDArray[np.uint8] | None,
+    flg_static: bool | int,
+    bodyexclude: int,
+    geomid: NDArray[np.int32],
+    dist: NDArray[np.float64],
+    normal: NDArray[np.float64] | None,
+    nray: int,
+    cutoff: float,
+) -> None: ...
 def mj_resetDataKeyframe(model: MjModel, data: MjData, key: int) -> None: ...
 def mj_name2id(model: MjModel, type: int, name: str | None) -> int: ...
 def mj_id2name(model: MjModel, type: int, id: int) -> str | None: ...
@@ -129,6 +169,7 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
 
@@ -138,3 +179,14 @@ class mjtTrn:
 
 class mjtWrap:
     mjWRAP_JOINT: int
+
+class mjtState:
+    mjSTATE_INTEGRATION: int
+
+class mjtIntegrator:
+    mjINT_IMPLICITFAST: int
+
+class mjtSensor:
+    mjSENS_GYRO: int
+    mjSENS_ACCELEROMETER: int
+    mjSENS_FRAMEQUAT: int

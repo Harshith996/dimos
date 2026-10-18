@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from multiprocessing.connection import Connection
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -19,10 +20,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.python_worker import Actor, PythonWorker
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import UndeployModuleRequest
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -146,6 +150,41 @@ def test_worker_manager_basic(create_worker_manager):
     module.stop()
 
 
+def test_undeploy_timeout_closes_pipe_before_late_reply_can_be_reused(mocker):
+    worker = PythonWorker()
+    connection = mocker.Mock(spec=Connection)
+    connection.poll.return_value = False
+    worker._conn = connection
+
+    with pytest.raises(TimeoutError, match="Module 7 did not stop within 0.1s"):
+        worker.undeploy_module(7, timeout=0.1)
+
+    connection.send.assert_called_once_with(UndeployModuleRequest(module_id=7))
+    connection.recv.assert_not_called()
+    connection.close.assert_called_once_with()
+    assert worker._conn is None
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_undeploy_closes_parent_rpc_client_even_when_worker_stop_fails(mocker, fails):
+    manager = WorkerManagerPython(g=GlobalConfig(n_workers=0))
+    worker = mocker.Mock(spec=PythonWorker)
+    actor = Actor(None, None, worker_id=0, module_id=7)
+    worker._modules = {7: actor}
+    manager._workers = [worker]
+    proxy = mocker.Mock(spec=RPCClient, actor_instance=actor)
+    if fails:
+        worker.undeploy_module.side_effect = TimeoutError("stuck")
+        with pytest.raises(TimeoutError, match="stuck"):
+            manager.undeploy(proxy, timeout=0.1)
+    else:
+        manager.undeploy(proxy, timeout=0.1)
+
+    worker.undeploy_module.assert_called_once_with(7, timeout=0.1)
+    proxy.stop_rpc_client.assert_called_once_with()
+
+
+@pytest.mark.skipif_macos_bug
 def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
     """An RPC result that cannot pickle comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)

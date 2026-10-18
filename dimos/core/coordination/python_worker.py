@@ -259,13 +259,19 @@ class PythonWorker:
         finally:
             self._reserved = max(0, self._reserved - 1)
 
-    def undeploy_module(self, module_id: int) -> None:
+    def undeploy_module(self, module_id: int, *, timeout: float | None = None) -> None:
         """Stop and remove a single module from the worker process."""
         if self._conn is None:
             raise RuntimeError("Worker process not started")
 
         with self._lock:
             self._conn.send(UndeployModuleRequest(module_id=module_id))
+            if timeout is not None and not self._conn.poll(timeout):
+                # A late reply cannot be reused as the response to another request.
+                # Pool shutdown will reap this unresponsive process.
+                self._conn.close()
+                self._conn = None
+                raise TimeoutError(f"Module {module_id} did not stop within {timeout:g}s")
             response: WorkerResponse = self._conn.recv()
 
         if response.error:

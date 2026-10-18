@@ -332,7 +332,7 @@ cuda = [
 
 sim = [
     # Simulation
-    "mujoco>=3.3.4",
+    "mujoco>=3.10.0",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]

@@ -21,11 +21,6 @@ import numpy as np
 import pytest
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    g1_arms,
-    g1_joints,
-    g1_legs_waist,
-)
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
@@ -45,6 +40,11 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1CollectionRecorder,
     G1ManipulationModule,
     unitree_g1_teleop,
+)
+from dimos.robot.unitree.g1.control_config import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
 )
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,

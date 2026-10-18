@@ -305,6 +305,16 @@ def _find_blueprints_in_file(
         elif isinstance(node, ast.ClassDef) and module_classes:
             if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
                 continue
+            if any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and any(
+                    (isinstance(decorator, ast.Name) and decorator.id == "abstractmethod")
+                    or (isinstance(decorator, ast.Attribute) and decorator.attr == "abstractmethod")
+                    for decorator in member.decorator_list
+                )
+                for member in node.body
+            ):
+                continue
             if any(b in module_classes for b in _get_base_class_names(node)):
                 module_vars.append(node.name)
 
@@ -352,3 +362,19 @@ def test_nested_projects_do_not_contribute_modules_or_blueprints(tmp_path: Path)
 
     assert blueprints == {"host-blueprint": "dimos.provider.contract:host_blueprint"}
     assert modules == {"host-contract": "dimos.provider.contract.HostContract"}
+
+
+def test_discovery_excludes_abstract_bases_but_keeps_concrete_devices(tmp_path):
+    source = tmp_path / "devices.py"
+    source.write_text("""from abc import abstractmethod
+class SensorModule(Module):
+    @abstractmethod
+    def capture(self): ...
+class CameraModule(SensorModule):
+    def capture(self): return 1
+""")
+    known = _build_module_class_set(tmp_path)
+
+    _, modules = _find_blueprints_in_file(source, known)
+
+    assert modules == ["CameraModule"]

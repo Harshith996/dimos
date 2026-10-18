@@ -18,6 +18,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 import dataclasses
+from graphlib import CycleError, TopologicalSorter
 import importlib
 import inspect
 import shutil
@@ -108,13 +109,13 @@ class ModuleCoordinator(Resource):
                 self._coordinator_rpc.stop()
                 self._coordinator_rpc = None
 
-        for name, module in reversed(self._deployed_modules.items()):
-            logger.info("Stopping module...", module=module.remote_name)
-            try:
-                module.stop()
-            except Exception:
-                logger.error("Error stopping module", module=name, exc_info=True)
-            logger.info("Module stopped.", module=module.remote_name)
+        with self._modules_lock:
+            for name in self._shutdown_order():
+                logger.info("Stopping module...", module=name)
+                try:
+                    self._unload_module(name, timeout=5.0)
+                except Exception:
+                    logger.error("Error stopping module", module=name, exc_info=True)
 
         for client in self._remote_module_ref_clients:
             client.stop_rpc_client()
@@ -127,6 +128,27 @@ class ModuleCoordinator(Resource):
                 logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
+        self._started = False
+
+    def _shutdown_order(self) -> list[str]:
+        # Providers must remain reachable until their RPC consumers have stopped.
+        consumers: dict[str, set[str]] = {name: set() for name in reversed(self._deployed_modules)}
+        for (consumer, _), provider in self._resolved_module_refs.items():
+            if consumer in consumers and provider in consumers and consumer != provider:
+                consumers[provider].add(consumer)
+        sorter = TopologicalSorter(consumers)
+        try:
+            sorter.prepare()
+        except CycleError:
+            logger.error("Cyclic module references prevent fully ordered shutdown")
+        ordered: list[str] = []
+        while sorter.is_active():
+            ready = sorter.get_ready()
+            ordered.extend(ready)
+            sorter.done(*ready)
+        # A cycle has no safe dependency order. Still tear down every remaining worker.
+        ordered.extend(name for name in consumers if name not in ordered)
+        return ordered
 
     def start_rpc_service(self, *, name: str | None = None) -> None:
         """Expose the coordinator's API as RPC methods under an optional name."""
@@ -555,7 +577,9 @@ class ModuleCoordinator(Resource):
         with self._modules_lock:
             self._unload_module(module)
 
-    def _unload_module(self, module: type[ModuleBase] | str) -> None:
+    def _unload_module(
+        self, module: type[ModuleBase] | str, *, timeout: float | None = None
+    ) -> None:
         name = self._resolve_instance_key(module)
         module_class = self._instance_classes[name]
         if module_class.deployment != "python":
@@ -565,18 +589,10 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
-        try:
-            proxy.stop()
-        except Exception:
-            logger.error(
-                "Error stopping module during unload",
-                module=name,
-                exc_info=True,
-            )
-
         python_wm = cast("WorkerManagerPython", self._managers["python"])
         try:
-            python_wm.undeploy(proxy)
+            python_wm.undeploy(proxy, timeout=timeout)
+            logger.info("Module stopped.", module=name)
         except Exception:
             logger.error(
                 "Error undeploying module from worker",

@@ -45,6 +45,7 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.rpc_client import ModuleProxyProtocol
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
 from dimos.core.transport_factory import transport_topic
@@ -356,6 +357,86 @@ def test_deploy_does_not_deepcopy_pinned_kwargs(mocker) -> None:
     _deploy_all_modules(blueprint, coordinator, coordinator._global_config, {})
 
     assert deploy.call_args.args[0][0][2]["lock"] is lock
+
+
+@pytest.mark.parametrize(
+    "refs,expected",
+    [
+        ({}, ["controller", "planner", "world"]),
+        (
+            {("planner", "control"): "controller", ("controller", "sim"): "world"},
+            ["planner", "controller", "world"],
+        ),
+    ],
+)
+def test_shutdown_waits_for_consumers_before_removing_providers(mocker, refs, expected):
+    coordinator = ModuleCoordinator(g=GlobalConfig(viewer="none"))
+    manager = coordinator._managers["python"]
+    proxies = {
+        name: mocker.Mock(spec=ModuleProxyProtocol, remote_name=name)
+        for name in ("world", "planner", "controller")
+    }
+    mocker.patch.object(manager, "deploy", side_effect=proxies.values())
+    undeploy = mocker.patch.object(manager, "undeploy")
+    stop_pool = mocker.patch.object(manager, "stop")
+    calls = mocker.Mock()
+    calls.attach_mock(undeploy, "undeploy")
+    calls.attach_mock(stop_pool, "stop_pool")
+    for name in proxies:
+        coordinator.deploy(ModuleA, instance_name=name)
+    coordinator._resolved_module_refs = refs
+
+    coordinator.stop()
+    coordinator.stop()
+
+    assert calls.mock_calls == [
+        *(mocker.call.undeploy(proxies[name], timeout=5.0) for name in expected),
+        mocker.call.stop_pool(),
+        mocker.call.stop_pool(),
+    ]
+    for proxy in proxies.values():
+        proxy.stop.assert_not_called()
+    assert coordinator.n_modules == 0
+
+
+def test_shutdown_cycle_is_reported_without_leaving_workers_running(mocker):
+    coordinator = ModuleCoordinator(g=GlobalConfig(viewer="none"))
+    manager = coordinator._managers["python"]
+    proxy = mocker.Mock(spec=ModuleProxyProtocol)
+    mocker.patch.object(manager, "deploy", return_value=proxy)
+    undeploy = mocker.patch.object(manager, "undeploy")
+    stop_pool = mocker.patch.object(manager, "stop")
+    log = mocker.patch("dimos.core.coordination.module_coordinator.logger")
+    for name in ("left", "right"):
+        coordinator.deploy(ModuleA, instance_name=name)
+    coordinator._resolved_module_refs = {
+        ("left", "peer"): "right",
+        ("right", "peer"): "left",
+    }
+
+    coordinator.stop()
+
+    log.error.assert_called_once_with("Cyclic module references prevent fully ordered shutdown")
+    assert undeploy.call_count == 2
+    stop_pool.assert_called_once_with()
+    assert coordinator.n_modules == 0
+
+
+def test_shutdown_continues_after_one_module_fails_to_stop(mocker):
+    coordinator = ModuleCoordinator(g=GlobalConfig(viewer="none"))
+    manager = coordinator._managers["python"]
+    proxy = mocker.Mock(spec=ModuleProxyProtocol)
+    mocker.patch.object(manager, "deploy", return_value=proxy)
+    undeploy = mocker.patch.object(manager, "undeploy", side_effect=[TimeoutError("stuck"), None])
+    stop_pool = mocker.patch.object(manager, "stop")
+    for name in ("world", "planner"):
+        coordinator.deploy(ModuleA, instance_name=name)
+
+    coordinator.stop()
+
+    assert undeploy.call_count == 2
+    stop_pool.assert_called_once_with()
+    assert coordinator.n_modules == 0
 
 
 def test_name_conflicts_are_reported() -> None:
