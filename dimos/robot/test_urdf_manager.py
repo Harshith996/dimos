@@ -425,3 +425,24 @@ def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monke
     )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
 
     assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
+
+
+def test_a_repeated_state_skips_the_fk_until_a_keepalive_is_due(make_filter, monkeypatch):
+    module = make_filter(
+        urdf_xml=_joint_robot("prismatic"), joint_tf_hz=1000.0, unchanged_tf_hz=4.0
+    )
+    fk_calls = []
+    joint_transforms = module.joint_transforms
+    monkeypatch.setattr(
+        module,
+        "joint_transforms",
+        lambda state: fk_calls.append(state.ts) or joint_transforms(state),
+    )
+    clock = [100.0]
+    monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
+
+    for t in (0.0, 0.1, 0.2, 0.3):
+        clock[0] = 100.0 + t
+        module.add_joint_state(JointState(ts=t, name=["shoulder"], position=[0.3]))
+
+    assert fk_calls == [0.0, 0.3]
