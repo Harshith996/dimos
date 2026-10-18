@@ -55,17 +55,17 @@ FUSION_CONFIG = {
             "accel_random_walk": 1e-4,
         }
     ],
-    # Wheel twist only: vx and wz are what a diff drive measures.
+    # Wheel twist only: Alfred is holonomic, so vx, vy and wz; vy unfused leaves the IMU's velocity free to drift sideways.
     "odom_sources": [
         {
             "parent_frame_id": "wheel_odom",
             "child_frame_id": "base_link",
             "kind": "twist",
-            "twist_variances": [0.01, 0.0, 0.0, 0.0, 0.0, 0.02],
+            "twist_variances": [0.01, 0.01, 0.0, 0.0, 0.0, 0.02],
         }
     ],
-    # Diff drive on the ground: no sideways slide, no vz, roll or pitch rate.
-    "zero_velocity_variances": [0.0, 1e-4, 1e-6, 1e-6, 1e-6, 0.0],
+    # Ground robot: pin vz, roll and pitch rates.
+    "zero_velocity_variances": [0.0, 0.0, 1e-6, 1e-6, 1e-6, 0.0],
 }
 
 
@@ -216,5 +216,5 @@ def test_dim_odom_fusion_replay():
 
     assert len(first) == 1203
     displacement = math.dist(first[0][1], first[-1][1])
-    assert displacement == pytest.approx(2.1581220240116283)
+    assert displacement == pytest.approx(2.111061075971029)
     assert first == second, "replaying the same data twice diverged"
