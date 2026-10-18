@@ -59,6 +59,6 @@ debug = 0
 [profile.test]
 debug = 0
 
-# zenoh 1.10.1 plus upstream's startup-deadlock fix (eclipse-zenoh/zenoh issue 2581), which no release has yet.
+# zenoh main at a fixed commit: 1.10.1 plus fixes no release has yet, e.g. the startup deadlock (eclipse-zenoh/zenoh issue 2581).
 [patch.crates-io]
-zenoh = { git = "https://github.com/jeff-hykin/zenoh-vendor", tag = "zenoh-1.10.1-patch.2" }
+zenoh = { git = "https://github.com/eclipse-zenoh/zenoh", rev = "467f138d26533079d010597136aadacc00dac49b" }
