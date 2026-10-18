@@ -242,7 +242,10 @@ class PickAndPlaceModule(Module):
             if not_held := self._close_and_verify(group, object_id):
                 # Back out while the target's cells are still ignored: left at
                 # the grasp pose, the arm would start the next plan inside them.
-                if blocked := self._servo(grasp, pregrasp, group):
+                # Only with the jaws open again, so nothing half-gripped is dragged.
+                if not_held.metadata.get("reopened") and (
+                    blocked := self._servo(grasp, pregrasp, group)
+                ):
                     stopped = self._stopped("Retract to the pre-grasp pose", blocked)
                     return SkillResult(f"{not_held.message} {stopped.message}")
                 return not_held
@@ -540,7 +543,9 @@ class PickAndPlaceModule(Module):
         report = f"Closed the gripper on object {object_id}. {_gripper_reading(settle)}"
         if "nothing in the jaws" in failure:
             reopened = self._open_gripper(planning_group, "after closing on nothing")
-            report = f"{report} {'Reopened the gripper.' if reopened is None else reopened.message}"
+            if reopened is None:
+                return SkillResult(f"{report} Reopened the gripper.", metadata={"reopened": True})
+            report = f"{report} {reopened.message}"
         return SkillResult(report)
 
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
