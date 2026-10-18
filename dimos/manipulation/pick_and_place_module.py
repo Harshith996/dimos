@@ -322,10 +322,10 @@ class PickAndPlaceModule(Module):
             return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
         self._holding_object = False
         self._clear_selection()
-        if blocked := self._servo(place, preplace, group):
-            # The gripper is still around the object; its box stays ignored.
-            return self._stopped(f"Retract from {target} after releasing", blocked)
+        # Released, the object no longer rides with the tool, so neither does its box.
         self._clear_target_box()
+        if blocked := self._servo(place, preplace, group):
+            return self._stopped(f"Retract from {target} after releasing", blocked)
         return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:

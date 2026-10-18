@@ -542,11 +542,11 @@ def test_release_makes_the_placed_object_an_obstacle_again(module: PickAndPlaceM
 
     assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
 
-    # Down, release, back up out of the object, and only then the box goes.
-    assert order == ["servo", "servo", "clear"]
+    # Down, release and take the box off the tool, then back up.
+    assert order == ["servo", "clear", "servo"]
 
 
-def test_a_release_whose_retract_stops_keeps_the_box(module: PickAndPlaceModule) -> None:
+def test_a_release_whose_retract_stops_still_clears_the_box(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     box_filter: Any = module._box_filter
     module._selected_grasp = PoseStamped(frame_id="world")
@@ -559,7 +559,7 @@ def test_a_release_whose_retract_stops_keeps_the_box(module: PickAndPlaceModule)
     result = module.place_at(0.4, 0.0, 0.2)
 
     assert result.message.startswith("Retract from (0.40, 0.00, 0.20) after releasing")
-    box_filter.clear_box.assert_not_called()
+    box_filter.clear_box.assert_called_once_with(TARGET_BOX)
 
 
 def test_an_empty_target_cloud_sets_no_box(module: PickAndPlaceModule) -> None:
