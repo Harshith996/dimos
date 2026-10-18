@@ -171,3 +171,5 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
 
 # The connection's wheel odometry's world frame where dimSLAM owns odom, which tells it apart from Point-LIO's.
 R1PRO_WHEEL_ODOM_FRAME = "wheel_odom"
+# Point-LIO's world frame (its origin is where the lidar started) where dimSLAM owns odom: a shared name drew its poses offset.
+R1PRO_POINTLIO_ODOM_FRAME = "pointlio_odom"

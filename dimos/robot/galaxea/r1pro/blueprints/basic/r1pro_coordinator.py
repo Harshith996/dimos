@@ -50,6 +50,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as Zen
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
+    R1PRO_POINTLIO_ODOM_FRAME,
     R1PRO_WHEEL_ODOM_FRAME,
 )
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
@@ -302,6 +303,7 @@ def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
         PointLio.blueprint(
+            frame_id=R1PRO_POINTLIO_ODOM_FRAME if mount_under_base else "odom",
             sensor_frame_id=lidar_frame,
             # Standing still at 0.01 the pose stepped ~7 mm a scan (the robot jittered in the viewer); 1.0 took it to 2.5 mm.
             lidar_meas_cov=1.0,
@@ -320,7 +322,7 @@ def r1pro_lidar_odometry(mount_under_base: bool = False) -> Blueprint:
 
 # Replaying a 30 m R1 drive: 4.8 mm / 0.25 deg jitter against Point-LIO's own 13.8 mm / 0.33 deg.
 POINTLIO_SOURCE = SourceConfig(
-    parent_frame_id="odom",
+    parent_frame_id=R1PRO_POINTLIO_ODOM_FRAME,
     child_frame_id="base_link",
     kind="pose",
     pose_variances=Covariance(x=2e-4, y=2e-4, yaw=3.3e-5),
