@@ -2370,13 +2370,6 @@ lint = [
     { name = "watchdog" },
     { name = "xacro" },
 ]
-message-codegen = [
-    { name = "dimos-cdrgen", extra = ["prepare"] },
-    { name = "pytest" },
-    { name = "rosbags" },
-    { name = "ruff" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-]
 project-deps = [
     { name = "can-motor-control" },
     { name = "chromadb" },
@@ -2737,13 +2730,6 @@ lint = [
     { name = "ultralytics", specifier = ">=8.3.70" },
     { name = "watchdog", specifier = ">=3.0.0" },
     { name = "xacro" },
-]
-message-codegen = [
-    { name = "dimos-cdrgen", extras = ["prepare"], specifier = "==0.1.0" },
-    { name = "pytest", specifier = "==8.3.5" },
-    { name = "rosbags", specifier = "==0.11.0" },
-    { name = "ruff", specifier = "==0.14.3" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
 project-deps = [
     { name = "can-motor-control", specifier = ">=0.0.8" },
