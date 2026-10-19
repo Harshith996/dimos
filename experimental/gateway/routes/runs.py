@@ -124,7 +124,7 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     run_id, ours = request.runId, await is_own_launch(request.runId)
     current = await asyncio.to_thread(launches.current_launch)
     active = ours and current is not None and current["phase"] in launches.ACTIVE
-    # TODO: after gateway is on main, drop this fallback for runs the gateway didn't launch
+    # a run started outside the gateway (e.g. `dimos run` in a terminal) restarts as a copy of its process
     try:
         run = (
             None
