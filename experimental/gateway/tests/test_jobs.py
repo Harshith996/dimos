@@ -74,6 +74,8 @@ def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
 ) -> None:
     checkout = scanned.dimos_dir
     subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    # as in a real checkout: the scan's child, run under coverage in CI, writes .coverage.* where it runs
+    (checkout / ".gitignore").write_text(".coverage*\n")
     (checkout / "blueprint.py").write_text("x = 1\n")
     scanned.listed = [{"name": "good", "kind": "builtin"}]
     job = client.post("/catalog/scan").json()["job"]
