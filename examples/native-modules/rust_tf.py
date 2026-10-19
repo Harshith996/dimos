@@ -43,8 +43,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# The crate is a workspace member, so cargo builds into the repo-root target dir.
-_BUILD = "cargo build --release"
+_BUILD = "nix build -L path:.#dimos-native-module-examples"
 
 
 class TfProducer(Module):
@@ -104,7 +103,7 @@ class StaticMount(StaticTfPublisher):
 
 
 class TfListenerConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/tf_listener"
+    executable: str = "result/bin/tf_listener"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True
@@ -121,7 +120,7 @@ class TfListenerModule(NativeModule):
 
 
 class TfBroadcasterConfig(NativeModuleConfig):
-    executable: str = "../../../target/release/tf_broadcaster"
+    executable: str = "result/bin/tf_broadcaster"
     build_command: str = _BUILD
     source_dir: str = "examples/native-modules/rust"
     stdin_config: bool = True

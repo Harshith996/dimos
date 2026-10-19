@@ -29,6 +29,7 @@ from dimos.evals.vqa.pointcloud_frame import (
     PointCloudFrameUnavailableError,
     _align_one,
     _ImageRectifier,
+    select_quality_indices,
 )
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
@@ -377,3 +378,30 @@ def test_load_selects_camera_info_for_each_image_timestamp(
     )
     assert early.camera_info.header.frame_id == "camera_early"
     assert late.camera_info.header.frame_id == "camera_late"
+
+
+def test_select_quality_indices_uses_mem_quality_window() -> None:
+    checkerboard = 2 * (np.indices((16, 16)).sum(axis=0) % 2) - 1
+    with MemoryStore() as store:
+        images = store.stream("color_image")
+        # Two 1s windows: sharpest at index 1 then index 4; index 2 is dark.
+        for ts, contrast, mean in (
+            (10.0, 30, 128),
+            (10.4, 90, 128),
+            (10.8, 10, 16),
+            (11.0, 50, 128),
+            (11.4, 80, 128),
+        ):
+            pixels = (mean + contrast * checkerboard).astype(np.uint8)
+            image = _image(np.repeat(pixels[:, :, None], 3, axis=2), ts=ts)
+            images.append(image, ts=ts)
+
+        stream = store.stream("color_image").order_by("ts")
+        assert select_quality_indices(stream, 0, 5, quality_window=1.0) == (1, 4)
+        assert select_quality_indices(stream, 0, 5, quality_window=1.0, min_brightness=0.2) == (
+            1,
+            4,
+        )
+        assert select_quality_indices(stream, 2, 3, quality_window=1.0) == (2,)
+        with pytest.raises(ValueError, match="selected no frames"):
+            select_quality_indices(stream, 2, 3, quality_window=1.0, min_brightness=0.2)
