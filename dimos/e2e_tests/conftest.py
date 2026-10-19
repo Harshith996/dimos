@@ -97,7 +97,6 @@ def serve_channel() -> Iterator[Callable[..., str]]:
         message: Any,
         robot_id: str,
         serve_dir: str | None = None,
-        rtc_file: str | None = None,
     ) -> str:
         (atom,) = blueprint.blueprints
         module = atom.module(
@@ -105,7 +104,6 @@ def serve_channel() -> Iterator[Callable[..., str]]:
             open_browser=False,
             robot_id=robot_id,
             serve_dir=serve_dir,
-            rtc_file=rtc_file,
             **atom.kwargs,
         )
         bridge_transport = make_transport(topic)

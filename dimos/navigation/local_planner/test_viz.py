@@ -26,7 +26,6 @@ from numpy.typing import NDArray
 from dimos.msgs.geometry import quaternion_from_euler
 from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.go2 import GO2
-from dimos.navigation.local_planner.profile import encode_precision
 from dimos.navigation.local_planner.viz import (
     motion_visual_override,
     plan_clearance,
@@ -49,6 +48,14 @@ def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     )
 
 
+def _stamp(plan: Path, speeds: NDArray[np.float64]) -> Path:
+    """Per-segment speeds as stamp deltas over the 0.1 m spacing, the planner's dialect."""
+    ts = np.concatenate([[0.0], np.cumsum(0.1 / speeds)])
+    for pose, t in zip(plan.poses, ts, strict=True):
+        pose.ts = float(t)
+    return plan
+
+
 def _rgba(boxes) -> NDArray[np.float64]:
     """rerun packs colors as u32 0xRRGGBBAA, not as rows."""
     packed = np.asarray(boxes.colors.pa_array.to_pylist(), dtype=np.uint32)
@@ -69,9 +76,10 @@ def test_boxes_are_subsampled_by_arc_not_by_index() -> None:
 
 def test_colour_tracks_the_precision_the_planner_stamped() -> None:
     """The colour channel is decoded from the path, not passed alongside it."""
-    plan = _plan()
-    tight = np.concatenate([np.full(15, 0.6), np.full(10, 0.02), np.full(15, 0.6)])
-    encode_precision(plan, tight, GO2)
+    fast, slow = GO2.max_speed, GO2.min_speed
+    plan = _stamp(
+        _plan(), np.concatenate([np.full(14, fast), np.full(11, slow), np.full(14, fast)])
+    )
 
     room = plan_clearance(plan, GO2)
     assert room is not None
@@ -90,7 +98,7 @@ def test_an_unstamped_plan_draws_one_flat_colour() -> None:
     Canonical fixtures carry equal stamps until precision is encoded.
     The renderer must not infer clearance from that unstamped path.
     """
-    plan = _plan()  # never passed through encode_precision
+    plan = _plan()  # never stamped
     room = plan_clearance(plan, GO2)
     assert room is None
     colors = _rgba(render_body(plan))

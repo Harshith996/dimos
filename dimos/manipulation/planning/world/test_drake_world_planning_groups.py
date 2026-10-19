@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,10 +35,13 @@ from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, Drake
 from dimos.msgs.time import duration_from_seconds, header_now
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
-requires_drake = pytest.mark.skipif(
-    not DRAKE_AVAILABLE,
-    reason="Drake planning-group tests require the manipulation extra",
-)
+
+def requires_drake(test: Callable[..., None]) -> Callable[..., None]:
+    # Drake ships with the planning extra, which only the self-hosted CI jobs install.
+    skip = pytest.mark.skipif(
+        not DRAKE_AVAILABLE, reason="Drake planning-group tests require the manipulation extra"
+    )
+    return pytest.mark.self_hosted(skip(test))
 
 
 def _trajectory(names: list[str], first: list[float], second: list[float]) -> JointTrajectory:
