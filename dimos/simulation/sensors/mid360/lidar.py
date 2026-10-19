@@ -98,6 +98,12 @@ class SimMid360:
             occlusion=OcclusionMap.load(root / "go2_mid360_occlusion.npz"),
         )
 
+    @classmethod
+    def unoccluded(cls, raycaster: Raycaster, seed: int) -> SimMid360:
+        """The Mid-360 with the fitted pattern and no mount occlusion."""
+        pattern = Mid360Pattern.load(get_data("go2_sim") / "mid360_pattern.npz")
+        return cls(raycaster=raycaster, pattern=pattern, seed=seed)
+
     def cast(
         self,
         origin: NDArray[np.float64],

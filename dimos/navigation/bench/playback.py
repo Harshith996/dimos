@@ -39,8 +39,9 @@ from dimos.navigation.bench.runner import (
 )
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_legged.robot import BASE_QUAT
-from dimos.simulation.go2_sim.world import build_model, open_viewer
+from dimos.simulation.go2_sim.world import GO2
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.world import build_model, open_viewer
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,7 @@ class Puppet:
     """The scene's model posed from frames, with physics left out."""
 
     def __init__(self, scene: Scene) -> None:
-        self.model = build_model(scene)
+        self.model = build_model(scene, GO2)
         self.data = mujoco.MjData(self.model)
         self._trunk = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "base")
         self._qpos_adr = {

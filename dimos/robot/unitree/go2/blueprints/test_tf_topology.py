@@ -44,7 +44,8 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     Go2Mid360StaticTf,
     mount_transforms,
 )
-from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, SimGo2World
+from dimos.simulation.go2_sim.world import SimGo2World
+from dimos.simulation.sim_world.world import SENSOR_FRAME_ID
 
 BLUEPRINTS = [
     unitree_go2_nav_3d,

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 import math
 import time
 
@@ -26,20 +27,18 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.go2_legged.robot import CONTROL_DT
-from dimos.simulation.go2_sim.world import (
+from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
+from dimos.simulation.go2_sim.world import GO2, MOUNT_R, SimGo2World
+from dimos.simulation.scenes.procedural import Box, Scene, office
+from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sim_world.world import (
     CONTACTS_HEARTBEAT_DT,
     FRAME_DT,
     LIDAR_GROUPS,
-    MOUNT_R,
-    TICKS_PER_FRAME,
-    Go2Sim,
     LidarFrame,
-    SimGo2World,
+    Sim,
     scene_edges,
 )
-from dimos.simulation.scenes.procedural import Box, Scene, office
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 
 pytestmark = pytest.mark.self_hosted
 
@@ -58,20 +57,25 @@ def scene() -> Scene:
 
 
 @pytest.fixture
-def sim(scene: Scene, policy: OnnxGo2Policy) -> Go2Sim:
-    sim = Go2Sim(scene, seed=1, policy=policy)
+def sim(scene: Scene, policy: OnnxGo2Policy) -> Sim:
+    sim = Sim(scene, 1, GO2, partial(LeggedGo2, policy=policy))
     sim.reset(*scene.start, 0.0)
     return sim
 
 
-def _next_frame(sim: Go2Sim, command: NDArray[np.float64]) -> LidarFrame:
-    for _ in range(TICKS_PER_FRAME):
+def _yaw(sim: Sim) -> float:
+    _, rotation = sim.base_pose()
+    return math.atan2(rotation[1, 0], rotation[0, 0])
+
+
+def _next_frame(sim: Sim, command: NDArray[np.float64]) -> LidarFrame:
+    for _ in range(sim.ticks_per_frame):
         if (frame := sim.tick(command)) is not None:
             return frame
     raise AssertionError("no lidar frame within one frame period")
 
 
-def _floor_is_flat(frame: LidarFrame, sim: Go2Sim, floor: float) -> None:
+def _floor_is_flat(frame: LidarFrame, sim: Sim, floor: float) -> None:
     position, rotation = sim.sensor_pose()
     world = position + frame.points.astype(np.float64) @ rotation.T
     z = world[:, 2]
@@ -80,20 +84,20 @@ def _floor_is_flat(frame: LidarFrame, sim: Go2Sim, floor: float) -> None:
     assert np.std(z[np.abs(z - floor) < 0.05]) < 0.02
 
 
-def test_frames_come_out_at_10hz_in_the_sensor_frame(sim: Go2Sim) -> None:
+def test_frames_come_out_at_10hz_in_the_sensor_frame(sim: Sim) -> None:
     frames = [f for _ in range(10) if (f := sim.tick(STILL)) is not None]
     assert [f.t for f in frames] == pytest.approx([FRAME_DT, 2 * FRAME_DT])
     assert 12_000 < len(frames[-1].points) < 20_000
     _floor_is_flat(frames[-1], sim, sim.scene.params["z0"])
 
 
-def test_deskew_keeps_the_floor_flat_while_walking(sim: Go2Sim) -> None:
+def test_deskew_keeps_the_floor_flat_while_walking(sim: Sim) -> None:
     for _ in range(75):
         sim.tick(FORWARD)
     _floor_is_flat(_next_frame(sim, FORWARD), sim, sim.scene.params["z0"])
 
 
-def test_standing_robot_touches_the_floor_only_with_its_feet(sim: Go2Sim) -> None:
+def test_standing_robot_touches_the_floor_only_with_its_feet(sim: Sim) -> None:
     for _ in range(25):
         sim.tick(STILL)
     contacts = sim.contacts()
@@ -102,7 +106,7 @@ def test_standing_robot_touches_the_floor_only_with_its_feet(sim: Go2Sim) -> Non
     assert "trunk" not in {c.part for c in contacts}
 
 
-def test_contacts_name_the_scene_kind_and_the_robot_part(sim: Go2Sim) -> None:
+def test_contacts_name_the_scene_kind_and_the_robot_part(sim: Sim) -> None:
     sim.reset(-0.05, 3.0, sim.scene.start[2], 0.0)
     assert Contact("trunk", "wall") in sim.contacts()
     clutter = max(
@@ -114,7 +118,7 @@ def test_contacts_name_the_scene_kind_and_the_robot_part(sim: Go2Sim) -> None:
     assert Contact("foot", "clutter") in sim.contacts()
 
 
-def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:
+def test_sensor_velocity_matches_the_motion(sim: Sim) -> None:
     for _ in range(75):
         sim.tick(FORWARD)
     before, _ = sim.sensor_pose()
@@ -128,24 +132,24 @@ def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:
     turn = np.array([0.0, 0.0, 0.8])
     for _ in range(50):
         sim.tick(turn)
-    yaw_before = sim.robot.yaw()
+    yaw_before = _yaw(sim)
     rate = 0.0
     for _ in range(10):
         sim.tick(turn)
         rate += (MOUNT_R @ sim.sensor_velocity()[1])[2] / 10
-    yaw_delta = (sim.robot.yaw() - yaw_before + np.pi) % (2 * np.pi) - np.pi
+    yaw_delta = (_yaw(sim) - yaw_before + np.pi) % (2 * np.pi) - np.pi
     assert rate == pytest.approx(yaw_delta / (10 * CONTROL_DT), abs=0.1)
     assert rate > 0.05
 
 
-def test_the_lidar_sees_nothing_overhead(sim: Go2Sim) -> None:
+def test_the_lidar_sees_nothing_overhead(sim: Sim) -> None:
     position, _ = sim.sensor_pose()
     raycaster = MujocoRaycaster(sim.model, sim.data, LIDAR_GROUPS)
     dist, _ = raycaster.cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
     assert dist[0] < 0
 
 
-def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
+def test_sensor_sits_on_the_mount_above_the_base(sim: Sim) -> None:
     base, _ = sim.base_pose()
     sensor, rotation = sim.sensor_pose()
     assert 0.1 < sensor[2] - base[2] < 0.2

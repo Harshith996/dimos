@@ -36,8 +36,9 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.suite import Point, Rules
-from dimos.simulation.go2_sim.world import LIDAR_HALF_EXTENTS, MOUNT_R, MOUNT_XYZ
+from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.world import LIDAR_HALF_EXTENTS
 
 Outcome = Literal[
     "success",
