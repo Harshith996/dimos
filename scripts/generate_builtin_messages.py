@@ -27,10 +27,10 @@ def main() -> None:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    target = root / "packages/dimos-generated/build/message-source/python"
+    target = root / "build/message-source/python"
     with tempfile.TemporaryDirectory(prefix="dimos-source-") as temporary:
         output = Path(temporary)
-        prepare(root / "packages/dimos-generated", output)
+        prepare(root, output)
         source = output / "python"
         packages = [source / "dimos_generated", source / "dimos_generated_schemas"]
         expected = {

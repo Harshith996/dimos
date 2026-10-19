@@ -14,7 +14,7 @@
 
 """Verify an installed message wheel from a clean environment outside the checkout."""
 
-from importlib.util import find_spec
+from importlib.metadata import distribution, entry_points
 from pathlib import Path
 import sys
 
@@ -34,7 +34,12 @@ def main() -> None:
     assert dimos_generated.__file__ is not None
     installed = Path(dimos_generated.__file__).resolve()
     assert installed.is_relative_to(Path(sys.prefix).resolve()), installed
-    assert find_spec("dimos") is None, "This example does not need the DimOS runtime"
+    owner = distribution("dimos")
+    assert "dimos_generated/std_msgs/msg/__init__.py" in {str(p) for p in owner.files}
+    assert (
+        len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_generated"])
+        == 1
+    )
     print(f"Installed package: {installed}")
     print(f"Catalog: {len(message_types())} types")
 

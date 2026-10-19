@@ -378,6 +378,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
@@ -433,6 +435,8 @@ jobs:
       - name: Install dependency for pyaudio (macOS)
         if: runner.os == 'macOS'
         run: brew install portaudio
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Build the extensions
@@ -464,6 +468,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
@@ -588,6 +594,8 @@ jobs:
           sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
@@ -705,6 +713,8 @@ jobs:
       - name: Provision native modules from Cachix
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
@@ -844,6 +854,8 @@ jobs:
         run: |
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Install web_browser e2e dependencies (macOS)
@@ -1112,6 +1124,8 @@ jobs:
             libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
@@ -1225,6 +1239,8 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+      - name: Prepare pinned built-in message inputs
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
         env:

@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ $# -ne 0 ]]; then
-  echo "Message version comes from packages/dimos-generated/pyproject.toml; no version argument is accepted" >&2
+  echo "Message version comes from pyproject.toml; no version argument is accepted" >&2
   exit 2
 fi
 "${DIMOS_CODEGEN_PYTHON:-$PWD/.venv/bin/python}" - <<'PY'
@@ -14,8 +14,8 @@ import tarfile
 import tomllib
 from dimos_cdrgen.source_package import prepare
 output = Path("build/message-codegen/release")
-version = tomllib.loads(Path("packages/dimos-generated/pyproject.toml").read_text())["project"]["version"]
-prepare(Path("packages/dimos-generated").resolve(), output)
+version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+prepare(Path.cwd(), output)
 resources = output / "python/dimos_generated_schemas/package"
 metadata = output / "metadata"
 metadata.mkdir(exist_ok=True)

@@ -18,6 +18,7 @@ from pathlib import Path
 import struct
 import sys
 
+from dimos_cdrgen.source_package import setup_arguments
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
@@ -162,9 +163,15 @@ ext_modules = [
     ),
 ]
 
+# The shared generator reads the root project's version and message configuration.
+# Inputs are prepared explicitly by CI/maintainers and included in the sdist.
+message_settings = setup_arguments(Path(__file__).resolve().parent)
+message_source = message_settings["package_dir"][""]
+message_roots = ("dimos_generated", "dimos_generated_schemas")
+
 setup(
-    packages=find_packages(),
-    package_dir={"": "."},
+    packages=find_packages() + message_settings["packages"],
+    package_dir={"": ".", **{name: f"{message_source}/{name}" for name in message_roots}},
     ext_modules=ext_modules,
-    cmdclass={"build_ext": build_ext, "build_py": build_py},
+    cmdclass={**message_settings["cmdclass"], "build_ext": build_ext, "build_py": build_py},
 )

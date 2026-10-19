@@ -33,17 +33,17 @@ External packages can reuse the exported dependency-owned types, including the
 same Header identity. We do not promise an arbitrary omitted standard type or
 split ROS-package ownership across Rust crates. There is no core/extras scheme.
 
-## Install matching review artifacts
+## Install and use
 
-The proposal packages are not assumed to exist on PyPI. Put matching backend and
-built-in wheels plus their Python dependencies in a wheelhouse:
+Built-in Python messages and their schemas ship inside the main `dimos` wheel.
+There is no separate `dimos-generated` Python distribution to install or publish.
+Until this proposal is released, install the matching review wheel:
 
 ```sh
-pip install --no-index --find-links review/wheels dimos-generated==0.1.0
+pip install review/wheels/dimos-*.whl
 ```
 
-Wheel installation needs no ROS, CMake, Cargo or C/C++ compiler. Import performs
-no download or native compilation. Python uses rosbags classes and CDR codecs:
+After release, ordinary users just run `pip install dimos`. Imports stay the same:
 
 ```python
 from dimos_generated.builtin_interfaces.msg import Time
@@ -54,47 +54,45 @@ header = Header(Time(17, 23), "map")
 assert decode(encode(header), Header) == header
 ```
 
-## Explicit source preparation
-
-Prepare the backend parser first, then prepare builtin inputs as a separate action:
-
-```sh
-python -m scripts.prepare_builtin_sources
-# Reuse cached, hash-checked archives without network:
-python -m scripts.prepare_builtin_sources --offline
-```
-
-The preparation script delegates archive/file validation to PR1's generic
-`source_inputs.prepare_sources`. It adds the local custom inputs and licenses.
-It never runs inside pip hooks or runtime imports. An unprepared checkout fails
-with the missing-input path instead of fetching data. Offline development needs
-these archives and Python dependency wheels cached beforehand. Release preparation
-performs the same checks before producing self-contained source/wheel artifacts.
-The generic backend retains only the first layer's small conformance fixtures,
-not the full builtin catalog. Product data do not select backend behavior.
+CI prepares pinned inputs, generates the catalog through `dimos-cdrgen`, and
+packages `dimos_generated`, `dimos_generated_schemas`, licenses and the
+`dimos.messages` provider entry point into the main wheel. Message versions
+follow the root `dimos` project version. Python messages use rosbags; installing
+a wheel generates nothing and adds no message compiler requirement. The main
+package's existing native extensions have their own platform wheel requirements.
 
 ## Source and editable builds
 
-PEP 517/660 calls the same `generate_builtin()` implementation used by native
-source packaging. It emits Python files and native source projects, but never
-invokes a native compiler. A source build needs the matching
-`dimos-cdrgen` wheel, setuptools/wheel and their dependencies. An offline
-build needs these in its wheelhouse:
+A maintainer prepares inputs explicitly in a checkout before normal builds:
 
 ```sh
-pip install --no-index --find-links review/wheels ./packages/dimos-generated
-pip install --no-index --find-links review/wheels -e ./packages/dimos-generated
+uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.0' python -m scripts.prepare_builtin_sources
+pip install .
+# Or for development:
+pip install -e .
 ```
 
-After editing a custom message or catalog, repeat source preparation and the editable install. Restart
-Python processes. There is no import-time source build. A clean checkout requires explicit source preparation before a pip build. A
-release sdist carries its own `interfaces/` inputs, catalog, pins and licenses. It can rebuild a wheel outside the
-checkout without GitHub access. The checkout-only uv dependency path is removed
-from release sdists.
+For cached archives, pass `--offline` to the preparation command. Source
+preparation verifies archive and selected-file hashes and includes the licenses.
+It never runs inside pip hooks or runtime imports. An unprepared checkout fails
+with the missing-input path rather than downloading schemas.
 
-The generator backend itself retains the explicit upstream parser preparation
-contract from layer 1. Preparing that backend is a developer/release step, not
-an implicit download inside this package's pip hook.
+The root PEP 517/660 build uses the shared generator and configuration in
+`pyproject.toml`. Only the existing main-package extension is compiled; Python
+message generation runs no CMake or Cargo. Build isolation installs the declared
+Python build dependencies. Offline builds need those dependencies cached locally.
+A release sdist includes prepared inputs, catalog, pins and licenses, so it can
+rebuild outside the checkout without fetching schemas. The normal main-package
+compiler and web-bundle prerequisites still apply to source builds.
+
+After changing a definition, rerun preparation and reinstall editable output,
+then restart existing Python processes. External message projects declare
+`dimos` as their Python build/runtime dependency and use the installed
+`dimos_generated` schema owner at the matching DimOS version. Their generated
+classes import the same `Header`; they must not package another copy. Use the
+source project's own packaging metadata rather than publishing the generator's
+standalone intermediate Python project, which infers distribution names from
+module names. C++ and Rust source artifacts remain separate native workflows.
 
 ## Maintainer artifacts and checks
 
@@ -103,10 +101,10 @@ python -m scripts.generate_builtin_messages
 python -m scripts.generate_builtin_messages --check
 ```
 
-Outputs live in `packages/dimos-generated/build/message-source/python`. The check
+Outputs live in `build/message-source/python`. The check
 compares independent regeneration with those build artifacts and does not repair
-them. CI mutation tests retain field/schema/version/deletion/rename and missing
-resource checks. Undeclared source additions require a catalog decision.
+them. Artifact acceptance verifies wheel, source and editable installs and external
+Header identity. Undeclared source additions require a catalog decision.
 
 `bash scripts/package_messages.sh` creates the explicit C++ source archive and
 Cargo crate using the same roots/closure. It invokes Cargo as a native packaging
