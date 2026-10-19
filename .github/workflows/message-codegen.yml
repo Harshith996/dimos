@@ -36,7 +36,9 @@ jobs:
       - name: Verify DimOS SDK, installed Python consumer and C++ consumer
         run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py dimos/message_codegen/test_build.py
       - name: Build main wheel and self-contained sdist
-        run: .venv/bin/python -m build --no-isolation
+        run: |
+          source .venv/bin/activate
+          python -m build --no-isolation
       - name: Prepare offline acceptance wheelhouse
         run: .venv/bin/python -m pip wheel 'dimos-cdrgen[prepare]==0.1.1' 'deno==2.6.10' 'setuptools>=70' wheel pybind11 --wheel-dir build/bundle-wheelhouse
       - name: Verify installed main wheel, source, editable and external type identity
