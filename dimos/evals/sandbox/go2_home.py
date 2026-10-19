@@ -115,9 +115,9 @@ MAX_NAGS = 30
 WALL_CLOCK_LIMIT = 4
 # A complete map: this share of what the lidar sees from everywhere reachable.
 COMPLETE_COVERAGE = 0.8
-# Each collision costs this share of the score: a real dog must not bump into things, and
-# must never walk into a person.
-BUMP_PENALTY = 0.25
+# Each collision costs this share of the score: bumping furniture is a nuisance, walking into a
+# person is what matters.
+BUMP_PENALTY = 0.05
 PERSON_PENALTY = 0.5
 WEIGHTS = {"map": 0.25, "plants": 0.55, "home": 0.2}
 

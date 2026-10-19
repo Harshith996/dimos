@@ -53,6 +53,9 @@ CLEARANCE = 0.35
 SURVEY_YAWS = (0.0, np.pi / 2, np.pi, 3 * np.pi / 2)
 # Contacts closer together than this are one collision.
 COLLISION_GAP_S = 2.0
+# ...and so are contacts until the robot has moved this far from where the last one began
+# (a dog parked with a leg on a sofa chatters in and out of contact for minutes).
+COLLISION_MOVE_M = 0.3
 # The kind of contact dim-go2-sim reports for touching a person.
 PERSON = "person"
 # Bump when the survey changes, so cached references are rebuilt.
@@ -110,7 +113,8 @@ class GroundTruth:
         times it touched a person (with any part) instead.
 
         A bump chatters in and out of contact; touches within COLLISION_GAP_S of the
-        last one are the same collision.
+        last one, or before the robot has moved COLLISION_MOVE_M from where the last collision
+        began, are the same collision.
         """
 
         def hit(part: str, kind: str) -> bool:
@@ -119,15 +123,30 @@ class GroundTruth:
             return kind != PERSON and (part != "foot" or kind != "floor")
 
         events: list[float] = []
-        touching, last_touch = False, -np.inf
+        touching, last_touch, last_at = False, -np.inf, None
         for t, contacts in zip(self.contact_t, self.contacts, strict=True):
             now = any(hit(part, kind) for part, kind in contacts)
-            if now and not touching and start <= t < end and t - last_touch > COLLISION_GAP_S:
+            at = self._position_at(t)
+            moved = last_at is None or float(np.linalg.norm(at - last_at)) >= COLLISION_MOVE_M
+            if (
+                now
+                and not touching
+                and start <= t < end
+                and t - last_touch > COLLISION_GAP_S
+                and moved
+            ):
                 events.append(float(t))
+                last_at = at
             if now or touching:
                 last_touch = float(t)
             touching = now
         return events
+
+    def _position_at(self, t: float) -> NDArray[np.float64]:
+        """The robot's x, y at the pose logged nearest at or after *t* (the origin with none)."""
+        if not len(self.pose_t):
+            return np.zeros(2)
+        return self.poses[min(int(np.searchsorted(self.pose_t, t)), len(self.poses) - 1), :2]
 
     def closest_person(self, start: float = -np.inf) -> float:
         """The nearest the robot's body centre came to a person's, metres, from *start* on."""
