@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-12T05:29:04.420458Z"
+exclude-newer = "2026-10-12T05:43:43.370659Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1789,7 +1789,7 @@ wheels = [
 
 [[package]]
 name = "dim-go2-sim"
-version = "0.4.12"
+version = "0.4.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dimos" },
@@ -1810,9 +1810,9 @@ dependencies = [
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/45/d0/dc4b26e27cbabe5a39e991cc1f7b0f42eb6a9cac1a7e4a23996ba20d8d1b/dim_go2_sim-0.4.12.tar.gz", hash = "sha256:51e2a15e9e7fdf5ba20e9952dd9f975e3bab7bd98182ffbea4ca40e9632037a9", size = 5354971, upload-time = "2026-10-19T05:28:35.026Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/ce/d2a90063aa04cd5e89bc11c203bb67d588b44dc7524df9a44846fcff5f3f/dim_go2_sim-0.4.13.tar.gz", hash = "sha256:3cca94575b30137937c4ca28edfbe1018aa396fdfae7955490633dd58e798174", size = 5355178, upload-time = "2026-10-19T05:41:53.253Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/c0/2657d022a94a9fc957ea816023f1bddcee79007c803b92281a3c805d9e3d/dim_go2_sim-0.4.12-py3-none-any.whl", hash = "sha256:a44aadded2c353b6190ff3a788db774493d2878cbb0327d3aa3210d9f94b4fe8", size = 5446111, upload-time = "2026-10-19T05:28:32.996Z" },
+    { url = "https://files.pythonhosted.org/packages/52/d6/d54dc5296e934ad900e6ca541521ab97c0e7bc3da0723f96fab6aada750e/dim_go2_sim-0.4.13-py3-none-any.whl", hash = "sha256:dff85d14e44d93d78348d124b77a62c4f261748aa4968c136017cd2f0f797399", size = 5446239, upload-time = "2026-10-19T05:41:51.473Z" },
 ]
 
 [[package]]
@@ -2490,7 +2490,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.4.12" },
+    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.4.13" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
