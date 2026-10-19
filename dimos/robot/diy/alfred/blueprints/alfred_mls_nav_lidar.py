@@ -29,6 +29,7 @@ from dimos.hardware.sensors.camera.realsense.constants import IMU_BMI055
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.mapping.dim_slam.dim_slam import ImuConfig
 from dimos.robot.diy.alfred.blueprints.alfred_mls_nav import alfred_mls_nav
+from dimos.robot.diy.alfred.blueprints.alfred_nav import MID360_MAX_RANGE_METERS
 from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
 from dimos.robot.diy.alfred.config import ALFRED
 
@@ -61,8 +62,6 @@ alfred_mls_nav_lidar = autoconnect(
             ),
         ],
         map_cloud_topic="lidar",
-        # The Mid-360 reaches far past this, but the voxel map raytraces every point from the
-        # sensor origin, so the far returns cost the most and carve the least reliable space.
-        map_max_range=15.0,
+        map_max_range=MID360_MAX_RANGE_METERS,
     ),
 ).global_config(n_workers=12, robot_model="alfred")

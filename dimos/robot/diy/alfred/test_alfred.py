@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 import xml.etree.ElementTree as ElementTree
 
+from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.diy.alfred.blueprints.vis_nav import DEPTH_FRAME, IR_ENTITY_BY_FRAME
 from dimos.robot.diy.alfred.mount_tf import mount_transforms
 
@@ -26,7 +27,7 @@ URDF = Path(__file__).parent / "alfred.urdf"
 def test_every_camera_frame_dim_slam_wants_is_rooted_at_base_link():
     """cuVSLAM places no camera at all until every configured frame resolves against
     base_link, so one missing mount edge drops every image instead of degrading."""
-    parents = {t.child_frame_id: t.frame_id for t in mount_transforms()}
+    parents = {t.child_frame_id: t.frame_id for t in mount_transforms("base_link")}
     for frame in [*IR_ENTITY_BY_FRAME, DEPTH_FRAME]:
         # The driver publishes the imager leaves off its own link; the mount tree owes
         # that link a path to base_link.
@@ -47,3 +48,18 @@ def test_every_urdf_link_has_exactly_one_parent():
 
     links = {link.attrib["name"] for link in root.findall("link")}
     assert links - set(parents) == {"base_link"}, "every link but base_link needs a joint"
+
+
+def test_mount_tree_rooted_at_mid360_link_composes_back_to_the_urdf():
+    """Point-LIO owns the one parent of mid360_link, so the mount tree has to hang below it."""
+    rooted = mount_transforms("mid360_link")
+    assert "mid360_link" not in {t.child_frame_id for t in rooted}
+    buffer = MultiTBuffer()
+    buffer.receive_transform(*rooted)
+    by_child = {t.child_frame_id: t for t in mount_transforms("base_link")}
+    for frame in ["mid360_link", "d455_link", "mast_link"]:
+        leg = buffer.get("base_link", frame)
+        assert leg is not None, f"{frame} has no path to base_link"
+        expected = by_child[frame]
+        assert (leg.translation - expected.translation).length() < 1e-9
+        assert abs(abs(leg.rotation.dot(expected.rotation)) - 1.0) < 1e-9

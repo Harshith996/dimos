@@ -28,12 +28,12 @@ from xml.etree import ElementTree
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 
 
-def mount_transforms() -> list[Transform]:
-    """One transform per fixed joint of the urdf, minus the imager frames.
+def mount_transforms(root_frame: str) -> list[Transform]:
+    """One transform per fixed joint of the urdf, minus the imager frames, rooted at root_frame.
 
     The drivers publish their own imager offsets from the factory extrinsics read
     off the device; the urdf's copies of those are nominal, so publishing them too
@@ -59,11 +59,28 @@ def mount_transforms() -> list[Transform]:
                 child_frame_id=child_link,
             )
         )
-    return transforms
+    parent_of = {transform.child_frame_id: transform.frame_id for transform in transforms}
+    if root_frame not in parent_of and root_frame not in parent_of.values():
+        raise ValueError(f"{root_frame} is not a frame of the published mount tree")
+    inverted = set()
+    frame = root_frame
+    while frame in parent_of:
+        inverted.add(frame)
+        frame = parent_of[frame]
+    return [
+        -transform if transform.child_frame_id in inverted else transform
+        for transform in transforms
+    ]
+
+
+class AlfredMountTfConfig(StaticTfPublisherConfig):
+    root_frame: str = "base_link"
 
 
 class AlfredMountTf(StaticTfPublisher):
     """Publishes Alfred's urdf mount tree onto tf on a fixed interval."""
 
+    config: AlfredMountTfConfig
+
     def transforms(self) -> list[Transform]:
-        return mount_transforms()
+        return mount_transforms(self.config.root_frame)
