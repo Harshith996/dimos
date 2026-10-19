@@ -132,7 +132,7 @@ def jsonable(value: Any) -> Any:
 
     try:
         return json.loads(json.dumps(value, default=text))
-    except Exception:
+    except (TypeError, ValueError):
         return text(repr(value))
 
 
@@ -178,7 +178,7 @@ def blueprint_source(name: str) -> dict[str, Any]:
         path, _, attr = all_blueprints[name].partition(":")
         module = importlib.import_module(path)
         lines = inspect.getsource(module).splitlines()
-    except Exception:
+    except Exception:  # importing a blueprint runs its code, which can raise anything
         return {"file": None, "line": None}
     assignment = re.compile(rf"{re.escape(attr)}\s*(:|=(?!=))")
     line = next((n for n, text in enumerate(lines, 1) if assignment.match(text)), 1)
@@ -324,6 +324,7 @@ def choices(kind: Any) -> list[Any] | None:
 
 def field_schema(kind: Any) -> dict[str, Any] | None:
     from pydantic import BaseModel, TypeAdapter
+    from pydantic.errors import PydanticUserError
 
     def has_model(annotation: Any) -> bool:
         if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -334,17 +335,18 @@ def field_schema(kind: Any) -> dict[str, Any] | None:
         return None
     try:
         return TypeAdapter(kind).json_schema()
-    except Exception:
+    except (PydanticUserError, TypeError, ValueError):
         return None
 
 
 def json_safe(kind: Any, value: Any) -> bool:
     from pydantic import TypeAdapter
+    from pydantic.errors import PydanticUserError
 
     try:
         json.dumps(TypeAdapter(kind).dump_python(value, mode="json"))
         return True
-    except Exception:
+    except (PydanticUserError, TypeError, ValueError):
         return False
 
 
@@ -361,7 +363,7 @@ def config_args(module: Any, overrides: dict[str, Any]) -> list[dict[str, Any]]:
         required, kind = field.is_required(), field.annotation
         try:
             default = None if required else field.get_default(call_default_factory=True)
-        except Exception:
+        except Exception:  # a default factory is the module's own code
             default = None
         entry = {
             "name": name,
