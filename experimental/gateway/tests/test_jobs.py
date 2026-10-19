@@ -43,6 +43,9 @@ for name in names:
           "importable": ok, "optional_dependency": False, "import_error": None if ok else "ModuleNotFoundError: x",
           "missing_module": None if ok else "unitree_sdk2py", "doc": "",
           "modules": [{{"name": "cam", "class": "x.Cam", "module": "cam", "streams": []}}] if ok else []}})
+    if ok and request.get("modules") == []:
+        emit({{"kind": "module", "name": "cam", "class": "x.Cam", "doc": "A rescanned camera.", "inputs": [],
+              "outputs": [], "skills": [{{"name": "snap", "doc": "", "params": []}}]}})
 for name in request.get("modules", ["cam"]):
     emit({{"kind": "start", "name": "module:" + name}})
     emit({{"kind": "module", "name": name, "class": "x.Cam", "doc": "A camera.", "inputs": [], "outputs": [],
@@ -95,7 +98,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     ]
     never = client.get("/catalog").json()
     assert never["modules"] == [] and never["scan"]["scanned"] is False and never["scan"]["stale"]
-    assert client.get("/blueprints").json()["scan"]["state"] == "idle"
+    assert client.get("/catalog/blueprints").json()["scan"]["state"] == "idle"
     assert scanned.scanner.task is None
     response = client.post("/catalog/scan")
     assert response.status_code == 202
@@ -106,7 +109,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     assert status["ok"] and status["kind"] == "scan"
     assert status["progress"] == {"done": 3, "total": 3, "current": None}
     assert any("crashed" in line for line in status["lines"])
-    answer = client.get("/blueprints").json()
+    answer = client.get("/catalog/blueprints").json()
     scan = answer["scan"]
     assert {k: scan[k] for k in ("job", "state", "scanned", "stale", "finished_at")} == {
         "job": job,
@@ -117,12 +120,14 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     }
     assert 0 <= scan["age_seconds"] < 60
     found = {b["name"]: b for b in answer["blueprints"]}
-    assert found["good"]["robot"] == "go2" and found["good"]["modules"][0]["class"] == "x.Cam"
+    assert found["good"]["robot"] == "go2" and found["good"]["modules"] == ["cam"]
+    assert found["good"]["scanned_at"] == status["finished_at"]
     assert "crashed" in found["crashes"]["import_error"]
     assert found["missing"]["suggested_extras"] == ["unitree-dds"]
-    assert found["other"] == {"name": "other", "kind": "builtin"}
+    assert found["other"]["importable"] is None and found["other"]["scanned_at"] is None
     catalog = client.get("/catalog").json()
-    assert [b["name"] for b in catalog["blueprints"]] == ["good"]
+    assert [b["name"] for b in catalog["blueprints"]] == ["good", "crashes", "missing", "other"]
+    assert catalog["modules"][0]["blueprints"] == ["good"] and "go2" in catalog["robots"]
     assert catalog["modules"][0]["skills"] == ["snap"] and catalog["modules"][0]["robots"] == [
         "go2"
     ]
@@ -139,11 +144,25 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     ] == ["cam"]
     assert "stale" in bp["scan"] and "age_seconds" in bp["scan"]
     assert client.get("/catalog?blueprint=nope").json()["modules"] == []
-    names = client.get("/blueprints?fields=name").json()["blueprints"]
-    assert {b["name"] for b in names} == set(found) and all(b.keys() == {"name"} for b in names)
-    assert client.get("/blueprints?fields=robot").json()["blueprints"][0].keys() <= {
-        "name",
-        "robot",
+    names = client.get("/catalog/blueprints?fields=blueprints.name").json()
+    assert {b["name"] for b in names["blueprints"]} == set(found)
+    assert all(b.keys() == {"name"} for b in names["blueprints"]) and "scan" in names
+    picked = client.get("/catalog?fields=modules.name,robots.name").json()
+    assert set(picked) == {"modules", "robots", "scan"} and picked["modules"] == [{"name": "cam"}]
+    assert picked["robots"]["go2"] == {"name": "Unitree Go2"}
+    unknown = client.get("/catalog/blueprints?fields=blueprints.nmae")
+    assert unknown.status_code == 400 and "blueprints.nmae" in unknown.json()["error"]
+    assert client.get("/catalog/modules").json()["modules"][0]["name"] == "cam"
+    assert (
+        client.get("/catalog/skills?namespace=robot0").json()["skills"][0]["rpc"]
+        == "robot0/cam/snap"
+    )
+    assert client.get("/catalog/skills/cam/snap").json()["module"] == "cam"
+    assert client.get("/catalog/skills/cam/nope").status_code == 404
+    assert client.get("/catalog/modules/nope").status_code == 404
+    assert client.get("/catalog/msgs/sensor_msgs.Image").json() == {
+        "name": "sensor_msgs.Image",
+        "definition": None,
     }
     scanned.blueprints_changed(["new"], [])
     assert client.get("/catalog").json()["modules"]
@@ -244,3 +263,43 @@ def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_fir
     assert f"CYCLONEDDS_HOME={(tmp_path / 'store').resolve()} sync --locked --inexact" in "\n".join(
         log["lines"]
     )
+
+
+def test_one_blueprint_rescans_without_a_full_scan(client: TestClient, scanned: State) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}, {"name": "missing", "kind": "builtin"}]
+    assert client.post("/catalog/scan/blueprints/nope").status_code == 404
+    job = client.post("/catalog/scan/blueprints/good").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert client.get(f"/jobs/{job}").json()["ok"]
+    found = {b["name"]: b for b in client.get("/catalog/blueprints").json()["blueprints"]}
+    assert found["good"]["importable"] and found["good"]["scanned_at"]
+    assert found["missing"]["importable"] is None
+    scan = client.get("/catalog").json()
+    assert scan["scan"]["scanned"] is False and scan["modules"][0]["doc"] == "A rescanned camera."
+
+
+def test_a_module_answers_with_its_methods_and_config(
+    client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scanned.listed = [{"name": "good", "kind": "builtin"}]
+    job = client.post("/catalog/scan/blueprints/good").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+
+    async def fake(args: list[str], stdin: Any = None) -> Any:
+        assert args[1] == "x.Cam"
+        if args[0] == "module_config":
+            return {"name": "cam", "class": "x.Cam", "args": {}}
+        return {"rpcs": [], "skill_methods": [], "file": "x.py", "line": 1}
+
+    monkeypatch.setattr(scanned, "introspected", fake)
+    cam = client.get("/catalog/modules/x.Cam").json()
+    assert cam["name"] == "cam" and cam["blueprints"] == ["good"] and cam["file"] == "x.py"
+    assert client.get("/catalog/modules/cam/config").json()["class"] == "x.Cam"
+    cache = scanned.scanner.cache()
+    assert cache is not None
+    cache["modules"]["x.f.<locals>.Cam"] = {
+        **cache["modules"]["x.Cam"],
+        "name": "Cam",
+        "class": "x.f.<locals>.Cam",
+    }
+    assert client.get("/catalog/modules/Cam").status_code == 404

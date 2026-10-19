@@ -103,56 +103,41 @@ BlueprintModule = TypedDict(
 with_config(CONFIG)(BlueprintModule)
 
 
-class ConfigArg(Body):
-    name: str
+class Arg(Body):
+    """One config field: its type, default and description, and whether it's secret."""
+
     type: str | None
     default: Any
     description: str | None
     required: bool
+    secret: bool
     base: bool
     json_compatible: bool
-    secret: bool
     choices: NotRequired[list[Any]]
     schema: NotRequired[dict[str, Any]]
-    value: NotRequired[Any]
 
 
-ModuleConfig = TypedDict(
-    "ModuleConfig",
-    {"module": str, "class": str, "args": list[ConfigArg], "error": NotRequired[str]},
+ModuleArgs = TypedDict(
+    "ModuleArgs", {"class": str, "args": dict[str, Arg], "error": NotRequired[str]}
 )
-with_config(CONFIG)(ModuleConfig)
+with_config(CONFIG)(ModuleArgs)
 
+BlueprintSchema = TypedDict(
+    "BlueprintSchema",
+    {"name": str, "global": dict[str, Arg], "modules": dict[str, ModuleArgs]},
+)
+"""A blueprint's config schema: GlobalConfig's fields, and each module's by instance name."""
+with_config(CONFIG)(BlueprintSchema)
 
-class CheckedArg(Body):
-    tokens: list[str]
-    target: str | None
-    error: str | None
+ModuleSchema = TypedDict("ModuleSchema", {"name": str, "class": str, "args": dict[str, Arg]})
+with_config(CONFIG)(ModuleSchema)
 
-
-class CheckedArgs(Body):
-    """Each group of CLI args, what it sets and why dimos would refuse it."""
-
-    name: str
-    args: list[CheckedArg]
-
-
-class BlueprintConfig(Body):
-    """A blueprint's configurable args per module, and the values Desktop saved for it."""
-
-    name: str
-    modules: list[ModuleConfig]
-    overrides: dict[str, dict[str, Any]]
-
-
-class Blueprint(Body):
-    """A blueprint's modules: their streams (topic, type, direction), RPCs and skills; and its config."""
-
-    name: str
-    file: str | None
-    line: int | None
-    modules: list[BlueprintModule]
-    config: BlueprintConfig
+BlueprintConfigValues = TypedDict(
+    "BlueprintConfigValues",
+    {"name": str, "global": dict[str, Any], "modules": dict[str, dict[str, Any]]},
+)
+"""What's saved for one blueprint: `global` (over /config/global) and each module's fields."""
+with_config(CONFIG)(BlueprintConfigValues)
 
 
 class GlobalConfig(Body):
@@ -162,55 +147,6 @@ class GlobalConfig(Body):
     defaults: dict[str, Any]
     overrides: dict[str, Any]
     secrets: list[str]
-
-
-class Robot(Body):
-    name: str
-    description: str
-    type: str | None
-    manufacturer: NotRequired[str | None]
-    dirs: NotRequired[list[str]]
-    recommended: list[str]
-    blueprints: dict[str, RobotBlueprint]
-
-
-class RobotBlueprint(Body):
-    title: str
-    description: str
-    robot: str
-    recommended_config: list[dict[str, Any]]
-    starter: int | None
-    hidden: bool
-    registered: bool
-
-
-class Robots(Body):
-    """Every robot dimos supports and its blueprints, with each one's recommended settings."""
-
-    about: None
-    types: dict[str, dict[str, Any]]
-    robots: dict[str, Robot]
-
-
-ScannedModule = TypedDict(
-    "ScannedModule", {"name": str, "class": str, "module": str, "streams": list[Stream]}
-)
-with_config(CONFIG)(ScannedModule)
-
-
-class BlueprintEntry(Body):
-    """A blueprint, and (once a scan finished) what the last scan found: whether it imports, and if not why."""
-
-    name: str
-    kind: NotRequired[Literal["builtin", "external"]]
-    ref: NotRequired[str | None]
-    robot: NotRequired[str | None]
-    importable: NotRequired[bool]
-    import_error: NotRequired[str | None]
-    missing_module: NotRequired[str | None]
-    optional_dependency: NotRequired[bool]
-    suggested_extras: NotRequired[list[str]]
-    modules: NotRequired[list[ScannedModule]]
 
 
 class ScanStatus(Body):
@@ -225,33 +161,49 @@ class ScanStatus(Body):
     stale: bool
 
 
-class BlueprintList(Body):
-    """Every blueprint dimos can run, and what the last scan found for each."""
-
-    blueprints: list[BlueprintEntry]
-    scan: ScanStatus
-
-
 class ScanStarted(Body):
     """The scan's job: follow it at /jobs/{job}."""
 
     job: str
 
 
-class CatalogBlueprint(Body):
+# every /catalog answer takes ?fields=, so none of their fields are required
+class BlueprintFields(Body, total=False):
     name: str
+    kind: Literal["builtin", "external"]
     ref: str | None
     robot: str | None
+    doc: str | None
+    title: str | None
+    description: str | None
+    starter: int | None
+    hidden: bool
+    recommended_config: list[dict[str, Any]]
+    importable: bool | None
+    import_error: str | None
+    missing_module: str | None
+    optional_dependency: bool | None
+    suggested_extras: list[str]
+    scanned_at: str | None
+
+
+class CatalogBlueprint(BlueprintFields, total=False):
+    """A blueprint: what annotations.yaml says of it, and what the last scan found (null before one)."""
+
     modules: list[str]
-    doc: str
 
 
-class CatalogSkill(Body):
-    name: str
-    doc: str
-    params: list[Param]
-    module: str
-    robots: list[str]
+class BlueprintDetail(BlueprintFields, total=False):
+    """A blueprint with its file and line, and its modules' streams, RPCs and skills."""
+
+    file: str | None
+    line: int | None
+    modules: list[BlueprintModule]
+
+
+class BlueprintList(Body, total=False):
+    blueprints: list[CatalogBlueprint]
+    scan: ScanStatus
 
 
 class PortType(Body):
@@ -269,19 +221,75 @@ CatalogModule = TypedDict(
         "outputs": list[PortType],
         "robots": list[str],
         "skills": list[str],
+        "blueprints": list[str],
     },
+    total=False,
 )
 with_config(CONFIG)(CatalogModule)
 
 
-class Catalog(Body):
-    """The importable built-in blueprints, every module and every skill, for browsing."""
+class ModuleDetail(CatalogModule, total=False):
+    """A module, the blueprints using it, and its RPCs and skills."""
+
+    rpcs: list[Method]
+    skill_methods: list[Method]
+    file: str | None
+    line: int | None
+
+
+class ModuleList(Body, total=False):
+    modules: list[CatalogModule]
+    scan: ScanStatus
+
+
+class CatalogSkill(Body, total=False):
+    name: str
+    doc: str
+    params: list[Param]
+    module: str
+    robots: list[str]
+    rpc: str
+
+
+class CatalogSkills(Body, total=False):
+    skills: list[CatalogSkill]
+    scan: ScanStatus
+
+
+class CatalogRobot(Body, total=False):
+    name: str
+    description: str
+    type: str | None
+    manufacturer: str | None
+    dirs: list[str]
+    recommended: list[str]
+    blueprints: list[str]
+
+
+class Robots(Body, total=False):
+    """Every robot dimos supports, by type, with its blueprints by name."""
+
+    types: dict[str, dict[str, Any]]
+    robots: dict[str, CatalogRobot]
+
+
+class Catalog(Body, total=False):
+    """Every blueprint, module, skill and robot the last scan found."""
 
     blueprints: list[CatalogBlueprint]
     modules: list[CatalogModule]
     skills: list[CatalogSkill]
+    robots: dict[str, CatalogRobot]
+    types: dict[str, dict[str, Any]]
     errors: list[str]
     scan: ScanStatus
+
+
+class MessageType(Body):
+    """A message type's definition (not filled in yet)."""
+
+    name: str
+    definition: dict[str, Any] | None
 
 
 class Extra(Body):
@@ -396,6 +404,19 @@ class LogRecord(Body):
     event: str
     extra: dict[str, Any]
     raw: str
+
+
+class PastRun(Body):
+    runId: str
+    blueprint: str | None
+    startedAt: str | None
+    running: bool
+
+
+class LogHistory(Body):
+    """Every run with a log, newest first."""
+
+    runs: list[PastRun]
 
 
 class RunLog(Body):

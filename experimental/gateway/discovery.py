@@ -77,6 +77,20 @@ SCANNED = (
 )
 
 
+def failed_record(name: str, problem: str) -> dict[str, Any]:
+    """A blueprint whose import crashed or hung the scan's child process."""
+    return {
+        "name": name,
+        "ref": None,
+        "builtin": None,
+        "importable": False,
+        "optional_dependency": False,
+        "import_error": problem,
+        "missing_module": None,
+        "modules": [],
+    }
+
+
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -130,6 +144,9 @@ class Scanner:
         self.saved: dict[str, Any] | None = None
         self.looked = False
         self.now_print: tuple[float, str] | None = None
+        # one child at a time: a full scan and a single blueprint's share the fields above
+        self.lock = asyncio.Lock()
+        self.single: set[asyncio.Task[None]] = set()
 
     def cache(self) -> dict[str, Any] | None:
         """The last finished scan (from disk after a restart), or None if this checkout was never scanned."""
@@ -157,7 +174,7 @@ class Scanner:
         return {
             "job": self.job and self.job.id,
             "state": self.state,
-            "scanned": cache is not None,
+            "scanned": finished is not None,
             "finished_at": finished,
             "age_seconds": age,
             "stale": cache is None or cache.get("fingerprint") != self.current_fingerprint(),
@@ -192,7 +209,53 @@ class Scanner:
                 "current": self.current,
             }
 
+    def start_one(self, name: str) -> Job:
+        """A scan of just `name` and its modules (the full scan's job if one is running)."""
+        if self.task is not None and not self.task.done():
+            assert self.job is not None
+            return self.job
+        job = self.jobs.add(f"Scan {name}", "scan", [*self.command, "scan"])
+        task = asyncio.get_running_loop().create_task(self.scan_one(job, name))
+        self.single.add(task)
+        task.add_done_callback(self.single.discard)
+        return job
+
+    async def scan_one(self, job: Job, name: str) -> None:
+        ok = False
+        async with self.lock:
+            self.blueprints, self.modules, self.errors = {}, {}, []
+            self.names, self.finished_modules = {"blueprints": [name], "modules": []}, set()
+            self.job = job
+            try:
+                problem = await self.child({"blueprints": [name], "modules": [], "known": []})
+                if name not in self.blueprints:
+                    self.blueprints[name] = failed_record(name, problem or "no answer")
+                found = await asyncio.to_thread(self.finish)
+                cache = self.cache() or {
+                    "fingerprint": None,
+                    "finished_at": None,
+                    "results": {},
+                    "modules": {},
+                    "errors": [],
+                    "names": {"blueprints": [], "modules": []},
+                }
+                cache["results"][name] = {**found[name], "scanned_at": now_iso()}
+                cache["modules"].update(self.modules)
+                self.saved, self.looked = cache, True
+                await asyncio.to_thread(self.save)
+                ok = True
+            except Exception as error:
+                logger.exception("scanning a blueprint failed", blueprint=name)
+                self.error(f"scan {name}: {type(error).__name__}: {error}")
+            finally:
+                job.finish(ok, None if ok else (self.errors or ["the scan was cancelled"])[-1])
+
     async def scan(self, job: Job) -> None:
+        async with self.lock:
+            await self.scan_all(job)
+
+    async def scan_all(self, job: Job) -> None:
+        self.job = job
         self.blueprints, self.modules, self.errors = {}, {}, []
         self.names, self.finished_modules = {"blueprints": [], "modules": []}, set()
         self.current = None
@@ -205,16 +268,7 @@ class Scanner:
                 current = self.current or ""
                 self.error(f"{current}: {problem}")
                 if current in self.pending()[0]:
-                    self.blueprints[current] = {
-                        "name": current,
-                        "ref": None,
-                        "builtin": None,
-                        "importable": False,
-                        "optional_dependency": False,
-                        "import_error": problem,
-                        "missing_module": None,
-                        "modules": [],
-                    }
+                    self.blueprints[current] = failed_record(current, problem)
                 elif current and current.startswith("module:"):
                     self.finished_modules.add(current[7:])
                 else:
@@ -229,10 +283,11 @@ class Scanner:
             self.current = None
             self.tick()
             results = await asyncio.to_thread(self.finish)
+            finished = now_iso()
             self.saved = {
                 "fingerprint": before,
-                "finished_at": now_iso(),
-                "results": results,
+                "finished_at": finished,
+                "results": {n: {**r, "scanned_at": finished} for n, r in results.items()},
                 "modules": self.modules,
                 "errors": self.errors,
                 "names": self.names,
