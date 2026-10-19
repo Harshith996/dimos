@@ -16,24 +16,8 @@
 
 import argparse
 from pathlib import Path
-import shutil
 
-from dimos_cdrgen.source_inputs import prepare_sources
-
-ROOT = Path(__file__).resolve().parents[1]
-PROJECT = ROOT / "packages/dimos-generated"
-
-
-def prepare(cache: Path, *, offline: bool = False, project: Path = PROJECT) -> Path:
-    upstream = cache / "upstream"
-    prepare_sources(project / "schema-sources.json", upstream, cache / "archives", offline=offline)
-    target = project / "interfaces"
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(upstream, target)
-    shutil.copytree(project / "custom/dimos_msgs/msg", target / "dimos_msgs/msg")
-    shutil.copyfile(project / "custom/dimos_msgs/LICENSE", target / "licenses/dimos_msgs-LICENSE")
-    return target
+from dimos.message_codegen.build import ROOT, prepare_builtin_sources as prepare
 
 
 def main() -> None:

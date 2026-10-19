@@ -19,10 +19,24 @@ import shutil
 import struct
 import sys
 
-from dimos_cdrgen.source_package import setup_arguments
+from dimos_cdrgen.source_package import SourceDistribution, setup_arguments
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
+
+# PEP 517 executes setup.py without putting the checkout on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dimos.message_codegen.build import prepare_builtin_sources, prepare_web_dist
+
+
+class sdist(SourceDistribution):
+    def run(self):
+        if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
+            prepare_web_dist(
+                Path(__file__).resolve().parent / "web",
+                offline=os.environ.get("DIMOS_OFFLINE") == "1",
+            )
+        super().run()
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -93,6 +107,11 @@ class build_py(_build_py):
         ]
 
     def run(self):
+        if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
+            prepare_web_dist(
+                Path(__file__).resolve().parent / "web",
+                offline=os.environ.get("DIMOS_OFFLINE") == "1",
+            )
         # Reconcile cached build trees after a namespace move or message deletion.
         for name in ("dimos_generated", "dimos_generated_schemas", *message_roots):
             directory = Path(self.build_lib) / name.replace(".", "/")
@@ -112,21 +131,12 @@ class build_py(_build_py):
             if not (src / rel).is_file()
         ]
         if missing:
-            # Wheels must carry the Cockpit and the SDK bundle: there is no
-            # fallback debug page, so a dist-less wheel's relay serves no UI
-            # (and /sdk.js only a build hint). Building a deliberate
-            # python-only wheel (e.g. where deno is unavailable) requires the
-            # explicit env-var opt-out, which covers both products.
-            if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
-                raise RuntimeError(
-                    f"web dist missing ({', '.join(missing)}); run `deno task build` "
-                    "in web/sdk and web/cockpit (or `dimos run --local-relay` from a "
-                    "checkout builds them), or set DIMOS_ALLOW_MISSING_COCKPIT=1 to "
-                    "build a UI-less wheel anyway"
+            if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") == "1":
+                self.warn(
+                    f"web dist missing ({', '.join(missing)}); this wheel's relay will have no UI"
                 )
-            self.warn(
-                f"web dist missing ({', '.join(missing)}); this wheel's relay will have no UI"
-            )
+            else:
+                prepare_web_dist(src, offline=os.environ.get("DIMOS_OFFLINE") == "1")
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
             entry = src / name
@@ -170,7 +180,8 @@ ext_modules = [
 ]
 
 # The shared generator reads the root project's version and message configuration.
-# Inputs are prepared explicitly by CI/maintainers and included in the sdist.
+# Source builds verify/prepare pinned inputs; sdists carry them for offline reuse.
+prepare_builtin_sources(offline=os.environ.get("DIMOS_OFFLINE") == "1")
 message_settings = setup_arguments(Path(__file__).resolve().parent)
 message_source = message_settings["package_dir"][""]
 message_roots = tuple(message_settings["package_data"])
@@ -183,5 +194,10 @@ setup(
         **{name: f"{message_source}/{name.replace('.', '/')}" for name in message_roots},
     },
     ext_modules=ext_modules,
-    cmdclass={**message_settings["cmdclass"], "build_ext": build_ext, "build_py": build_py},
+    cmdclass={
+        **message_settings["cmdclass"],
+        "sdist": sdist,
+        "build_ext": build_ext,
+        "build_py": build_py,
+    },
 )

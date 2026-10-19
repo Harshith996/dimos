@@ -3,7 +3,7 @@
 Git keeps the 14 DimOS definitions under `custom/dimos_msgs`, the supported
 `catalog.json`, and `schema-sources.json` with pinned revisions, archive hashes,
 selected-file hashes and license paths. Bulk upstream `.msg` files are not Git
-inputs. Explicit preparation puts their selected closure in ignored `interfaces/`.
+inputs. Source builds prepare their selected closure in ignored `interfaces/`.
 Python aliases/stubs and native source projects are also ignored build outputs.
 
 ## Supported types
@@ -37,10 +37,10 @@ split ROS-package ownership across Rust crates. There is no core/extras scheme.
 
 Built-in Python messages and their schemas ship inside the main `dimos` wheel.
 There is no separate `dimos-generated` Python distribution to install or publish.
-Until this proposal is released, install the matching review wheel:
+Before release, install directly from the proposal commit (replace `COMMIT`):
 
 ```sh
-pip install review/wheels/dimos-*.whl
+pip install "dimos @ git+https://github.com/dimensionalOS/dimos.git@COMMIT"
 ```
 
 After release, ordinary users just run `pip install dimos`. Imports stay the same:
@@ -63,30 +63,34 @@ package's existing native extensions have their own platform wheel requirements.
 
 ## Source and editable builds
 
-A maintainer prepares inputs explicitly in a checkout before normal builds:
+Normal source and editable installation prepares inputs and generates messages automatically:
 
 ```sh
-uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.1' python -m scripts.prepare_builtin_sources
 pip install .
 # Or for development:
 pip install -e .
 ```
 
-For cached archives, pass `--offline` to the preparation command. Source
-preparation verifies archive and selected-file hashes and includes the licenses.
-It never runs inside pip hooks or runtime imports. An unprepared checkout fails
-with the missing-input path rather than downloading schemas.
+The PEP 517/660 backend uses the root configuration and shared generator. It
+verifies pinned archive and selected-file hashes, includes licenses, and reuses
+verified inputs. No schema preparation command is needed. Imports never download
+or generate code. Only the main package's existing A* extension is compiled;
+Python messages need neither CMake nor Cargo.
 
-The root PEP 517/660 build uses the shared generator and configuration in
-`pyproject.toml`. Only the existing main-package extension is compiled; Python
-message generation runs no CMake or Cargo. Build isolation installs the declared
-Python build dependencies. Offline builds need those dependencies cached locally.
-A release sdist includes prepared inputs, catalog, pins and licenses, so it can
-rebuild outside the checkout without fetching schemas. The normal main-package
-compiler and web-bundle prerequisites still apply to source builds.
+Build isolation installs declared Python build dependencies, including the
+pinned official Deno distribution. When Web bundles are absent, the source build
+uses Deno with the frozen repository lockfile to build them. A C++ compiler is
+still required for the existing A* extension. Missing tools, downloads or invalid
+hashes fail the build; no OS packages are installed silently.
 
-After changing a definition, rerun preparation and reinstall editable output,
-then restart existing Python processes. External message projects declare
+A source distribution includes verified definitions and Web bundles. For offline
+rebuilds set `DIMOS_OFFLINE=1` and supply all Python build dependencies from a
+local wheelhouse. A fresh Git checkout also needs verified schema archives in
+`DIMOS_MESSAGE_SOURCE_CACHE` and Deno's locked dependencies cached. The optional
+maintainer preparation command remains available for explicitly warming that
+cache. After changing a definition, reinstall editable output and restart Python.
+
+External message projects declare
 `dimos` as their Python build/runtime dependency and use the installed
 `dimos.messages` schema owner at the matching DimOS version:
 ```toml

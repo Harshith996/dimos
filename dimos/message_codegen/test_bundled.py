@@ -15,7 +15,8 @@
 """Acceptance for built-in messages owned by the main DimOS distribution.
 
 Build the root wheel and sdist first, then set DIMOS_BUNDLE_DIST and
-DIMOS_BUNDLE_WHEELHOUSE. All installation runs use only that local wheelhouse.
+DIMOS_BUNDLE_WHEELHOUSE. Python dependencies use only that local wheelhouse. Git-source acceptance
+also downloads verified schema archives and frozen Web dependencies.
 """
 
 import os
@@ -54,6 +55,8 @@ def test_main_wheel_owns_messages_and_schema_closure(artifacts):
         metadata = archive.read(next(n for n in names if n.endswith("/METADATA"))).decode()
         assert "Requires-Dist: dimos-generated" not in metadata
         assert "dimos/core/module.py" in names
+        assert "dimos/web/relay_bridge/_relay_dist/sdk/dist/sdk.js" in names
+        assert "dimos/web/relay_bridge/_relay_dist/cockpit/dist/index.html" in names
         assert not any(name.startswith("dimos_generated") for name in names)
         assert "dimos/messages/std_msgs/msg/__init__.py" in names
         assert "dimos/messages_schemas/schemas/std_msgs/msg/Header.msg" in names
@@ -67,7 +70,7 @@ def test_main_wheel_owns_messages_and_schema_closure(artifacts):
         assert "packages/dimos-generated/catalog.json" in names
 
 
-@pytest.mark.parametrize("mode", ["wheel", "source", "editable"])
+@pytest.mark.parametrize("mode", ["wheel", "source", "editable", "git"])
 def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mode):
     wheel, sdist, wheelhouse, version = artifacts
     environment = tmp_path / "venv"
@@ -75,13 +78,18 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     python = str(environment / "bin/python")
     pip = [python, "-m", "pip", "install", "--no-index", "--find-links", str(wheelhouse)]
     run(*pip, "dimos-cdrgen==0.1.1", "setuptools>=70", "wheel", "pybind11", cwd=tmp_path)
-    if mode == "wheel":
+    if mode == "git":
+        root = Path(__file__).resolve().parents[2]
+        head = run("git", "rev-parse", "HEAD", cwd=root).strip()
+        source = f"git+{root.as_uri()}@{head}"
+    elif mode == "wheel":
         source = wheel
     else:
         with tarfile.open(sdist) as archive:
             archive.extractall(tmp_path / "source", filter="data")
         source = next((tmp_path / "source").iterdir())
-    env = {**os.environ, "DIMOS_ALLOW_MISSING_COCKPIT": "1"}
+    env = {**os.environ, "DIMOS_OFFLINE": "0" if mode == "git" else "1"}
+    env.pop("DIMOS_ALLOW_MISSING_COCKPIT", None)
     run(
         *pip,
         "--no-deps",

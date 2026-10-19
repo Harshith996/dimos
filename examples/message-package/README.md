@@ -5,23 +5,19 @@ then run outside the checkout. This example constructs an upstream `Image` and
 the existing custom `LineSegments3D`, checks their CDR roundtrips, and inspects
 the packaged definitions and native build inputs.
 
-Use Python 3.12 and uv on Linux or macOS. No ROS installation, CMake, Rust
-toolchain or MCAP package is needed for message use. Building DimOS from a checkout needs its normal C++ compiler and
-prebuilt web bundles. Initial preparation, building, and dependency installation need network access unless their inputs
-are cached.
-
-From the repository root on this example branch:
+Use Python 3.12 and a C++ compiler (for DimOS's existing A* extension).
+From this PR's checkout, install its commit into your active environment and run:
 
 ```sh
-message_demo_dir="$(mktemp -d)"
-uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.1' python -m scripts.prepare_builtin_sources
-uv build --wheel --out-dir "$message_demo_dir/wheels"
-uv venv --python 3.12 "$message_demo_dir/venv"
-uv pip install --python "$message_demo_dir/venv/bin/python" "$message_demo_dir"/wheels/dimos-*.whl
-cp examples/message-package/demo_installed_wheel.py "$message_demo_dir/"
-cd "$message_demo_dir"
-"$message_demo_dir/venv/bin/python" -I demo_installed_wheel.py
+python -m pip install "dimos @ git+https://github.com/dimensionalOS/dimos.git@$(git rev-parse HEAD)"
+python -I examples/message-package/demo_installed_wheel.py
 ```
+
+This uses standard isolated source installation: the backend prepares hash-verified
+message definitions, generates Python modules, and builds missing Web bundles
+using the declared Deno dependency. You do not need to publish DimOS, run a
+preparation script, or install ROS/CMake/Rust. Network access is needed on a cold
+source build. Installing a prebuilt wheel performs none of these build steps.
 
 Expected output, with your temporary directory in the first line:
 
@@ -59,8 +55,8 @@ Messages use `dimos-cdrgen`, rosbags, and NumPy; an ordinary DimOS installation
 also installs its other runtime dependencies. Running this example does not fetch `.msg` files or compile
 native bindings. For offline installation, make those dependency wheels
 available locally and pass `--no-index --find-links <wheelhouse>` to
-`uv pip install`. Offline source preparation separately requires cached
-archives and `scripts.prepare_builtin_sources --offline`.
+`uv pip install`. Offline source builds use `DIMOS_OFFLINE=1` and require cached archives and
+locked Deno dependencies unless prepared inputs/bundles are already present.
 
 MCAP recording is a separate layer. The existing
 [layer-3 example](https://github.com/dimensionalOS/dimos/blob/3cb96b780433dcdac605f69453721aac2df1d800/examples/message-codegen/demo_mcap.py)
