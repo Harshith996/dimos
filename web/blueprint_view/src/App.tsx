@@ -25,6 +25,7 @@ import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import { type Launch, launchedWithOther, type Relaunching, relaunchLabel } from "./run.ts";
+import type { StatsAnswer } from "./process_rows.ts";
 import { CodeButton, ModuleList, ModuleView } from "./side.tsx";
 
 const FRAMED = framedByDesktop();
@@ -75,6 +76,8 @@ export function App() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [rateRowsHeard, setRateRowsHeard] = useState<TopicRate[]>([]);
   const [ratesError, setRatesError] = useState<string | null>(null);
+  const [stats, setStats] = useState<StatsAnswer | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [showExtras, setShowExtras] = useState(false);
   const [dialog, setDialog] = useState<"config" | "logs" | null>(null);
   const chrome = useDesktopChrome({ pausable: true });
@@ -170,6 +173,28 @@ export function App() {
     const timer = setInterval(poll, 2000);
     return () => clearInterval(timer);
   }, [visible]);
+
+  // dtop's numbers for the processes table, while something runs (the gateway hears them only while asked)
+  useEffect(() => {
+    if (!visible || !running) {
+      setStats(null);
+      return;
+    }
+    const poll = async () => {
+      try {
+        const answer = await getJson<StatsAnswer>("runs/stats");
+        setStats(answer);
+        setStatsError(
+          answer.up ? null : "no stats yet: a run started outside Desktop needs --dtop",
+        );
+      } catch (caught) {
+        setStatsError(errorText(caught));
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => clearInterval(timer);
+  }, [visible, running]);
 
   // Hz per topic (without its leading slash), and the live topics no module here is wired to
   const rates = useMemo(() => {
@@ -352,6 +377,8 @@ export function App() {
                 error={error}
                 rates={rateRowsHeard}
                 ratesError={ratesError}
+                stats={running ? stats : null}
+                statsError={running ? statsError : null}
                 onOpen={open}
                 onHover={setHovered}
               />

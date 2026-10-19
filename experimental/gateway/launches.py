@@ -273,6 +273,8 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "VIRTUAL_ENV": str(venv),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
+            # dtop's stats for the blueprint view's process table (GET /runs/stats); a --no-dtop flag still wins
+            "DTOP": os.environ.get("DTOP", "1"),
             **secret_env,
         }
         with launch_log().open("a") as log:

@@ -467,3 +467,37 @@ h4 {
     border-bottom: 1px solid var(--border);
   }
 }
+
+/* the Processes table (dtop): dr-rates' look, with a header row, children indented, stale stats faded */
+.processes {
+  max-height: calc(8.5 * 21px + 20px);
+}
+.processes .dr-rates__topic {
+  max-width: 120px;
+}
+.processes th {
+  padding: 0 5px 2px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--muted-fg);
+  position: sticky;
+  top: 0;
+  background: var(--card, var(--bg));
+}
+.processes th:first-child {
+  text-align: left;
+}
+.processes tr.child .dr-rates__topic {
+  padding-left: 14px;
+  color: var(--muted-fg);
+}
+.processes tr.dead .dr-rates__topic {
+  text-decoration: line-through;
+}
+.processes .dr-sparkline {
+  display: block;
+  color: var(--info, var(--primary));
+}
+.processes.stale {
+  opacity: 0.45;
+}

@@ -8,7 +8,7 @@ install: |
   set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "5.0.0"
+  version: "5.1.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
@@ -91,6 +91,9 @@ provides:
     - method: GET
       path: runs/logs
       description: 'The running run''s log, or the latest run''s when nothing runs, from ?after= on (?level=, ?q=, ?limit=)'
+    - method: GET
+      path: runs/stats
+      description: 'dtop for the running blueprint: cpu, memory, threads, fds and io per process (coordinator, workers, their children), with a minute of cpu history; up false until its /resource_stats is heard (launches from here run with dtop)'
     - method: POST
       path: runs/restart
       description: 'Stop the run {runId} and launch it again'

@@ -11,6 +11,8 @@ import {
 } from "dimos-react";
 import { type CSSProperties, useState } from "react";
 import type { Where } from "./code.tsx";
+import { processRows, type StatsAnswer } from "./process_rows.ts";
+import { ProcessTable } from "./processes.tsx";
 import {
   aliasOf,
   className,
@@ -70,11 +72,14 @@ function StreamPills({ label, list }: { label: string; list: Stream[] }) {
 }
 
 export function ModuleList(
-  { modules, error, rates, ratesError, onOpen, onHover }: {
+  { modules, error, rates, ratesError, stats, statsError, onOpen, onHover }: {
     modules: Module[] | null;
     error: string | null;
     rates: TopicRate[];
     ratesError: string | null;
+    /** null: nothing running (no table) */
+    stats: StatsAnswer | null;
+    statsError: string | null;
     onOpen: (name: string) => void;
     onHover: (name: string | null) => void;
   },
@@ -91,6 +96,17 @@ export function ModuleList(
       >
         <TopicRates rows={rows} empty={ratesError} />
       </Disclosure>
+      {(stats || statsError) && (
+        <Disclosure
+          persistKey="bp.processesOpen"
+          title="Processes"
+          count={stats?.up
+            ? `${processRows(stats).filter((row) => !row.child).length} · dtop`
+            : null}
+        >
+          <ProcessTable stats={stats} empty={statsError} />
+        </Disclosure>
+      )}
       <Disclosure persistKey="bp.modulesOpen" title="Modules" count={modules?.length}>
         {error && <div className="note">{error}</div>}
         {!modules && !error && <div className="note">loading…</div>}
