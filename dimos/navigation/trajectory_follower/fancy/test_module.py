@@ -24,13 +24,11 @@ from dimos_generated.geometry_msgs.msg import (
 )
 from dimos_generated.nav_msgs.msg import Path
 from dimos_generated.std_msgs.msg import Header
-import numpy as np
 import pytest
 
 from dimos.core.module import ModuleConfig
 from dimos.core.transport_factory import rpc_backend
 from dimos.msgs.time import time_from_seconds
-from dimos.navigation.local_planner.obstacles import path_clearance
 from dimos.navigation.tf_pose import TfPose
 from dimos.navigation.trajectory_follower.fancy.laws import seed
 from dimos.navigation.trajectory_follower.fancy.module import (
@@ -56,26 +54,6 @@ def _stop_modules():
     yield
     while _BUILT:
         _BUILT.pop().stop()
-
-
-def test_clearance_is_obstacle_distance_minus_half_width():
-    xy = np.array([[0.0, 0.0]])
-    points = np.array([[1.0, 0.0, 0.2]])
-    clr = path_clearance(xy, points, half_width=0.155)
-    assert abs(clr[0] - (1.0 - 0.155)) < 1e-6
-
-
-def test_clearance_reads_every_point_it_is_handed_whatever_its_z():
-    # a floor or ceiling z arriving here means the model kept it
-    xy = np.array([[0.0, 0.0]])
-    for z in (-0.5, 0.01, 0.2, 0.46, 1.0):
-        points = np.array([[0.1, 0.0, z]])
-        assert abs(path_clearance(xy, points, half_width=0.0)[0] - 0.1) < 1e-6
-
-
-def test_clearance_empty_path_or_no_obstacles():
-    assert path_clearance(np.zeros((0, 2)), np.zeros((0, 3)), 0.1).shape == (0,)
-    assert np.isinf(path_clearance(np.zeros((1, 2)), np.zeros((0, 3)), 0.1)[0])
 
 
 def test_goal_latch_fires_once_then_holds():

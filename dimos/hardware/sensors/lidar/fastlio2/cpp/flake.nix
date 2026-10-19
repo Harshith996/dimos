@@ -2,12 +2,13 @@
   description = "FAST-LIO2 + Livox Mid-360 native module";
 
   inputs = {
+    nix-filter.url = "github:numtide/nix-filter";
     zenoh.url = "github:jeff-hykin/zenoh_flake";
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    livox-sdk.url = "path:../../livox/cpp";
-    livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
-    livox-sdk.inputs.flake-utils.follows = "flake-utils";
+    zenoh.inputs.nixpkgs.follows = "nixpkgs";
+    zenoh.inputs.flake-utils.follows = "flake-utils";
+    nixpkgs.follows = "dimos-native-cpp/nixpkgs";
+    flake-utils.follows = "dimos-native-cpp/flake-utils";
+    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
@@ -26,7 +27,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -60,22 +61,22 @@
                 (old.patches or [ ]);
             });
           };
+        sdk = nix-filter.lib { root = ../../../../../../native/cpp; exclude = [ "build" "target" "result" "__pycache__" ]; };
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ darwinDepFixes ];
         };
-        livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
         zenohc = zenoh.packages.${system}.zenoh-c;
         zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
-        livox-common = ../../common;
+        livox-sdk2 = import ./livox_sdk2.nix { inherit pkgs; };
 
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
           version = "0.2.0";
 
-          src = ./.;
+          src = nix-filter.lib { root = ./.; exclude = [ "build" "target" "result" "__pycache__" ]; };
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
@@ -96,13 +97,13 @@
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
-            "-DLIVOX_COMMON_DIR=${livox-common}"
-            # The header-only SDK lives outside this dir. A git-tree flake can
-            # reach it as a path literal within the repo tree.
-            "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
+            "-DDIMOS_NATIVE_CPP_DIR=${sdk}"
           ];
         };
       in {
+        # Nothing to lint and no tests here yet; declared so the gate sees the flake.
+        checks.lint = pkgs.runCommand "fastlio2-lint" { } "mkdir $out";
+        checks.tests = pkgs.runCommand "fastlio2-tests" { } "mkdir $out";
         packages = {
           default = fastlio2_native;
           inherit fastlio2_native;

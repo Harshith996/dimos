@@ -46,3 +46,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
+smallvec = "1"
+
+[workspace]
+members = ["py"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

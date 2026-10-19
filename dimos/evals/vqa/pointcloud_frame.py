@@ -29,9 +29,10 @@ import numpy as np
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.tf import StreamTF
+from dimos.memory.transform import QualityWindow
 from dimos.msgs.camera_info import camera_info_from_intrinsics
 from dimos.msgs.geometry import pose_from_matrix, transform_from_pose, transform_matrix
-from dimos.msgs.image import image_from_array, image_view
+from dimos.msgs.image import image_brightness, image_from_array, image_sharpness, image_view
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
@@ -169,6 +170,13 @@ class PointCloudFrameLoader:
             )
         return self._images.count()
 
+    @property
+    def images(self) -> Stream[Image]:
+        """Started ``color_image`` stream (ordered by timestamp)."""
+        if self._images is None:
+            raise RuntimeError("point-cloud frame loader must be started before reading images")
+        return self._images
+
     def _clear_state(self) -> None:
         self._store = None
         self._images = None
@@ -241,6 +249,44 @@ class PointCloudFrameLoader:
             raise RuntimeError("camera calibration was not initialized")
         camera_info = _camera_info_at(recorded_camera_info, observation.ts)
         return self._rectifier.rectify(image, camera_info)[0]
+
+
+def select_quality_indices(
+    images: Stream[Image],
+    start: int,
+    stop: int,
+    *,
+    quality_window: float,
+    min_brightness: float | None = None,
+) -> tuple[int, ...]:
+    """Pick color_image indices via mem ``QualityWindow`` on sharpness.
+
+    Callers (``GenerationRequest`` / CLI) own argument validation. This keeps the
+    sharpest observation in each ``quality_window`` seconds — same path as
+    loop-closure / semantic-peak image picking — after an optional brightness floor.
+    """
+    ranged = list(images.range_seek(start, stop))
+    ts_to_index = {obs.ts: start + offset for offset, obs in enumerate(ranged)}
+    if not ts_to_index:
+        raise ValueError(f"color_image range [{start}, {stop}) is empty")
+
+    # None means no floor; keep the filter in the chain either way.
+    brightness_floor = float("-inf") if min_brightness is None else min_brightness
+    selected_obs = QualityWindow(image_sharpness, window=quality_window)(
+        obs for obs in ranged if image_brightness(obs.data) > brightness_floor
+    )
+    indices: list[int] = []
+    for obs in selected_obs:
+        index = ts_to_index.get(obs.ts)
+        if index is None:
+            raise RuntimeError(f"quality window selected unknown timestamp {obs.ts}")
+        indices.append(index)
+    if not indices:
+        raise ValueError(
+            f"quality window selected no frames in [{start}, {stop}) "
+            f"(window={quality_window}s, min_brightness={min_brightness})"
+        )
+    return tuple(indices)
 
 
 class _ImageRectifier:
