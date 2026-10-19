@@ -1,5 +1,5 @@
 // The config dialog: the blueprint's recommended settings, its modules' args and dimos's global config, each saved
-// for every launch of this blueprint (PUT /blueprints/{name}/config, PUT /global-config).
+// for every launch of this blueprint (PUT config/blueprints/{name}, PUT config/global).
 import {
   Alert,
   Button,
@@ -16,10 +16,13 @@ import { type ReactNode, useEffect, useState } from "react";
 import { errorText, getJson, send } from "./api.ts";
 import {
   type BlueprintConfig,
+  blueprintConfig,
+  type BlueprintSchema,
   type FieldSpec,
   type GlobalConfig,
   globalFields,
   moduleFields,
+  type SavedBlueprint,
 } from "./config_fields.ts";
 
 type Overrides = Record<string, unknown>;
@@ -45,20 +48,10 @@ interface Recommended {
 
 async function recommendedOf(name: string): Promise<Recommended[]> {
   try {
-    const { robots } = await getJson<
-      {
-        robots?: Record<
-          string,
-          { blueprints?: Record<string, { recommended_config?: Recommended[] }> }
-        >;
-      }
-    >("robots");
-    for (const robot of Object.values(robots ?? {})) {
-      const entry = robot.blueprints?.[name];
-      if (entry) {
-        return entry.recommended_config ?? [];
-      }
-    }
+    const { recommended_config } = await getJson<{ recommended_config?: Recommended[] }>(
+      `catalog/blueprints/${encodeURIComponent(name)}?fields=recommended_config`,
+    );
+    return recommended_config ?? [];
   } catch {
     // no robots: no recommended settings
   }
@@ -89,18 +82,24 @@ export function ConfigModal(
 ) {
   const [global, setGlobal] = useState<GlobalConfig | null>(null);
   const [modules, setModules] = useState<BlueprintConfig | null>(null);
+  const [schema, setSchema] = useState<BlueprintSchema | null>(null);
+  const [blueprintGlobal, setBlueprintGlobal] = useState<Overrides>({});
   const [recommended, setRecommended] = useState<Recommended[]>([]);
   const [query, setQuery] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
+    const at = encodeURIComponent(name);
     Promise.all([
-      getJson<GlobalConfig>("global-config"),
-      getJson<{ config: BlueprintConfig }>(`blueprints/${encodeURIComponent(name)}`),
+      getJson<GlobalConfig>("config/global"),
+      getJson<BlueprintSchema>(`catalog/blueprints/${at}/config`),
+      getJson<SavedBlueprint>(`config/blueprints/${at}`),
       recommendedOf(name),
-    ]).then(([g, b, r]) => {
+    ]).then(([g, s, b, r]) => {
       setGlobal(g);
-      setModules(b.config);
+      setSchema(s);
+      setBlueprintGlobal(b.global ?? {});
+      setModules(blueprintConfig(s, b));
       setRecommended(r);
     }, (caught) => setProblem(errorText(caught)));
   }, [name]);
@@ -109,7 +108,11 @@ export function ConfigModal(
   const savedModules = modules?.overrides ?? {};
   useEffect(() => {
     if (global && modules) {
-      onSaved({ global: savedGlobal, modules: savedModules, defaults: global.defaults ?? {} });
+      onSaved({
+        global: { ...savedGlobal, ...blueprintGlobal },
+        modules: savedModules,
+        defaults: global.defaults ?? {},
+      });
     }
     // report what's saved whenever it changes
   }, [global, modules]);
@@ -122,14 +125,19 @@ export function ConfigModal(
       setProblem(errorText(caught));
     }
   };
-  const saveModules = async (overrides: ModuleOverrides) =>
-    setModules(
-      await send<BlueprintConfig>("PUT", `blueprints/${encodeURIComponent(name)}/config`, {
-        overrides,
-      }),
+  const saveModules = async (overrides: ModuleOverrides) => {
+    const saved = await send<SavedBlueprint>(
+      "PUT",
+      `config/blueprints/${encodeURIComponent(name)}`,
+      {
+        global: blueprintGlobal,
+        modules: overrides,
+      },
     );
+    setModules(blueprintConfig(schema!, saved));
+  };
   const saveGlobal = async (overrides: Overrides) =>
-    setGlobal(await send<GlobalConfig>("PUT", "global-config", { overrides }));
+    setGlobal(await send<GlobalConfig>("PUT", "config/global", { overrides }));
   const setField = (spec: FieldSpec, value: unknown) =>
     save(() => {
       const atBase = sameValue(value, spec.base);

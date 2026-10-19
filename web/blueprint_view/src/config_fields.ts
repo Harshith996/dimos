@@ -49,6 +49,32 @@ export interface BlueprintConfig {
   overrides?: Record<string, Record<string, unknown>>;
 }
 
+/** GET catalog/blueprints/{name}/config: each module's args by name. */
+export interface BlueprintSchema {
+  modules: Record<
+    string,
+    { class?: string; args: Record<string, Omit<ConfigArg, "name">>; error?: string }
+  >;
+}
+
+/** GET/PUT config/blueprints/{name}: what's saved for the blueprint. */
+export interface SavedBlueprint {
+  global?: Record<string, unknown>;
+  modules?: Record<string, Record<string, unknown>>;
+}
+
+export function blueprintConfig(schema: BlueprintSchema, saved: SavedBlueprint): BlueprintConfig {
+  return {
+    modules: Object.entries(schema.modules).map(([module, entry]) => ({
+      module,
+      class: entry.class,
+      args: Object.entries(entry.args).map(([name, arg]) => ({ name, ...arg })),
+      error: entry.error,
+    })),
+    overrides: saved.modules ?? {},
+  };
+}
+
 function settable(arg: ConfigArg): boolean {
   if (arg.json_compatible !== undefined) {
     return arg.json_compatible;

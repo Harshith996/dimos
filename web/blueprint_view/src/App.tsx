@@ -41,15 +41,15 @@ interface RatesAnswer {
 
 async function loadSaved(): Promise<Saved | null> {
   try {
-    const [global, modules] = await Promise.all([
-      getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>("global-config"),
-      getJson<{ config?: { overrides?: Saved["modules"] } }>(
-        `blueprints/${encodeURIComponent(NAME)}`,
+    const [global, mine] = await Promise.all([
+      getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>("config/global"),
+      getJson<{ global?: Saved["global"]; modules?: Saved["modules"] }>(
+        `config/blueprints/${encodeURIComponent(NAME)}`,
       ),
     ]);
     return {
-      global: global.overrides ?? {},
-      modules: modules.config?.overrides ?? {},
+      global: { ...global.overrides, ...mine.global },
+      modules: mine.modules ?? {},
       defaults: global.defaults ?? {},
     };
   } catch {
@@ -88,13 +88,15 @@ export function App() {
 
   useEffect(() => {
     document.title = `${NAME} · blueprint`;
-    const usage = getJson<{ blueprints?: { modules?: string[] }[] }>("catalog").then(
+    const usage = getJson<{ blueprints?: { modules?: string[] }[] }>(
+      "catalog/blueprints?fields=blueprints.modules",
+    ).then(
       moduleUsage,
       () => new Map(),
     );
     (async () => {
       try {
-        const detail = await getJson<Blueprint>(`blueprints/${encodeURIComponent(NAME)}`);
+        const detail = await getJson<Blueprint>(`catalog/blueprints/${encodeURIComponent(NAME)}`);
         setSource(detail.file ? { file: detail.file, line: detail.line ?? 1 } : null);
         await Promise.race([
           document.fonts.ready,

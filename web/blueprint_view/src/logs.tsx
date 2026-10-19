@@ -1,4 +1,4 @@
-// A run's structured log (GET /runs/{id}/log), followed live unless paused; the server filters by level and search.
+// A run's structured log (GET runs/log_hist/{id}), followed live unless paused; the server filters by level and search.
 import { EditorNote, type LogRecord, Modal, StructuredLog, useDesktopEditor } from "dimos-react";
 import { useEffect, useRef, useState } from "react";
 import { errorText, getJson } from "./api.ts";
@@ -39,7 +39,7 @@ export function LogsModal(
       }
       try {
         const page = await getJson<{ offset: number; records: LogRecord[] }>(
-          `runs/${encodeURIComponent(runId)}/log?${params}`,
+          `runs/log_hist/${encodeURIComponent(runId)}?${params}`,
         );
         if (!live) {
           return;
