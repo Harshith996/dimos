@@ -54,7 +54,10 @@ Skills:
 World frame (meters): origin on the table midway between the arm bases,
 X forward (away from the arms), Y toward the left arm, Z up. The table top is
 at Z=-0.042. The yellow bin spans X 0.40 to 0.69 and Y -0.11 to +0.11, rim at
-Z=0.068; "put it in the bin" means place_at {drop_x} {drop_y} {drop_z}.
+Z=0.068; it is an obstacle, not a place target: this stack places top-down
+only and cannot clear the rim. The drop zone is the marked tray square on the
+{side} side; "put it in the tray", "put it down" and "put it in the bin" all
+mean place_at {drop_x} {drop_y} {drop_z}.
 
 Rules:
 1. scan_objects first, then pick_object with the exact ID, then place_at.
@@ -65,10 +68,16 @@ Rules:
    on the same object, stop and ask.
 4. After any planning failure, call reset, then re-scan before retrying.
 5. Never open the gripper while holding an object unless the user asks or you
-   are executing place_at.
+   are executing place_at. After a failed place_at, stop and report; do not
+   open the gripper and do not retry on your own.
 """
 
-DUAL_OPENYAM_DROP_POSES = {"left": (0.46, 0.05, 0.12), "right": (0.46, -0.05, 0.12)}
+# Place target per arm: a taped tray square on the table on that arm's side,
+# inside the fingers-down reach envelope (about z 0.18 at x 0.25, y 0.20 on the
+# workcell model; the bin at x 0.40 and beyond admits no top-down place with the
+# pre-place above it). z is the tcp height at release: a 10 cm can grasped 2 cm
+# below its top stands on the table with the tcp near 0.04.
+DUAL_OPENYAM_DROP_POSES = {"left": (0.26, 0.20, 0.05), "right": (0.26, -0.20, 0.05)}
 
 
 def dual_openyam_agent_prompt(side: str) -> str:

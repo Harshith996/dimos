@@ -291,7 +291,10 @@ def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint,
             world_frame="world",
         ),
         ManipulationSkills.blueprint(),
-        PickAndPlaceModule.blueprint(planning_frame="world"),
+        # Pre-grasp and pre-place share one offset on main. 0.10 puts the pre-place
+        # above the fingers-down reach ceiling of this arm (about 0.12 to 0.16 at
+        # x 0.22 to 0.30, measured 2026-10-13); 0.05 keeps a low place reachable.
+        PickAndPlaceModule.blueprint(planning_frame="world", pregrasp_offset=0.05),
         dual_openyam_grasp_provider(graspgen=graspgen),
         # The D405 offers no 848x480 at 15 fps; 640x480 at 30 fps is its native mode.
         RealSenseCamera.blueprint(

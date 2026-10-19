@@ -98,7 +98,7 @@ The xArm grasp stack on the workcell, one arm per blueprint:
 ```bash
 dimos run dual-openyam-grasp-right --left-can-port follower_l --right-can-port follower_r
 dimos run dual-openyam-grasp-right-agent --left-can-port follower_l --right-can-port follower_r
-dimos humancli      # second terminal: "scan for a soup can", "pick up the soup can", "put it in the bin"
+dimos humancli      # second terminal: "scan for a soup can", "pick up the soup can", "put it in the tray"
 ```
 
 `dual-openyam-grasp-left` and the `-graspgenx` variants select the other arm
@@ -112,7 +112,12 @@ measures as is: grasps are one top-down heuristic candidate per object; a pick
 executes as soon as it is planned, so the operator keeps a hand on the e-stop;
 grasp success is judged from the jaw readback alone. The planner knows the
 arms, the wrist cameras, the table, the post and the overhead camera from the
-workcell model; the bin is added per scene with the `add_obstacle` RPC.
+workcell model; the bin is added per scene with the `add_obstacle` RPC. The
+place target is a taped tray square on the table on the arm's side (0.26,
+-0.20 for the right arm, 0.26, 0.20 for the left, tcp released at z 0.05):
+the pick-and-place module places top-down with the grasp orientation and a
+pre-place 0.05 above the target, and the arm's fingers-down reach ends near
+z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
 
 ## Model assets
 

@@ -86,7 +86,10 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
     assert manipulation["world_frame"] == "world"
     assert "floor_z" not in manipulation
     assert manipulation["static_transforms"][0].child_frame_id == "camera_link"
-    assert _atom(dual_openyam_grasp_right, PickAndPlaceModule).kwargs == {"planning_frame": "world"}
+    assert _atom(dual_openyam_grasp_right, PickAndPlaceModule).kwargs == {
+        "planning_frame": "world",
+        "pregrasp_offset": 0.05,
+    }
     overhead = next(
         atom
         for atom in dual_openyam_grasp_right.active_blueprints
@@ -119,5 +122,6 @@ def test_recorded_stream_names_are_valid_identifiers() -> None:
 def test_agent_prompt_pins_the_arm_and_its_drop_pose() -> None:
     prompt = dual_openyam_agent_prompt("right")
     assert "right_manipulator" in prompt
-    assert "place_at 0.46 -0.05 0.12" in prompt
+    assert "place_at 0.26 -0.2 0.05" in prompt
+    assert "place_at 0.26 0.2 0.05" in dual_openyam_agent_prompt("left")
     assert ManipulationModule in _modules(dual_openyam_grasp_right_agent)
