@@ -16,7 +16,7 @@ from dimos_cdrgen.source_package import prepare
 output = Path("build/message-codegen/release")
 version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
 prepare(Path.cwd(), output)
-resources = output / "python/dimos_generated_schemas/package"
+resources = output / "python/dimos/messages_schemas/package"
 metadata = output / "metadata"
 metadata.mkdir(exist_ok=True)
 for file in resources.iterdir():

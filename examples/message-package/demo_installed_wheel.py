@@ -19,27 +19,25 @@ from pathlib import Path
 import sys
 
 from dimos_cdrgen.registry import decode, encode
-import dimos_generated
-from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.dimos_msgs.msg import LineSegment3D, LineSegments3D
-from dimos_generated.geometry_msgs.msg import Point
-from dimos_generated.sensor_msgs.msg import Image
-from dimos_generated.std_msgs.msg import Header
-from dimos_generated_schemas.provider import message_types, package_root
 import numpy as np
+
+import dimos.messages
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos.messages.geometry_msgs.msg import Point
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages_schemas.provider import message_types, package_root
 
 
 def main() -> None:
     assert sys.prefix != sys.base_prefix, "Run in the clean verification environment"
-    assert dimos_generated.__file__ is not None
-    installed = Path(dimos_generated.__file__).resolve()
+    assert dimos.messages.__file__ is not None
+    installed = Path(dimos.messages.__file__).resolve()
     assert installed.is_relative_to(Path(sys.prefix).resolve()), installed
     owner = distribution("dimos")
-    assert "dimos_generated/std_msgs/msg/__init__.py" in {str(p) for p in owner.files}
-    assert (
-        len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_generated"])
-        == 1
-    )
+    assert "dimos/messages/std_msgs/msg/__init__.py" in {str(p) for p in owner.files}
+    assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos"]) == 1
     print(f"Installed package: {installed}")
     print(f"Catalog: {len(message_types())} types")
 

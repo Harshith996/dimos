@@ -32,7 +32,7 @@ def main() -> None:
         output = Path(temporary)
         prepare(root, output)
         source = output / "python"
-        packages = [source / "dimos_generated", source / "dimos_generated_schemas"]
+        packages = [source / "dimos/messages", source / "dimos/messages_schemas"]
         expected = {
             str(path.relative_to(source)): path.read_bytes()
             for package in packages
@@ -65,7 +65,7 @@ def main() -> None:
             return
         target.mkdir(parents=True, exist_ok=True)
         for package in packages:
-            destination = target / package.name
+            destination = target / package.relative_to(source)
             if destination.exists():
                 shutil.rmtree(destination)
             shutil.copytree(package, destination)

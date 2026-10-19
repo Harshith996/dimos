@@ -15,6 +15,7 @@
 import fnmatch
 import os
 from pathlib import Path
+import shutil
 import struct
 import sys
 
@@ -92,6 +93,11 @@ class build_py(_build_py):
         ]
 
     def run(self):
+        # Reconcile cached build trees after a namespace move or message deletion.
+        for name in ("dimos_generated", "dimos_generated_schemas", *message_roots):
+            directory = Path(self.build_lib) / name.replace(".", "/")
+            if directory.is_dir():
+                shutil.rmtree(directory)
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
@@ -167,11 +173,15 @@ ext_modules = [
 # Inputs are prepared explicitly by CI/maintainers and included in the sdist.
 message_settings = setup_arguments(Path(__file__).resolve().parent)
 message_source = message_settings["package_dir"][""]
-message_roots = ("dimos_generated", "dimos_generated_schemas")
+message_roots = tuple(message_settings["package_data"])
 
 setup(
     packages=find_packages() + message_settings["packages"],
-    package_dir={"": ".", **{name: f"{message_source}/{name}" for name in message_roots}},
+    package_dir={
+        "": ".",
+        "dimos": "dimos",
+        **{name: f"{message_source}/{name.replace('.', '/')}" for name in message_roots},
+    },
     ext_modules=ext_modules,
     cmdclass={**message_settings["cmdclass"], "build_ext": build_ext, "build_py": build_py},
 )

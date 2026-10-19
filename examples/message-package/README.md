@@ -14,7 +14,7 @@ From the repository root on this example branch:
 
 ```sh
 message_demo_dir="$(mktemp -d)"
-uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.0' python -m scripts.prepare_builtin_sources
+uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.1' python -m scripts.prepare_builtin_sources
 uv build --wheel --out-dir "$message_demo_dir/wheels"
 uv venv --python 3.12 "$message_demo_dir/venv"
 uv pip install --python "$message_demo_dir/venv/bin/python" "$message_demo_dir"/wheels/dimos-*.whl
@@ -26,7 +26,7 @@ cd "$message_demo_dir"
 Expected output, with your temporary directory in the first line:
 
 ```text
-Installed package: <temporary-directory>/venv/lib/python3.12/site-packages/dimos_generated/__init__.py
+Installed package: <temporary-directory>/venv/lib/python3.12/site-packages/dimos/messages/__init__.py
 Catalog: 73 types
 PASS: sensor_msgs/msg/Image pixels, encoding and source stamp
 PASS: dimos_msgs/msg/LineSegments3D geometry, weight and nested type identity

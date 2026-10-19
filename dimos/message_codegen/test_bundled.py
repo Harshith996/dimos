@@ -53,11 +53,13 @@ def test_main_wheel_owns_messages_and_schema_closure(artifacts):
         names = set(archive.namelist())
         metadata = archive.read(next(n for n in names if n.endswith("/METADATA"))).decode()
         assert "Requires-Dist: dimos-generated" not in metadata
-        assert "dimos_generated/std_msgs/msg/__init__.py" in names
-        assert "dimos_generated_schemas/schemas/std_msgs/msg/Header.msg" in names
-        assert "dimos_generated_schemas/schemas/builtin_interfaces/msg/Time.msg" in names
-        assert "dimos_generated_schemas/package/cpp/CMakeLists.txt" in names
-        assert "dimos_generated_schemas/package/rust/Cargo.toml" in names
+        assert "dimos/core/module.py" in names
+        assert not any(name.startswith("dimos_generated") for name in names)
+        assert "dimos/messages/std_msgs/msg/__init__.py" in names
+        assert "dimos/messages_schemas/schemas/std_msgs/msg/Header.msg" in names
+        assert "dimos/messages_schemas/schemas/builtin_interfaces/msg/Time.msg" in names
+        assert "dimos/messages_schemas/package/cpp/CMakeLists.txt" in names
+        assert "dimos/messages_schemas/package/rust/Cargo.toml" in names
     with tarfile.open(sdist) as archive:
         names = {name.split("/", 1)[-1] for name in archive.getnames()}
         assert "packages/dimos-generated/interfaces/std_msgs/msg/Header.msg" in names
@@ -72,7 +74,7 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     venv.EnvBuilder(with_pip=True).create(environment)
     python = str(environment / "bin/python")
     pip = [python, "-m", "pip", "install", "--no-index", "--find-links", str(wheelhouse)]
-    run(*pip, "dimos-cdrgen==0.1.0", "setuptools>=70", "wheel", "pybind11", cwd=tmp_path)
+    run(*pip, "dimos-cdrgen==0.1.1", "setuptools>=70", "wheel", "pybind11", cwd=tmp_path)
     if mode == "wheel":
         source = wheel
     else:
@@ -94,15 +96,16 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     definition.write_text("std_msgs/Header header\nfloat64 value\n")
     (project / "pyproject.toml").write_text(
         """[build-system]
-requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.0", "dimos==0.0.14"]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.1", "dimos==0.0.14"]
 build-backend = "setuptools.build_meta"
 [project]
 name = "external-reading"
 version = "0.1.0"
-dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.0"]
+dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.1"]
 [tool.dimos.messages]
+python-module = "my_robot.messages"
 [tool.dimos.messages.dependencies]
-dimos_generated = "0.0.14"
+"dimos.messages" = "0.0.14"
 """.replace("0.0.14", version)
     )
     (project / "setup.py").write_text(
@@ -117,13 +120,15 @@ dimos_generated = "0.0.14"
         "-c",
         """from importlib.metadata import distribution, entry_points, PackageNotFoundError
 import json
-from dimos_generated.std_msgs.msg import Header
-from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated_schemas.provider import message_types, package_root
-from external_reading.demo_msgs.msg import Reading
-from external_reading_schemas.provider import package_root as external_root
+from importlib.util import find_spec
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages_schemas.provider import message_types, package_root
+from my_robot.messages.demo_msgs.msg import Reading
+from my_robot.messages_schemas.provider import package_root as external_root
 from dimos_cdrgen.registry import encode, decode
 assert distribution("dimos").version == "0.0.14"
+assert find_spec("dimos_generated") is None
 try:
     distribution("dimos-generated")
 except PackageNotFoundError:
@@ -131,7 +136,7 @@ except PackageNotFoundError:
 else:
     raise AssertionError("Built-ins must have only the DimOS distribution owner")
 assert len(message_types()) == 73
-assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_generated"]) == 1
+assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos"]) == 1
 header = Header(Time(17, 23), "map")
 value = Reading(header=header, value=21.5)
 assert type(value.header) is Header

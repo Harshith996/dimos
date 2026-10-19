@@ -379,7 +379,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
@@ -436,7 +436,7 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install portaudio
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Build the extensions
@@ -469,7 +469,7 @@ jobs:
         with:
           node-version: 'lts/*'
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install Python dependencies
         run: uv sync --group tests --frozen
       - name: Restore Hugging Face model cache
@@ -595,7 +595,7 @@ jobs:
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
@@ -714,7 +714,7 @@ jobs:
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
@@ -855,7 +855,7 @@ jobs:
           uv venv .codecov-venv
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Install web_browser e2e dependencies (macOS)
@@ -1125,7 +1125,7 @@ jobs:
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
@@ -1240,7 +1240,7 @@ jobs:
         with:
           enable-cache: true
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Install dependencies
         run: uv sync --group tests --frozen
         env:

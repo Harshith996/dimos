@@ -87,7 +87,7 @@ jobs:
       - name: Build cockpit dist  # shipped pre-built in the sdist and wheels
         uses: ./.github/actions/build-cockpit
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Build sdist
         run: uv build --sdist
       - name: Check sdist contents
@@ -132,7 +132,7 @@ jobs:
       - name: Build cockpit dist  # setup.py copies it into the wheel's _relay_dist
         uses: ./.github/actions/build-cockpit
       - name: Prepare pinned built-in message inputs
-        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+        run: uv run --no-project --with "dimos-cdrgen[prepare]==0.1.1" python -m scripts.prepare_builtin_sources
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.1
       - name: Attestation

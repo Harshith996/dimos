@@ -1,12 +1,12 @@
 # CDR generation in DimOS
 
-DimOS uses the published `dimos-cdrgen==0.1.0` package directly. Its parser,
+DimOS uses the published `dimos-cdrgen==0.1.1` package directly. Its parser,
 generators, ownership checks, codecs and native build recipes live in the
 [independent library](https://github.com/TomCC7/dimos-cdrgen).
 See its [Python, C++ and Rust guides](https://tomcc7.github.io/dimos-cdrgen/)
 for message package configuration and supported schema features.
 
-Install `dimos-cdrgen==0.1.0` in both the build and runtime dependencies of
+Install `dimos-cdrgen==0.1.1` in both the build and runtime dependencies of
 message packages. Import its APIs directly:
 
 ```python
@@ -34,7 +34,7 @@ message catalogs. Those remain separate PRs.
 Use a Python environment with the published generator and test tools:
 
 ```sh
-uv pip install 'dimos-cdrgen[native]==0.1.0' numpy build pytest pytest-asyncio pytest-env
+uv pip install 'dimos-cdrgen[native]==0.1.1' numpy build pytest pytest-asyncio pytest-env
 python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
 ```
 

@@ -46,8 +46,8 @@ pip install review/wheels/dimos-*.whl
 After release, ordinary users just run `pip install dimos`. Imports stay the same:
 
 ```python
-from dimos_generated.builtin_interfaces.msg import Time
-from dimos_generated.std_msgs.msg import Header
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.std_msgs.msg import Header
 from dimos_cdrgen.registry import encode, decode
 
 header = Header(Time(17, 23), "map")
@@ -55,7 +55,7 @@ assert decode(encode(header), Header) == header
 ```
 
 CI prepares pinned inputs, generates the catalog through `dimos-cdrgen`, and
-packages `dimos_generated`, `dimos_generated_schemas`, licenses and the
+packages `dimos.messages`, `dimos.messages_schemas`, licenses and the
 `dimos.messages` provider entry point into the main wheel. Message versions
 follow the root `dimos` project version. Python messages use rosbags; installing
 a wheel generates nothing and adds no message compiler requirement. The main
@@ -66,7 +66,7 @@ package's existing native extensions have their own platform wheel requirements.
 A maintainer prepares inputs explicitly in a checkout before normal builds:
 
 ```sh
-uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.0' python -m scripts.prepare_builtin_sources
+uv run --no-project --with 'dimos-cdrgen[prepare]==0.1.1' python -m scripts.prepare_builtin_sources
 pip install .
 # Or for development:
 pip install -e .
@@ -88,7 +88,18 @@ compiler and web-bundle prerequisites still apply to source builds.
 After changing a definition, rerun preparation and reinstall editable output,
 then restart existing Python processes. External message projects declare
 `dimos` as their Python build/runtime dependency and use the installed
-`dimos_generated` schema owner at the matching DimOS version. Their generated
+`dimos.messages` schema owner at the matching DimOS version:
+```toml
+[tool.dimos.messages]
+python-module = "my_robot.messages"
+
+[tool.dimos.messages.dependencies]
+"dimos.messages" = "0.0.14"
+```
+
+The version above must match the installed DimOS artifact. `python-module`
+controls Python imports; the retained `module = "dimos_generated"` in the main
+project controls CMake/Cargo and schema ownership metadata. Their generated
 classes import the same `Header`; they must not package another copy. Use the
 source project's own packaging metadata rather than publishing the generator's
 standalone intermediate Python project, which infers distribution names from
