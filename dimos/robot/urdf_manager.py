@@ -17,10 +17,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 from pathlib import Path
 from threading import RLock
 import time
+from urllib.parse import parse_qs
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -82,7 +84,9 @@ class UrdfManager(Module):
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     filtered_pointcloud: Out[PointCloud2]
-    # The URDF XML, its meshes named package://<package>/<path>; any of those names on mesh_request gets the file on mesh_info.
+    # The URDF XML, its meshes named package://<package>/<path>?hash=<sha256>; a mesh_request for one of those names gets
+    # the file on mesh_info, unless it carries &have=<sha256> of the current file (a client's cached copy is fresh). An empty
+    # mesh_request asks for urdf_info now, so a client that just connected doesn't wait out urdf_info_period_s.
     urdf_info: Out[String]
     mesh_request: In[String]
     mesh_info: Out[MeshFile]
@@ -96,6 +100,7 @@ class UrdfManager(Module):
         self._last_capture: float | None = None
         self._load_scene()
         self._next_joint_tf_t = 0.0
+        self._last_urdf_on_request_t = -1.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
@@ -119,12 +124,23 @@ class UrdfManager(Module):
             await asyncio.sleep(self.config.urdf_info_period_s)
 
     async def handle_mesh_request(self, request: String) -> None:
+        if not request.data:
+            # at most every 0.2 s however many clients connect
+            if time.monotonic() - self._last_urdf_on_request_t >= 0.2:
+                self._last_urdf_on_request_t = time.monotonic()
+                self.urdf_info.publish(String(self._urdf_xml))
+            return
+        name, _, query = request.data.partition("?")
         # Only meshes the URDF names: a request is never a path into the filesystem.
-        path = self._mesh_paths.get(request.data)
-        if path is None:
+        mesh = self._mesh_paths.get(name)
+        if mesh is None:
             logger.warning(f"mesh_request for {request.data!r}, which is not a mesh in urdf_info")
             return
-        self.mesh_info.publish(MeshFile(request.data, await asyncio.to_thread(path.read_bytes)))
+        path, digest = mesh
+        if parse_qs(query).get("have", [""])[0] == digest:
+            return
+        data = await asyncio.to_thread(path.read_bytes)
+        self.mesh_info.publish(MeshFile(f"{name}?hash={digest}", data))
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
@@ -341,10 +357,11 @@ class UrdfManager(Module):
         self._joints = {joint.name: joint for joint in description.joints}
 
 
-def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, Path]]:
-    """The URDF with each mesh's local path swapped for package://<package>/<path>, and those names' files."""
+def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, tuple[Path, str]]]:
+    """The URDF with each mesh's local path swapped for package://<package>/<path>?hash=<sha256>, and per name (without
+    the query) its file and hash."""
     root = ET.fromstring(description.xml)
-    mesh_paths: dict[str, Path] = {}
+    mesh_paths: dict[str, tuple[Path, str]] = {}
     for mesh in root.iter("mesh"):
         path = Path(mesh.attrib["filename"])
         uri = str(path)
@@ -352,6 +369,7 @@ def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, Path]
             if path.is_relative_to(package_root):
                 uri = f"package://{package}/{path.relative_to(package_root).as_posix()}"
                 break
-        mesh.set("filename", uri)
-        mesh_paths[uri] = path
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        mesh.set("filename", f"{uri}?hash={digest}")
+        mesh_paths[uri] = (path, digest)
     return ET.tostring(root, encoding="unicode"), mesh_paths
