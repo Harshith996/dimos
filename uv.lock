@@ -32,7 +32,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-11T15:43:18.758872235Z"
+exclude-newer = "2026-10-12T01:14:09.815122Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1789,27 +1789,30 @@ wheels = [
 
 [[package]]
 name = "dim-go2-sim"
-version = "0.1.2"
+version = "0.4.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dimos" },
     { name = "fast-simplification" },
     { name = "gltflib" },
     { name = "imageio" },
+    { name = "msgpack" },
     { name = "mujoco" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "pillow" },
     { name = "pygfx" },
     { name = "rendercanvas" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/21/39/31d06611d5c1a2307d09217cd984947cdc5513bb10391e864a61af98d52f/dim_go2_sim-0.1.2.tar.gz", hash = "sha256:390b0f582b932bbabdc031e2deb9d242e9c267ce47c3f154f2f588b86019d0e4", size = 5291095, upload-time = "2026-10-15T15:11:33.677Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/b8/3c8fee77c3c70ffd03925d032e7eee44fbc6997f648976955c0d9fc0f87c/dim_go2_sim-0.4.8.tar.gz", hash = "sha256:61d35ec955b84912131ee4d0afa1b2db6ece5316f9384f7e6b04d76929f5f37f", size = 5341958, upload-time = "2026-10-19T01:13:54.971Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/68/e1ac71e40f3d7c7261c31a62a548c2a6075cca18e4befa600d8182411119/dim_go2_sim-0.1.2-py3-none-any.whl", hash = "sha256:db045fc2b06c056c389acb476c9783e01354c8230ff30d05d730ec624a0e7198", size = 5392053, upload-time = "2026-10-15T15:11:31.912Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/cd/9e567838b472beb9adbc4978825e72a6f5ac69446371342230ce553df0b6/dim_go2_sim-0.4.8-py3-none-any.whl", hash = "sha256:16d8312f000e744026a23c64d03ba32cbe41dd1b056207199675f3637edf7299", size = 5436130, upload-time = "2026-10-19T01:13:53.186Z" },
 ]
 
 [[package]]
@@ -2487,7 +2490,7 @@ requires-dist = [
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
-    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.1.2" },
+    { name = "dim-go2-sim", marker = "extra == 'sim'", specifier = ">=0.4.8" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },

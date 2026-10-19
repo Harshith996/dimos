@@ -149,14 +149,14 @@ directory. Use it when the robot needs the GPU, which Docker on a Mac doesn't ha
 stays in its container.
 
 ```bash skip
-dimos evals sandbox dimos.evals.sandbox.go2_store --robot-on-host --max-steps 2000
+dimos evals sandbox dimos.evals.sandbox.go2_home --robot-on-host --max-steps 2000
 ```
 
 On Linux with an NVIDIA GPU and the NVIDIA Container Toolkit, `--robot-gpu` keeps the robot
 in its container and gives that container the GPU (`gpus: all`, with graphics, for Vulkan):
 
 ```bash skip
-dimos evals sandbox dimos.evals.sandbox.go2_store --robot-gpu --max-steps 2000
+dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000
 ```
 
 ## What the agent can and cannot see
@@ -168,33 +168,40 @@ dimos evals sandbox dimos.evals.sandbox.go2_store --robot-gpu --max-steps 2000
 - Pi's harness files (`/opt/harness`) are mounted into the agent container. The done
   result is read from Pi's event stream, not from a file, so editing them changes nothing.
 
-## The store patrol cases
+## The home plants case
 
-`dimos/evals/sandbox/go2_store.py` has three cases on
+`dimos/evals/sandbox/go2_home.py` has one case on
 [dim-go2-sim](https://pypi.org/project/dim-go2-sim/)'s Go2 (a rolling Mid-360 and a front
-camera) in the cooked supermarket scene: map the store, then loop between the entrance and the
-fruit stand every 10 minutes. `store_patrol_dimos` adds a line asking the agent to use dimOS;
-`store_patrol_dimos_framework` requires building on its blueprints and modules.
+camera) in a scanned ranch home ([SuperSplat 3f89bbd3](https://superspl.at/scene/3f89bbd3),
+CC BY 4.0) with two people walking slow loops through it: map the house, stop at every plant
+facing it, then come back to the living room, without bumping into anyone.
 
 ```bash skip
-dimos evals sandbox dimos.evals.sandbox.go2_store --max-steps 2000
+dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000
 ```
 
-- The robot container runs `sandbox-go2-supermarket` with `--hide-dimos`: the agent sees
-  only raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
+- The robot container runs `sandbox-go2-home` with `--hide-dimos`: the agent sees only
+  raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
 - The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
-- `GroundTruthLog` writes the true pose and every contact to the case directory, which
-  only the grader reads.
-- The human is the store owner (`store_owner`). Until the agent calls done they say "I don't
-  understand and I don't care..."; after each done they run its command for 20 minutes of sim time
-  and, unless the dog reached both places and looped once without bumping anything, tell it
-  what they saw ("The dog barely moved...", "It never went to the fruit stand.") and ask for
-  a fix, at most 3 times. Its output is `/root/work/run-output.log`.
+- `GroundTruthLog` writes the true pose, every contact (`person` when the dog touches someone)
+  and the people's poses to the case directory, which only the grader reads.
+- The five graded plants (`PLANTS`) and the living room (`LIVING_ROOM`) were placed by eye in
+  renders of the scan. A plant counts as visited when the dog stops for 2 s within 1.2 m of it,
+  facing it, with nothing in between.
+- The human is the owner (`home_owner`). Until the agent calls done they say "I don't
+  understand and I don't care..."; after each done they run its command for 20 minutes of sim
+  time and, unless the dog stopped at every plant, ended in the living room and touched nothing
+  and no one, tell it what they saw ("It never stopped at the palm in the back bedroom.", "It
+  walked into one of us once!") and ask for a fix, at most 3 times. Its output is
+  `/root/work/run-output.log`.
 - `evaluate` then runs the agent's command for 30 minutes of sim time (the sim can run slower
-  than the wall clock when the machine is loaded; ground truth is in sim time), then scores map coverage (the share
-  of the store its lidar saw, from the true poses, against what is visible from every
-  reachable spot), reaching the entrance and the fruit stand, entrance/fruit round trips,
-  and multiplies by a penalty for each collision. `grading.json` has the breakdown.
-- `dim-go2-sim`'s `Go2Sim` module is the whole robot: `cmd_vel` in, lidar, camera, odometry and
-  contacts out. The first start compiles the store (about 2 minutes) and caches it in the robot
-  cache. In Docker the camera renders with Mesa's software Vulkan.
+  than the wall clock when the machine is loaded; ground truth is in sim time) and scores map
+  coverage (the share of the home its lidar saw, from the true poses, against what is visible
+  from every reachable spot; 0.25), the share of plants visited during that run (0.55) and
+  ending in the living room (0.2), less 0.25 of the score for each bump into the house and 0.5
+  for each time it touched a person. `grading.json` has the breakdown, with the closest the
+  dog came to a person.
+- `dim-go2-sim`'s `Go2Sim` module is the whole robot, and the people: `cmd_vel` in, lidar,
+  camera, odometry, contacts and the people's poses out. The first start downloads and cooks
+  the scan (31 MB, under a minute) into the robot cache. Without a GPU the camera renders with
+  Mesa's software Vulkan, at about 2 frames a second.
