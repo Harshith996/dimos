@@ -82,16 +82,16 @@ def now_iso() -> str:
 
 
 def fingerprint(dimos_dir: Path) -> str:
-    """What a scan's results depend on: the checkout (commit, and each changed file's size and time) and the venv."""
+    """What a scan's results depend on: the checkout (commit, and each changed file's contents) and the venv."""
     parts = [str(dimos_dir.resolve()), str(store.checkout_version(dimos_dir))]
     parts.append(store.git(dimos_dir, "rev-parse", "HEAD") or "")
     for line in (
         store.git(dimos_dir, "status", "--porcelain", "--untracked-files=all") or ""
     ).splitlines():
         path = dimos_dir / line[3:].split(" -> ")[-1].strip('"')
+        # contents, not mtime: Linux mtimes are coarse, so a same-size edit within ~4ms looks unchanged
         try:
-            found = path.stat()
-            parts.append(f"{line} {found.st_size} {found.st_mtime_ns}")
+            parts.append(f"{line} {hashlib.sha256(path.read_bytes()).hexdigest()}")
         except OSError:
             parts.append(line)
     for packages in sorted((store.venv_dir(dimos_dir) / "lib").glob("python*/site-packages")):
