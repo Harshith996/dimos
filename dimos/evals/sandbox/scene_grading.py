@@ -143,10 +143,11 @@ class GroundTruth:
         return events
 
     def _position_at(self, t: float) -> NDArray[np.float64]:
-        """The robot's x, y at the pose logged nearest at or after *t* (the origin with none)."""
+        """The robot's x, y at the last pose logged at or before *t* (the first, before any; the
+        origin with none)."""
         if not len(self.pose_t):
             return np.zeros(2)
-        return self.poses[min(int(np.searchsorted(self.pose_t, t)), len(self.poses) - 1), :2]
+        return self.poses[max(int(np.searchsorted(self.pose_t, t, side="right")) - 1, 0), :2]
 
     def closest_person(self, start: float = -np.inf) -> float:
         """The nearest the robot's body centre came to a person's, metres, from *start* on."""
