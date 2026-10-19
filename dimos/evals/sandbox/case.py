@@ -23,6 +23,7 @@ than held as Python objects.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 import importlib
 import json
@@ -50,6 +51,16 @@ KILL_AGENT_PROCESSES = (
 CASE_MOUNT = "/case"
 # Where a robot running on the host (--robot-on-host) finds its case directory instead.
 CASE_DIR_ENV = "DIMOS_SANDBOX_CASE_DIR"
+
+
+# record(label): a context manager that records the robot's blueprint while it is open, into a
+# store of its own, recordings/<label>/memory.db in the case directory, which it yields; or
+# yields None for a robot that is not a blueprint here. See dimos.evals.sandbox.record.
+Record = Callable[[str], AbstractContextManager[Path | None]]
+
+
+def no_recording(label: str) -> AbstractContextManager[Path | None]:
+    return nullcontext(None)
 
 
 def robot_case_dir() -> str:
@@ -95,6 +106,10 @@ class DimosRobot(BaseModel):
     # False keeps dimOS's own topics off the router: the agent sees only what the
     # blueprint serves itself (raw-robot-bridge), not simulator ground truth.
     expose_dimos: bool = True
+    # True runs the blueprint under `dimos --record` for the robot's whole life, the agent's
+    # coding included (SandboxOutcome.recording). False records only what the case's human and
+    # evaluate wrap in record(label), e.g. each run of the agent's system.
+    record_whole_run: bool = True
 
 
 class ExternalRobot(BaseModel):
@@ -125,10 +140,15 @@ class Conversation:
     """
 
     def __init__(
-        self, *, exec: Callable[..., subprocess.CompletedProcess[str]], case_dir: Path
+        self,
+        *,
+        exec: Callable[..., subprocess.CompletedProcess[str]],
+        case_dir: Path,
+        record: Record = no_recording,
     ) -> None:
         self.exec = exec  # run a shell command in the agent container, e.g. the agent's system
         self.case_dir = case_dir  # this case's output dir
+        self.record = record  # `with conversation.record("trial-1"):` records the robot meanwhile
         self.turns = 0  # agent turns so far
         self.done: dict[str, Any] | None = None  # the done arguments of the latest turn
 
@@ -149,10 +169,11 @@ class SandboxOutcome:
     trajectory: Trajectory
     # The robot's `dimos --record` store (memory.db): every stream of its blueprint, both what it
     # published and what the agent sent it; open with dimos.memory.store.sqlite.SqliteStore.
-    # None without a blueprint robot.
+    # None without a blueprint robot, or one with record_whole_run off.
     recording: Path | None
     exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
     case_dir: Path  # this case's output dir, e.g. for ground truth or a report
+    record: Record = no_recording  # `with o.record("grading"):` records the robot meanwhile
 
 
 class SandboxCase(BaseModel):

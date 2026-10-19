@@ -17,7 +17,13 @@ import math
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.evals.sandbox.go2_home import PLANTS, came_home, plant_visits, what_went_wrong
+from dimos.evals.sandbox.go2_home import (
+    PLANTS,
+    SUITE,
+    came_home,
+    plant_visits,
+    what_went_wrong,
+)
 from dimos.evals.sandbox.scene_grading import GroundTruth
 
 SIDEBOARD = PLANTS[2]
@@ -76,3 +82,11 @@ def test_the_owner_says_what_was_missed_and_who_was_walked_into() -> None:
     assert "the palm in the back bedroom" in problems[0] and SIDEBOARD.name not in problems[0]
     assert problems[1] == "It walked into one of us once! It must never touch anyone."
     assert len(problems) == 2  # it came home, and bumped into nothing else
+
+
+def test_the_dimos_case_is_the_home_case_plus_the_framework_requirement() -> None:
+    plain, dimos = SUITE
+    assert (plain.id, dimos.id) == ("home_plants", "home_plants_dimos")
+    added = dimos.prompt.removeprefix(plain.prompt)
+    assert added != dimos.prompt and "Dimensional framework" in added
+    assert plain.model_copy(update={"id": dimos.id, "prompt": dimos.prompt}) == dimos

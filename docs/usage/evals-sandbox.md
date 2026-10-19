@@ -64,6 +64,12 @@ SUITE = [
   topics (`dimos/<stream>/<msg type>`) are what the agent sees. `forward=` adds endpoints the
   router dials itself, for a peer that only listens, e.g. `raw-robot-bridge` at
   `tcp/127.0.0.1:7448`, which serves plain JSON/bytes topics under `robot/`.
+  `record_whole_run=False` drops `--record`: the blueprint is recorded only while the case's
+  human or `evaluate` holds `record(label)` open (below). With `expose_dimos=False` the
+  blueprint's own dimOS topics run under a zenoh namespace (`evals/<run>-<case>/dimos/...` on
+  the wire; `--topic-namespace` sets it, `''` turns it off), so they can't cross another dimOS
+  on the same machine, e.g. a sim you have running. The topics a bridge serves the agent keep
+  their keys (`robot/...`), so a prompt can name them.
 - `ready_key` is a zenoh key expression the robot must publish before the agent starts.
 - `done_schema` is the JSON schema of the `done` tool's arguments. Pi validates each call;
   an invalid call is an error the agent sees and can retry, and a valid call ends the agent's
@@ -76,6 +82,12 @@ SUITE = [
     with an accepted done call, and its arguments.
   - `conversation.turns`, `conversation.exec("cmd")` (e.g. to try the agent's system),
     `conversation.case_dir`.
+  - `with conversation.record("trial-1") as db:` records the robot's blueprint into
+    `recordings/trial-1/memory.db` in the case directory while the block runs:
+    `dimos.evals.sandbox.record`, started beside the blueprint (in the robot container, with
+    its environment) and stopped with SIGINT at the end of the block, taps the same transports
+    as `dimos --record`. It yields None for a robot that isn't a blueprint in the sandbox. Each
+    label is used once.
 
   ```python skip
   def until_done(conversation, *, message="You have not called done yet...", times=3):
@@ -95,7 +107,8 @@ SUITE = [
   - `o.recording`: the robot blueprint's `dimos --record` store (`memory.db`): every one of its
     streams at full rate, what it published and what the agent sent it, by stream name; open it
     with `dimos.memory.store.sqlite.SqliteStore` (see [memory](/dimos/memory/intro.md)).
-    None for a robot that isn't a blueprint in the sandbox.
+    None for a robot that isn't a blueprint in the sandbox, or with `record_whole_run=False`.
+  - `o.record("grading")`: as `conversation.record`, e.g. around the graded run.
   - `o.exec("cmd")`: a `bash -lc` command in the agent container, returning
     `subprocess.CompletedProcess`.
   - `o.trajectory`: the ATIF trajectory, every turn, with the human's messages as user steps.
@@ -114,7 +127,8 @@ dimos evals sandbox dimos.evals.sandbox.example --model gpt-5.6-luna --max-steps
 
 Each run writes `~/.local/state/dimos/evals/sandbox-*/`: `manifest.json`, `results.jsonl`,
 `summary.json`, and per case `trajectory.json`, `raw/` (exact model payloads),
-`recordings/<run id>/memory.db` (the robot's `dimos --record`),
+`recordings/<run id>/memory.db` (the robot's `dimos --record`) or `recordings/<label>/memory.db`
+and `record.log` (each `record(label)`),
 `work/` (the agent's working directory, copied out before its container is removed),
 `case.json` (the case as run), `harness/session/` (Pi's own session), `compose.json`, `containers.log` and `pi-stderr.txt`.
 `results.jsonl` gains a line as each case ends. The robot image is rebuilt from the
@@ -168,22 +182,28 @@ dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000
 - Pi's harness files (`/opt/harness`) are mounted into the agent container. The done
   result is read from Pi's event stream, not from a file, so editing them changes nothing.
 
-## The home plants case
+## The home plants cases
 
-`dimos/evals/sandbox/go2_home.py` has one case on
+`dimos/evals/sandbox/go2_home.py` has two cases on
 [dim-go2-sim](https://pypi.org/project/dim-go2-sim/)'s Go2 (a rolling Mid-360 and a front
 camera) in a scanned ranch home ([SuperSplat 3f89bbd3](https://superspl.at/scene/3f89bbd3),
 CC BY 4.0) with two people walking slow loops through it: map the house, stop at every plant
-facing it, then come back to the living room, without bumping into anyone.
+facing it, then come back to the living room, without bumping into anyone. `home_plants_dimos`
+is the same case, its prompt with one more sentence: the system must be built on the
+Dimensional framework, out of its blueprints, modules and streams.
 
 ```bash skip
-dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000
+dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000   # both
+dimos evals sandbox dimos.evals.sandbox.go2_home --case home_plants_dimos --robot-gpu --max-steps 2000
 ```
 
 - The robot container runs `sandbox-go2-home` with `--hide-dimos`: the agent sees only
-  raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
-- The robot records every stream of its blueprint at full rate (`dimos --record`), ground truth
-  and people included: about 11 GB an hour, nine tenths of it the lidar.
+  raw-robot-bridge's `robot/*` topics, never the simulator's ground truth. Its dimOS topics are
+  under the run's zenoh namespace.
+- The robot is recorded only while the agent's system runs: each of the owner's trials
+  (`recordings/trial-<n>/memory.db`) and the graded run (`recordings/grading/memory.db`), every
+  stream of the blueprint at full rate, ground truth and people included: about 11 GB an hour,
+  nine tenths of it the lidar. Nothing is recorded while the agent writes code.
 - `GroundTruthLog` writes the true pose, every contact (`person` when the dog touches someone)
   and the people's poses to the case directory, which only the grader reads.
 - The five graded plants (`PLANTS`) and the living room (`LIVING_ROOM`) were placed by eye in

@@ -21,7 +21,10 @@ Per case, one docker compose project:
 - ``robot``: the zenoh router at ``tcp/robot:7447``, in front of a blueprint
   (:class:`DimosRobot`) or forwarding to one running elsewhere (:class:`ExternalRobot`). A
   blueprint runs under ``dimos --record``, so every one of its streams lands in the case's
-  ``recordings/<run id>/memory.db``.
+  ``recordings/<run id>/memory.db``; or, with ``record_whole_run`` off, only while the case's
+  human or evaluate holds ``record(label)`` open, into ``recordings/<label>/memory.db``. A
+  blueprint whose dimOS topics the agent doesn't see runs under a zenoh namespace of its own
+  (``evals/<project>`` unless set), so it can't cross another dimOS on the same machine.
 - ``llm-proxy``: forwards Pi's model calls and saves each request and response.
 
 Each agent turn ends when Pi stops, e.g. on an accepted call to the done tool. The case's
@@ -32,8 +35,8 @@ containers are still up.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from contextlib import closing
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, replace
 import json
 import os
@@ -64,10 +67,12 @@ from dimos.evals.sandbox.case import (
     Conversation,
     DimosRobot,
     ExternalRobot,
+    Record,
     Robot,
     SandboxCase,
     SandboxOutcome,
     exec_in,
+    no_recording,
 )
 from dimos.evals.types import EvalResult, Step, Trajectory
 from dimos.utils.logging_config import setup_logger
@@ -93,6 +98,11 @@ HARNESS = "/opt/harness"
 DONE_ACCEPTED = "Done: accepted."
 # Extra seconds the runner waits past the in-container timeout before giving up on Pi.
 TIMEOUT_GRACE_S = 15.0
+# Seconds a recorder gets to subscribe, and then to flush and close its store.
+RECORDER_START_S = 120.0
+RECORDER_STOP_S = 120.0
+# Case IDs and recording labels: safe as file names and compose project names.
+SAFE_ID = r"[A-Za-z0-9][A-Za-z0-9_.-]*"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -123,6 +133,7 @@ class SandboxRunner:
         robot_gpu: bool = False,
         resume_from: Path | None = None,
         resume_message: str = "",
+        topic_namespace: str | None = None,
         out_dir: Path = STATE_DIR / "evals",
     ) -> None:
         """*robot* replaces every case's robot, e.g. a real robot in place of a blueprint.
@@ -135,6 +146,10 @@ class SandboxRunner:
 
         *resume_from*, an earlier run's directory, continues each case's Pi session there with
         *resume_message* as the next user turn, on a fresh robot, in a copy of its /root/work.
+
+        *topic_namespace* is the zenoh namespace (key prefix) of a blueprint robot whose dimOS
+        topics the agent doesn't see (expose_dimos off); None is ``evals/<project>``, the case's
+        compose project, and "" none. The agent-facing topics a bridge serves keep their keys.
         """
         if resume_from is not None and not resume_message:
             raise ValueError("resuming needs a message for the agent")
@@ -144,13 +159,14 @@ class SandboxRunner:
         self.robot_gpu = robot_gpu
         self.resume_from = resume_from
         self.resume_message = resume_message
+        self.topic_namespace = topic_namespace
         self.out_dir = out_dir
         self.run_dir = out_dir
 
     def run(self, cases: Sequence[SandboxCase], *, source: str = "") -> list[EvalResult]:
         ids = [case.id for case in cases]
         for case_id in ids:
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", case_id):
+            if not re.fullmatch(SAFE_ID, case_id):
                 raise ValueError(f"unsafe sandbox case ID: {case_id!r}")
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate sandbox case IDs")
@@ -192,9 +208,13 @@ class SandboxRunner:
             self.robot_override if case.robot is not None and self.robot_override else case.robot
         )
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
+        robot = namespaced(
+            robot, f"evals/{project}" if self.topic_namespace is None else self.topic_namespace
+        )
         started = time.time()
-        if self.robot_on_host and isinstance(robot, DimosRobot):
-            host_robot = _start_host_robot(robot, case_dir)
+        blueprint = robot if isinstance(robot, DimosRobot) else None
+        if self.robot_on_host and blueprint is not None:
+            host_robot = _start_host_robot(blueprint, case_dir)
             robot = ExternalRobot(connect=(f"tcp/host.docker.internal:{HOST_ROBOT_PORT}",))
         else:
             host_robot = None
@@ -206,6 +226,11 @@ class SandboxRunner:
         (case_dir / "case.json").write_text(case.model_dump_json(indent=2))
         compose_file.write_text(json.dumps(self._compose(robot, case_dir), indent=2))
         compose = ["docker", "compose", "-p", project, "-f", str(compose_file)]
+        record = (
+            no_recording
+            if blueprint is None
+            else _recorder(blueprint, case_dir, compose, on_host=host_robot is not None)
+        )
         trajectory: Trajectory | None = None
         agent_s = 0.0
         try:
@@ -215,23 +240,35 @@ class SandboxRunner:
             if previous is not None:
                 _restore_work(compose, previous / "work", case_dir / "restored-work")
             agent_t0 = time.monotonic()
-            trajectory = self._converse(compose, case, case_dir, exec_in(project, compose_file))
+            trajectory = self._converse(
+                compose, case, case_dir, exec_in(project, compose_file), record
+            )
             agent_s = time.monotonic() - agent_t0
             _write_trajectory(case_dir, trajectory, [*self.agent.tools, case.done_tool])
             done = accepted_done(trajectory.steps, case.done_tool)
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
-            if host_robot is not None:
+            if blueprint is None or not blueprint.record_whole_run:
+                recording = None
+            elif host_robot is not None:
                 recording = _host_recording(started)
             else:
-                recording = next((case_dir / "recordings").glob("*/memory.db"), None)
+                recording = next(
+                    (
+                        db
+                        for db in (case_dir / "recordings").glob("*/memory.db")
+                        if not (db.parent / "record.log").exists()  # one of record()'s
+                    ),
+                    None,
+                )
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
                 recording=recording,
                 exec=exec_in(project, compose_file),
                 case_dir=case_dir,
+                record=record,
             )
             return self._result(case, t0, trajectory, agent_s, score=case.evaluate(outcome))
         except Exception as e:
@@ -345,13 +382,14 @@ class SandboxRunner:
         case: SandboxCase,
         case_dir: Path,
         exec: Callable[..., subprocess.CompletedProcess[str]],
+        record: Record = no_recording,
     ) -> Trajectory:
         """Agent turns, each answered by the case's human, until it has nothing more to say."""
         prompt = self.resume_message or case.prompt
         events = PiToAtif(
             case_dir / "raw", TrajectoryBuilder(prompt, name="SandboxPi", model=self.agent.model)
         )
-        conversation = Conversation(exec=exec, case_dir=case_dir)
+        conversation = Conversation(exec=exec, case_dir=case_dir, record=record)
         human = case.human(conversation)
         deadline = time.monotonic() + case.timeout_s
         while True:
@@ -470,6 +508,17 @@ class SandboxRunner:
         )
 
 
+def namespaced(robot: Robot | None, namespace: str) -> Robot | None:
+    """*robot*, its dimOS topics under the zenoh *namespace* if the agent doesn't see them.
+
+    Every dimOS zenoh session reads ZENOH_NAMESPACE (global_config.zenoh_namespace); the
+    sessions a bridge serves the agent from are its own and keep their keys.
+    """
+    if not isinstance(robot, DimosRobot) or robot.expose_dimos or not namespace:
+        return robot
+    return robot.model_copy(update={"env": {**robot.env, "ZENOH_NAMESPACE": namespace}})
+
+
 def _restore_work(compose: list[str], work: Path, staged: Path) -> None:
     """Put an earlier run's /root/work back in the agent container, minus any sign of grading."""
     shutil.copytree(work, staged, symlinks=True)
@@ -492,7 +541,7 @@ def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
         hide = [] if robot.expose_dimos else ["--hide-dimos"]
         ROBOT_CACHE.mkdir(parents=True, exist_ok=True)
         (case_dir / "recordings").mkdir(exist_ok=True)  # this user's, not the container's root
-        record = ["--record", "sqlite"]
+        record = ["--record", "sqlite"] if robot.record_whole_run else []
         return {
             "command": ["dimos", "evals", "robot", *forward, *hide, "--", *record, *robot.args],
             "environment": dict(robot.env),
@@ -531,8 +580,7 @@ def _start_host_robot(robot: DimosRobot, case_dir: Path) -> subprocess.Popen[byt
             *forward,
             *hide,
             "--",
-            "--record",
-            "sqlite",
+            *(["--record", "sqlite"] if robot.record_whole_run else []),
             *robot.args,
         ],
         env={**os.environ, **robot.env, CASE_DIR_ENV: str(case_dir)},
@@ -540,6 +588,70 @@ def _start_host_robot(robot: DimosRobot, case_dir: Path) -> subprocess.Popen[byt
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+
+
+def _recorder(robot: DimosRobot, case_dir: Path, compose: list[str], *, on_host: bool) -> Record:
+    """``record(label)`` for *robot*: dimos.evals.sandbox.record beside its blueprint, in its
+    container (or on this machine for a host robot) with its environment, while the block runs.
+    """
+
+    @contextmanager
+    def record(label: str) -> Iterator[Path | None]:
+        if not re.fullmatch(SAFE_ID, label):
+            raise ValueError(f"unsafe recording label: {label!r}")
+        db = case_dir / "recordings" / label / "memory.db"
+        db.parent.mkdir(parents=True)  # a label is used once
+        log_path = db.parent / "record.log"
+        recorder = ["-m", "dimos.evals.sandbox.record"]
+        with log_path.open("wb") as log:
+            if on_host:
+                proc = subprocess.Popen(
+                    [sys.executable, *recorder, str(db), *robot.args],
+                    env={**os.environ, "DIMOS_TRANSPORT": "zenoh", **robot.env,
+                         CASE_DIR_ENV: str(case_dir)},
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )  # fmt: skip
+
+                def stop() -> None:
+                    proc.send_signal(signal.SIGINT)
+
+            else:
+                pid_file = f"/tmp/record-{label}.pid"
+                # The container's environment is the blueprint's: its transport and namespace.
+                proc = subprocess.Popen(
+                    [*compose, "exec", "-T", "robot", "sh", "-c",
+                     'umask 0000; echo $$ > "$0"; exec python "$@"', pid_file,
+                     *recorder, f"/app/recordings/{label}/memory.db", *robot.args],
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                )  # fmt: skip
+
+                def stop() -> None:
+                    subprocess.run(
+                        [*compose, "exec", "-T", "robot", "sh", "-c",
+                         f'kill -INT "$(cat {pid_file})"'],
+                        capture_output=True,
+                    )  # fmt: skip
+
+            try:
+                deadline = time.monotonic() + RECORDER_START_S
+                while not any(
+                    line.startswith("recording ") for line in log_path.read_text().splitlines()
+                ):
+                    if proc.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError(f"the recorder didn't start; see {log_path}")
+                    time.sleep(0.5)
+                yield db
+            finally:
+                if proc.poll() is None:
+                    stop()
+                try:
+                    proc.wait(timeout=RECORDER_STOP_S)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+
+    return record
 
 
 def _host_recording(since: float) -> Path | None:

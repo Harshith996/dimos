@@ -249,6 +249,12 @@ def sandbox(
         help="An earlier sandbox run directory: continue each case's agent session from there",
     ),
     message: str = typer.Option("", "--message", help="With --resume: the agent's next message"),
+    topic_namespace: str | None = typer.Option(
+        None,
+        "--topic-namespace",
+        help="Zenoh namespace of a robot blueprint's hidden dimOS topics; default "
+        "evals/<run>-<case>, '' for none",
+    ),
     print_json: bool = typer.Option(
         False, "--json", help="Print the (selected) cases as JSON instead of running them"
     ),
@@ -282,6 +288,7 @@ def sandbox(
         robot_gpu=robot_gpu,
         resume_from=resume,
         resume_message=message,
+        topic_namespace=topic_namespace,
     )
     results = runner.run(cases, source=suite)
     for r in results:

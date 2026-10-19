@@ -33,6 +33,7 @@ so the prompt's "skip it" covers it) and the cut flowers on the dining table.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import cache
 import json
@@ -164,6 +165,13 @@ answer any questions, you'll just have to do your best guess and continue. Don't
 whole system is working. When you're finished call the done tool and tell it how to run your \
 system."""
 
+# The same request, but the system must be built on dimOS.
+PROMPT_DIMOS = (
+    PROMPT
+    + " You must use the Dimensional framework (github.com/dimensionalos/dimos): build the system"
+    " out of its blueprints, modules, streams, etc."
+)
+
 DONE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -197,15 +205,17 @@ def run_system(
     command: str,
     seconds: float,
     log: str,
+    recording: AbstractContextManager[object] = nullcontext(),
 ) -> float:
-    """The agent's command, from /root/work, for *seconds* of sim time; then everything it
-    started is killed. Returns the sim time it started at."""
-    started = sim_now(case_dir)
-    exec(f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/work/{log} 2>&1 &")
-    give_up = time.monotonic() + WALL_CLOCK_LIMIT * seconds
-    while sim_now(case_dir) < started + seconds and time.monotonic() < give_up:
-        time.sleep(5.0)
-    exec(KILL_AGENT_PROCESSES)
+    """The agent's command, from /root/work, for *seconds* of sim time, inside *recording*;
+    then everything it started is killed. Returns the sim time it started at."""
+    with recording:
+        started = sim_now(case_dir)
+        exec(f"cd /root/work && nohup bash -lc {shlex.quote(command)} > /root/work/{log} 2>&1 &")
+        give_up = time.monotonic() + WALL_CLOCK_LIMIT * seconds
+        while sim_now(case_dir) < started + seconds and time.monotonic() < give_up:
+            time.sleep(5.0)
+        exec(KILL_AGENT_PROCESSES)
     return started
 
 
@@ -313,7 +323,12 @@ def home_owner(
         assert conversation.done is not None
         command = conversation.done["command"]
         started = run_system(
-            conversation.exec, conversation.case_dir, command, trial_s, "run-output.log"
+            conversation.exec,
+            conversation.case_dir,
+            command,
+            trial_s,
+            "run-output.log",
+            conversation.record(f"trial-{tried}"),
         )
         truth = GroundTruth.load(conversation.case_dir / "ground_truth.jsonl")
         problems = what_went_wrong(truth, started, home_raycaster())
@@ -362,7 +377,9 @@ def grade(truth: GroundTruth, started: float) -> dict[str, object]:
 def evaluate(o: SandboxOutcome) -> float:
     """Run the agent's command for GRADE_RUN_S, then grade the whole run from ground truth."""
     command = o.done["command"]
-    started = run_system(o.exec, o.case_dir, command, GRADE_RUN_S, "grading-run.log")
+    started = run_system(
+        o.exec, o.case_dir, command, GRADE_RUN_S, "grading-run.log", o.record("grading")
+    )
     log_tail = o.exec("tail -c 4000 /root/work/grading-run.log").stdout
     report = grade(GroundTruth.load(o.case_dir / "ground_truth.jsonl"), started)
     report |= {"command": command, "grading_run_log_tail": log_tail}
@@ -370,14 +387,15 @@ def evaluate(o: SandboxOutcome) -> float:
     return float(report["score"])  # type: ignore[arg-type]
 
 
-SUITE = [
-    SandboxCase(
-        id="home_plants",
-        prompt=PROMPT,
+def _case(case_id: str, prompt: str) -> SandboxCase:
+    return SandboxCase(
+        id=case_id,
+        prompt=prompt,
         robot=DimosRobot(
             args=("run", "sandbox-go2-home"),
             forward=("tcp/127.0.0.1:7448",),  # raw-robot-bridge only listens
             expose_dimos=False,
+            record_whole_run=False,  # home_owner and evaluate record their own runs
         ),
         ready_key="robot/camera/jpeg",  # the camera is the last to start: it loads the splats
         ready_timeout_s=900.0,  # the first start downloads and cooks the scan, minutes
@@ -394,4 +412,6 @@ SUITE = [
         timeout_s=6 * 3600.0,
         tags=("go2", "home", "navigation", "people"),
     )
-]
+
+
+SUITE = [_case("home_plants", PROMPT), _case("home_plants_dimos", PROMPT_DIMOS)]
