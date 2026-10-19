@@ -467,7 +467,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install portaudio
       - name: Install dependencies
-        run: uv sync --group tests --frozen
+        run: |
+          uv run --no-project --with "dimos-cdrgen[prepare]==0.1.0" python -m scripts.prepare_builtin_sources
+          uv sync --group tests --frozen
       - name: Build the extensions
         run: uv run python bin/pyo3-extensions --build
       # Tested here, not in the tests jobs, so those start without waiting for this build.
