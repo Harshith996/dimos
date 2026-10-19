@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
+import hashlib
 from pathlib import Path
 from typing import Any, cast
 
@@ -338,12 +339,13 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_urdf_info_names_meshes_by_package_and_mesh_request_serves_only_those(
+def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only_stale_ones(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
     (package / "meshes").mkdir(parents=True)
     trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
+    cube = (package / "meshes" / "cube.stl").read_bytes()
     urdf = tmp_path / "mesh_robot.urdf"
     urdf.write_text(
         _URDF.replace(
@@ -353,15 +355,33 @@ def test_urdf_info_names_meshes_by_package_and_mesh_request_serves_only_those(
     module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
     sent: list[MeshFile] = []
     monkeypatch.setattr(module.mesh_info, "publish", sent.append)
+    name = f"package://box/meshes/cube.stl?hash={hashlib.sha256(cube).hexdigest()}"
 
-    assert 'filename="package://box/meshes/cube.stl"' in module._urdf_xml
+    assert f'filename="{name}"' in module._urdf_xml
     assert str(tmp_path) not in module._urdf_xml
-    for request in ("package://box/meshes/cube.stl", str(urdf)):
+    # the name as urdf_info gives it, with or without its hash, or with a stale have= gets the file; have= of the
+    # current file (a fresh cached copy) and a filesystem path get nothing
+    plain = "package://box/meshes/cube.stl"
+    for request in (name, plain, f"{name}&have=0", f"{name}&have={name.split('=')[1]}", str(urdf)):
         asyncio.run(module.handle_mesh_request(String(request)))
 
-    assert [mesh.uri for mesh in sent] == ["package://box/meshes/cube.stl"]
+    assert [mesh.uri for mesh in sent] == [name, name, name]
     decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
-    assert decoded.data == (package / "meshes" / "cube.stl").read_bytes()
+    assert decoded.data == cube
+
+
+def test_an_empty_mesh_request_sends_urdf_info_right_away(make_filter, monkeypatch):
+    module = make_filter()
+    sent: list[String] = []
+    monkeypatch.setattr(module.urdf_info, "publish", sent.append)
+    monkeypatch.setattr(
+        module.mesh_info, "publish", lambda mesh: pytest.fail("no mesh for an empty request")
+    )
+
+    asyncio.run(module.handle_mesh_request(String("")))
+    asyncio.run(module.handle_mesh_request(String("")))  # within 0.2 s: dropped
+
+    assert [message.data for message in sent] == [module._urdf_xml]
 
 
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_captures_drop(
