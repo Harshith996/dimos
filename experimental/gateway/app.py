@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events
-from experimental.gateway.routes import blueprints, jobs, runs, server, skills
+from experimental.gateway.routes import catalog, config, jobs, runs, server
 from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
 
 
@@ -72,6 +72,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def failed(_: Request, error: Exception) -> JSONResponse:
         return JSONResponse({"error": str(error) or type(error).__name__}, status_code=500)
 
-    for module in (server, blueprints, runs, skills, jobs):
+    for module in (server, catalog, config, runs, jobs):
         app.include_router(module.router)
     return app

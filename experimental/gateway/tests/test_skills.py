@@ -62,15 +62,15 @@ def bus(state: State, monkeypatch: pytest.MonkeyPatch) -> FakeBus:
 
 
 def test_skills_are_listed_and_called(client: TestClient, bus: FakeBus) -> None:
-    listed = client.get("/skills").json()
+    listed = client.get("/runs/skills").json()
     assert listed["run"] == {"runId": "run-1", "blueprint": "demo"}
     assert [
         (s["name"], s["module"], s["description"], s["required"]) for s in listed["skills"]
     ] == [("speak", "Speaker", "Say something.", ["text"])]
-    called = client.post("/skills/call", json={"skill": "speak", "args": {"text": "hi"}}).json()
+    called = client.post("/runs", json={"skill": {"name": "speak", "args": {"text": "hi"}}}).json()
     assert called["ok"] and called["text"] == "said hi" and called["via"] == "rpc"
     failed = client.post(
-        "/skills/call", json={"skill": "speak", "args": {"text": "explode"}}
+        "/runs", json={"skill": {"name": "speak", "args": {"text": "explode"}}}
     ).json()
     assert not failed["ok"] and "speaker on fire" in failed["text"]
 
@@ -78,13 +78,24 @@ def test_skills_are_listed_and_called(client: TestClient, bus: FakeBus) -> None:
 def test_bad_skill_calls_are_refused_before_reaching_the_robot(
     client: TestClient, bus: FakeBus
 ) -> None:
-    assert client.post("/skills/call", json={"skill": "fly"}).status_code == 404
-    missing = client.post("/skills/call", json={"skill": "speak", "args": {}})
+    assert client.post("/runs", json={"skill": {"name": "fly"}}).status_code == 404
+    missing = client.post("/runs", json={"skill": {"name": "speak", "args": {}}})
     assert missing.status_code == 400 and "missing text" in missing.json()["error"]
     assert not [name for name, _ in bus.calls if name == "Speaker/speak"]
 
 
 def test_nothing_running_means_no_skills(client: TestClient, bus: FakeBus) -> None:
     bus.running = False
-    assert client.get("/skills").json() == {"skills": [], "run": None, "errors": []}
-    assert client.post("/skills/call", json={"skill": "speak"}).status_code == 409
+    assert client.get("/runs/skills").json() == {"skills": [], "run": None, "errors": []}
+    assert client.post("/runs", json={"skill": {"name": "speak"}}).status_code == 409
+
+
+def test_a_namespaced_skill_is_called_on_its_namespaced_module(
+    client: TestClient, bus: FakeBus
+) -> None:
+    answer = client.post(
+        "/runs", json={"skill": {"module": "Speaker", "name": "speak", "namespace": "robot0"}}
+    )
+    assert answer.status_code == 404 and "speak" in answer.json()["error"]
+    both = client.post("/runs", json={"blueprint": "demo", "skill": {"name": "speak"}})
+    assert both.status_code == 400

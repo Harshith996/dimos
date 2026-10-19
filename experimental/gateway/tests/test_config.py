@@ -29,36 +29,51 @@ ARG = {
     "default": None,
     "description": None,
     "required": False,
+    "secret": False,
     "base": False,
     "json_compatible": True,
 }
 CONFIG = {
     "name": "demo",
-    "modules": [
-        {
-            "module": "camera",
+    "global": {"n_workers": {**ARG, "type": "int", "default": 2}},
+    "modules": {
+        "camera": {
             "class": "x.Camera",
-            "args": [
-                {**ARG, "name": "fps", "type": "int", "default": 30, "value": 10},
-                {**ARG, "name": "api_key", "type": "str", "value": "real"},
-            ],
+            "args": {
+                "fps": {**ARG, "type": "int", "default": 30},
+                "api_key": {**ARG, "type": "str", "secret": True},
+            },
         }
-    ],
+    },
 }
+REMOVED = [
+    ("get", "/blueprints"),
+    ("get", "/blueprints/demo"),
+    ("post", "/blueprints/demo/args"),
+    ("put", "/blueprints/demo/config"),
+    ("get", "/robots"),
+    ("get", "/global-config"),
+    ("get", "/skills"),
+    ("post", "/skills/call"),
+    ("get", "/runs/latest/log"),
+]
 
 
 @pytest.fixture
 def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     calls: list[Any] = []
+    state.listed = [{"name": "demo", "kind": "builtin"}]
 
     async def fake(args: list[str], stdin: Any = None) -> Any:
         calls.append((args, stdin))
         if args[0] == "config":
             return CONFIG
         if args[0] == "blueprint":
-            return {"name": args[1], "file": None, "line": None, "modules": []}
+            return {"name": args[1], "file": "x.py", "line": 3, "modules": []}
         bad = [a for a in stdin or [] if "fps=fast" in a]
-        return {"args": [{"tokens": [a], "error": "not an int"} for a in bad]}
+        return {
+            "args": [{"tokens": [a], "target": "camera.fps", "error": "not an int"} for a in bad]
+        }
 
     monkeypatch.setattr(state, "introspected", fake)
     return calls
@@ -85,65 +100,104 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
-    assert {"/runs", "/skills", "/catalog"} <= set(routes)
+    assert {"/runs", "/runs/skills", "/catalog", "/config/global"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
-    assert slow == {"/blueprints/{name}"}
-    assert not any(path.startswith("/discovery") for path in routes)
+    assert slow == {
+        "/catalog/blueprints/{name}",
+        "/catalog/blueprints/{name}/config",
+        "/catalog/modules/{name}",
+        "/catalog/modules/{name}/config",
+    }
+    assert not any(
+        path.startswith(("/blueprints", "/skills", "/robots", "/global-config")) for path in routes
+    )
+
+
+@pytest.mark.parametrize(("method", "path"), REMOVED)
+def test_the_4x_routes_are_gone(client: TestClient, method: str, path: str) -> None:
+    assert getattr(client, method)(path).status_code in (404, 405)
 
 
 def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:
-    answer = client.put("/global-config", json={"overrides": {"robot_ip": "10.0.0.2"}})
+    answer = client.put("/config/global", json={"overrides": {"robot_ip": "10.0.0.2"}})
     assert answer.status_code == 200
     assert answer.json()["overrides"] == {"robot_ip": "10.0.0.2"}
     saved = json.loads((home / "state" / "gateway" / "settings.json").read_text())
     assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
-    shown = client.get("/global-config").json()
+    shown = client.get("/config/global").json()
     assert "robot_ip" in shown["schema"]["properties"]
     assert shown["defaults"]["rerun_open"] == "none"
 
 
 def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
-    unknown = client.put("/global-config", json={"overrides": {"robot_iq": "x"}})
+    unknown = client.put("/config/global", json={"overrides": {"robot_iq": "x"}})
     assert unknown.status_code == 400
     assert "robot_iq" in unknown.json()["error"]
-    wrong = client.put("/global-config", json={"overrides": {"n_workers": "many"}})
+    wrong = client.put("/config/global", json={"overrides": {"n_workers": "many"}})
     assert wrong.status_code == 400
 
 
 def test_a_secret_is_hidden_and_kept_when_sent_back(client: TestClient) -> None:
-    client.put("/global-config", json={"overrides": {"typesafe_api_key": "s3cret"}})
-    assert client.get("/global-config").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
+    client.put("/config/global", json={"overrides": {"typesafe_api_key": "s3cret"}})
+    assert client.get("/config/global").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
     client.put(
-        "/global-config", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
+        "/config/global", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
     )
     assert store.global_config_overrides() == {"typesafe_api_key": "s3cret", "n_workers": 2}
 
 
-def test_module_config_round_trip(client: TestClient, introspected: list[Any]) -> None:
-    put = client.put(
-        "/blueprints/demo/config", json={"overrides": {"camera": {"fps": 5, "api_key": "k"}}}
+def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]) -> None:
+    sent = {"global": {"n_workers": 3}, "modules": {"camera": {"fps": 5, "api_key": "k"}}}
+    put = client.put("/config/blueprints/demo", json=sent)
+    assert put.status_code == 200, put.text
+    assert store.blueprint_config("demo") == sent
+    shown = client.get("/config/blueprints/demo").json()
+    assert shown == {
+        "name": "demo",
+        "global": {"n_workers": 3},
+        "modules": {"camera": {"api_key": ov.HIDDEN, "fps": 5}},
+    }
+    kept = client.put(
+        "/config/blueprints/demo", json={"modules": {"camera": {"api_key": ov.HIDDEN}}}
     )
-    assert put.status_code == 200
-    assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
-    shown = client.get("/blueprints/demo").json()["config"]
-    assert shown["overrides"] == {"camera": {"api_key": ov.HIDDEN, "fps": 5}}
-    args = {a["name"]: a for a in shown["modules"][0]["args"]}
-    assert args["api_key"]["secret"] and args["api_key"]["value"] == ov.HIDDEN
-    refused = client.put("/blueprints/demo/config", json={"overrides": {"camera": {"fps": "fast"}}})
+    assert kept.status_code == 200
+    assert store.blueprint_config("demo")["modules"] == {"camera": {"api_key": "k"}}
+
+
+def test_blueprint_config_lists_every_refused_key(
+    client: TestClient, introspected: list[Any]
+) -> None:
+    refused = client.put(
+        "/config/blueprints/demo",
+        json={"global": {"n_workers": "many"}, "modules": {"camera": {"fps": "fast"}}},
+    )
     assert refused.status_code == 400
-    assert store.module_config("demo") == {"camera": {"api_key": "k", "fps": 5}}
+    keys = {p["key"] for p in refused.json()["problems"]}
+    assert keys == {"global", "modules.camera.fps"}
+    assert store.blueprint_config("demo") == {"global": {}, "modules": {}}
+    assert client.get("/config/blueprints/nope").status_code == 404
+
+
+def test_a_blueprints_config_schema_is_global_and_module_fields(
+    client: TestClient, introspected: list[Any]
+) -> None:
+    schema = client.get("/catalog/blueprints/demo/config").json()
+    assert schema["global"]["n_workers"]["default"] == 2
+    assert schema["modules"]["camera"]["args"]["api_key"]["secret"]
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
-    assert client.get("/blueprints/-x").status_code == 400
+    assert client.get("/catalog/blueprints/-x").status_code == 400
+    assert client.get("/config/blueprints/-x").status_code == 400
 
 
-def test_robots_come_from_the_yaml_with_global_config_reflected(client: TestClient) -> None:
-    answer = client.get("/robots").json()
-    go2 = answer["robots"]["go2"]
-    assert go2["blueprints"]["unitree-go2"]["registered"]
-    settings = go2["blueprints"]["unitree-go2"]["recommended_config"]
-    assert any(s["kind"] == "pick" for s in settings)
+def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestClient) -> None:
+    go2 = client.get("/catalog/robots").json()["robots"]["go2"]
+    assert "unitree-go2" in go2["blueprints"]
+    found = client.get("/catalog/blueprints?fields=blueprints.name,blueprints.recommended_config")
+    bp = next(b for b in found.json()["blueprints"] if b["name"] == "unitree-go2")
+    assert set(bp) == {"name", "recommended_config"}
+    assert any(s["kind"] == "pick" for s in bp["recommended_config"])
 
 
 def test_annotations_name_registered_blueprints_and_real_fields() -> None:
@@ -169,20 +223,3 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
     }
     declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
     assert declared == served
-
-
-def test_blueprint_args_are_read_as_dimos_run_would(
-    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def fake(args: list[str], stdin: Any = None) -> Any:
-        assert args == ["args", "demo"]
-        return {
-            "name": "demo",
-            "args": [{"tokens": [a], "target": "fps", "error": None} for a in stdin],
-        }
-
-    monkeypatch.setattr(state, "introspected", fake)
-    checked = client.post("/blueprints/demo/args", json={"args": ["--fps=5"]})
-    assert checked.status_code == 200, checked.text
-    assert checked.json()["args"] == [{"tokens": ["--fps=5"], "target": "fps", "error": None}]
-    assert client.post("/blueprints/-x/args", json={"args": []}).status_code == 400

@@ -27,7 +27,7 @@ import psutil
 import pytest
 
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches, overrides as ov
+from experimental.gateway import launches, overrides as ov, store
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -52,16 +52,17 @@ def launched(client: TestClient) -> Any:
 def test_launch_runs_dimos_with_saved_and_one_off_config(
     client: TestClient, launched: None
 ) -> None:
-    client.put("/global-config", json={"overrides": {"n_workers": 3, "typesafe_api_key": "k1"}})
+    client.put("/config/global", json={"overrides": {"n_workers": 3, "typesafe_api_key": "k1"}})
+    store.set_blueprint_config("demo", {"n_workers": 5, "viewer": "none"}, {})
     started = client.post(
-        "/runs",
-        json={"blueprint": "demo", "replay": True, "overrides": {"global": {"n_workers": 4}}},
+        "/runs", json={"blueprint": "demo", "config": {"global": {"n_workers": 4, "replay": True}}}
     )
     assert started.status_code == 200, started.text
     assert started.json()["phase"] == "starting"
     until(output_has(client, "secret k1"))
     launch = client.get("/runs").json()["launch"]
     assert "--n-workers=4" in launch["output"] and "--replay" in launch["output"]
+    assert "--viewer=none" in launch["output"]
     assert f"run --run-id {launch['runId']} demo" in launch["output"].splitlines()[0]
     assert "k1" not in launch["output"].splitlines()[0]
     assert launch["overrides"]["typesafe_api_key"] == ov.HIDDEN
@@ -76,6 +77,35 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     assert client.get("/runs").json()["launch"]["phase"] == "stopped"
 
 
+def test_a_module_launches_like_a_blueprint_and_exec_runs_args_as_typed(
+    client: TestClient, launched: None
+) -> None:
+    assert client.post("/runs", json={}).status_code == 400
+    assert client.post("/runs", json={"blueprint": "demo", "module": "cam"}).status_code == 400
+    assert client.post("/runs/exec", json={"args": ["--n-workers=7"]}).status_code == 400
+    client.put("/config/global", json={"overrides": {"n_workers": 3}})
+    started = client.post("/runs", json={"module": "cam"})
+    assert started.status_code == 200, started.text
+    until(output_has(client, "args"))
+    launch = client.get("/runs").json()["launch"]
+    assert (
+        f"run --run-id {launch['runId']} cam" in launch["output"]
+        and "--n-workers=3" in launch["output"]
+    )
+    client.post("/runs/stop", json={"runId": launch["runId"]})
+    until(lambda: client.get("/runs").json()["launch"]["phase"] == "stopped")
+    typed = client.post("/runs/exec", json={"args": ["demo", "--n-workers=7"]})
+    assert typed.status_code == 200, typed.text
+    until(output_has(client, "args"))
+    first = client.get("/runs").json()["launch"]["output"].splitlines()[0]
+    assert first.endswith(f"run --run-id {typed.json()['runId']} demo --n-workers=7")
+    restarted = client.post("/runs/restart", json={"runId": typed.json()["runId"]})
+    assert restarted.status_code == 200, restarted.text
+    until(output_has(client, "args"))
+    again = client.get("/runs").json()["launch"]["output"].splitlines()[0]
+    assert again.endswith("demo --n-workers=7") and "--n-workers=3" not in again
+
+
 def test_a_failed_launch_reports_its_last_output_line(client: TestClient) -> None:
     client.post("/runs", json={"blueprint": "fail"})
     until(lambda: client.get("/runs").json()["launch"]["phase"] == "failed")
@@ -84,7 +114,7 @@ def test_a_failed_launch_reports_its_last_output_line(client: TestClient) -> Non
 
 def test_restart_launches_the_last_blueprint_again(client: TestClient, launched: None) -> None:
     assert client.post("/runs/restart", json={"runId": "nope"}).status_code == 400
-    client.post("/runs", json={"blueprint": "demo", "overrides": {"n_workers": 2}})
+    client.post("/runs", json={"blueprint": "demo", "config": {"n_workers": 2}})
     until(output_has(client, "args"))
     first = client.get("/runs").json()["launch"]["runId"]
     assert client.post("/runs/restart").status_code == 400
@@ -159,21 +189,29 @@ def test_runs_lists_the_registry(client: TestClient) -> None:
     assert "stop it first" in refused.json()["error"]
 
 
-def test_run_log_pages_and_tails(client: TestClient, home: Path) -> None:
+def test_run_logs_now_and_past(client: TestClient, home: Path) -> None:
+    assert client.get("/runs/logs").status_code == 404
+    assert client.get("/runs/log_hist").json() == {"runs": []}
+    for run_id in ("20260101-110000-old", "20260101-120000-demo"):
+        (home / "logs" / run_id).mkdir(parents=True)
     run = home / "logs" / "20260101-120000-demo"
-    run.mkdir(parents=True)
     lines = [
         {"level": "info", "event": "hello", "logger": "a"},
         {"level": "error", "event": "boom", "logger": "b"},
     ]
     (run / "main.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
-    page = client.get("/runs/latest/log").json()
+    (home / "logs" / "20260101-110000-old" / "main.jsonl").write_text("")
+    page = client.get("/runs/logs").json()
     assert page["runId"] == "20260101-120000-demo"
     assert [r["event"] for r in page["records"]] == ["hello", "boom"]
     assert page["loggers"] == ["a", "b"]
-    errors = client.get("/runs/20260101-120000-demo/log?level=error").json()
+    past = client.get("/runs/log_hist").json()["runs"]
+    assert [r["runId"] for r in past] == ["20260101-120000-demo", "20260101-110000-old"]
+    assert not past[0]["running"]
+    errors = client.get("/runs/log_hist/20260101-120000-demo?level=error").json()
     assert [r["event"] for r in errors["records"]] == ["boom"]
+    assert client.get("/runs/log_hist/20990101-000000-nope").status_code == 404
     with (run / "main.jsonl").open("a") as handle:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
-    tail = client.get(f"/runs/latest/log?after={page['offset']}").json()
+    tail = client.get(f"/runs/logs?after={page['offset']}").json()
     assert [r["event"] for r in tail["records"]] == ["later"]

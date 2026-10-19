@@ -85,6 +85,31 @@ def find(dimos_dir: Path, run_id: str) -> Path | None:
     return found[-1][1] if found else None
 
 
+def history(dimos_dir: Path) -> list[dict[str, Any]]:
+    """Every run with a log, newest first, with its blueprint and start when the run registry knows them."""
+    from dimos.core.run_registry import list_runs
+
+    known = {e.run_id: e for e in list_runs(alive_only=False)}
+    alive = {e.run_id for e in list_runs(alive_only=True)}
+    ids = {
+        path.name
+        for root in logs_dirs(dimos_dir)
+        if root.is_dir()
+        for path in root.iterdir()
+        if (path / "main.jsonl").exists()
+    }
+    ids |= {i for i, e in known.items() if (Path(e.log_dir) / "main.jsonl").exists()}
+    return [
+        {
+            "runId": run_id,
+            "blueprint": known[run_id].blueprint if run_id in known else None,
+            "startedAt": known[run_id].started_at if run_id in known else None,
+            "running": run_id in alive,
+        }
+        for run_id in sorted(ids, reverse=True)
+    ]
+
+
 def read(
     file: Path | None,
     run_id: str,

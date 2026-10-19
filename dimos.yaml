@@ -8,68 +8,98 @@ install: |
   set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "4.1.0"
+  version: "5.0.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
   description: >-
-    The dimos gateway: run and stop blueprints, and read their config, modules, logs and skills.
+    The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; and runs (launch, stop, logs, skills).
     Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   endpoints:
     - method: GET
       path: info
-      description: Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process
+      description: 'Whether dimos is found and installed, its version, the gateway API version, the checkout''s commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process'
     - method: POST
       path: server/stop
       description: Stop this gateway (a running blueprint keeps running)
     - method: GET
-      path: blueprints
-      description: Every blueprint (builtin or external) with what the last scan found (importable, import_error, missing_module, suggested_extras, modules) and how stale that is; ?fields= keeps only those fields (name always), ?fresh= relists
+      path: catalog
+      description: 'Every blueprint, module, skill and robot from the last scan (cached on disk), with how stale it is (scan: finished_at, age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)'
     - method: GET
-      path: blueprints/{name}
-      description: 'A blueprint''s modules with their streams, RPCs and skills, its file and line, and its configurable args per module with Desktop''s saved values (slow: imports python)'
-    - method: POST
-      path: blueprints/{name}/args
-      description: Read CLI args ({args}) as `dimos run <name> <args>` would, without launching; what each group sets and why dimos would refuse it (slow)
-    - method: PUT
-      path: blueprints/{name}/config
-      description: Save a blueprint's module arg overrides
+      path: catalog/blueprints
+      description: 'Every blueprint, including external ones and ones that don''t import, with what the last scan found.'
+    - method: GET
+      path: catalog/blueprints/{name}
+      description: 'A blueprint, plus its file and line and its modules'' streams, RPCs and skills. (slow: imports python)'
+    - method: GET
+      path: catalog/blueprints/{name}/config
+      description: 'The blueprint''s config schema: GlobalConfig''s fields and each module''s, with types, defaults and choices. (slow: imports python)'
+    - method: GET
+      path: catalog/modules
+      description: 'Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only those (dot paths)'
+    - method: GET
+      path: catalog/modules/{name}
+      description: 'A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class). (slow: imports python)'
+    - method: GET
+      path: catalog/modules/{name}/config
+      description: 'The module''s config fields with the code''s defaults; saved values are per blueprint (/config/blueprints/{name}). (slow: imports python)'
+    - method: GET
+      path: catalog/msgs/{name}
+      description: 'A message type''s definition, by the type name topics use (e.g. sensor_msgs.Image). Not filled in yet.'
+    - method: GET
+      path: catalog/robots
+      description: 'Every robot dimos supports, by type, with its blueprints by name.'
     - method: POST
       path: catalog/scan
       description: '202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes; follow it at jobs/{job}'
+    - method: POST
+      path: catalog/scan/blueprints/{name}
+      description: 'Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).'
     - method: GET
-      path: catalog
-      description: 'Every blueprint, module and skill from the last scan (cached on disk), with how stale it is (scan: finished_at, age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it'
+      path: catalog/skills
+      description: 'Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint''s are at /runs/skills.'
     - method: GET
-      path: robots
-      description: Robot types, their blueprints and recommended configs
+      path: catalog/skills/{module}/{skill}
+      description: 'One skill from the last scan: its doc, params and rpc name; ?namespace= names it as that namespace would'
     - method: GET
-      path: global-config
-      description: 'dimos''s GlobalConfig: schema, defaults, saved overrides and which keys are secret'
+      path: config/blueprints/{name}
+      description: 'The values saved for this blueprint: `global` (over /config/global) and each module''s; the schema is at /catalog/blueprints/{name}/config.'
     - method: PUT
-      path: global-config
-      description: Save global config overrides
+      path: config/blueprints/{name}
+      description: Replace the values saved for this blueprint; a 400 lists every key dimos would refuse.
+    - method: GET
+      path: config/global
+      description: 'GlobalConfig''s schema and defaults, and the values saved for every launch.'
+    - method: PUT
+      path: config/global
+      description: 'Save GlobalConfig values used by every launch ({overrides}); a secret sent back as ••• keeps its saved value'
     - method: GET
       path: runs
-      description: The live runs (dimos's run registry) and this gateway's launch (phase, output, runId, logDir)
+      description: 'The running dimos runs (run id, pid, blueprint, start, log dir) and the launch this gateway started'
     - method: POST
       path: runs
-      description: Launch a blueprint with the saved config plus one-off overrides and args
+      description: 'Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call a skill of the running blueprint ({skill: {module, name, args}})'
+    - method: POST
+      path: runs/exec
+      description: 'Run exactly `dimos run <args>` (args[0] is the blueprint or module), without the saved config.'
+    - method: GET
+      path: runs/log_hist
+      description: 'Every run with a log, newest first.'
+    - method: GET
+      path: runs/log_hist/{runId}
+      description: 'A run''s structured log records, current or past, from ?after= on (?level=, ?q=, ?limit=)'
+    - method: GET
+      path: runs/logs
+      description: 'The running run''s log, or the latest run''s when nothing runs, from ?after= on (?level=, ?q=, ?limit=)'
+    - method: POST
+      path: runs/restart
+      description: 'Stop the run {runId} and launch it again'
+    - method: GET
+      path: runs/skills
+      description: 'The running blueprint''s skills, live, with each one''s JSON schema; call one with POST /runs {skill}.'
     - method: POST
       path: runs/stop
       description: 'Stop the run {runId}'
-    - method: POST
-      path: runs/restart
-      description: 'Stop the run {runId} and launch it again: the gateway''s launch with the config saved now, another run with its own command line, directory and env'
-    - method: GET
-      path: runs/{runId}/log
-      description: A run's structured log (after, level, q, limit; runId may be latest)
-    - method: GET
-      path: skills
-      description: The running blueprint's skills
-    - method: POST
-      path: skills/call
-      description: Call one of the running blueprint's skills (skill, args, module, runId)
     - method: GET
       path: extras
       description: 'dimos''s optional extras: installed, applicable, missing, download size'
