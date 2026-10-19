@@ -283,6 +283,14 @@ marker acceptance. `map rename` and `map pose-fill` remain SQLite-only.
 
 ### Independent validation and manual viewers
 
+Verify that the installed Rerun version can load each exported recording:
+
+```sh skip
+rerun rrd verify "$CDR_REVIEW_DIR/memory.rrd"
+rerun rrd verify "$CDR_REVIEW_DIR/global.rrd"
+rerun rrd verify "$CDR_REVIEW_DIR/replay.rrd"
+```
+
 If the separately installed official Foxglove MCAP CLI is on PATH:
 
 ```sh skip
