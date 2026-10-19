@@ -98,12 +98,14 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
         cwd=tmp_path,
         env=env,
     )
-    example = (
-        Path(__file__).resolve().parents[2] / "examples/message-package/demo_installed_wheel.py"
-    )
-    output = run(python, "-I", str(example), cwd=tmp_path)
-    assert "Catalog: 73 types" in output
-    assert "PASS: dimos_msgs/msg/LineSegments3D" in output
+    # The wheel demo deliberately rejects editable paths outside site-packages.
+    if mode != "editable":
+        example = (
+            Path(__file__).resolve().parents[2] / "examples/message-package/demo_installed_wheel.py"
+        )
+        output = run(python, "-I", str(example), cwd=tmp_path)
+        assert "Catalog: 73 types" in output
+        assert "PASS: dimos_msgs/msg/LineSegments3D" in output
     project = tmp_path / "external"
     definition = project / "interfaces/demo_msgs/msg/Reading.msg"
     definition.parent.mkdir(parents=True)
