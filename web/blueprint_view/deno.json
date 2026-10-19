@@ -3,6 +3,9 @@
     "dimos-react": "jsr:@robotics/dimos-react@^0.2.1"
   },
   "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "jsxImportSourceTypes": "@types/react",
     "lib": [
       "ES2022",
       "DOM",
