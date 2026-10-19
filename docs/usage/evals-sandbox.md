@@ -145,8 +145,8 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
 
 `--robot-on-host` does that per case: each case's blueprint runs on this machine, behind its
 own router on 7447, started and stopped with the case, writing ground truth to the case
-directory. Use it when the robot needs the GPU, which Docker on a Mac doesn't have; the agent
-stays in its container.
+directory (its recording lands in this checkout's `recordings/`). Use it when the robot needs
+the GPU, which Docker on a Mac doesn't have; the agent stays in its container.
 
 ```bash skip
 dimos evals sandbox dimos.evals.sandbox.go2_home --robot-on-host --max-steps 2000
@@ -182,7 +182,8 @@ dimos evals sandbox dimos.evals.sandbox.go2_home --robot-gpu --max-steps 2000
 
 - The robot container runs `sandbox-go2-home` with `--hide-dimos`: the agent sees only
   raw-robot-bridge's `robot/*` topics, never the simulator's ground truth.
-- The recorder keeps lidar at 1 Hz, camera at 2 Hz, and odometry and `cmd_vel` whole.
+- The robot records every stream of its blueprint at full rate (`dimos --record`), ground truth
+  and people included: about 11 GB an hour, nine tenths of it the lidar.
 - `GroundTruthLog` writes the true pose, every contact (`person` when the dog touches someone)
   and the people's poses to the case directory, which only the grader reads.
 - The five graded plants (`PLANTS`) and the living room (`LIVING_ROOM`) were placed by eye in

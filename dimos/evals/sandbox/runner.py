@@ -47,7 +47,7 @@ import tempfile
 import time
 from typing import Any
 
-from dimos.constants import CACHE_DIR, STATE_DIR
+from dimos.constants import CACHE_DIR, RECORDINGS_DIR, STATE_DIR
 from dimos.evals.agents.lib.pi_config import Provider, RuntimeConfig, Thinking
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -192,6 +192,7 @@ class SandboxRunner:
             self.robot_override if case.robot is not None and self.robot_override else case.robot
         )
         project = re.sub(r"[^a-z0-9_-]", "-", f"{self.run_dir.name}-{case.id}".lower())
+        started = time.time()
         if self.robot_on_host and isinstance(robot, DimosRobot):
             host_robot = _start_host_robot(robot, case_dir)
             robot = ExternalRobot(connect=(f"tcp/host.docker.internal:{HOST_ROBOT_PORT}",))
@@ -221,11 +222,14 @@ class SandboxRunner:
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
                 return self._result(case, t0, trajectory, agent_s, error=error)
-
+            if host_robot is not None:
+                recording = _host_recording(started)
+            else:
+                recording = next((case_dir / "recordings").glob("*/memory.db"), None)
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
-                recording=next((case_dir / "recordings").glob("*/memory.db"), None),
+                recording=recording,
                 exec=exec_in(project, compose_file),
                 case_dir=case_dir,
             )
@@ -527,12 +531,22 @@ def _start_host_robot(robot: DimosRobot, case_dir: Path) -> subprocess.Popen[byt
             *forward,
             *hide,
             "--",
+            "--record",
+            "sqlite",
             *robot.args,
         ],
         env={**os.environ, **robot.env, CASE_DIR_ENV: str(case_dir)},
         stdout=log,
         stderr=subprocess.STDOUT,
         start_new_session=True,
+    )
+
+
+def _host_recording(since: float) -> Path | None:
+    """The memory.db of a host robot's `dimos --record` begun since *since*: the newest run's."""
+    runs = [d for d in RECORDINGS_DIR.glob("*") if d.stat().st_mtime >= since]
+    return next(
+        (d / "memory.db" for d in sorted(runs, reverse=True) if (d / "memory.db").is_file()), None
     )
 
 

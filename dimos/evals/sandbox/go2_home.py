@@ -381,12 +381,6 @@ SUITE = [
         ),
         ready_key="robot/camera/jpeg",  # the camera is the last to start: it loads the splats
         ready_timeout_s=900.0,  # the first start downloads and cooks the scan, minutes
-        record={
-            "robot/lidar/**": 1.0,
-            "robot/camera/**": 2.0,
-            "robot/odom/**": None,
-            "robot/cmd_vel/**": None,  # what the agent told the dog to do
-        },
         human=FunctionRef(
             function=f"{__name__}:home_owner",
             params={
