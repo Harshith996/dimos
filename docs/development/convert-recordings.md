@@ -199,10 +199,20 @@ claim newly validated model inference, macOS execution or MCAP embedding support
 
 ## Ivan's offline acceptance checklist
 
-Run from this proposal checkout with its prepared development environment activated
-(`source .venv/bin/activate`). It must contain matching `dimos-generated`, MCAP,
-NumPy, Open3D and Rerun packages. These commands do not build/install dependencies
-or start a robot. Use a fresh directory for each run:
+Run from the recording-converter branch, `cc/feat/cdr-recording-converter`.
+For a fresh checkout, prepare the pinned message inputs before installing the
+matching runtime and generated message package:
+
+```sh skip
+uv run --no-project --python 3.12 --with 'dimos-cdrgen[prepare]==0.1.0' python -m scripts.prepare_builtin_sources
+uv sync --frozen --python 3.12 --no-default-groups --extra unitree
+source .venv/bin/activate
+uv pip install 'mcap>=1.2.0' 'dimos-lcm==0.1.4' 'matplotlib>=3.7.1'
+```
+
+Preparation and installation require network access unless their inputs are
+cached. The following conversion and CPU mapping commands use only local files
+and do not start a robot. Use a fresh directory for each run:
 
 ```sh skip
 export CDR_REVIEW_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dimos-cdr-review.XXXXXX")"
@@ -238,15 +248,7 @@ entity tree therefore does not guarantee a visible 3D scene.
 
 ### Memory rendering, mapping and replay
 
-For a core-only checkout environment, mapping currently also imports Unitree
-helpers and Matplotlib. Install the declared Unitree extra and the plotting
-package if absent (the full development environment already has these):
-
-```sh skip
-uv sync --frozen --python 3.12 --no-default-groups --extra unitree
-source .venv/bin/activate
-uv pip install 'mcap>=1.2.0' 'dimos-lcm==0.1.4' 'matplotlib>=3.7.1'
-```
+The setup above includes the Unitree helpers and plotting package used by mapping.
 
 The following bound visualization to five seconds and use CPU mapping:
 
@@ -308,7 +310,7 @@ visual review.
 ### Focused regression entry
 
 ```sh skip
-python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py dimos/memory/store/test_mcap.py dimos/mapping/cli/test_stream_selection.py dimos/mapping/cli/test_pgo_accumulate.py dimos/mapping/loop_closure/test_pgo.py
+python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py dimos/memory/store/test_mcap.py dimos/mapping/cli/test_stream_selection.py dimos/mapping/cli/test_pgo_accumulate.py dimos/navigation/go2/loop_closure/test_pgo.py
 ```
 
 At published `6256c71becff76f9ae60af0b4076a145941bdf98`, the actual stairs
