@@ -350,8 +350,10 @@ def json_safe(kind: Any, value: Any) -> bool:
         return False
 
 
-def field_args(fields: dict[str, Any], base: set[str]) -> dict[str, dict[str, Any]]:
-    """Each config field's type, default, description and choices, by name."""
+def field_args(
+    fields: dict[str, Any], base: set[str], values: dict[str, Any] | None = None
+) -> dict[str, dict[str, Any]]:
+    """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
     from experimental.gateway.overrides import is_secret_name
 
     args = {}
@@ -378,17 +380,19 @@ def field_args(fields: dict[str, Any], base: set[str]) -> dict[str, dict[str, An
         entry["json_compatible"] = schema is not None and json_safe(kind, default)
         if schema is not None:
             entry["schema"] = schema
+        if values and name in values:
+            entry["value"] = jsonable(values[name])
         args[name] = entry
     return args
 
 
-def module_args(module: Any) -> dict[str, dict[str, Any]]:
+def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     from dimos.core.module import ModuleConfig
 
     fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
     if fields is None:
         raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
-    return field_args(fields, set(ModuleConfig.model_fields))
+    return field_args(fields, set(ModuleConfig.model_fields), values)
 
 
 def config(name: str) -> dict[str, Any]:
@@ -400,7 +404,7 @@ def config(name: str) -> dict[str, Any]:
     for atom in get_by_name(name).active_blueprints:
         entry: dict[str, Any] = {"class": type_name(atom.module)}
         try:
-            entry["args"] = module_args(atom.module)
+            entry["args"] = module_args(atom.module, dict(atom.kwargs))
         except Exception as error:  # a module's config class is its own code
             entry["args"] = {}
             entry["error"] = f"{type(error).__name__}: {error}"
