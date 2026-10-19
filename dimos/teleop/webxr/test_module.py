@@ -359,10 +359,11 @@ def test_websocket_rejects_additional_control_client(
     app = mocker.MagicMock()
     app.get.side_effect = lambda *_args, **_kwargs: lambda fn: fn
 
-    def capture_websocket(*_args: Any, **_kwargs: Any) -> Callable[[Any], Any]:
+    def capture_websocket(path: str, **_kwargs: Any) -> Callable[[Any], Any]:
         def decorator(fn: Callable[[Any], Awaitable[None]]) -> Callable[[Any], Awaitable[None]]:
             nonlocal endpoint
-            endpoint = fn
+            if path == "/ws":
+                endpoint = fn
             return fn
 
         return decorator
@@ -404,6 +405,53 @@ def test_websocket_dispatches_binary_and_text_messages(
 
     dispatch_binary.assert_called_once_with(b"controller")
     dispatch_text.assert_called_once_with('{"type":"body_tracking_snapshot"}')
+
+
+def test_camera_viewer_route_and_socket_are_read_only(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    app = _setup_test_app(module, mocker)
+    dispatch_binary = mocker.patch.object(module, "_dispatch_binary_message")
+    dispatch_text = mocker.patch.object(module, "_dispatch_text_message")
+    control_client = mocker.MagicMock()
+    assert module._client_connected(control_client)
+
+    with TestClient(app) as client:
+        response = client.get("/cameras")
+        assert response.status_code == 200
+        assert 'src="/static/cameras.js"' in response.text
+        with client.websocket_connect("/cameras/ws") as viewer:
+            assert module._has_clients()
+            assert len(module._viewer_clients) == 1
+            viewer.send_bytes(b"not a controller command")
+            viewer.send_text("not a body tracking message")
+            assert module._connected_clients == {control_client}
+
+    assert module._connected_clients == {control_client}
+    assert not module._viewer_clients
+    dispatch_binary.assert_not_called()
+    dispatch_text.assert_not_called()
+
+
+def test_camera_viewer_keeps_video_encoding_enabled_without_headset(
+    make_video_module: Callable[..., DualArmVideoTeleopModule],
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = make_video_module(video_max_width=0)
+    viewer = mocker.MagicMock()
+    viewer.send_bytes = mocker.AsyncMock()
+    module._ws_loop = module._loop
+    with module._clients_lock:
+        module._viewer_clients.add(viewer)
+
+    _run_on_module_loop(module, module.handle_egocentric_image(_frame()))
+    _run_on_module_loop(module, asyncio.sleep(0))
+
+    data = viewer.send_bytes.await_args.args[0]
+    panel, frame = _decode_panel_frame(data)
+    assert panel == 0
+    assert frame.shape == (48, 64, 3)
+    assert not module._connected_clients
 
 
 def test_first_client_connection_rejects_stale_cached_state(

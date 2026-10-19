@@ -184,6 +184,7 @@ class WebXRTeleopModule(Module):
         # _clients_lock guards add/discard/snapshot of the set across the
         # uvicorn thread and the RX subscriber thread.
         self._connected_clients: set[WebSocket] = set()
+        self._viewer_clients: set[WebSocket] = set()
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
@@ -206,6 +207,10 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/config")
         async def teleop_config() -> dict[str, Any]:
             return self._webxr_client_config()
+
+        @self._web_server.app.get("/cameras", response_class=HTMLResponse)
+        async def camera_viewer() -> HTMLResponse:
+            return HTMLResponse(content=(STATIC_DIR / "cameras.html").read_text())
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -239,6 +244,24 @@ class WebXRTeleopModule(Module):
                 logger.exception("WebSocket error")
             finally:
                 self._client_disconnected(ws)
+
+        @self._web_server.app.websocket("/cameras/ws")
+        async def camera_viewer_endpoint(ws: WebSocket) -> None:
+            await ws.accept()
+            self._ws_loop = asyncio.get_running_loop()
+            with self._clients_lock:
+                self._viewer_clients.add(ws)
+            try:
+                while True:
+                    message = await ws.receive()
+                    if message["type"] == "websocket.disconnect":
+                        break
+                    # Viewer messages are never dispatched as robot input.
+            except WebSocketDisconnect:
+                pass
+            finally:
+                with self._clients_lock:
+                    self._viewer_clients.discard(ws)
 
     def _webxr_client_config(self) -> dict[str, Any]:
         required_features = ["local-floor"]
@@ -343,22 +366,31 @@ class WebXRTeleopModule(Module):
 
     def _has_clients(self) -> bool:
         with self._clients_lock:
-            return bool(self._connected_clients)
+            return bool(self._connected_clients or self._viewer_clients)
 
     def _broadcast_text(self, data: str) -> None:
         """Schedule a text message for the active WebXR client."""
         self._broadcast(lambda ws: _ws_send_text(ws, data))
 
     def _broadcast_bytes(self, data: bytes) -> None:
-        """Schedule a binary message (a tagged camera frame) for the active WebXR client."""
-        self._broadcast(lambda ws: _ws_send_bytes(ws, data))
+        """Send a tagged camera frame to the control client and camera viewers."""
+        self._broadcast(lambda ws: _ws_send_bytes(ws, data), include_viewers=True)
 
-    def _broadcast(self, send: Callable[[WebSocket], Coroutine[Any, Any, None]]) -> None:
+    def _broadcast(
+        self,
+        send: Callable[[WebSocket], Coroutine[Any, Any, None]],
+        *,
+        include_viewers: bool = False,
+    ) -> None:
         loop = self._ws_loop
         if loop is None:
             return
         with self._clients_lock:
-            clients = tuple(self._connected_clients)
+            clients = (
+                tuple(self._connected_clients | self._viewer_clients)
+                if include_viewers
+                else tuple(self._connected_clients)
+            )
         for ws in clients:
             asyncio.run_coroutine_threadsafe(send(ws), loop)
 
