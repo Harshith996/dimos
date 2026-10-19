@@ -5,6 +5,8 @@ edition = "2021"
 description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
 
+[workspace]
+
 [dependencies]
 re_cdr = "=0.1.0"
 dimos-lcm-transport = { path = "../dimos-lcm-transport", version = "0.1.0" }

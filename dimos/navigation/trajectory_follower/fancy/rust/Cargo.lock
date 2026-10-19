@@ -664,7 +664,6 @@ dependencies = [
  "dimos-generated-messages",
  "dimos-local-planner",
  "dimos-module",
- "dimos-trajectory-follower",
  "numpy",
  "pyo3",
  "serde",
