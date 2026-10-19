@@ -19,8 +19,9 @@ Per case, one docker compose project:
 - ``agent``: Ubuntu and Pi, nothing else. The runner starts Pi in it with the case
   prompt and reads its JSON events, then once per later turn with the human's message.
 - ``robot``: the zenoh router at ``tcp/robot:7447``, in front of a blueprint
-  (:class:`DimosRobot`) or forwarding to one running elsewhere (:class:`ExternalRobot`).
-- ``recorder``: subscribes to every key on the router and writes ``zenoh.db``.
+  (:class:`DimosRobot`) or forwarding to one running elsewhere (:class:`ExternalRobot`). A
+  blueprint runs under ``dimos --record``, so every one of its streams lands in the case's
+  ``recordings/<run id>/memory.db``.
 - ``llm-proxy``: forwards Pi's model calls and saves each request and response.
 
 Each agent turn ends when Pi stops, e.g. on an accepted call to the done tool. The case's
@@ -44,8 +45,6 @@ import tempfile
 import time
 from typing import Any
 
-import zenoh
-
 from dimos.constants import STATE_DIR
 from dimos.evals.agents.lib.pi_config import Provider, RuntimeConfig, Thinking
 from dimos.evals.agents.lib.pi_to_atif import PiToAtif
@@ -66,13 +65,20 @@ from dimos.evals.sandbox.case import (
     SandboxOutcome,
     exec_in,
 )
-from dimos.evals.sandbox.recorder import NEW_KEY, RECORDING, Recording
 from dimos.evals.types import EvalResult, Step, Trajectory
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 PROXY_PORT = 8080
+# Seconds each readiness probe of the robot waits for the case's ready_key, then tries again.
+READY_PROBE_S = 10.0
+# Run in the robot container: exits 0 once argv[1] (a key expression, or "" for none) publishes on
+# the router at argv[2], within argv[3] seconds.
+AWAIT_KEY = (
+    "import sys; from dimos.evals.sandbox.robot import await_key; "
+    "sys.exit(not await_key(sys.argv[1] or None, sys.argv[2], float(sys.argv[3])))"
+)
 # Inside the agent container: the harness files, and where Pi works.
 HARNESS = "/opt/harness"
 # What the done tool answers when its arguments validate; the runner looks for it.
@@ -188,8 +194,6 @@ class SandboxRunner:
             trajectory = self._converse(compose, case, case_dir, exec_in(project, compose_file))
             agent_s = time.monotonic() - agent_t0
             _write_trajectory(case_dir, trajectory, [*self.agent.tools, case.done_tool])
-            if robot is not None:
-                subprocess.run([*compose, "stop", "recorder"], check=True, capture_output=True)
             done = accepted_done(trajectory.steps, case.done_tool)
             if done is None:
                 error = trajectory.extra.error or "the agent never made an accepted done call"
@@ -197,7 +201,7 @@ class SandboxRunner:
             outcome = SandboxOutcome(
                 done=done,
                 trajectory=trajectory,
-                recording=Recording(case_dir / "zenoh.db") if robot is not None else None,
+                recording=next((case_dir / "recordings").glob("*/memory.db"), None),
                 exec=exec_in(project, compose_file),
             )
             return self._result(case, t0, trajectory, agent_s, score=case.evaluate(outcome))
@@ -272,31 +276,21 @@ class SandboxRunner:
             },
         }
         if robot is not None:
-            services["robot"] = {"image": robot.image, "init": True, **_robot_service(robot)}
-            services["recorder"] = {
-                "image": robot.image,
-                "init": True,
-                "restart": "on-failure",  # until the router is up
-                "command": owned(
-                    "python", "-m", "dimos.evals.sandbox.recorder", ROBOT_ENDPOINT, "/case/zenoh.db"
-                ),
-                "volumes": [f"{case_dir}:/case"],
-            }
+            service = _robot_service(robot, case_dir)
+            service["command"] = owned(*service["command"])  # its recording, too
+            services["robot"] = {"image": robot.image, "init": True, **service}
         return {"services": services}
 
     def _wait_ready(self, compose: list[str], case: SandboxCase) -> None:
-        """Until the recorder is subscribed and, if the case names one, ready_key has published."""
-        wanted = zenoh.KeyExpr(case.ready_key) if case.ready_key else None
+        """Until the robot's router answers and, if the case names one, ready_key has published."""
         deadline = time.monotonic() + case.ready_timeout_s
         while time.monotonic() < deadline:
-            logs = subprocess.run(
-                [*compose, "logs", "--no-color", "--no-log-prefix", "recorder"],
-                capture_output=True, text=True,
-            ).stdout.splitlines()  # fmt: skip
-            keys = [line[len(NEW_KEY) :] for line in logs if line.startswith(NEW_KEY)]
-            if RECORDING in logs and (
-                wanted is None or any(wanted.intersects(zenoh.KeyExpr(k)) for k in keys)
-            ):
+            probe = subprocess.run(
+                [*compose, "exec", "-T", "robot", "python", "-c", AWAIT_KEY,
+                 case.ready_key or "", ROBOT_ENDPOINT, str(READY_PROBE_S)],
+                capture_output=True,
+            )  # fmt: skip
+            if probe.returncode == 0:
                 return
             state = subprocess.run(
                 [*compose, "ps", "-a", "--format", "{{.State}}", "robot"],
@@ -452,12 +446,24 @@ def _restore_work(compose: list[str], work: Path, staged: Path) -> None:
         shutil.rmtree(staged)
 
 
-def _robot_service(robot: Robot) -> dict[str, Any]:
+def _robot_service(robot: Robot, case_dir: Path) -> dict[str, Any]:
     if isinstance(robot, DimosRobot):
         forward = [a for endpoint in robot.forward for a in ("--forward", endpoint)]
+        (case_dir / "recordings").mkdir(exist_ok=True)  # this user's, not the container's root
         return {
-            "command": ["dimos", "evals", "robot", *forward, "--", *robot.args],
+            "command": [
+                "dimos",
+                "evals",
+                "robot",
+                *forward,
+                "--",
+                "--record",
+                "sqlite",
+                *robot.args,
+            ],
             "environment": dict(robot.env),
+            # The robot image's XDG_STATE_HOME is /state, so dimos records under it.
+            "volumes": [f"{case_dir / 'recordings'}:/state/dimos/recordings"],
         }
     forward = [a for endpoint in robot.connect for a in ("--forward", endpoint)]
     return {

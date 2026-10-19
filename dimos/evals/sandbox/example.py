@@ -17,9 +17,9 @@
 dimos evals sandbox dimos.evals.sandbox.example
 """
 
-import json
-
 from dimos.evals.sandbox.case import DimosRobot, FunctionRef, SandboxCase, SandboxOutcome
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.Twist import Twist
 
 PROMPT = """\
 You are connected to a mobile robot. Its only interface is a Zenoh router at tcp/robot:7447
@@ -36,8 +36,9 @@ Drive the robot forward at 0.2 m/s for about 2 seconds. Leave the script you use
 
 def evaluate(o: SandboxOutcome) -> float:
     assert o.recording is not None
-    commands = [json.loads(s.payload) for s in o.recording.samples("robot/cmd_vel/json")]
-    drove = any(abs(c.get("vx", 0) - 0.2) < 0.05 for c in commands)
+    with SqliteStore(path=str(o.recording)) as store:
+        commands = [obs.data for obs in store.stream("cmd_vel", Twist).to_list()]  # the bridge's
+    drove = any(abs(c.linear.x - 0.2) < 0.05 for c in commands)
     reported = bool(o.done["joint_names"] == ["base/vx", "base/vy", "base/wz"])
     kept_script = o.exec("test -f /root/work/drive.py").returncode == 0
     return (drove + reported + kept_script) / 3

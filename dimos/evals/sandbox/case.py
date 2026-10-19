@@ -32,10 +32,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dimos.evals.sandbox.recorder import Recording
 from dimos.evals.types import Trajectory
 
-# The image the robot, recorder and model trace proxy run from (docker/evals_sandbox).
+# The image the robot and model trace proxy run from (docker/evals_sandbox).
 ROBOT_IMAGE = "dimensional/evals-robot"
 AGENT_IMAGE = "dimensional/evals-agent"
 # Where the agent finds its robot, whichever robot it is.
@@ -132,7 +131,10 @@ class SandboxOutcome:
 
     done: dict[str, Any]  # the arguments of the agent's last accepted done call
     trajectory: Trajectory
-    recording: Recording | None  # every zenoh sample of the run; None without a robot
+    # The robot's `dimos --record` store (memory.db): every stream of its blueprint, both what it
+    # published and what the agent sent it; open with dimos.memory.store.sqlite.SqliteStore.
+    # None without a blueprint robot.
+    recording: Path | None
     exec: Callable[..., subprocess.CompletedProcess[str]]  # run a command in the agent container
 
 

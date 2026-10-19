@@ -1,5 +1,5 @@
 # The sandbox's robot side: dimOS, for the robot container (any blueprint behind a zenoh
-# router), the recorder and the model trace proxy. See docs/usage/evals-sandbox.md.
+# router, recording itself) and the model trace proxy. See docs/usage/evals-sandbox.md.
 # Build from the repo root:
 #   docker build -f docker/evals_sandbox/robot.Dockerfile -t dimensional/evals-robot .
 FROM ubuntu:24.04

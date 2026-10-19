@@ -28,6 +28,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from types import FrameType
 
 import zenoh
@@ -93,3 +94,30 @@ def serve(listen: str, forward: Sequence[str], dimos_args: Sequence[str]) -> int
                 except subprocess.TimeoutExpired:
                     proc.kill()
             return proc.wait()
+
+
+def await_key(key_expr: str | None, endpoint: str, timeout_s: float) -> bool:
+    """Whether *key_expr* publishes on the router at *endpoint* within *timeout_s*; with no key,
+    whether the router answers at all."""
+    config = zenoh.Config()
+    config.insert_json5("mode", '"client"')
+    config.insert_json5("connect/endpoints", json.dumps([endpoint]))
+    config.insert_json5("scouting/multicast/enabled", "false")
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            session = zenoh.open(config)
+            break
+        except zenoh.ZError:  # the router isn't up yet
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.5)
+    with session:
+        if key_expr is None:
+            return True
+        published = threading.Event()
+        subscriber = session.declare_subscriber(key_expr, lambda _: published.set())
+        try:
+            return published.wait(max(0.0, deadline - time.monotonic()))
+        finally:
+            subscriber.undeclare()

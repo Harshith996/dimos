@@ -11,12 +11,11 @@ the router fronts a blueprint in that container or a real robot.
  ┌──────────────────────────────────────────────────────────────────────────┐
  │  agent                         robot                                     │
  │  Ubuntu + pi ── zenoh ───────▶ zenoh router :7447                        │
- │   ▲   │                         └─ dimos <args>  (any blueprint, on zenoh)│
- │   │   │ model calls                or: dials a real robot's router       │
+ │   ▲   │                         └─ dimos --record <args>  (a blueprint,  │
+ │   │   │ model calls                on zenoh) ── recordings/memory.db     │
+ │   │   │                            or: dials a real robot's router       │
  │   │   ▼                                                                  │
  │   │  llm-proxy ── saves each request/response ── provider API            │
- │   │                                                                      │
- │   │                            recorder ── subscribes to ** ── zenoh.db  │
  └───┼──────────────────────────────────────────────────────────────────────┘
      │ docker exec: pi --mode json <prompt>      (from `dimos evals sandbox`)
      │ docker exec: evaluate's commands
@@ -31,10 +30,12 @@ with `FunctionRef("module:function", params)`; `params` are JSON keyword argumen
 
 ```python skip
 from dimos.evals.sandbox.case import DimosRobot, FunctionRef, SandboxCase, SandboxOutcome
+from dimos.memory.store.sqlite import SqliteStore
 
 
 def evaluate(o: SandboxOutcome) -> float:
-    commands = [s.decode() for s in o.recording.samples("robot/cmd_vel/json")]
+    with SqliteStore(path=str(o.recording)) as store:
+        commands = store.stream("cmd_vel").to_list()
     script_ran = o.exec("python3 /root/work/drive.py --check").returncode == 0
     return float(bool(commands) and script_ran and o.done["distance_m"] > 0.3)
 
@@ -91,9 +92,10 @@ SUITE = [
 - `evaluate(o, **params)` runs after the human ends the conversation, with the robot and agent
   containers still up:
   - `o.done`: the last accepted done arguments.
-  - `o.recording`: every zenoh sample of the run, both directions
-    (`samples(key_expr)`, `last(key_expr)`, `keys()`; `Sample.decode()` gives a dimOS message
-    when the key names its type, parsed JSON, or bytes).
+  - `o.recording`: the robot blueprint's `dimos --record` store (`memory.db`): every one of its
+    streams at full rate, what it published and what the agent sent it, by stream name; open it
+    with `dimos.memory.store.sqlite.SqliteStore` (see [memory](/dimos/memory/intro.md)).
+    None for a robot that isn't a blueprint in the sandbox.
   - `o.exec("cmd")`: a `bash -lc` command in the agent container, returning
     `subprocess.CompletedProcess`.
   - `o.trajectory`: the ATIF trajectory, every turn, with the human's messages as user steps.
@@ -111,7 +113,8 @@ dimos evals sandbox dimos.evals.sandbox.example --model gpt-5.6-luna --max-steps
 ```
 
 Each run writes `~/.local/state/dimos/evals/sandbox-*/`: `manifest.json`, `results.jsonl`,
-`summary.json`, and per case `trajectory.json`, `raw/` (exact model payloads), `zenoh.db`,
+`summary.json`, and per case `trajectory.json`, `raw/` (exact model payloads),
+`recordings/<run id>/memory.db` (the robot's `dimos --record`),
 `work/` (the agent's working directory, copied out before its container is removed),
 `case.json` (the case as run), `harness/session/` (Pi's own session), `compose.json`, `containers.log` and `pi-stderr.txt`.
 `results.jsonl` gains a line as each case ends. The robot image is rebuilt from the
@@ -144,7 +147,7 @@ dimos evals sandbox dimos.evals.sandbox.example --robot tcp/192.168.123.18:7447
 
 - It has a shell as root in its own container, internet access, and the provider key its
   harness needs. It has no dimOS checkout, no suite files and no grader.
-- It can resolve the `llm-proxy` and `recorder` hostnames on the network. The router's admin
+- It can resolve the `llm-proxy` hostname on the network. The router's admin
   space is off, so zenoh does not list who is connected behind it.
 - Pi's harness files (`/opt/harness`) are mounted into the agent container. The done
   result is read from Pi's event stream, not from a file, so editing them changes nothing.
