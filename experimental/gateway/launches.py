@@ -310,7 +310,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
 
 def snapshot(pid: int) -> tuple[list[str], str, dict[str, str]]:
     """The command line, working directory and environment that started `pid`."""
-    # TODO: after gateway is on main, restart from what the run registry records instead of psutil
+    # from psutil, since the run registry doesn't record the working directory or environment
     try:
         process = psutil.Process(pid)
         with process.oneshot():

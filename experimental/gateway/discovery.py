@@ -384,7 +384,7 @@ def applies(requirement: Requirement, environment: dict[str, str], extra: str = 
         return True
     try:
         return bool(requirement.marker.evaluate({**environment, "extra": extra}))
-    except Exception:
+    except ValueError:
         return True
 
 

@@ -1,15 +1,8 @@
-# A recommended setting names a config value by key: `global: <GlobalConfig field>`, or `module: <module>` + `field:`.
-# Only write what reflection can't know: GlobalConfig gives each field's type, default and (for a Literal or an Enum)
-# its choices. Add a nicer `label`, a `placeholder`, a `docs` link, `required: true`, `kind: recording` (+ `streams`),
-# `choices` (each `{value, label}`) for an enum of your own, and `when: {<key>: <value>}` to show it only while those
-# config values hold. A pick sets several values at once: a `label` and `choices` that each `set:` them, e.g.
-# "Run it on": Robot / Replay / Simulator. On a blueprint, `recommended_config` replaces its robot's defaults; an entry
-# for a key the robot's defaults also name inherits that entry's fields.
-# A setting or list used more than once is written once with an anchor (`&name`) and reused as `*name` (or `<<: *name`).
-# A blueprint named coordinator-*, *test* or *benchmark* is hidden unless it says `hidden: false`.
+# Only what reflection can't know. A setting: `global: <field>` or `module:` + `field:`, plus optional label, placeholder,
+# docs, required, kind: recording (+ streams), choices [{value, label}], when: {<key>: <value>}; a pick's choices `set:` several.
+# A blueprint's recommended_config overrides its robot's defaults. Blueprints named coordinator-*, *test*, *benchmark* are hidden.
 
-# Robot types, in the order a launcher groups robots by; each robot's `type` is one of these (or null: not a robot
-# dimos drives, listed last under Other).
+# Robot types in launcher order; a robot's `type` is one of these, or null (listed under Other).
 types:
   dog: {label: Dogs}
   humanoid: {label: Humanoids}
@@ -197,10 +190,6 @@ robots:
         title: Go2 remote driving
         description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker.
         recommended_config: *robot_ip_only
-      go2-localize-live:
-        title: Go2 localize (recording)
-        description: A Go2 recording looped as a live feed, with localization behind an agent skill.
-        recommended_config: [{global: replay_db}, {global: robot_ip}]
       go2-dds:
         title: 'Go2 over DDS'
         description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
