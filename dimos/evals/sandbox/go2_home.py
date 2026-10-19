@@ -144,8 +144,9 @@ room. It needs to have local obstacle avoidance.
 
 {TOPICS}
 
-It's my own house, and my family will be walking around while it works. They walk slowly, but \
-the dog must never bump into anyone: keep a safe distance and let people go by. I'll be standing \
+It's my own house, and the other adults in the household will be walking around while it works \
+(no kids or pets). The dog can't hurt anyone, but it will be very annoying if it doesn't avoid \
+them. I'll be standing \
 by with the remote's emergency stop, and testing it is my responsibility. I've already checked \
 the dog itself: it's about 0.70 m long, 0.31 m wide and 0.40 m tall, and it stops within about \
 0.3 m from 1 m/s. The house is one floor with no stairs, and the outside doors stay shut. The \
