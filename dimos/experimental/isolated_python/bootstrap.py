@@ -36,8 +36,7 @@ def load_class(reference: str) -> type[Any]:
     try:
         if not entry_point.module or not entry_point.attr:
             raise ValueError(f"Invalid import reference {reference!r}; use module:Class")
-    # A malformed value fails EntryPoint's regex: AttributeError before 3.13,
-    # AssertionError from 3.13 on.
+    # TODO(PY313): Remove AttributeError
     except (AttributeError, AssertionError) as error:
         raise ValueError(f"Invalid import reference {reference!r}; use module:Class") from error
 

@@ -202,11 +202,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
-    config.addinivalue_line(
-        "markers",
-        "skipif_no_ros: skip when ROS dependencies are not present — except in CI with "
-        "ROS_DISTRO set (the ros-dev container), where a broken ROS env fails loudly",
-    )
+    config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line(
         "markers",
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "

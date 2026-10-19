@@ -40,9 +40,7 @@ HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
 INSTALL_PYTHON="3.14"
-# Library mode installs the published release: dimos 0.0.14 caps requires-python
-# below 3.13 and ships cp310–cp312 wheels. Bump with the first release built
-# from a 3.14 tree.
+# TODO: Increase to 3.14 after release.
 LIBRARY_PYTHON="3.12"
 GUM=""
 INSTALL_DEPS=1

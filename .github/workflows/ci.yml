@@ -375,7 +375,6 @@ jobs:
       - name: Install dependencies for pyaudio and open3d
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependencies
         run: uv sync --group tests --frozen
@@ -428,7 +427,6 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y portaudio19-dev libegl1
       - name: Install dependency for pyaudio (macOS)
         if: runner.os == 'macOS'
@@ -455,7 +453,6 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y libturbojpeg portaudio19-dev libegl1
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
@@ -582,7 +579,6 @@ jobs:
       - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
@@ -622,12 +618,6 @@ jobs:
           - os: "ubuntu-24.04-arm"
             pyver: "3.14"
             experimental: false
-          - os: "ubuntu-latest"
-            pyver: "3.15"
-            experimental: true
-          - os: "macos-latest"
-            pyver: "3.15"
-            experimental: true
       fail-fast: true
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
@@ -667,7 +657,6 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg libegl1
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -809,9 +798,7 @@ jobs:
             # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
             # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
             markers: "self_hosted or web_browser or native_e2e"
-            # Behind .python-version: on 3.14 the planning extra needs
-            # drake>=1.47, whose macOS arm64 wheels require macOS 15. Unpin
-            # once the runner is confirmed on macOS 15 or newer.
+            # TODO: Remove pyver once runners are on MacOS 15+
             pyver: "3.12"
             experimental: false
     runs-on:
@@ -850,7 +837,6 @@ jobs:
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
-          # Empty follows .python-version; the matrix explains each leg.
           python-version: ${{ matrix.pyver }}
       - name: Install codecov CLI
         # Self-hosted runners have no `pip` on PATH, so codecov-action's
@@ -1234,7 +1220,6 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # open3d>=0.20 links libEGL at import.
           sudo apt-get install -y portaudio19-dev libturbojpeg libegl1
       # LCM lidar/image UDP fragments drop with small kernel buffers; the
       # in-process configurator (64MB) skips under pytest, so do it here.

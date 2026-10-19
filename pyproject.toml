@@ -104,8 +104,7 @@ classifiers = [
 dependencies = [
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
-    "dimos-lcm>=0.1.5", # First release on upstream lcm instead of lcm-dimos-fork.
-    # 1.5.3 is the first upstream release with the lcm-proj/lcm#621 unsubscribe fix.
+    "dimos-lcm>=0.1.5",
     "lcm>=1.5.3",
     "eclipse-zenoh>=1.10.1,<2.0",
     "PyTurboJPEG==1.8.2",
@@ -283,7 +282,6 @@ control = [
     "xarm-python-sdk>=1.17.0",
     "can-motor-control>=0.0.8",
     "python-can>=4",
-    # The maintained fork; pygame itself stopped at cp313 wheels. Same `pygame` import.
     "pygame-ce>=2.5.5",
     "xacro",
 ]
@@ -291,8 +289,6 @@ control = [
 # Motion planning and its interactive visualization, without perception or agents.
 planning = [
     "dimos[control]",
-    # macOS: 1.45.0 is the last release with macOS 14 wheels (cp312/cp313);
-    # from 1.47 the wheels are cp313/cp314 and need macOS 15.
     "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64' and python_version < '3.14'",
     "drake>=1.47.0; sys_platform == 'darwin' and platform_machine != 'aarch64' and python_version >= '3.14'",
     "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
@@ -316,7 +312,6 @@ cpu = [
 ]
 
 cuda = [
-    # 14 is the first line with cp314 wheels.
     "cupy-cuda12x>=14; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.21; platform_machine == 'x86_64'",  # >=1.21 for onnxruntime.preload_dlls()
     # MeshModule's marching cubes
@@ -396,8 +391,7 @@ autofix = ["ruff==0.14.3"]
 # Project deps shared by `tests` and `lint`.
 project-deps = [
     "dimos[web,visualization,webrtc]",
-    # Blackwell (sm_120) needs the pytorch-cu128 index. 2.9 is the first line
-    # with cp314 wheels and 2.11 the last one published for cu128.
+    # Blackwell (sm_120) needs the pytorch-cu128 index. 2.11 is the last one published for cu128.
     "torch>=2.9,<2.12",
     "torchvision>=0.24,<0.27",
     "langchain==1.2.3",
@@ -515,9 +509,7 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     "dim-odom>=0.4.1",
-    # ROS Lyrical's generated message modules import rosidl_pycommon and
-    # rosidl_parser, which import empy and lark at module level. The ROS debs
-    # take them from the system Python; the sealed venv has to bring its own.
+    # Needed for ROS Lyrical's generated message modules
     "empy>=4",
     "lark>=1.1.1",
 ]
