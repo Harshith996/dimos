@@ -89,21 +89,28 @@ def set_global_config_overrides(values: dict[str, Any]) -> None:
         _save_settings(settings)
 
 
-def module_config(blueprint: str) -> dict[str, dict[str, Any]]:
+def blueprint_config(blueprint: str) -> dict[str, Any]:
+    """What's saved for one blueprint: `global` (over the saved global config) and `modules`."""
     with _settings_lock:
-        saved = _section(_section(_settings().get("module_config")).get(blueprint))
-    return {module: dict(fields) for module, fields in saved.items() if isinstance(fields, dict)}
+        saved = _section(_section(_settings().get("blueprint_config")).get(blueprint))
+    modules = _section(saved.get("modules"))
+    return {
+        "global": dict(_section(saved.get("global"))),
+        "modules": {m: dict(f) for m, f in modules.items() if isinstance(f, dict)},
+    }
 
 
-def set_module_config(blueprint: str, modules: dict[str, dict[str, Any]]) -> None:
+def set_blueprint_config(
+    blueprint: str, global_: dict[str, Any], modules: dict[str, dict[str, Any]]
+) -> None:
     with _settings_lock:
         settings = _settings()
-        saved = _section(settings.get("module_config"))
-        if modules:
-            saved[blueprint] = modules
+        saved = _section(settings.get("blueprint_config"))
+        if global_ or modules:
+            saved[blueprint] = {"global": global_, "modules": modules}
         else:
             saved.pop(blueprint, None)
-        settings["module_config"] = saved
+        settings["blueprint_config"] = saved
         _save_settings(settings)
 
 

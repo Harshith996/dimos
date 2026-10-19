@@ -350,13 +350,11 @@ def json_safe(kind: Any, value: Any) -> bool:
         return False
 
 
-def config_args(module: Any, overrides: dict[str, Any]) -> list[dict[str, Any]]:
-    from dimos.core.module import ModuleConfig
+def field_args(fields: dict[str, Any], base: set[str]) -> dict[str, dict[str, Any]]:
+    """Each config field's type, default, description and choices, by name."""
+    from experimental.gateway.overrides import is_secret_name
 
-    fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
-    if fields is None:
-        raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
-    args = []
+    args = {}
     for name, field in fields.items():
         if name in INTERNAL_FIELDS:
             continue
@@ -366,12 +364,12 @@ def config_args(module: Any, overrides: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:  # a default factory is the module's own code
             default = None
         entry = {
-            "name": name,
             "type": type_name(kind) if isinstance(kind, type) else str(kind).replace("typing.", ""),
             "default": jsonable(default),
             "description": field.description,
             "required": required,
-            "base": name in ModuleConfig.model_fields,
+            "secret": is_secret_name(name),
+            "base": name in base,
         }
         options = choices(kind)
         if options is not None:
@@ -380,25 +378,67 @@ def config_args(module: Any, overrides: dict[str, Any]) -> list[dict[str, Any]]:
         entry["json_compatible"] = schema is not None and json_safe(kind, default)
         if schema is not None:
             entry["schema"] = schema
-        if name in overrides:
-            entry["value"] = jsonable(overrides[name])
-        args.append(entry)
+        args[name] = entry
     return args
 
 
+def module_args(module: Any) -> dict[str, dict[str, Any]]:
+    from dimos.core.module import ModuleConfig
+
+    fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
+    if fields is None:
+        raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
+    return field_args(fields, set(ModuleConfig.model_fields))
+
+
 def config(name: str) -> dict[str, Any]:
+    """A blueprint's config schema: GlobalConfig's fields, and each module's."""
+    from dimos.core.global_config import GlobalConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
-    modules = []
+    modules: dict[str, Any] = {}
     for atom in get_by_name(name).active_blueprints:
-        entry: dict[str, Any] = {"module": atom.name, "class": type_name(atom.module)}
+        entry: dict[str, Any] = {"class": type_name(atom.module)}
         try:
-            entry["args"] = config_args(atom.module, dict(atom.kwargs))
-        except Exception as error:
-            entry["args"] = []
+            entry["args"] = module_args(atom.module)
+        except Exception as error:  # a module's config class is its own code
+            entry["args"] = {}
             entry["error"] = f"{type(error).__name__}: {error}"
-        modules.append(entry)
-    return {"name": name, "modules": modules}
+        modules[atom.name] = entry
+    return {
+        "name": name,
+        "global": field_args(GlobalConfig.model_fields, set()),
+        "modules": modules,
+    }
+
+
+def module_class(name: str) -> tuple[str, Any]:
+    """A module by registry name or class path, as (its name in the scan, class)."""
+    from dimos.robot.all_blueprints import all_modules
+
+    path = all_modules.get(name, name)
+    module_path, _, attr = path.rpartition(".")
+    if not module_path:
+        raise KeyError(f"no module {name}")
+    cls = getattr(importlib.import_module(module_path), attr)
+    return next((n for n, p in all_modules.items() if p == path), attr), cls
+
+
+def module(name: str) -> dict[str, Any]:
+    registry, cls = module_class(name)
+    record = module_record(registry, cls)
+    found = methods(cls)
+    return {
+        **{k: v for k, v in record.items() if k not in ("kind", "skills")},
+        "rpcs": found["rpcs"],
+        "skill_methods": found["skills"],
+        **source_of(cls),
+    }
+
+
+def module_config(name: str) -> dict[str, Any]:
+    registry, cls = module_class(name)
+    return {"name": registry, "class": type_name(cls), "args": module_args(cls)}
 
 
 def check_args(name: str, args: list[str]) -> dict[str, Any]:
@@ -649,6 +689,8 @@ def packages() -> dict[str, Any]:
 COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
     "blueprint": blueprint,
     "config": config,
+    "module": module,
+    "module_config": module_config,
     "args": check_args,
     "list": blueprint_list,
     "packages": packages,

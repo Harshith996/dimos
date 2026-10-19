@@ -23,7 +23,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
 from experimental.gateway import msgs, responses, store, web_view
-from experimental.gateway.routes.blueprints import blueprint_list, check_name
+from experimental.gateway.routes.catalog import check_name, find_blueprint
 from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
@@ -42,9 +42,7 @@ async def blueprint_view(
         raise ApiError(400, f"view {view} isn't logs")
     if run is not None and not re.fullmatch("[A-Za-z0-9_.-]+", run):
         raise ApiError(400, f"not a run id: {run}")
-    listed = await blueprint_list(state)
-    if not any(entry["name"] == name for entry in listed["blueprints"]):
-        raise ApiError(404, f"no such blueprint: {name}")
+    await find_blueprint(state, name)
     dist = await web_view.built_dist()
     if dist is None:
         raise ApiError(503, "the blueprint view isn't built (web/blueprint_view: deno task build)")
