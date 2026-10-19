@@ -109,6 +109,8 @@ STILL_M = 0.15
 # How long the agent's system runs during grading, and each time the owner tries it.
 GRADE_RUN_S = 30 * 60
 TRIAL_RUN_S = 20 * 60
+# Nags without a done call before the owner gives up and the run is graded as it stands.
+MAX_NAGS = 30
 # These are sim time; a sim running this many times slower than the wall clock is cut short.
 WALL_CLOCK_LIMIT = 4
 # A complete map: this share of what the lidar sees from everywhere reachable.
@@ -309,13 +311,22 @@ def what_went_wrong(truth: GroundTruth, since: float, raycaster: Raycaster) -> l
 
 
 def home_owner(
-    conversation: Conversation, *, nag: str, trial_s: float = TRIAL_RUN_S, trials: int = 3
+    conversation: Conversation,
+    *,
+    nag: str,
+    trial_s: float = TRIAL_RUN_S,
+    trials: int = 3,
+    nags: int = MAX_NAGS,
 ) -> Iterator[str]:
-    """The owner. Until the agent calls done, *nag*. Then they run its command for *trial_s* and,
-    if the dog did not look after the plants, say what went wrong, at most *trials* times."""
-    tried = 0
+    """The owner. Until the agent calls done, *nag*, at most *nags* times before giving up. Then
+    they run its command for *trial_s* and, if the dog did not look after the plants, say what
+    went wrong, at most *trials* times."""
+    tried = nagged = 0
     while True:
         if not conversation.called_done:
+            if nagged == nags:
+                return
+            nagged += 1
             yield nag
             continue
         if tried == trials:

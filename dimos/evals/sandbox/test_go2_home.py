@@ -13,14 +13,17 @@
 # limitations under the License.
 
 import math
+from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from dimos.evals.sandbox.case import Conversation
 from dimos.evals.sandbox.go2_home import (
     PLANTS,
     SUITE,
     came_home,
+    home_owner,
     plant_visits,
     what_went_wrong,
 )
@@ -90,3 +93,9 @@ def test_the_dimos_case_is_the_home_case_plus_the_framework_requirement() -> Non
     added = dimos.prompt.removeprefix(plain.prompt)
     assert added != dimos.prompt and "Dimensional framework" in added
     assert plain.model_copy(update={"id": dimos.id, "prompt": dimos.prompt}) == dimos
+
+
+def test_the_owner_gives_up_after_nagging_an_agent_that_never_calls_done() -> None:
+    conversation = Conversation(exec=lambda command: None, case_dir=Path("."))
+    owner = home_owner(conversation, nag="go on", nags=3)
+    assert list(owner) == ["go on"] * 3
