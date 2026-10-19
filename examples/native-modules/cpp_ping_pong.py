@@ -32,7 +32,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 
-_BUILD = "nix build .#default"
+_BUILD = "nix build -L path:.#dimos-native-module-examples-cpp"
 
 
 class PingConfig(NativeModuleConfig):
