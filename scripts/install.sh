@@ -989,8 +989,8 @@ main() {
     fi
     if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 14 ]]; then
-            die "macOS ${DETECTED_OS_VERSION} too old — 14+ required by current dependencies"
+        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 15 ]]; then
+            die "macOS ${DETECTED_OS_VERSION} too old — 15+ required by current dependencies"
         fi
     fi
 

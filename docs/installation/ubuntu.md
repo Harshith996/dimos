@@ -37,8 +37,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
-# The published release supports Python 3.10 to 3.12 until the next release.
-uv venv --python 3.12
+uv venv --python 3.14
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
 uv run dimos --help

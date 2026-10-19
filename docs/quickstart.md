@@ -6,7 +6,7 @@ When you are ready for more, the same install works with physics simulation, a r
 
 ## Before you begin
 
-You need a machine running **Ubuntu 22.04 or newer** or **macOS 14 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
+You need a machine running **Ubuntu 22.04 or newer** or **macOS 15 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
 
 The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/docs/requirements.md) page.
 

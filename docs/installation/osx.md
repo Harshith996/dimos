@@ -1,12 +1,12 @@
 # macOS installation
 
-Use the official installer on macOS 14 or newer:
+Use the official installer on macOS 15 or newer:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-Developer mode installs Python 3.14 and needs macOS 15, because Drake 1.47 and newer only ship Apple Silicon wheels for macOS 15. On macOS 14, follow the manual developer steps below with Python 3.13 in place of 3.14; that keeps Drake 1.45.0, the last release with macOS 14 wheels. Library mode installs the published release on Python 3.12 and runs on macOS 14. Some older library combinations may work on earlier macOS releases, but this installer does not support or validate those combinations.
+Python 3.14 needs Drake 1.47 or newer, which only ships Apple Silicon wheels for macOS 15; that sets the minimum. Older macOS releases are not supported or validated.
 
 The installer sets up Homebrew dependencies, uv, Python, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
 
@@ -37,8 +37,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```sh skip
 mkdir dimos-app && cd dimos-app
-# The published release supports Python 3.10 to 3.12 until the next release.
-uv venv --python 3.12
+uv venv --python 3.14
 source .venv/bin/activate
 uv pip install --torch-backend cpu 'dimos[base,unitree,sim]'
 uv run dimos --help

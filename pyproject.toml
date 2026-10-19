@@ -688,6 +688,7 @@ module = [
     "scipy",
     "scipy.*",
     "sensor_msgs.*",
+    "sounddevice",
     "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",

@@ -31,7 +31,7 @@ from dimos.utils.logging_config import setup_logger
 # failure when a stream is opened.
 _sounddevice_error: Exception | None = None
 try:
-    import sounddevice as sd  # type: ignore[import-untyped]
+    import sounddevice as sd
 except Exception as exc:
     sd = None
     _sounddevice_error = exc
