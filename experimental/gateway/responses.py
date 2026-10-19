@@ -115,6 +115,7 @@ class Arg(Body):
     json_compatible: bool
     choices: NotRequired[list[Any]]
     schema: NotRequired[dict[str, Any]]
+    value: NotRequired[Any]
 
 
 ModuleArgs = TypedDict(
