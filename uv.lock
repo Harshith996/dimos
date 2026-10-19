@@ -1845,7 +1845,6 @@ dependencies = [
     { name = "cmeel-tinyxml2" },
     { name = "cryptography" },
     { name = "dimos-cdrgen" },
-    { name = "dimos-generated" },
     { name = "dimos-lcm" },
     { name = "dimos-viewer" },
     { name = "eclipse-zenoh" },
@@ -2544,7 +2543,6 @@ requires-dist = [
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-cdrgen", specifier = "==0.1.0" },
-    { name = "dimos-generated", editable = "packages/dimos-generated" },
     { name = "dimos-lcm", specifier = ">=0.1.4" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
@@ -2901,24 +2899,6 @@ wheels = [
 [package.optional-dependencies]
 prepare = [
     { name = "requests" },
-]
-
-[[package]]
-name = "dimos-generated"
-version = "0.1.0"
-source = { editable = "packages/dimos-generated" }
-dependencies = [
-    { name = "dimos-cdrgen" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "rosbags" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dimos-cdrgen", specifier = "==0.1.0" },
-    { name = "numpy", specifier = ">=1.26.4" },
-    { name = "rosbags", specifier = "==0.11.0" },
 ]
 
 [[package]]

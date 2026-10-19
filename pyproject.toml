@@ -100,7 +100,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "dimos-generated==0.1.0",
     "dimos-cdrgen==0.1.0",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
@@ -574,7 +573,6 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-dimos-generated = { path = "packages/dimos-generated", editable = true }
 # CUDA builds are not published for macOS or non-x86_64 Linux. Those platforms
 # fall back to PyPI.
 torch = [
