@@ -64,6 +64,7 @@ def stamp(web_dir: Path, app: Path) -> str:
 
 def ensure_built(app: Path) -> Path | None:
     """The dist, rebuilt first if a source changed; None when there's none to serve."""
+    # TODO: uses relay_process's private build helpers; make them public there (a small core change)
     dist = app / "dist"
     if (app / "src").is_dir():
         web_dir = app.parent
