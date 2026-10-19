@@ -204,14 +204,19 @@ For a fresh checkout, prepare the pinned message inputs before installing the
 matching runtime and generated message package:
 
 ```sh skip
+export UV_PROJECT_ENVIRONMENT="$PWD/.venv-stairs"
+export UV_CACHE_DIR="$PWD/.cache-stairs/uv"
 uv run --no-project --python 3.12 --with 'dimos-cdrgen[prepare]==0.1.0' python -m scripts.prepare_builtin_sources
-uv sync --frozen --python 3.12 --no-default-groups --extra unitree
-source .venv/bin/activate
-uv pip install 'mcap>=1.2.0' 'dimos-lcm==0.1.4' 'matplotlib>=3.7.1'
+uv sync --frozen --python 3.12 --no-default-groups
+uv export --frozen --no-default-groups --extra unitree --no-emit-project --no-emit-local --no-hashes --format requirements-txt --output-file "$PWD/.cache-stairs/demo-constraints.txt"
+uv pip install --python "$UV_PROJECT_ENVIRONMENT/bin/python" --constraint "$PWD/.cache-stairs/demo-constraints.txt" 'mcap==1.3.1' 'unitree-webrtc-connect==2.1.2'
+source "$UV_PROJECT_ENVIRONMENT/bin/activate"
 ```
 
-Preparation and installation require network access unless their inputs are
-cached. The following conversion and CPU mapping commands use only local files
+The export provides locked versions for the two additional packages and their
+dependencies. The current mapping CLI imports Unitree helpers during offline
+runs. Preparation and installation require network access unless their inputs
+are cached. The following conversion and CPU mapping commands use only local files
 and do not start a robot. Use a fresh directory for each run:
 
 ```sh skip
@@ -309,6 +314,9 @@ visual review.
 
 ### Focused regression entry
 
+Run this from the project test environment. The converter tests also cover
+embedding migration and require PyTorch; the stairs demo above does not.
+
 ```sh skip
 python -m pytest dimos/memory/test_convert_recording.py dimos/protocol/test_cdr_mcap.py dimos/memory/store/test_mcap.py dimos/mapping/cli/test_stream_selection.py dimos/mapping/cli/test_pgo_accumulate.py dimos/navigation/go2/loop_closure/test_pgo.py
 ```
@@ -330,6 +338,15 @@ and old/new observation-ID associations. Both source database hashes remained
 unchanged. The converter/writer regression suite passed 38 tests, including
 nonempty numeric and byte arrays. These results do not establish strict malformed
 CDR rejection; the accepted native-library limitations above still apply.
+
+The 2026-10-19 synchronized checkout was checked with a fresh Python 3.12
+environment using the core install and the two packages above. All six stairs
+commands passed, retaining 4,451 messages. The five-second memory view logged
+70 images, global mapping kept 39/39 clouds on CPU:0, and replay completed. All
+three RRD files passed `rerun rrd verify`. The local web viewer displayed the
+image and cloud data in Chrome using software rendering. This is an automated
+browser check, not human visual review or Foxglove acceptance. Native hardware
+and Nix builds were not validated by this demo.
 
 ## Built-in region streams
 
