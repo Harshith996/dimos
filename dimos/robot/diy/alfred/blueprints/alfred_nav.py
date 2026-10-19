@@ -21,6 +21,7 @@ both rather than run on its own.
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -31,7 +32,7 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
+from dimos.robot.diy.alfred.config import ALFRED, alfred_model
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 
 ALFRED_RERUN_ROOT = "world/alfred"
@@ -48,8 +49,17 @@ def _path_colored(msg: Any, color: tuple[int, int, int]) -> Any:
     return msg.to_rerun(color=color)
 
 
+def _resolved_urdf() -> Path:
+    """The model written out with package:// resolved, which the rerun urdf loader cannot do."""
+    loaded = alfred_model().load()
+    path = loaded.source_path.parent / ".resolved" / loaded.source_path.name
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(loaded.xml)
+    return path
+
+
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
+    factory = UrdfRobotStaticRerunFactory(urdf_path=_resolved_urdf(), root_path=ALFRED_RERUN_ROOT)
     return [
         *factory(rr),
         (ALFRED_RERUN_ROOT, rr.Transform3D(parent_frame="tf#/base_link")),

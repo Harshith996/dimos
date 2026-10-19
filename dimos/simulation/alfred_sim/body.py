@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred in MuJoCo: the urdf's base and mast boxes on a planar holonomic base."""
+"""Alfred in MuJoCo: the CAD model, lift and arms welded, on a planar holonomic base."""
 
 from __future__ import annotations
 
@@ -22,18 +22,18 @@ import math
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
+from scipy.spatial.transform import Rotation
 
 from dimos.msgs.sim_msgs.Contacts import Part
-from dimos.robot.diy.alfred.config import ALFRED_URDF
+from dimos.robot.diy.alfred.config import alfred_model
 from dimos.robot.diy.alfred.mount_tf import mount_transforms
-from dimos.simulation.sim_world.world import ROBOT_VISUAL_GROUP
+from dimos.simulation.sim_world.world import COLLISION_GROUP, ROBOT_VISUAL_GROUP
 
 CONTROL_DT = 0.02
 BASE_BODY = "base_link"
-CHASSIS = "base_body"
-PARTS: dict[str, Part] = {CHASSIS: "base", "mast_link": "mast"}
 FLOOR_CLEARANCE = 0.01
 VELOCITY_TIME_CONSTANT = 0.05
+PARTS: dict[str, Part] = {"base": "base", "lift": "lift", "arm": "arm"}
 PLANAR_JOINTS = (
     ("x", mujoco.mjtJoint.mjJNT_SLIDE, (1.0, 0.0, 0.0)),
     ("y", mujoco.mjtJoint.mjJNT_SLIDE, (0.0, 1.0, 0.0)),
@@ -48,19 +48,37 @@ def mid360_mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
+def _part(link: str) -> Part:
+    if link.startswith("openarm_"):
+        return "arm"
+    if link == "lift_link":
+        return "lift"
+    return "base"
+
+
 def alfred_spec() -> mujoco.MjSpec:
-    """The urdf on a planar base with no ground, its chassis lifted off the floor."""
-    spec = mujoco.MjSpec.from_file(str(ALFRED_URDF))
+    """The welded model on a planar base with no ground, the lidar blind to its own housing."""
+    spec = mujoco.MjSpec.from_string(alfred_model().load().xml)
     spec.compiler.inertiafromgeom = mujoco.mjtInertiaFromGeom.mjINERTIAFROMGEOM_FALSE  # type: ignore[attr-defined]
-    for link, part in PARTS.items():
-        geom = spec.body(link).geoms[0]
-        geom.name = part
-        geom.group = ROBOT_VISUAL_GROUP
-    chassis = spec.body(CHASSIS)
-    shell = chassis.geoms[0]
-    lift = np.array([0.0, 0.0, FLOOR_CLEARANCE / 2])
-    shell.pos = shell.pos + lift
-    shell.size = shell.size - lift
+    count: dict[Part, int] = {}
+    for body in spec.bodies:
+        for geom in body.geoms:
+            part = _part(body.name)
+            geom.name = f"{part}_{count.setdefault(part, 0)}"
+            count[part] += 1
+            geom.group = ROBOT_VISUAL_GROUP
+    for geom in spec.body(BASE_BODY).geoms:
+        sink = FLOOR_CLEARANCE - (geom.pos[2] - geom.size[2])
+        if geom.type == mujoco.mjtGeom.mjGEOM_BOX and sink > 0:
+            lift = np.array([0.0, 0.0, sink / 2])
+            geom.pos = geom.pos + lift
+            geom.size = geom.size - lift
+    mount, _ = mid360_mount()
+    for geom in spec.body(BASE_BODY).geoms:
+        w, x, y, z = geom.quat
+        local = Rotation.from_quat([x, y, z, w]).inv().apply(mount - geom.pos)
+        if geom.type == mujoco.mjtGeom.mjGEOM_BOX and np.all(np.abs(local) <= geom.size):
+            geom.group = COLLISION_GROUP
     base = spec.body(BASE_BODY)
     for name, kind, axis in PLANAR_JOINTS:
         joint = base.add_joint()
@@ -71,13 +89,24 @@ def alfred_spec() -> mujoco.MjSpec:
         actuator.name = name
         actuator.target = name
         actuator.trntype = mujoco.mjtTrn.mjTRN_JOINT
-        resisted = chassis.mass if kind == mujoco.mjtJoint.mjJNT_SLIDE else chassis.fullinertia[2]
-        actuator.set_to_velocity(kv=resisted / VELOCITY_TIME_CONSTANT)
+        actuator.set_to_velocity(kv=0.0)
     return spec
 
 
+def tune_velocity_gains(model: mujoco.MjModel) -> None:
+    """Gains that reach the commanded velocity in VELOCITY_TIME_CONSTANT, from the compiled inertia."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    for name, _, _ in PLANAR_JOINTS:
+        dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)]
+        actuator = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+        kv = data.qM[model.dof_Madr[dof]] / VELOCITY_TIME_CONSTANT
+        model.actuator_gainprm[actuator, 0] = kv
+        model.actuator_biasprm[actuator, 2] = -kv
+
+
 class PlanarBase:
-    """Alfred in a compiled model, tracking a body-frame velocity command with no slip or lag."""
+    """Alfred in a compiled model, tracking a body-frame velocity command with no wheel slip."""
 
     dt = CONTROL_DT
     joint_names: tuple[str, ...] = ()
@@ -99,10 +128,11 @@ class PlanarBase:
                 for name, _, _ in PLANAR_JOINTS
             ]
         )
-        self._parts = {
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, part): part
-            for part in PARTS.values()
-        }
+        self._parts: dict[int, Part] = {}
+        for geom in range(model.ngeom):
+            part = PARTS.get(model.geom(geom).name.rsplit("_", 1)[0])
+            if part is not None:
+                self._parts[geom] = part
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
         """Set base_link on the floor at z_feet, at rest."""

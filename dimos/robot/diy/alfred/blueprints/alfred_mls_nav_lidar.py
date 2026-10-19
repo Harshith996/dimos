@@ -49,7 +49,7 @@ alfred_mls_nav_lidar = autoconnect(
             # Gyro yaw halved final drift on drive_2026-08-18_23-05-04.db, 2.66 m out to 1.33 m
             # against a 0.59 m floor on the lidar reference's own heading. Datasheet-class
             # figures for the part, not an Allan variance of this particular camera.
-            ImuConfig(frame_id="d455_accel_optical_frame", **IMU_BMI055),
+            ImuConfig(frame_id="camera_front_accel_optical_frame", **IMU_BMI055),
             # The Mid-360's built-in IMU, an order of magnitude quieter than the D455's BMI055, which is
             # the point of the pairing: the filter keeps a bias pair per IMU, so the good gyro keeps its
             # say instead of being averaged into the cheap one.

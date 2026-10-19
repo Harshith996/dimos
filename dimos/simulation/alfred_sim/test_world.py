@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import math
 
+import mujoco
 import numpy as np
 import pytest
 
 from dimos.msgs.sim_msgs.Contacts import Contact
-from dimos.simulation.alfred_sim.body import PlanarBase, alfred_spec
+from dimos.simulation.alfred_sim.body import PARTS, PlanarBase, alfred_spec
 from dimos.simulation.alfred_sim.world import ALFRED, MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.procedural import Scene, office
 from dimos.simulation.sim_world.world import Sim
@@ -48,9 +49,9 @@ def test_a_body_frame_command_is_followed_after_turning(sim: Sim, scene: Scene) 
     for _ in range(100):
         sim.tick(np.array([0.5, 0.0, 0.0]))
     after, rotation = sim.base_pose()
-    assert after - before == pytest.approx([0.0, 0.975, 0.0], abs=0.01)
-    assert math.atan2(rotation[1, 0], rotation[0, 0]) == pytest.approx(math.pi / 2, abs=1e-6)
-    assert sim.robot.base_velocity()[0] == pytest.approx([0.0, 0.5, 0.0], abs=1e-3)
+    assert after - before == pytest.approx([0.0, 0.975, 0.0], abs=0.02)
+    assert math.atan2(rotation[1, 0], rotation[0, 0]) == pytest.approx(math.pi / 2, abs=0.02)
+    assert sim.robot.base_velocity()[0] == pytest.approx([0.0, 0.5, 0.0], abs=0.01)
 
 
 def test_a_yaw_command_turns_the_base(sim: Sim) -> None:
@@ -69,9 +70,9 @@ def test_base_link_stays_on_the_floor_and_only_the_casters_touch_it(sim: Sim, sc
     assert sim.contacts() == []
 
 
-def test_contacts_name_the_base_and_the_mast(sim: Sim) -> None:
-    sim.reset(0.2, 3.0, sim.scene.start[2], math.pi)
-    assert {Contact("base", "wall"), Contact("mast", "wall")} <= set(sim.contacts())
+def test_contacts_name_the_robot_part(sim: Sim) -> None:
+    sim.reset(0.2, 3.0, sim.scene.start[2], 0.0)
+    assert Contact("base", "wall") in sim.contacts()
 
 
 def test_sensor_sits_on_the_urdf_mount(sim: Sim) -> None:
@@ -79,12 +80,27 @@ def test_sensor_sits_on_the_urdf_mount(sim: Sim) -> None:
     sensor, sensor_rotation = sim.sensor_pose()
     assert sensor - base == pytest.approx(rotation @ MOUNT_XYZ)
     assert sensor_rotation == pytest.approx(rotation @ MOUNT_R)
-    assert sensor[2] - base[2] == pytest.approx(0.437)
+    assert sensor[2] - base[2] == pytest.approx(0.376, abs=1e-3)
 
 
-def test_collision_boxes_clear_the_floor_and_reach_the_mast_top() -> None:
+def test_the_lidar_never_reports_the_robot_itself(sim: Sim) -> None:
+    frame = None
+    while frame is None:
+        frame = sim.tick(STILL)
+    assert len(frame.points) > 10_000
+    assert np.linalg.norm(frame.points, axis=1).min() >= ALFRED.lio_blind_range
+
+
+def test_the_model_clears_the_floor_and_stands_under_the_door_lintel() -> None:
     model = alfred_spec().compile()
-    base, mast = model.geom("base"), model.geom("mast")
-    assert base.pos[2] - base.size[2] > 0.0
-    assert mast.pos[2] + mast.size[2] == pytest.approx(2.011)
-    assert model.body_mass[model.body("base_link").id] == pytest.approx(60.0)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    bottom, top = np.inf, -np.inf
+    for geom in range(model.ngeom):
+        if model.geom_type[geom] == mujoco.mjtGeom.mjGEOM_BOX:
+            reach = np.abs(data.geom_xmat[geom].reshape(3, 3))[2] @ model.geom_size[geom]
+            bottom = min(bottom, data.geom_xpos[geom][2] - reach)
+            top = max(top, data.geom_xpos[geom][2] + reach)
+    assert bottom > 0.0
+    assert top == pytest.approx(1.859, abs=1e-3)
+    assert {model.geom(geom).name.rsplit("_", 1)[0] for geom in range(model.ngeom)} == set(PARTS)

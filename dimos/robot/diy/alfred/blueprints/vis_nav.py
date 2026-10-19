@@ -39,13 +39,13 @@ from dimos.visualization.vis_module import vis_module
 CAMERA_RERUN_ROOT = "world/camera"
 
 IR_ENTITY_BY_FRAME = {
-    "d455_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
-    "d455_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
+    "camera_front_infra1_optical_frame": f"{CAMERA_RERUN_ROOT}/infra1",
+    "camera_front_infra2_optical_frame": f"{CAMERA_RERUN_ROOT}/infra2",
 }
 """The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
 from the message, and cuVSLAM's rig has to be told the order."""
 
-DEPTH_FRAME = "d455_depth_optical_frame"
+DEPTH_FRAME = "camera_front_depth_optical_frame"
 """Colour is off, so depth is unaligned and arrives in its own frame."""
 
 

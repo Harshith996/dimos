@@ -276,9 +276,9 @@ class Sim:
 
         def cast() -> None:
             position, rotation = self.sensor_pose()
-            self.lio.add(
-                self.lidar.cast(position, rotation, self._points_per_step), position, rotation
-            )
+            points = self.lidar.cast(position, rotation, self._points_per_step)
+            kept = points[np.linalg.norm(points, axis=1) >= self.rig.lio_blind_range]
+            self.lio.add(kept, position, rotation)
 
         self.robot.tick(command, cast)
         self._tick += 1

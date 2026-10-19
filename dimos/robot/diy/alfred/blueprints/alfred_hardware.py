@@ -41,7 +41,7 @@ _alfred_hardware = autoconnect(
         # native now. Depth is unaligned without colour, so it lands in its own frame.
         enable_color=False,
         align_depth_to_color=False,
-        frame_id="d455_link",
+        frame_id="camera_front_link",
         serial_number=ALFRED.d455_serial,
     ).remappings(
         [

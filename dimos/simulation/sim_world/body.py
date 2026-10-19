@@ -43,6 +43,7 @@ class Rig:
     lidar: Callable[[Raycaster, int], SimMid360]
     command_timeout: float
     tune: Callable[[mujoco.MjModel], None] = _untuned
+    lio_blind_range: float = 0.0
 
 
 class Body(Protocol):
