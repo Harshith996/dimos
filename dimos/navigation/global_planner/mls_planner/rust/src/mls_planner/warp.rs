@@ -237,7 +237,7 @@ impl Planner {
             *cells = keys;
         }
 
-        report.rigid_voxels = rigid_tile_voxels(&voxels, moved_voxels, vs, warp);
+        report.rigid_voxels = rigid_tile_voxels(&voxels, &landed, vs, warp);
         let moved_count = voxels
             .par_iter()
             .zip(landed.par_iter())
@@ -245,8 +245,10 @@ impl Planner {
             .count();
         if moved_count as f64 > warp.rebuild_fraction() * self.voxel_map.len() as f64 {
             let stage = Instant::now();
-            self.rekey_voxels(&voxels, landed);
-            self.set_residuals(&voxels, &residuals);
+            let reached_voxel = |k: &VoxelKey| {
+                reached.contains(&warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs))
+            };
+            self.rekey_voxels(&voxels, &landed, &residuals, reached_voxel);
             report.voxels_moved = moved_count;
             report.voxel_ms = ms_since(stage);
             let stage = Instant::now();
@@ -296,33 +298,52 @@ impl Planner {
         report
     }
 
-    /// Move every warped voxel to its new key at once, for a rebuild: each
-    /// leaves its old key and lands in the new one with its time.
-    fn rekey_voxels(&mut self, voxels: &[VoxelKey], landed: Vec<VoxelKey>) {
-        let times: Vec<f32> = match &self.voxel_times {
-            Some(t) => voxels
-                .iter()
-                .map(|k| t.by_key.get(k).copied().unwrap_or(f32::NAN))
-                .collect(),
-            None => Vec::new(),
+    /// Move every warped voxel to its new key at once, for a rebuild: the
+    /// voxel set, times and residuals are built afresh from the voxels the warp
+    /// did not reach and the ones it moved, each landing with its time and,
+    /// first to land in a key, its residual.
+    fn rekey_voxels(
+        &mut self,
+        voxels: &[VoxelKey],
+        landed: &[VoxelKey],
+        residuals: &[(VoxelKey, [f32; 3])],
+        reached: impl Fn(&VoxelKey) -> bool + Sync,
+    ) {
+        let old = std::mem::take(&mut self.voxel_map);
+        let stationary: Vec<VoxelKey> = old.par_iter().filter(|k| !reached(k)).copied().collect();
+        drop(old);
+        let mut voxel_map = AHashSet::with_capacity(stationary.len() + landed.len());
+        voxel_map.extend(stationary.iter().copied());
+        voxel_map.extend(landed.iter().copied());
+        self.voxel_map = voxel_map;
+        let Some(times) = &mut self.voxel_times else {
+            return;
         };
-        for k in voxels {
-            self.voxel_map.remove(k);
-        }
-        self.voxel_map.extend(landed.iter().copied());
-        if let Some(t) = &mut self.voxel_times {
-            for k in voxels {
-                t.by_key.remove(k);
+        let old_times = std::mem::take(&mut times.by_key);
+        let old_residual = std::mem::take(&mut times.residual);
+        let mut by_key = AHashMap::with_capacity(stationary.len() + landed.len());
+        let mut residual = AHashMap::with_capacity(old_residual.len().max(landed.len()));
+        for k in &stationary {
+            if let Some(&t) = old_times.get(k) {
+                by_key.insert(*k, t);
             }
-            for (k, time) in landed.into_iter().zip(times) {
-                if time.is_finite() {
-                    t.by_key
-                        .entry(k)
-                        .and_modify(|e| *e = e.min(time))
-                        .or_insert(time);
-                }
+            if let Some(&r) = old_residual.get(k) {
+                residual.insert(*k, r);
             }
         }
+        for (from, &to) in voxels.iter().zip(landed) {
+            if let Some(&t) = old_times.get(from) {
+                by_key
+                    .entry(to)
+                    .and_modify(|e: &mut f32| *e = e.min(t))
+                    .or_insert(t);
+            }
+        }
+        for &(to, r) in residuals {
+            residual.entry(to).or_insert(r);
+        }
+        times.by_key = by_key;
+        times.residual = residual;
     }
 
     /// The warped voxels' residuals at the keys they landed in; the first to land in a key keeps it.
@@ -451,18 +472,22 @@ impl Planner {
 }
 
 /// Voxels in tiles whose voxels all moved by one whole-voxel offset, shared by every neighboring tile.
-fn rigid_tile_voxels(voxels: &[VoxelKey], warped: &[[f32; 3]], vs: f32, warp: &Warp) -> usize {
+fn rigid_tile_voxels(voxels: &[VoxelKey], landed: &[VoxelKey], vs: f32, warp: &Warp) -> usize {
     // Per tile: its voxel count and its single offset, None once two differ.
+    let mut by_tile: Vec<(Tile, VoxelKey)> = voxels
+        .par_iter()
+        .zip(landed.par_iter())
+        .map(|(k, to)| {
+            let tile = warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+            (tile, (to.0 - k.0, to.1 - k.1, to.2 - k.2))
+        })
+        .collect();
+    by_tile.par_sort_unstable();
     let mut tiles: AHashMap<Tile, (usize, Option<VoxelKey>)> = AHashMap::new();
-    for (k, w) in voxels.iter().zip(warped) {
-        let to = voxelize((w[0], w[1], w[2]), vs);
-        let offset = (to.0 - k.0, to.1 - k.1, to.2 - k.2);
-        let tile = warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
-        let entry = tiles.entry(tile).or_insert((0, Some(offset)));
-        entry.0 += 1;
-        if entry.1 != Some(offset) {
-            entry.1 = None;
-        }
+    for chunk in by_tile.chunk_by(|a, b| a.0 == b.0) {
+        let offset = chunk[0].1;
+        let uniform = chunk.last().map(|c| c.1) == Some(offset);
+        tiles.insert(chunk[0].0, (chunk.len(), uniform.then_some(offset)));
     }
     tiles
         .iter()

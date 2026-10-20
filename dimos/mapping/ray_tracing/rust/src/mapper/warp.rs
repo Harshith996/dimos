@@ -17,12 +17,11 @@
 
 use std::time::Instant;
 
-use ahash::AHashMap;
 use rayon::prelude::*;
 
 use super::Mapper;
 use crate::reform::{Tile, Warp};
-use crate::voxel_ray_tracer::{voxel_moves, VoxelKey};
+use crate::voxel_ray_tracer::{voxel_moves, ChunkMap, VoxelKey};
 
 /// A point's place before and after a warp.
 pub type Displacement = ([f32; 3], [f32; 3]);
@@ -77,7 +76,6 @@ fn hold_implausible(
 pub(super) struct VoxelTimes {
     epoch: Option<f64>,
     now: f32,
-    by_key: AHashMap<VoxelKey, f32>,
 }
 
 impl VoxelTimes {
@@ -87,22 +85,18 @@ impl VoxelTimes {
     }
 
     /// Stamp the voxels this frame hit that have no time yet.
-    pub(super) fn stamp_hits<'a>(&mut self, hits: impl IntoIterator<Item = &'a VoxelKey>) {
-        for &k in hits {
-            self.by_key.entry(k).or_insert(self.now);
+    pub(super) fn stamp_hits<'a>(
+        &self,
+        map: &mut ChunkMap,
+        hits: impl IntoIterator<Item = &'a VoxelKey>,
+    ) {
+        for k in hits {
+            if let Some(v) = map.get_mut(k) {
+                if v.time.is_nan() {
+                    v.time = self.now;
+                }
+            }
         }
-    }
-
-    /// Absolute time of a voxel, NaN when unknown.
-    fn get(&self, k: &VoxelKey) -> f64 {
-        match (self.by_key.get(k), self.epoch) {
-            (Some(&t), Some(epoch)) => epoch + t as f64,
-            _ => f64::NAN,
-        }
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.by_key.clear();
     }
 }
 
@@ -116,7 +110,13 @@ impl Mapper {
         (
             self.map.voxels.len(),
             self.map.voxels.chunk_count(),
-            self.voxel_times.as_ref().map_or(0, |t| t.by_key.len()),
+            self.voxel_times.as_ref().map_or(0, |_| {
+                self.map
+                    .voxels
+                    .iter()
+                    .filter(|(_, v)| !v.time.is_nan())
+                    .count()
+            }),
         )
     }
 
@@ -142,7 +142,13 @@ impl Mapper {
 
     /// Absolute time a voxel landed, NaN when untracked or unknown.
     pub fn voxel_time(&self, k: &VoxelKey) -> f64 {
-        self.voxel_times.as_ref().map_or(f64::NAN, |t| t.get(k))
+        match (
+            self.voxel_times.as_ref().and_then(|t| t.epoch),
+            self.map.voxels.get(k),
+        ) {
+            (Some(epoch), Some(v)) => epoch + v.time as f64,
+            _ => f64::NAN,
+        }
     }
 
     /// Carry the map through a warp. When more than the warp's rebuild
@@ -184,7 +190,7 @@ impl Mapper {
         if keys.is_empty() {
             return report;
         }
-        let times: Vec<f64> = keys.iter().map(|k| self.voxel_time(k)).collect();
+        let times: Vec<f64> = keys.par_iter().map(|k| self.voxel_time(k)).collect();
         let means = self.map.voxel_means(&keys, vs);
         let mut warped = warp.apply(&means, &times);
         (report.implausible, report.worst_implausible) =
@@ -204,24 +210,6 @@ impl Mapper {
             self.map.rebuild_moved(&moves);
         } else {
             self.map.move_voxels(&moves);
-        }
-        if let Some(t) = &mut self.voxel_times {
-            let landed: Vec<(VoxelKey, Option<f32>)> = moves
-                .iter()
-                .filter(|m| m.from != m.to)
-                .map(|m| (m.to, t.by_key.remove(&m.from)))
-                .collect();
-            for (to, time) in landed {
-                if let Some(time) = time {
-                    t.by_key
-                        .entry(to)
-                        .and_modify(|e| *e = e.min(time))
-                        .or_insert(time);
-                }
-            }
-            // Drop times of voxels that are gone, so a key reused later starts fresh.
-            let map = &self.map.voxels;
-            t.by_key.retain(|k, _| map.contains_key(k));
         }
         report.voxel_ms = ms_since(stage);
         report

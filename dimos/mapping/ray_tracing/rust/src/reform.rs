@@ -948,40 +948,53 @@ pub fn landing_keys(
     stays: impl Fn(&Key) -> bool + Sync,
 ) -> Vec<Key> {
     let preferred: Vec<Key> = warped.par_iter().map(|p| key_of(p, voxel_size)).collect();
-    let mut order: Vec<usize> = (0..from.len()).collect();
-    order.par_sort_unstable_by(|&a, &b| {
-        preferred[a].cmp(&preferred[b]).then_with(|| {
-            distance2_to_center(&warped[a], preferred[a], voxel_size)
-                .total_cmp(&distance2_to_center(&warped[b], preferred[b], voxel_size))
-                .then_with(|| from[a].cmp(&from[b]))
+    // Movers by the key they prefer, the nearest to its center first.
+    let mut order: Vec<(Key, f32, Key, usize)> = (0..from.len())
+        .into_par_iter()
+        .map(|i| {
+            let d = distance2_to_center(&warped[i], preferred[i], voxel_size);
+            (preferred[i], d, from[i], i)
         })
+        .collect();
+    order.par_sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.total_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
     });
-    let mut landed = preferred.clone();
-    let mut claimed: AHashMap<Key, Key> = AHashMap::with_capacity(from.len());
-    let mut displaced: Vec<usize> = Vec::new();
-    for (n, &i) in order.iter().enumerate() {
-        let key = preferred[i];
-        if (n == 0 || preferred[order[n - 1]] != key) && stays(&key) {
-            claimed.insert(key, key);
-        }
-        let holder = claimed.get(&key).copied();
-        match holder {
-            None => {
-                claimed.insert(key, from[i]);
-            }
-            Some(held_from) if neighbors(held_from, from[i]) => displaced.push(i),
-            Some(_) => {}
-        }
-    }
-    displaced.sort_unstable_by_key(|&i| from[i]);
+    // A key's holder: a voxel that stays there, else the first mover to prefer it.
+    let displaced: Vec<usize> = (0..order.len())
+        .into_par_iter()
+        .filter_map(|n| {
+            let (key, _, mover_from, i) = order[n];
+            let first = n - order[..n].iter().rev().take_while(|o| o.0 == key).count();
+            let holder = if stays(&key) {
+                key
+            } else if first == n {
+                return None;
+            } else {
+                order[first].2
+            };
+            neighbors(holder, mover_from).then_some(i)
+        })
+        .collect();
+    let mut landed = preferred;
+    let preferred_keys: Vec<Key> = {
+        let mut keys: Vec<Key> = order.iter().map(|o| o.0).collect();
+        keys.dedup();
+        keys
+    };
+    let mut claimed: AHashSet<Key> = AHashSet::new();
+    let mut displaced = displaced;
+    displaced.par_sort_unstable_by_key(|&i| from[i]);
     for i in displaced {
-        let at = preferred[i];
+        let at = landed[i];
         let mut free: Option<(f32, Key)> = None;
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
                     let k = (at.0 + dx, at.1 + dy, at.2 + dz);
-                    if claimed.contains_key(&k) || stays(&k) {
+                    if preferred_keys.binary_search(&k).is_ok() || claimed.contains(&k) || stays(&k)
+                    {
                         continue;
                     }
                     let d = distance2_to_center(&warped[i], k, voxel_size);
@@ -992,7 +1005,7 @@ pub fn landing_keys(
             }
         }
         if let Some((_, k)) = free {
-            claimed.insert(k, from[i]);
+            claimed.insert(k);
             landed[i] = k;
         }
     }
@@ -1032,6 +1045,27 @@ mod tests {
         for (p, k) in warped.iter().zip(&landed) {
             assert!(distance2_to_center(p, *k, vs).sqrt() <= 1.5 * vs);
         }
+    }
+
+    /// cargo test --release --lib landing_keys_bench -- --ignored --nocapture
+    #[test]
+    #[ignore = "a timing, not a check"]
+    fn landing_keys_bench() {
+        let vs = 0.08_f32;
+        let from: Vec<Key> = (0..400)
+            .flat_map(|x| (0..300).flat_map(move |y| (0..10).map(move |z| (x, y, z))))
+            .collect();
+        let (s, c) = 0.02_f32.sin_cos();
+        let warped: Vec<[f32; 3]> = from
+            .iter()
+            .map(|k| {
+                let (x, y) = ((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+                [c * x - s * y + 0.13, s * x + c * y, (k.2 as f32 + 0.5) * vs]
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let landed = landing_keys(&from, &warped, vs, |_| false);
+        println!("{} voxels: {:?}", landed.len(), started.elapsed());
     }
 
     #[test]

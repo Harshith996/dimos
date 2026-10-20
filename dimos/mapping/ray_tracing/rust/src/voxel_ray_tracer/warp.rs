@@ -45,6 +45,7 @@ impl Voxel {
         self.fine |= other.fine;
         self.num_pts += other.num_pts;
         self.next_fit_pts = self.next_fit_pts.min(other.next_fit_pts);
+        self.time = self.time.min(other.time);
         self.sum += other.sum;
         self.m2 += other.m2;
         self.normal = NormalFit::Stale;

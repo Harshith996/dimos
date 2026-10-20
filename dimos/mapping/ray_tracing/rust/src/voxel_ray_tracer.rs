@@ -435,6 +435,9 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
+    /// When the voxel first landed, seconds past the mapper's epoch; NaN when
+    /// untracked. Travels with the voxel through warps.
+    pub(crate) time: f32,
 }
 
 impl Default for Voxel {
@@ -447,6 +450,7 @@ impl Default for Voxel {
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
+            time: f32::NAN,
         }
     }
 }
