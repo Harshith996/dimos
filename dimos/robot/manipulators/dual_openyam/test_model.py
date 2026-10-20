@@ -41,7 +41,8 @@ def _joint(root: ET.Element, name: str) -> ET.Element:
 def _origin(joint: ET.Element, key: str) -> tuple[float, float, float]:
     origin = joint.find("origin")
     assert origin is not None
-    return tuple(float(value) for value in origin.attrib[key].split())
+    x, y, z = (float(value) for value in origin.attrib[key].split())
+    return (x, y, z)
 
 
 def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
