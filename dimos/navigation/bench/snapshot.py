@@ -27,11 +27,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.navigation.bench.suite import Case, Manifest, Point
-from dimos.simulation.go2_legged.robot import BASE_QUAT
-from dimos.simulation.go2_sim.world import GO2
 from dimos.simulation.scenes.mjcf import geom_name
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Rect, Scene
-from dimos.simulation.sim_world.world import build_model
+from dimos.simulation.sim_world.world import HOME_KEY, ROOT_QUAT, scene_model
 
 SNAPSHOT_PX = (600, 480)
 ELEVATION_DEG = 55.0
@@ -191,12 +189,15 @@ def _pin(drawn: mujoco.MjvScene, x: float, y: float, z: float, rgba: tuple[float
     _mark(drawn, sphere, (PIN_HEAD_M,) * 3, (x, y, z + PIN_HEIGHT_M), rgba)
 
 
-def render(case: Case) -> NDArray[np.uint8]:
-    """The case's scene with the robot at its start, a green disc at the goal and a red pin on the feature."""
+def render(case: Case, robot: Path) -> NDArray[np.uint8]:
+    """The case's scene with the robot at its start, a green disc at the goal and a red pin on the feature.
+
+    The robot is the free-floating model its sim world exported.
+    """
     scene = case.scene()
     seen = view(case, scene)
     floor = scene.start[2]
-    model = build_model(scene, GO2)
+    model = scene_model(scene, mujoco.MjSpec.from_file(str(robot)))
     model.vis.global_.offwidth, model.vis.global_.offheight = SNAPSHOT_PX
     model.vis.global_.fovy = FOVY_DEG
     model.vis.headlight.diffuse[:] = HEADLIGHT
@@ -207,10 +208,12 @@ def render(case: Case) -> NDArray[np.uint8]:
     for i in seen.faded:
         model.geom(geom_name(i, scene.boxes[i])).rgba[3] = FADED_ALPHA
     data = mujoco.MjData(model)
-    mujoco.mj_resetDataKeyframe(model, data, model.key("home").id)
+    home = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, HOME_KEY)
+    if home >= 0:
+        mujoco.mj_resetDataKeyframe(model, data, home)
     x, y, yaw = case.start
     data.qpos[0:3] = [x, y, data.qpos[2] + floor]
-    data.qpos[BASE_QUAT] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+    data.qpos[ROOT_QUAT] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
     mujoco.mj_forward(model, data)
     camera = mujoco.MjvCamera()
     camera.lookat[:] = seen.lookat
@@ -231,6 +234,6 @@ def render(case: Case) -> NDArray[np.uint8]:
 
 
 if __name__ == "__main__":
-    suite, case_id, out = sys.argv[1:]
-    picture = render(Manifest.load(Path(suite)).case(case_id))
+    suite, case_id, robot, out = sys.argv[1:]
+    picture = render(Manifest.load(Path(suite)).case(case_id), Path(robot))
     cv2.imwrite(out, cv2.cvtColor(picture, cv2.COLOR_RGB2BGR))

@@ -103,7 +103,12 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
             wall_clearance_m=WALL_CLEARANCE_M,
             step_penalty_weight=1.0,
             viz_publish_hz=PLANNER_VIZ_HZ,
-        ).remappings([(MLSPlannerNative, "path", "planner_path")]),
+        ).remappings(
+            [
+                (MLSPlannerNative, "global_map", "global_map_unused"),
+                (MLSPlannerNative, "path", "planner_path"),
+            ]
+        ),
         # Solely the tf-driven start_pose source for the dannav odom remaps below.
         StartRelay.blueprint(),
         DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(

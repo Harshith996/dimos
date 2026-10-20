@@ -22,6 +22,7 @@ all_blueprints = {
     "alfred-mls-nav-lidar": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav_lidar:alfred_mls_nav_lidar",
     "alfred-pointlio-nav": "dimos.robot.diy.alfred.blueprints.alfred_pointlio_nav:alfred_pointlio_nav",
     "alfred-sim-nav": "dimos.robot.diy.alfred.blueprints.alfred_sim_nav:alfred_sim_nav",
+    "alfred-sim-nav-episode": "dimos.robot.diy.alfred.blueprints.alfred_sim_nav_episode:alfred_sim_nav_episode",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",

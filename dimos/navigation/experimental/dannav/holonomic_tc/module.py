@@ -24,7 +24,7 @@ from __future__ import annotations
 from threading import Event, RLock, Thread
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool as LCMBool
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -35,6 +35,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
     HolonomicPathController,
@@ -71,7 +72,7 @@ class DanHolonomicTC(Module):
 
     path: In[Path]
     odom: In[PoseStamped]
-    stop_movement: In[Bool]
+    stop_movement: In[LCMBool]
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]
@@ -117,7 +118,7 @@ class DanHolonomicTC(Module):
     def _on_path(self, path: Path) -> None:
         self._follow(path if path.poses else None)
 
-    def _on_stop(self, msg: Bool) -> None:
+    def _on_stop(self, msg: LCMBool) -> None:
         if msg.data:
             self._follow(None)
 

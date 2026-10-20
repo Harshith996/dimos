@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.navigation.bench.ground_truth import CELL, GO2, GroundTruth
+from dimos.navigation.bench.ground_truth import CELL, GroundTruth
 from dimos.navigation.bench.suite import (
     APPROACH_M,
     BAR,
@@ -41,6 +41,7 @@ from dimos.navigation.bench.suite import (
     NARROW_DOOR_M,
     OVERHANG,
     POLE,
+    REFERENCE_BODY,
     SIDE_WALL_M,
     SMALL_OBJECT,
     UNDER_SLAB_RAD,
@@ -75,7 +76,7 @@ def _far_goal(gt: GroundTruth) -> NDArray[np.float64]:
 
 
 def test_ground_truth_finds_floor_walls_and_routes() -> None:
-    gt = GroundTruth(office(1))
+    gt = GroundTruth(office(1), REFERENCE_BODY)
     z0 = gt.scene.params["z0"]
     assert gt.height[gt.index((1.0, 1.0))] == pytest.approx(z0, abs=1e-6)
     assert np.isnan(gt.height[gt.index((-0.05, 3.0))])
@@ -85,19 +86,7 @@ def test_ground_truth_finds_floor_walls_and_routes() -> None:
     assert route is not None and all(gt.stands(p) for p in route.points)
     assert np.allclose(route.points[-1, :2], goal[:2])
     difficulty = gt.difficulty(route)
-    assert difficulty.min_clearance >= GO2.radius and difficulty.doors >= 1
-
-
-@pytest.mark.self_hosted
-def test_premap_cloud_is_what_the_lidar_sees_along_the_route() -> None:
-    gt = GroundTruth(office(1))
-    z0 = gt.scene.params["z0"]
-    route = gt.route(gt.scene.start, _far_goal(gt), centered=True)
-    assert route is not None
-    cloud = gt.premap_cloud(route.points)
-    lo, hi = gt.scene.bounds()
-    assert len(cloud) > 20_000 and np.all(cloud >= lo - gt.cell) and np.all(cloud <= hi + gt.cell)
-    assert np.mean(np.abs(cloud[:, 2] - z0) < 0.05) > 0.1 and np.any(cloud[:, 2] > z0 + 2.5)
+    assert difficulty.min_clearance >= REFERENCE_BODY.half_width and difficulty.doors >= 1
 
 
 def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
@@ -200,7 +189,7 @@ def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
         legs = [table_leg(scene, case.level.value, corner) for corner in range(4)]
         leg = min(legs, key=lambda leg: float(np.hypot(*np.subtract(leg, case.feature))))
         offset, reach, _, past = _line(case, leg)
-        bound = case.level.value / 2 + GO2.radius
+        bound = case.level.value / 2 + REFERENCE_BODY.half_width
         assert abs(offset) <= bound and 2.3 <= past <= 3.0
         assert reach >= APPROACH_M - case.level.value
         aim[case.seed].add(round(offset / bound, 9))
@@ -225,7 +214,7 @@ def test_pole_width_probe_aims_one_line_through_every_width_of_pole() -> None:
         poles = [box for box in scene.boxes if box.kind == "clutter"]
         assert len(poles) == (0 if case.level.control else 1)
         offset, _, _, past = _line(case, (scene.params["pole_x"], scene.params["pole_y"]))
-        assert abs(offset) <= POLE_WIDTH[0] / 2 + GO2.radius and 2.3 <= past <= 3.0
+        assert abs(offset) <= POLE_WIDTH[0] / 2 + REFERENCE_BODY.half_width and 2.3 <= past <= 3.0
     _one_start_per_seed(manifest, "pole_x")
     manifest.check_drift()
 
@@ -254,7 +243,7 @@ def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
         blocks = [box for box in scene.boxes if box.kind == "clutter"]
         assert len(blocks) == (0 if case.level.control else 1)
         offset, reach, _, past = _line(case, (scene.params["block_x"], scene.params["block_y"]))
-        assert abs(offset) <= BLOCK_SIZE / 2 + GO2.radius
+        assert abs(offset) <= BLOCK_SIZE / 2 + REFERENCE_BODY.half_width
         assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
     assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == 1}) == 1
     _one_start_per_seed(manifest, "block_x")
@@ -273,7 +262,10 @@ def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
         for box in objects:
             assert 2 * box.half[0] == pytest.approx(case.level.value)
         offset, reach, _, past = _line(case, (scene.params["object_x"], scene.params["object_y"]))
-        assert abs(offset) <= SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2 + GO2.radius
+        assert (
+            abs(offset)
+            <= SMALL_OBJECT_ASPECT * SMALL_OBJECT_LENGTH[0] / 2 + REFERENCE_BODY.half_width
+        )
         assert reach >= APPROACH_M - 1e-9 and 2.3 <= past <= 3.0
     for seed in probe.seeds:
         assert len({(c.start, c.goal, c.feature) for c in manifest.cases if c.seed == seed}) == 1
@@ -377,7 +369,11 @@ def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: P
         else:
             assert params["room_x"] + SIDE_WALL_M <= case.goal[0] <= params["width"] - SIDE_WALL_M
             assert params["room_y"] + SIDE_WALL_M <= case.goal[1] <= params["length"] - SIDE_WALL_M
-        assert GO2.radius <= case.difficulty.min_clearance <= case.level.value / 2 + CELL
+        assert (
+            REFERENCE_BODY.half_width
+            <= case.difficulty.min_clearance
+            <= case.level.value / 2 + CELL
+        )
         straight = float(np.hypot(case.goal[0] - case.start[0], case.goal[1] - case.start[1]))
         assert case.route_length >= straight and case.difficulty.doors == 0
         assert case.start[0] <= params["corridor_x"] - APPROACH_M
@@ -400,7 +396,7 @@ def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -
         assert [len(b) for b in boxes] == list(probe.levels)
         assert all(few == many[: len(few)] for few, many in itertools.pairwise(boxes))
         gaps = [c.difficulty.min_clearance for c in cases]
-        assert gaps == sorted(gaps, reverse=True) and gaps[-1] >= GO2.radius
+        assert gaps == sorted(gaps, reverse=True) and gaps[-1] >= REFERENCE_BODY.half_width
     for case in manifest.cases:
         assert case.level is not None and case.params == {"clutter_count": case.level.value}
         params = case.scene().params

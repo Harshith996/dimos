@@ -144,7 +144,6 @@ def run_command(
     ),
     procs: int = typer.Option(4, min=1, help="Episodes running at once."),
     out: Path | None = typer.Option(None, "--out", help="Run directory, new."),
-    policy: Path | None = typer.Option(None, help="Body policy file for the sim world."),
     viewer: bool = typer.Option(
         False,
         "--viewer/--no-viewer",
@@ -201,7 +200,6 @@ def run_command(
         procs=procs,
         out_dir=out,
         overrides=tuple(override_flag(s) for s in setting),
-        policy=policy,
         viewer=viewer,
         keep=cast("Keep", keep),
     )

@@ -88,21 +88,12 @@ class SimMid360:
         self._p_return = np.asarray(self.returns.incidence_p_return)
 
     @classmethod
-    def go2(cls, raycaster: Raycaster, seed: int) -> SimMid360:
-        """The Mid-360 with the fitted pattern and the Go2 mount occlusion."""
-        root = get_data("go2_sim")
-        return cls(
-            raycaster=raycaster,
-            pattern=Mid360Pattern.load(root / "mid360_pattern.npz"),
-            seed=seed,
-            occlusion=OcclusionMap.load(root / "go2_mid360_occlusion.npz"),
-        )
-
-    @classmethod
-    def unoccluded(cls, raycaster: Raycaster, seed: int) -> SimMid360:
-        """The Mid-360 with the fitted pattern and no mount occlusion."""
+    def fitted(
+        cls, raycaster: Raycaster, seed: int, occlusion: OcclusionMap | None = None
+    ) -> SimMid360:
+        """The Mid-360 with the fitted pattern, shadowed by its mount's occlusion if given."""
         pattern = Mid360Pattern.load(get_data("go2_sim") / "mid360_pattern.npz")
-        return cls(raycaster=raycaster, pattern=pattern, seed=seed)
+        return cls(raycaster=raycaster, pattern=pattern, seed=seed, occlusion=occlusion)
 
     def cast(
         self,

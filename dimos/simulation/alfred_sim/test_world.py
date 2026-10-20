@@ -15,15 +15,27 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import time
 
 import mujoco
 import numpy as np
 import pytest
 
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact
-from dimos.simulation.alfred_sim.body import PARTS, PlanarBase, alfred_spec
-from dimos.simulation.alfred_sim.world import ALFRED, MOUNT_R, MOUNT_XYZ
-from dimos.simulation.scenes.procedural import Scene, office
+from dimos.simulation.alfred_sim.body import PARTS, alfred_spec
+from dimos.simulation.alfred_sim.world import (
+    ALFRED,
+    ALFRED_BODY,
+    MOUNT_R,
+    MOUNT_XYZ,
+    SimAlfredWorld,
+)
+from dimos.simulation.scenes.procedural import Scene, block, office
 from dimos.simulation.sim_world.world import Sim
 
 pytestmark = pytest.mark.self_hosted
@@ -38,7 +50,7 @@ def scene() -> Scene:
 
 @pytest.fixture
 def sim(scene: Scene) -> Sim:
-    sim = Sim(scene, 1, ALFRED, PlanarBase)
+    sim = Sim(scene, 1, ALFRED, ALFRED_BODY)
     sim.reset(*scene.start, 0.0)
     return sim
 
@@ -104,3 +116,31 @@ def test_the_model_clears_the_floor_and_stands_under_the_door_lintel() -> None:
     assert bottom > 0.0
     assert top == pytest.approx(1.859, abs=1e-3)
     assert {model.geom(geom).name.rsplit("_", 1)[0] for geom in range(model.ngeom)} == set(PARTS)
+
+
+def test_the_world_swaps_scenes_and_hands_out_its_body_premap_and_model(tmp_path: Path) -> None:
+    world = SimAlfredWorld()
+    world.cmd_vel.transport = LCMTransport("/test_alfred_sim_world/cmd_vel", Twist)
+    poses: list[PoseStamped] = []
+    maps: list[PointCloud2] = []
+    world.ground_truth.subscribe(poses.append)
+    world.loaded_map.subscribe(maps.append)
+    world.start()
+    try:
+        scene = block(2)
+        world.load_scene("block", 2, {})
+        swapped = time.time()
+        deadline = swapped + 10.0
+        while not [p for p in poses if p.ts >= swapped] and time.time() < deadline:
+            time.sleep(0.05)
+        after = next(p for p in poses if p.ts >= swapped)
+        assert (after.position.x, after.position.y) == pytest.approx(scene.start[:2], abs=0.05)
+        assert world.body() == ALFRED.shape
+        x, y, z0 = scene.start
+        count = world.publish_premap(np.array([[x, y, z0], [x + 1.0, y, z0]]), True)
+        assert count > 1_000 and len(maps) == 1 and len(maps[0].points_f32()) == count
+        world.export_model(tmp_path / "robot.xml")
+        model = mujoco.MjSpec.from_file(str(tmp_path / "robot.xml")).compile()
+        assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE and model.nu == 0
+    finally:
+        world.stop()

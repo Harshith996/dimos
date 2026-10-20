@@ -27,14 +27,33 @@ from numpy.typing import NDArray
 from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.simulation.sensors.mid360.lidar import Raycaster, SimMid360
 
+Vec3 = tuple[float, float, float]
+
 
 def _untuned(model: mujoco.MjModel) -> None:
     pass
 
 
 @dataclass(frozen=True)
+class BodyShape:
+    """The robot from outside: the room it needs, its highest point and what counts as lying down.
+
+    The top box is in the base frame. Its top is the robot's highest point however the base tilts.
+    """
+
+    half_width: float
+    headroom: float
+    step: float
+    base_height: float
+    top_center: Vec3
+    top_rotation: tuple[Vec3, Vec3, Vec3]
+    top_half_extents: Vec3
+    lying_parts: tuple[Part, ...] = ()
+
+
+@dataclass(frozen=True)
 class Rig:
-    """A robot as a scene is built around it: its model, its Mid-360 mount and its driver."""
+    """A robot as a scene is built around it: its model, its Mid-360 mount, its shape and its driver."""
 
     spec: Callable[[], mujoco.MjSpec]
     base_body: str
@@ -42,6 +61,7 @@ class Rig:
     mount_r: NDArray[np.float64]
     lidar: Callable[[Raycaster, int], SimMid360]
     command_timeout: float
+    shape: BodyShape
     tune: Callable[[mujoco.MjModel], None] = _untuned
     lio_blind_range: float = 0.0
 

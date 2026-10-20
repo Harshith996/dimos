@@ -24,14 +24,15 @@ from numpy.typing import NDArray
 
 from dimos.core.core import rpc
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
-from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
 from dimos.simulation.go2_legged.policy import load_policy
 from dimos.simulation.go2_legged.robot import LeggedGo2, apply_fitted_physics, go2_spec
 from dimos.simulation.scenes.procedural import Scene
-from dimos.simulation.sensors.mid360.lidar import SimMid360
-from dimos.simulation.sim_world.body import Rig
-from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
+from dimos.simulation.sensors.mid360.lidar import OcclusionMap, Raycaster, SimMid360
+from dimos.simulation.sim_world.body import BodyShape, Rig
+from dimos.simulation.sim_world.world import LIDAR_HALF_EXTENTS, Sim, SimWorld, SimWorldConfig
+from dimos.utils.data import get_data
 
 
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -41,15 +42,41 @@ def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 
+def _lidar(raycaster: Raycaster, seed: int) -> SimMid360:
+    """The Mid-360 shadowed by the Go2 mount."""
+    occlusion = OcclusionMap.load(get_data("go2_sim") / "go2_mid360_occlusion.npz")
+    return SimMid360.fitted(raycaster, seed, occlusion)
+
+
 MOUNT_XYZ, MOUNT_R = _mount()
+STEP_LIMIT = 0.2
+STAND_HEIGHT = 0.3
+# the Mid-360 on its mount is the highest point of the standing sim Go2
+CLEARANCE_HEIGHT = 0.6
+
+SHAPE = BodyShape(
+    half_width=ROBOT_WIDTH / 2,
+    headroom=CLEARANCE_HEIGHT,
+    step=STEP_LIMIT,
+    base_height=STAND_HEIGHT,
+    top_center=(float(MOUNT_XYZ[0]), float(MOUNT_XYZ[1]), float(MOUNT_XYZ[2])),
+    top_rotation=(
+        (float(MOUNT_R[0, 0]), float(MOUNT_R[0, 1]), float(MOUNT_R[0, 2])),
+        (float(MOUNT_R[1, 0]), float(MOUNT_R[1, 1]), float(MOUNT_R[1, 2])),
+        (float(MOUNT_R[2, 0]), float(MOUNT_R[2, 1]), float(MOUNT_R[2, 2])),
+    ),
+    top_half_extents=LIDAR_HALF_EXTENTS,
+    lying_parts=("trunk",),
+)
 
 GO2 = Rig(
     spec=go2_spec,
     base_body="base",
     mount_xyz=MOUNT_XYZ,
     mount_r=MOUNT_R,
-    lidar=SimMid360.go2,
+    lidar=_lidar,
     command_timeout=CMD_VEL_TIMEOUT,
+    shape=SHAPE,
     tune=apply_fitted_physics,
 )
 
