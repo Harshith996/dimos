@@ -202,7 +202,8 @@ def grow_floor(
 
 
 def _apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
-    return points @ matrix[:3, :3].T + matrix[:3, 3]
+    moved: np.ndarray = points @ matrix[:3, :3].T + matrix[:3, 3]
+    return moved
 
 
 def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
