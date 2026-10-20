@@ -25,7 +25,8 @@ from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXError, GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x.remote import RemoteGraspGenX
 from dimos.manipulation.grasping.heuristic_grasp import top_down_grasps
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -57,11 +58,17 @@ class GraspProposalsConfig(ModuleConfig):
     grasp_depth: float = Field(default=0.02, ge=0.0)
     # How many of a proposer's best grasps are checked for reach; the listed ones come from these.
     check_count: int = Field(default=30, gt=0)
+    # A shared GraspGenX server (graspgenx_runtime.server) for proposer "graspgenx" when no
+    # GraspGenX module is in the stack, e.g. GRASPPROPOSALS__GRASPGENX_URL=http://host:8701.
+    # Empty: no server. The seed makes the same cloud give the same grasps; None leaves it unseeded.
+    graspgenx_url: str = ""
+    graspgenx_seed: int | None = 0
 
 
 class GraspProposals(Module):
     """Ranked, reachability-checked grasp poses for a localized object, from the top-down
-    heuristic or GraspGenX when it is in the blueprint. The agent chooses and executes."""
+    heuristic or GraspGenX when it is in the blueprint or served (``graspgenx_url``). The agent
+    chooses and executes."""
 
     config: GraspProposalsConfig
     _localize: ObjectCloudSpec
@@ -98,9 +105,18 @@ class GraspProposals(Module):
         if proposer == "heuristic":
             proposals = top_down_grasps(cloud, self.config.max_jaw_span, self.config.grasp_depth)
         elif proposer == "graspgenx":
-            if self._graspgenx is None:
+            if self._graspgenx is not None:
+                proposals = self._graspgenx.propose_grasps(cloud)
+            elif self.config.graspgenx_url:
+                try:
+                    proposals = RemoteGraspGenX(
+                        self.config.graspgenx_url, seed=self.config.graspgenx_seed
+                    ).propose_grasps(cloud)
+                except GraspGenXError as exc:
+                    return f'graspgenx failed: {exc}. Use proposer="heuristic".'
+            else:
                 return 'graspgenx is not running in this robot\'s stack; use proposer="heuristic".'
-            proposals = self._graspgenx.propose_grasps(cloud)
+
         else:
             return f'Unknown proposer {proposer!r}; use "heuristic" or "graspgenx".'
         frame = proposals.header.frame_id
