@@ -14,5 +14,7 @@
 
 pub mod mapper;
 pub mod module;
+pub mod reform;
+pub mod reform_module;
 pub mod region_viz;
 pub mod voxel_ray_tracer;

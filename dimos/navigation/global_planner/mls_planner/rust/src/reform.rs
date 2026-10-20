@@ -311,8 +311,8 @@ pub struct ReformParams {
     /// A keyframe whose correction moves its surroundings less than this
     /// waits for a later closure.
     pub min_shift_m: f64,
-    /// Past this fraction of the map's voxels moving, the planner rebuilds
-    /// its graph from the warped voxels rather than repair around them all.
+    /// Past this fraction of the map's voxels moving, the map is rebuilt
+    /// from the warped voxels rather than repaired around them all.
     pub rebuild_fraction: f64,
 }
 
