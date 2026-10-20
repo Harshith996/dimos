@@ -129,6 +129,9 @@ jobs:
           .record-review/bin/python -m pip install -e . mcap pytest pytest-mock pytest-env pytest-asyncio
       - name: Verify schema planning and wrapper compatibility
         run: .record-review/bin/python -m pytest --noconftest -o addopts='' -q dimos/experimental/memory/test_cdr_schema.py dimos/experimental/memory/test_rust_recorder.py
+      - name: Verify recording replay collection and dataset boundaries
+        run: |
+          .record-review/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/memory/codecs/test_codecs.py dimos/memory/store/test_cdr_recording.py dimos/memory/store/test_cdr_occupancy.py dimos/protocol/test_cdr_mcap.py dimos/teleop/utils/test_recorder.py dimos/teleop/utils/test_video_stats.py dimos/teleop/hosted/test_hosted_stats.py dimos/imitation/collection/test_recorder.py dimos/imitation/collection/test_blueprint.py dimos/imitation/dataprep/test_core.py dimos/imitation/dataprep/test_mcap_source.py
       - name: Verify native CDR storage and legacy codec tests
         run: |
           cargo test --manifest-path dimos/experimental/memory/rust/Cargo.toml --locked --lib --jobs 2

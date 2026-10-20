@@ -40,12 +40,13 @@ from dimos.messages.sensor_msgs.msg import Joy
 from dimos.messages.std_msgs.msg import Header, UInt32
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.utils.recorder import TeleopRecorder
+from dimos.utils.threadpool import get_max_workers
 from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
 @pytest.fixture
 def recording_scheduler(monkeypatch):
-    scheduler = ThreadPoolScheduler(max_workers=2)
+    scheduler = ThreadPoolScheduler(max_workers=get_max_workers())
     monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
     monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
     yield scheduler

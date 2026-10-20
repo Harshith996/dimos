@@ -117,3 +117,7 @@ session accumulates half-dead pushes and the second bridge 502s with
 Robot-side auto-redial is not yet implemented (a follow-up). TURN has landed
 (`_fetch_ice_servers` fetches broker-minted creds, STUN fallback), so it is no
 longer blocked on that.
+
+## Canonical recording boundary
+
+The recorder stores generated PoseStamped, TwistStamped, UInt32 button masks, and Joy video statistics. Reports retain source timestamps and typed values after reopening SQLite. These are explicit CDR endpoints; shipped graph defaults are verified in the later default-cutover unit.

@@ -16,6 +16,7 @@ from dimos_cdrgen.definitions import Definitions
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 from mcap.reader import make_reader
 import numpy as np
+
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
