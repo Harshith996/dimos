@@ -39,7 +39,7 @@ def memory(mocker: MockerFixture) -> Generator[_Rig, None, None]:
     mocker.patch(f"{_MODULE}.ImageEmbeddingProvider")
     mocker.patch(f"{_MODULE}.SpatialVectorDB")
     mocker.patch(f"{_MODULE}.VisualMemory")
-    module = SpatialMemory(chroma_client=MagicMock())
+    module = SpatialMemory(chroma_client=MagicMock(), world_frame="odom")
     db = MagicMock()
     db.query_tagged_location.return_value = (None, 0.0)
     db.query_by_text.return_value = []
@@ -59,16 +59,14 @@ def test_find_location_prefers_a_tagged_location(memory: _Rig) -> None:
     memory.db.query_tagged_location.return_value = (kitchen, 0.1)
     memory.db.query_by_text.return_value = _seen(0.5, 9.0, 9.0)
 
-    assert memory.module.find_location("kitchen") == (
-        "Tagged location 'kitchen' at (1.00, 2.00) in the world frame."
-    )
+    assert memory.module.find_location("kitchen") == ("Tagged location 'kitchen' at (1.00, 2.00).")
 
 
 def test_find_location_falls_back_to_what_the_camera_saw(memory: _Rig) -> None:
     memory.db.query_by_text.return_value = _seen(0.7, 3.0, -1.5)
 
     assert memory.module.find_location("red couch") == (
-        "Seen by the camera at (3.00, -1.50) in the world frame, similarity 0.30."
+        "Seen by the camera at (3.00, -1.50), similarity 0.30."
     )
 
 
@@ -85,12 +83,15 @@ def test_find_location_reports_no_match(memory: _Rig, seen: list[dict[str, Any]]
     )
 
 
-def test_tag_location_stores_the_robot_position(memory: _Rig, mocker: MockerFixture) -> None:
+def test_tag_location_stores_the_robot_position_in_the_world_frame(
+    memory: _Rig, mocker: MockerFixture
+) -> None:
     tf = MagicMock()
     tf.get.return_value = Transform(translation=Vector3(1.5, -2.0, 0.3))
     mocker.patch.object(SpatialMemory, "tfbuffer", new_callable=PropertyMock, return_value=tf)
 
     assert memory.module.tag_location("kitchen") == "Tagged 'kitchen' at (1.50, -2.00)."
+    tf.get.assert_called_once_with("odom", "base_link")
     (location,), _ = memory.db.tag_location.call_args
     assert (location.name, location.position) == ("kitchen", (1.5, -2.0, 0.3))
 

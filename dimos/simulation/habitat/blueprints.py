@@ -17,7 +17,7 @@
 - ``habitat-teleop``: sim, streams, teleop.
 - ``habitat-raycaster``: + :class:`RayTracingVoxelMap` on a sensor-frame scan.
 - ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
-- ``habitat-nav-agentic``: + MCP server and agent, driving the planner's ``go_to``.
+- ``habitat-nav-agentic``: + spatial memory, MCP server and agent, driving the planner's ``go_to``.
 - ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
   not a layer: the two mappers want the scan in different frames.
 - ``habitat-typesafe``: teleop + :class:`TypeSafeNavigationAgent` steering to a named visible object.
@@ -40,7 +40,9 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
+from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.simulation.habitat.connection import HabitatConnection
+from dimos.simulation.habitat.system_prompt import HABITAT_NAV_SYSTEM_PROMPT
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
@@ -200,8 +202,9 @@ habitat_nav = autoconnect(
 
 habitat_nav_agentic = autoconnect(
     habitat_nav,
+    SpatialMemory.blueprint(world_frame=WORLD_FRAME),
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    McpClient.blueprint(system_prompt=HABITAT_NAV_SYSTEM_PROMPT),
 ).global_config(transport="zenoh")
 
 

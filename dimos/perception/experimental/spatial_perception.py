@@ -65,6 +65,9 @@ class SpatialConfig(ModuleConfig):
     visual_memory: VisualMemory | None = None  # Optional VisualMemory instance for storing images
     # A remembered view counts as a find_location match at this similarity or above.
     min_view_similarity: float = 0.23
+    # Positions are stored in world_frame, so it must match the planner's.
+    world_frame: str = "world"
+    base_frame: str = "base_link"
 
 
 class SpatialMemory(Module):
@@ -205,7 +208,7 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        tf = self.tfbuffer.get("world", "base_link", warn=False)
+        tf = self.tfbuffer.get(self.config.world_frame, self.config.base_frame, warn=False)
 
         if tf is None:
             return
@@ -474,7 +477,7 @@ class SpatialMemory(Module):
         Returns:
             True if successfully added, False otherwise
         """
-        tf = self.tfbuffer.get("world", "base_link")
+        tf = self.tfbuffer.get(self.config.world_frame, self.config.base_frame)
         if not tf:
             logger.error("No position available for robot location")
             return False
@@ -536,7 +539,7 @@ class SpatialMemory(Module):
         Args:
             name: the name for this place, e.g. "kitchen".
         """
-        tf = self.tfbuffer.get("world", "base_link")
+        tf = self.tfbuffer.get(self.config.world_frame, self.config.base_frame)
         if tf is None:
             return "Nothing tagged: no robot position on tf."
         x, y, z = tf.translation.x, tf.translation.y, tf.translation.z
@@ -563,7 +566,7 @@ class SpatialMemory(Module):
         tagged = self.query_tagged_location(query)
         if tagged is not None:
             x, y = tagged.position[0], tagged.position[1]
-            return f"Tagged location '{tagged.name}' at ({x:.2f}, {y:.2f}) in the world frame."
+            return f"Tagged location '{tagged.name}' at ({x:.2f}, {y:.2f})."
 
         results = self.vector_db.query_by_text(query, limit=1)
         if results and results[0].get("metadata"):
@@ -571,10 +574,7 @@ class SpatialMemory(Module):
             if similarity >= self.config.min_view_similarity:
                 seen = results[0]["metadata"][0]
                 x, y = seen.get("pos_x", 0.0), seen.get("pos_y", 0.0)
-                return (
-                    f"Seen by the camera at ({x:.2f}, {y:.2f}) in the world frame, "
-                    f"similarity {similarity:.2f}."
-                )
+                return f"Seen by the camera at ({x:.2f}, {y:.2f}), similarity {similarity:.2f}."
         return f"No tagged location or remembered view matches '{query}'."
 
     @rpc
