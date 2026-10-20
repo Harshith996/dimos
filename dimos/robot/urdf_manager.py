@@ -67,8 +67,8 @@ class UrdfManagerConfig(ModuleConfig):
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # urdf_info is re-sent so a late subscriber gets it; nothing on these streams is latched.
-    urdf_info_period_s: float = Field(default=5.0, gt=0.0)
+    # robot_description is re-sent so a late subscriber gets it; nothing on these streams is latched.
+    robot_description_period_s: float = Field(default=5.0, gt=0.0)
     # Seconds between self-filter summary log lines (0 disables).
     filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
@@ -84,10 +84,11 @@ class UrdfManager(Module):
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     filtered_pointcloud: Out[PointCloud2]
-    # The URDF XML, its meshes named package://<package>/<path>?hash=<sha256>; a mesh_request for one of those names gets
-    # the file on mesh_info, unless it carries &have=<sha256> of the current file (a client's cached copy is fresh). An empty
-    # mesh_request asks for urdf_info now, so a client that just connected doesn't wait out urdf_info_period_s.
-    urdf_info: Out[String]
+    # The URDF XML (ROS's robot_description), its meshes named package://<package>/<path>?hash=<sha256>; a mesh_request
+    # for one of those names gets the file on mesh_info, unless it carries &have=<sha256> of the current file (a client's
+    # cached copy is fresh). An empty mesh_request asks for robot_description now, so a client that just connected
+    # doesn't wait out robot_description_period_s.
+    robot_description: Out[String]
     mesh_request: In[String]
     mesh_info: Out[MeshFile]
 
@@ -120,21 +121,23 @@ class UrdfManager(Module):
 
     async def _publish_urdf_loop(self) -> None:
         while self._running:
-            self.urdf_info.publish(String(self._urdf_xml))
-            await asyncio.sleep(self.config.urdf_info_period_s)
+            self.robot_description.publish(String(self._urdf_xml))
+            await asyncio.sleep(self.config.robot_description_period_s)
 
     async def handle_mesh_request(self, request: String) -> None:
         if not request.data:
             # at most every 0.2 s however many clients connect
             if time.monotonic() - self._last_urdf_on_request_t >= 0.2:
                 self._last_urdf_on_request_t = time.monotonic()
-                self.urdf_info.publish(String(self._urdf_xml))
+                self.robot_description.publish(String(self._urdf_xml))
             return
         name, _, query = request.data.partition("?")
         # Only meshes the URDF names: a request is never a path into the filesystem.
         mesh = self._mesh_paths.get(name)
         if mesh is None:
-            logger.warning(f"mesh_request for {request.data!r}, which is not a mesh in urdf_info")
+            logger.warning(
+                f"mesh_request for {request.data!r}, which is not a mesh in robot_description"
+            )
             return
         path, digest = mesh
         if parse_qs(query).get("have", [""])[0] == digest:
