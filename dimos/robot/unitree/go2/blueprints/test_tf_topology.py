@@ -44,7 +44,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     Go2Mid360StaticTf,
     mount_transforms,
 )
-from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, SimGo2World
+from dimos.simulation.go2_sim.world import SENSOR_FRAME_ID, Go2SimTelemetry
 
 BLUEPRINTS = [
     unitree_go2_nav_3d,
@@ -67,8 +67,8 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
         if atom.module is PointLio:
             sensor_frame = atom.kwargs.get("sensor_frame_id", "mid360_link")
             children["PointLio"] = {sensor_frame}
-        if atom.module is SimGo2World:
-            children["SimGo2World"] = {SENSOR_FRAME_ID}
+        if atom.module is Go2SimTelemetry:
+            children["Go2SimTelemetry"] = {SENSOR_FRAME_ID}
         if issubclass(atom.module, RelocalizationModule):
             children[atom.module.__name__] = {atom.kwargs.get("map_frame", "map")}
     return children

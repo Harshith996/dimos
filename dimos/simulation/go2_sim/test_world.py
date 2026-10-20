@@ -12,150 +12,111 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+from contextlib import ExitStack
+import time
+from uuid import uuid4
 
 import mujoco
 import numpy as np
-from numpy.typing import NDArray
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact
-from dimos.simulation.go2_legged.policy import OnnxGo2Policy
-from dimos.simulation.go2_legged.robot import CONTROL_DT
-from dimos.simulation.go2_sim.world import (
-    CEILING_GROUP,
-    FRAME_DT,
-    LIDAR_GROUPS,
-    MOUNT_R,
-    TICKS_PER_FRAME,
-    Go2Sim,
-    LidarFrame,
-    scene_edges,
-)
-from dimos.simulation.scenes.procedural import Scene, office
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
-
-pytestmark = pytest.mark.self_hosted
-
-STILL = np.zeros(3)
-FORWARD = np.array([0.8, 0.0, 0.0])
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.transport import ZenohTransport
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.scene import describe_scene
+from dimos.sim2.spec import WorldConfig
+from dimos.simulation.go2_sim.world import Go2SimTelemetry, procedural_scene
+from dimos.simulation.scenes.procedural import generate
 
 
-@pytest.fixture(scope="module")
-def policy() -> OnnxGo2Policy:
-    return OnnxGo2Policy.load()
-
-
-@pytest.fixture(scope="module")
-def scene() -> Scene:
-    return office(1)
+def test_procedural_world_contains_the_same_boxes_without_a_robot(tmp_path, monkeypatch):
+    monkeypatch.setattr("dimos.simulation.go2_sim.world.CACHE_DIR", tmp_path)
+    path = procedural_scene(seed=7)
+    scene = generate("office", 7)
+    model = mujoco.MjModel.from_xml_path(str(path))
+    assert model.nu == model.nq == 0
+    assert model.ngeom == len(scene.boxes)
+    assert describe_scene(path).spawns["default"].position.to_tuple() == scene.start
+    ceiling = next(i for i, b in enumerate(scene.boxes) if b.kind == "ceiling")
+    assert model.geom(f"ceiling_{ceiling}").group == 1
+    assert procedural_scene(seed=8).read_text() != path.read_text()
 
 
 @pytest.fixture
-def sim(scene: Scene, policy: OnnxGo2Policy) -> Go2Sim:
-    sim = Go2Sim(scene, seed=1, policy=policy)
-    sim.reset(*scene.start, 0.0)
-    return sim
-
-
-def _next_frame(sim: Go2Sim, command: NDArray[np.float64]) -> LidarFrame:
-    for _ in range(TICKS_PER_FRAME):
-        if (frame := sim.tick(command)) is not None:
-            return frame
-    raise AssertionError("no lidar frame within one frame period")
-
-
-def _floor_is_flat(frame: LidarFrame, sim: Go2Sim, floor: float) -> None:
-    position, rotation = sim.sensor_pose()
-    world = position + frame.points.astype(np.float64) @ rotation.T
-    z = world[:, 2]
-    assert z.min() > floor - 0.05
-    assert abs(np.quantile(z, 0.1) - floor) < 0.03
-    assert np.std(z[np.abs(z - floor) < 0.05]) < 0.02
-
-
-def test_frames_come_out_at_10hz_in_the_sensor_frame(sim: Go2Sim) -> None:
-    frames = [f for _ in range(10) if (f := sim.tick(STILL)) is not None]
-    assert [f.t for f in frames] == pytest.approx([FRAME_DT, 2 * FRAME_DT])
-    assert 12_000 < len(frames[-1].points) < 20_000
-    _floor_is_flat(frames[-1], sim, sim.scene.params["z0"])
-
-
-def test_deskew_keeps_the_floor_flat_while_walking(sim: Go2Sim) -> None:
-    for _ in range(75):
-        sim.tick(FORWARD)
-    _floor_is_flat(_next_frame(sim, FORWARD), sim, sim.scene.params["z0"])
-
-
-def test_standing_robot_touches_the_floor_only_with_its_feet(sim: Go2Sim) -> None:
-    for _ in range(25):
-        sim.tick(STILL)
-    contacts = sim.contacts()
-    assert Contact("foot", "floor") in contacts
-    assert {c.kind for c in contacts} == {"floor"}
-    assert "trunk" not in {c.part for c in contacts}
-
-
-def test_contacts_name_the_scene_kind_and_the_robot_part(sim: Go2Sim) -> None:
-    sim.reset(-0.05, 3.0, sim.scene.start[2], 0.0)
-    assert Contact("trunk", "wall") in sim.contacts()
-    clutter = max(
-        (b for b in sim.scene.boxes if b.kind == "clutter"), key=lambda b: min(b.half[:2])
+def world_stack(tmp_path, monkeypatch):
+    monkeypatch.setattr("dimos.simulation.go2_sim.world.CACHE_DIR", tmp_path)
+    blueprint = autoconnect(
+        SimulationModule.blueprint(
+            world=WorldConfig(scene=procedural_scene(), robots={}, timestep=0.002)
+        ),
+        GO2Connection.blueprint(camera=False, lidar_model="mid360", publish_tf=False),
+        Go2SimTelemetry.blueprint(robot_id=GO2Connection.name, rate_hz=50),
+    ).remappings(
+        [
+            (GO2Connection.name + "_lidar", "pointcloud", "go2_scan"),
+            (GO2Connection.name + "_lidar", "tf", "sim_lidar_tf"),
+            (Go2SimTelemetry, "scan", "go2_scan"),
+        ]
     )
-    sim.reset(clutter.center[0], clutter.center[1], clutter.center[2] + clutter.half[2], 0.0)
-    for _ in range(25):
-        sim.tick(STILL)
-    assert Contact("foot", "clutter") in sim.contacts()
+    samples = {name: [] for name in ("lidar", "odometry", "contacts", "scene")}
+    with ExitStack() as stack:
+        transports = {}
+        for name, message in (
+            ("lidar", PointCloud2),
+            ("odometry", Odometry),
+            ("contacts", Contacts),
+            ("scene", LineSegments3D),
+        ):
+            transport = ZenohTransport(f"go2-test/{uuid4().hex}/{name}", message)
+            stack.callback(transport.stop)
+            stack.callback(transport.subscribe(samples[name].append))
+            transports[name, message] = transport
+        blueprint = blueprint.transports(transports)
+        app = ModuleCoordinator.build(
+            blueprint.global_config(
+                simulation="mujoco",
+                transport="zenoh",
+                viewer="none",
+                n_workers=2,
+            )
+        )
+        stack.callback(app.stop)
+        yield app, samples
 
 
-def test_sensor_velocity_matches_the_motion(sim: Go2Sim) -> None:
-    for _ in range(75):
-        sim.tick(FORWARD)
-    before, _ = sim.sensor_pose()
-    linear = np.zeros(3)
-    for _ in range(10):
-        sim.tick(FORWARD)
-        linear += sim.sensor_velocity()[0] / 10
-    after, _ = sim.sensor_pose()
-    assert linear == pytest.approx((after - before) / (10 * CONTROL_DT), abs=0.1)
-    assert linear[0] > 0.1
-    turn = np.array([0.0, 0.0, 0.8])
-    for _ in range(50):
-        sim.tick(turn)
-    yaw_before = sim.robot.yaw()
-    rate = 0.0
-    for _ in range(10):
-        sim.tick(turn)
-        rate += (MOUNT_R @ sim.sensor_velocity()[1])[2] / 10
-    yaw_delta = (sim.robot.yaw() - yaw_before + np.pi) % (2 * np.pi) - np.pi
-    assert rate == pytest.approx(yaw_delta / (10 * CONTROL_DT), abs=0.1)
-    assert rate > 0.05
-
-
-def test_ceiling_is_hidden_from_the_viewer_but_not_the_lidar(sim: Go2Sim) -> None:
-    index, ceiling = next(
-        (i, box) for i, box in enumerate(sim.scene.boxes) if box.kind == "ceiling"
+@pytest.mark.self_hosted
+def test_procedural_go2_walks_with_rolling_lidar_and_existing_nav_contract(world_stack):
+    app, samples = world_stack
+    world = app.get_instance(SimulationModule)
+    robot = app.get_instance(GO2Connection)
+    start = world.status()
+    positions = []
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        robot.move(Twist(Vector3(0.35, 0, 0)))
+        positions.append(world.status()["robots"][GO2Connection.name])
+        time.sleep(0.1)  # Command input rate.
+    robot.stop_movement()
+    assert world.status()["error"] is None
+    assert world.status()["steps"] - start["steps"] > 3000
+    assert np.asarray(positions)[:, 2].min() > 0.2
+    assert positions[-1][0] - positions[0][0] > 0.8
+    assert len(samples["lidar"]) > 20, (
+        app.get_instance(Go2SimTelemetry).sensor_status(),
+        app.get_instance(GO2Connection.name + "_lidar").sensor_status(),
+        {key: getattr(t, "topic", None) for key, t in app.transports.items()},
     )
-    underside = ceiling.center[2] - ceiling.half[2]
-    position, _ = sim.sensor_pose()
-    raycaster = MujocoRaycaster(sim.model, sim.data, LIDAR_GROUPS)
-    dist, _ = raycaster.cast(position, np.array([[0.0, 0.0, 1.0]]), 10.0)
-    assert abs(dist[0] - (underside - position[2])) < 0.01
-    geom = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_GEOM, f"ceiling_{index}")
-    assert sim.model.geom_group[geom] == CEILING_GROUP
-
-
-def test_sensor_sits_on_the_mount_above_the_base(sim: Go2Sim) -> None:
-    base, _ = sim.base_pose()
-    sensor, rotation = sim.sensor_pose()
-    assert 0.1 < sensor[2] - base[2] < 0.2
-    forward = rotation @ np.array([1.0, 0.0, 0.0])
-    assert forward[2] < -0.8
-
-
-def test_scene_edges_cover_every_box(scene: Scene) -> None:
-    edges = scene_edges(scene)
-    assert edges.shape == (12 * len(scene.boxes), 2, 3)
-    lo, hi = scene.bounds()
-    assert np.allclose(edges.reshape(-1, 3).min(0), lo)
-    assert np.allclose(edges.reshape(-1, 3).max(0), hi)
+    assert {cloud.frame_id for cloud in samples["lidar"]} == {"mid360_link"}
+    assert len(samples["odometry"]) > 100
+    assert samples["odometry"][-1].child_frame_id == "mid360_link"
+    assert any(Contact("foot", "floor") in msg.contacts for msg in samples["contacts"])
+    assert len(samples["scene"][-1].segments) > 12
+    assert app.get_instance(Go2SimTelemetry).sensor_status()["error"] is None

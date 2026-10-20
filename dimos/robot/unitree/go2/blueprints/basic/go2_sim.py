@@ -23,9 +23,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.global_planner.viz import body_on_base_link
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
-from dimos.simulation.go2_sim.world import SimGo2World
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.scene import scene_path
+from dimos.sim2.spec import WorldConfig
+from dimos.simulation.go2_sim.world import Go2SimTelemetry, procedural_scene
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
@@ -69,11 +73,39 @@ rerun_config: dict[str, Any] = {
     "visual_override": {"world/scene": _scene_lines},
 }
 
-go2_sim = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
-    SimGo2World.blueprint(),
-    Go2Mid360StaticTf.blueprint(),
-    MovementManager.blueprint(),
-    # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
-    # spawned together never link, which the nav stack composed on this blueprint needs
-).global_config(transport="zenoh", zenoh_gossip=False, n_workers=5, robot_model="unitree_go2")
+go2_sim = (
+    autoconnect(
+        vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
+        SimulationModule.blueprint(
+            world=WorldConfig(
+                scene=(
+                    scene_path(global_config.scene_package, "logistics.xml")
+                    if global_config.scene_package
+                    else procedural_scene()
+                ),
+                robots={},
+                timestep=0.002,
+            )
+        ),
+        GO2Connection.blueprint(camera=False, lidar_model="mid360", publish_tf=False),
+        Go2SimTelemetry.blueprint(robot_id="go2connection", rate_hz=50),
+        Go2Mid360StaticTf.blueprint(),
+        MovementManager.blueprint(),
+        # gossip off until zenoh fixes its pending-connection bug: with it on, native modules
+        # spawned together never link, which the nav stack composed on this blueprint needs
+    )
+    .remappings(
+        [
+            ("go2connection_lidar", "pointcloud", "go2_scan"),
+            ("go2connection_lidar", "tf", "sim_lidar_tf"),
+            (Go2SimTelemetry, "scan", "go2_scan"),
+        ]
+    )
+    .global_config(
+        simulation="mujoco",
+        transport="zenoh",
+        zenoh_gossip=False,
+        n_workers=5,
+        robot_model="unitree_go2",
+    )
+)

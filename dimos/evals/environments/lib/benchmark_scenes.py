@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.types import EvalCase, Outcome, Suite, recording
+from dimos.evals.types import EvalCase, Outcome, Suite, truth_recording
 from dimos.utils.data import get_data
 
 GradeKind = Literal["lifted"]
@@ -71,7 +71,7 @@ def scene_path(root: str, relative: str) -> Path:
 
 
 def tracked_bodies_for_case(case: BenchmarkCase) -> tuple[str, ...]:
-    """Ensure the graded body is recorded on ``tf`` even if the manifest omits it."""
+    """Ensure the graded body is in the privileged truth recording."""
     bodies = list(case.tracked_bodies)
     if case.grade.body not in bodies:
         bodies.append(case.grade.body)
@@ -92,7 +92,7 @@ def grade_from_spec(spec: GradeSpec) -> Callable[[Outcome], float]:
         raise ValueError(f"unsupported grade type: {spec.type}")
 
     def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
+        with truth_recording(outcome) as store:
             try:
                 start = first_body_transform(store, spec.body).translation.z
                 end = last_body_transform(store, spec.body).translation.z

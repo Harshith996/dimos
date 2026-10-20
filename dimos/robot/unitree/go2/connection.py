@@ -19,7 +19,7 @@ from pathlib import Path
 import sys
 from threading import Lock, Thread
 import time
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Literal, Protocol, cast
 
 from pydantic import BaseModel, Field
 from reactivex import defer, empty, operators as ops
@@ -84,6 +84,7 @@ class ConnectionConfig(ControlConnectionConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
+    lidar_model: Literal["ideal", "mid360"] = "ideal"
     camera: bool = True
     velocity_api: bool = False
     # "mcf" for stair traversal, "normal" for basic, None to leave it as is
@@ -458,7 +459,12 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         config = cast("ConnectionConfig", config)
         return scene_robot(
             scene,
-            go2_definition(config.policy, camera=config.camera, lidar=config.lidar),
+            go2_definition(
+                config.policy,
+                camera=config.camera,
+                lidar=config.lidar,
+                lidar_model=config.lidar_model,
+            ),
             config.spawn,
             default=(0, 0, 0),
         )

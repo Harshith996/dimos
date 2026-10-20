@@ -12,24 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
+from dataclasses import replace
 from pathlib import Path
 import time
 
 import numpy as np
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
+from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.manipulation.manipulation_module import ManipulationModuleConfig
+from dimos.evals.scorers import lifted
+from dimos.evals.types import Outcome, truth_recording
 from dimos.memory.store.memory import MemoryStore
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
+from dimos.robot.manipulators.xarm.sim2 import xarm_definition
+from dimos.sim2.runtime import SimulationRuntime
+from dimos.sim2.scene import scene_robot
+from dimos.sim2.scene_types import EntityState, SceneControlSpec, SceneState, SceneUpdate
+from dimos.sim2.spec import WorldConfig
+from dimos.utils.data import LfsPath
 
 
 def environment(**kwargs):
@@ -43,73 +54,37 @@ def _tf(ts: float, child: str, z: float) -> TFMessage:
 
 
 def test_launch_flags(monkeypatch):
-    monkeypatch.delenv("MUJOCOSIMMODULE__HEADLESS", raising=False)
-    env = environment(tracked_bodies=("apple", "cup"))
+    monkeypatch.delenv("SIMULATIONMODULE__VIEWER", raising=False)
     proc = DimosCliCall()
-    env.configure_launch(proc)
+    environment(tracked_bodies=("apple", "cup"), scene=Path("scenes/table.xml")).configure_launch(
+        proc
+    )
     assert proc.simulator == "mujoco"
-    assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "true"
-    assert json.loads(proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"]) == ["apple", "cup"]
+    assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "false"
     assert proc.global_args == [
         "--record-topics",
         "color_image,camera_info,coordinator_joint_state,tf,odom",
+        "--scene-package",
+        str(Path("scenes/table.xml").resolve()),
     ]
-
-    proc = DimosCliCall()
-    environment().configure_launch(proc)
-    assert "MUJOCOSIMMODULE__TRACKED_BODIES" not in proc.extra_env
-
-    proc = DimosCliCall()
-    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
-    assert proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] == str(Path("scenes/table.xml").resolve())
-    assert "CONTROLCOORDINATOR__HARDWARE" not in proc.extra_env
-
-    proc = DimosCliCall()
-    environment(base_height=0.912).configure_launch(proc)
-    assert json.loads(proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"]) == {
-        "frame_id": "world",
-        "position": [0.0, 0.0, 0.912],
-    }
-    assert "--xarm7-sim-base-height" not in proc.global_args
-
-    monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
+    assert not any("TRACKED_BODIES" in key or "HARDWARE" in key for key in proc.extra_env)
+    monkeypatch.setenv("SIMULATIONMODULE__VIEWER", "true")
     proc = DimosCliCall()
     environment(
         module_env={"OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "yoloe"}
     ).configure_launch(proc)
-    assert proc.extra_env["MUJOCOSIMMODULE__HEADLESS"] == "false"
+    assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "true"
     assert proc.extra_env["OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND"] == "yoloe"
 
 
-def test_module_env_reaches_blueprint_parser(monkeypatch):
-    monkeypatch.delenv("MUJOCOSIMMODULE__HEADLESS", raising=False)
-    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-    from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
-
+def test_module_env_reaches_blueprint_parser():
     proc = DimosCliCall()
     environment(
-        tracked_bodies=("apple", "cup"),
-        base_height=0.912,
-        module_env={
-            "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
-            "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
-        },
+        module_env={"OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2"}
     ).configure_launch(proc)
     parsed = BlueprintConfigParser(xarm_perception_sim).parse(environ=proc.extra_env)
-    perception = parsed.module_kwargs("objectsceneregistrationmodule")
-    assert perception["detector_backend"] == "owlv2"
-    assert perception["segmentation_backend"] == "yolo"
-    sim = parsed.module_kwargs("mujocosimmodule")
-    assert sim["headless"] is True
-    assert sim["tracked_bodies"] == ["apple", "cup"]
-
-    mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
-    assert mounted.model.base_pose.position.z == pytest.approx(0.912)
-    defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
-    default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
-    assert default.model.base_pose.position.z == pytest.approx(0.12)
-    assert mounted.model.joint_names == default.model.joint_names
-    assert mounted.model.base_pose.orientation == default.model.base_pose.orientation
+    assert parsed.module_kwargs("objectsceneregistrationmodule")["detector_backend"] == "owlv2"
+    assert parsed.module_kwargs("simulationmodule")["viewer"] is False
 
 
 def test_latest_pose_needs_odom():
@@ -178,7 +153,7 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
     env = environment(tracked_bodies=("apple",))
     with MemoryStore() as store:
         with pytest.raises(TimeoutError, match="apple"):
-            env.wait_ready(store, deadline=time.monotonic() + 0.3)
+            env.wait_ready(store, deadline=time.monotonic())
         now = time.time()
         store.stream("color_image", Image).append(
             Image(data=np.zeros((1, 1, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
@@ -186,8 +161,14 @@ def test_ready_needs_fresh_streams_and_tracked_body_poses():
         store.stream("coordinator_joint_state", JointState).append(
             JointState(ts=now, name=["j1"], position=[0.0], velocity=[0.0])
         )
+        # Robot observations alone must not satisfy privileged truth readiness.
         store.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
-        env.wait_ready(store, deadline=time.monotonic() + 2.0)
+        with pytest.raises(TimeoutError):
+            env.wait_ready(store, deadline=time.monotonic())
+        with MemoryStore() as truth:
+            env._truth = truth
+            truth.stream("tf", TFMessage).append(_tf(now, "apple", 0.17))
+            env.wait_ready(store, deadline=time.monotonic() + 2.0)
 
 
 def test_settle_waits_for_joints_to_stop():
@@ -224,7 +205,10 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store = mocker.patch("dimos.memory.store.sqlite.SqliteStore").return_value
     env = environment(tracked_bodies=("apple",), disable=("rerun-bridge-module",))
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
-    ready = mocker.patch.object(env, "wait_ready")
+    mocker.patch.object(env, "setup_scene")
+    ready = mocker.patch.object(
+        env, "prepare_recording", return_value={"truth": tmp_path / "truth.db"}
+    )
     try:
         result = env.start(("speak-skill",))
         assert proc.simulator == "mujoco"
@@ -237,10 +221,114 @@ def test_launch_and_cleanup(tmp_path, mocker):
             "--disable",
             "rerun-bridge-module",
         ]
-        assert "MUJOCOSIMMODULE__HEADLESS" in proc.extra_env
+        assert "SIMULATIONMODULE__VIEWER" in proc.extra_env
         ready.assert_called_once()
-        assert set(result.artifacts) == {"recording"}
+        assert set(result.artifacts) == {"recording", "truth"}
     finally:
         env.stop()
     proc.stop.assert_called_once()
     store.stop.assert_called_once()
+
+
+def test_truth_is_recorded_separately_and_flushed_before_grading(tmp_path, mocker):
+    env = environment(tracked_bodies=("apple",), ready_streams=())
+    env.scene = mocker.Mock(spec=SceneControlSpec)
+    state = SceneState(
+        world_id="world",
+        scene_id="table",
+        generation=0,
+        tick=0,
+        sim_time=0,
+        ts=time.time(),
+        entities={
+            "apple": EntityState(
+                pose=Pose(0.4, 0, 0.1),
+                velocity=(0, 0, 0),
+                angular_velocity=(0, 0, 0),
+                bounds_min=(0, 0, 0),
+                bounds_max=(1, 1, 1),
+            )
+        },
+        robots={},
+        joints={},
+        regions={},
+        contacts=(),
+    )
+    env.scene.scene_state.return_value = state
+    with MemoryStore() as observations:
+        try:
+            artifacts = env.prepare_recording(
+                observations, tmp_path / "memory.db", time.monotonic() + 2
+            )
+            moved = state.entities["apple"].model_copy(update={"pose": Pose(0.4, 0, 0.2)})
+            env.scene.scene_state.return_value = state.model_copy(
+                update={"entities": {"apple": moved}, "ts": state.ts + 1}
+            )
+            assert "tf" not in observations.streams
+        finally:
+            env.stop()
+    assert not env._truth_thread.is_alive()
+    outcome = Outcome(trajectory=mocker.Mock(), artifacts=artifacts)
+    with truth_recording(outcome) as store:
+        assert last_body_transform(store, "apple").translation.z == pytest.approx(0.2)
+    assert lifted("apple", by_m=0.1)(outcome) == pytest.approx(1)
+    with pytest.raises(KeyError, match="truth"):
+        lifted("apple", by_m=0.1)(
+            Outcome(trajectory=mocker.Mock(), artifacts={"recording": tmp_path / "memory.db"})
+        )
+
+
+def test_truth_recorder_failure_is_not_silently_graded(tmp_path, mocker):
+    env = environment(ready_streams=())
+    env.scene = mocker.Mock(spec=SceneControlSpec)
+    env.scene.scene_state.side_effect = RuntimeError("world stopped")
+    env._truth_stop = mocker.Mock()
+    env._truth_stop.wait.return_value = False
+    with MemoryStore() as store:
+        env._truth = store
+        env._record_truth_loop()
+        with pytest.raises(RuntimeError, match="truth recording failed"):
+            env._stop_truth()
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize(
+    "scene",
+    [
+        "xarm7",
+        "robosuite/lift",
+        "robosuite/door",
+        "robosuite/pick_place",
+        "robosuite/stack",
+        "robosuite/tool_hang",
+        "robosuite/nut_assembly",
+    ],
+)
+def test_exported_eval_world_composes_one_arm_and_supports_reset(scene):
+    path = LfsPath(scene) / "world.xml"
+    robot = replace(xarm_definition(7), sensors=())
+    instance = scene_robot(path, robot, "workbench", default=(0, 0, 0))
+    with SimulationRuntime(WorldConfig(scene=path, robots={"arm": instance}), "eval-test") as world:
+        assert world.model.body("arm/link_base").id > 0
+        with pytest.raises(KeyError):
+            world.model.body("link_base")
+        assert world.model.body("arm/link_base").pos == pytest.approx(instance.xyz)
+        assert len(world.robots) == 1
+        assert np.isfinite(world.data.qpos).all()
+        initial = world.scene_state()
+        movable = next(
+            (name for name, entity in world.description.entities.items() if entity.movable),
+            None,
+        )
+        if movable is not None:
+            pose = initial.entities[movable].pose
+            moved = Pose(pose.position + Vector3(0, 0, 0.05), pose.orientation)
+            result = world.set_scene_state(SceneUpdate(poses={movable: moved}))
+            assert result.entities[movable].pose.position.z == pytest.approx(pose.position.z + 0.05)
+        for _ in range(20):
+            world.step()
+        assert np.isfinite(world.data.qpos).all()
+        restored = world.reset()
+        assert restored.entities == initial.entities
+        assert world.data.time == 0
+        assert world.model.nq >= len(robot.joints)

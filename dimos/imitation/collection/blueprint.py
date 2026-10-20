@@ -42,7 +42,7 @@ def _session_db(robot: str) -> str:
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
     """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
-    MujocoSimModule already publishes color_image on /camera/color_image, so a
+    The sim2 camera already publishes color_image on /camera/color_image, so a
     real camera would be redundant (and fail with no device connected)."""
     if global_config.simulation:
         return ()

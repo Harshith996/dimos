@@ -28,10 +28,10 @@ from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.dimsim.config import DIMSIM_PORT
-from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page

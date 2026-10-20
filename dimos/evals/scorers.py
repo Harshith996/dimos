@@ -33,7 +33,7 @@ from typing import TypeVar
 import numpy as np
 
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
-from dimos.evals.types import Outcome, recording
+from dimos.evals.types import Outcome, truth_recording
 
 T = TypeVar("T")
 
@@ -158,7 +158,7 @@ def lifted(body: str, *, by_m: float) -> Callable[[Outcome], float]:
     """How far the body ended above where it started, full credit at ``by_m``."""
 
     def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
+        with truth_recording(outcome) as store:
             try:
                 start = first_body_transform(store, body).translation.z
                 end = last_body_transform(store, body).translation.z
@@ -176,7 +176,7 @@ def stacked_on(
     0.0 at ``band_m`` off. A body held higher than the resting height scores 0.0."""
 
     def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
+        with truth_recording(outcome) as store:
             try:
                 t = last_body_transform(store, top).translation
                 b = last_body_transform(store, base).translation
@@ -190,7 +190,7 @@ def stacked_on(
 
 
 def opened_door(outcome: Outcome) -> float:
-    with recording(outcome) as store:
+    with truth_recording(outcome) as store:
         try:
             frame = last_body_transform(store, "Door_frame").rotation.to_rotation_matrix()
             panel = last_body_transform(store, "Door_door").rotation.to_rotation_matrix()
@@ -201,7 +201,7 @@ def opened_door(outcome: Outcome) -> float:
 
 
 def placed_can(outcome: Outcome) -> float:
-    with recording(outcome) as store:
+    with truth_recording(outcome) as store:
         try:
             can = last_body_transform(store, "Can_main")
             marker = last_body_transform(store, "VisualCan_main")
@@ -215,7 +215,7 @@ def placed_can(outcome: Outcome) -> float:
 
 
 def seated_nut(outcome: Outcome) -> float:
-    with recording(outcome) as store:
+    with truth_recording(outcome) as store:
         try:
             nut = last_body_transform(store, "SquareNut_main")
             peg = last_body_transform(store, "peg1")
@@ -232,7 +232,7 @@ def seated_nut(outcome: Outcome) -> float:
 
 def hung_tool(outcome: Outcome) -> float:
     """Geometric assembly/hanging proxy from body poses; does not check contact or release."""
-    with recording(outcome) as store:
+    with truth_recording(outcome) as store:
         try:
             stand = last_body_transform(store, "stand_root")
             frame = last_body_transform(store, "frame_root")

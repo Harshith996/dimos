@@ -1,12 +1,46 @@
-# sim2 core
+# sim2
 
 sim2 owns a MuJoCo world and independently scheduled camera/lidar workers.
 Robot connections and policy hosts use `SimRobotClient` for internal motor IO.
 The core does not choose a locomotion policy or create public robot connections.
 
-This branch extracts the existing emulator onto current main. Robot blueprint
-migrations are subsequent work; existing MuJoCo blueprints have not been
-switched by this core change.
+The migrated G1, Go2, xArm6/7 and Piper blueprints use this world through their
+ordinary robot connection. DimSim and replay remain separate, unchanged modes.
+The previous MuJoCo engines and their private control adapters are removed.
+
+## Run
+
+```bash
+uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-groot-wbc
+uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-sonic-wbc --g1sonicpolicymodule.cpu-simulation=true
+uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-go2
+uv run dimos --simulation mujoco --transport zenoh run xarm7-planner-coordinator
+uv run dimos --simulation mujoco --transport zenoh run coordinator-piper
+uv run dimos --transport zenoh run go2-sim
+```
+
+SONIC's CPU mode is for simulation; real hardware still requires CUDA.
+Use `--scene-package kitchen` before `run`, or pass a robot-free MJCF path.
+Set `--simulationmodule.viewer=false` after the blueprint name for headless
+operation. The procedural `go2-sim` blueprint uses rolling Mid360 and preserves
+its existing odometry/contact/scene topics through a read-only telemetry worker.
+
+| Public connection | Controller | Internal device |
+| --- | --- | --- |
+| `G1Connection` | Stock firmware on hardware, GR00T coordinator task, or standalone SONIC | WebRTC, `G1MotorDevice` (DDS), or `SimRobotClient` |
+| `GO2Connection` | Stock firmware on hardware; existing ONNX/FREE walking policy in sim | WebRTC/replay/DimSim, or internal `Go2SimDevice` using `SimRobotClient` |
+| `XArmConnection` / `PiperConnection` | Existing coordinator/planner | Existing vendor adapter or `SimRobotClient` |
+
+There is no public sim-specific connection. G1's `cmd_vel: Twist` / `move()`
+routes intent to the selected controller, which returns `MotorCommandArray`.
+The connection owns motor IO and publishes measured `motor_states: JointState`
+and `imu: Imu`. Arms expose `position_command` and `velocity_command`
+(`JointState`) and measured `joint_state`. xArm gripper units remain 0..850;
+Piper's aperture remains metres.
+
+Stock G1 sport firmware is not simulated. Go2's walking policy does not provide
+vendor tricks or lie-down. Lite6 has no matching simulation asset and is
+explicitly rejected rather than loading xArm6 geometry.
 
 ## Ownership
 

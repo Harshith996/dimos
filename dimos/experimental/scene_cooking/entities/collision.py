@@ -28,9 +28,9 @@ entities/<safe_id>/
 ```
 
 The hull paths are recorded per entity as ``collision_paths`` in
-``scene.meta.json`` and loaded verbatim by the runtime composer
-(``dimos/simulation/mujoco/scene_package_entity_composer.py``) — there is no runtime
-decomposition and no per-machine cache; the package is self-contained.
+``scene.meta.json``. A native MuJoCo export must reference these hulls in
+its MJCF; sim2 loads that MJCF, not this cooker's metadata. There is no
+runtime decomposition.
 """
 
 from __future__ import annotations

@@ -16,16 +16,21 @@
 
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
+from threading import Event, Thread
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import Field
 
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.porcelain.dimos import Dimos
+from dimos.sim2.scene_types import SceneControlSpec
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -45,41 +50,94 @@ class MujocoEnvironmentConfig(SimConfig):
         "tf",
         "odom",
     )
-    # Full xArm MJCF for the MujocoSimModule; the coordinator's sim adapter attaches to it.
+    # Robot-free MJCF with a scene sidecar defining entities and the robot mount.
     scene: Path | None = None
-    base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class MujocoEnvironment(Sim):
-    """Run agent evaluations in a MuJoCo scene, with ground-truth object poses recorded on tf."""
+    """Run sim2 with sensor recordings for agents and separate physical truth for grading."""
 
     config: MujocoEnvironmentConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.scene: SceneControlSpec | None = None
+        self._truth_error: Exception | None = None
+        self._truth_stop = Event()
+        self._truth_thread: Thread | None = None
+        self._truth: SqliteStore | None = None
 
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "mujoco"
         proc.global_args = ["--record-topics", ",".join(self.config.recorded_topics)]
         if self.config.scene is not None:
-            proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] = str(self.config.scene.resolve())
+            proc.global_args.extend(["--scene-package", str(self.config.scene.resolve())])
         proc.extra_env.update(self.config.module_env)
-        if self.config.base_height is not None:
-            proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"] = json.dumps(
-                {"frame_id": "world", "position": [0.0, 0.0, self.config.base_height]}
-            )
         proc.extra_env.setdefault(
-            "MUJOCOSIMMODULE__HEADLESS", os.environ.get("MUJOCOSIMMODULE__HEADLESS", "true")
+            "SIMULATIONMODULE__VIEWER", os.environ.get("SIMULATIONMODULE__VIEWER", "false")
         )
-        if self.config.tracked_bodies:
-            proc.extra_env["MUJOCOSIMMODULE__TRACKED_BODIES"] = json.dumps(
-                list(self.config.tracked_bodies)
-            )
+
+    def setup_scene(self) -> None:
+        app = Dimos.connect()
+        self._resources.callback(app.stop)
+        self.scene = app.find_module_by_spec(SceneControlSpec)
+        missing = set(self.config.tracked_bodies) - self.scene.describe_scene().entities.keys()
+        if missing:
+            raise ValueError(f"scene lacks tracked entities: {sorted(missing)}")
 
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
+        truth_path = path.with_name("truth.db")
+        self._truth = SqliteStore(path=str(truth_path))
+        self._resources.callback(self._truth.stop)
+        self._truth_stop.clear()
+        self._truth_error = None
+        self._record_truth()
+        self._truth_thread = Thread(target=self._record_truth_loop, daemon=True)
+        self._truth_thread.start()
+        self._resources.callback(self._stop_truth)
         self.wait_ready(recording, deadline=deadline)
-        return {}
+        return {"truth": truth_path}
+
+    def _record_truth(self) -> None:
+        assert self.scene is not None and self._truth is not None
+        state = self.scene.scene_state()
+        self._truth.stream("tf", TFMessage).append(
+            TFMessage(
+                *[
+                    Transform(
+                        translation=state.entities[name].pose.position,
+                        rotation=state.entities[name].pose.orientation,
+                        frame_id="world",
+                        child_frame_id=name,
+                        ts=state.ts,
+                    )
+                    for name in self.config.tracked_bodies
+                ]
+            )
+        )
+
+    def _record_truth_loop(self) -> None:
+        try:
+            while not self._truth_stop.wait(0.1):
+                self._record_truth()
+        except Exception as error:
+            self._truth_error = error
+
+    def _stop_truth(self) -> None:
+        self._truth_stop.set()
+        if self._truth_thread is not None:
+            self._truth_thread.join(timeout=10)
+            if self._truth_thread.is_alive():
+                raise RuntimeError("sim2 truth recorder did not stop")
+        if self._truth_error is not None:
+            raise RuntimeError("sim2 truth recording failed") from self._truth_error
+        self._record_truth()
 
     def wait_ready(self, recording: Store, *, deadline: float) -> None:
         """Wait for fresh samples on every ready stream and a pose for every tracked body."""
         while time.monotonic() < deadline:
+            if self._truth_error is not None:
+                raise RuntimeError("sim2 truth recording failed") from self._truth_error
             try:
                 ages = [
                     time.time() - getattr(recording.streams, name).last().data.ts
@@ -87,7 +145,9 @@ class MujocoEnvironment(Sim):
                     if name in recording.streams
                 ]
                 for body in self.config.tracked_bodies:
-                    last_body_transform(recording, body)
+                    if self._truth is None:
+                        raise LookupError("truth recorder has not started")
+                    last_body_transform(self._truth, body)
             except (LookupError, AttributeError):
                 ages = []
             if len(ages) == len(self.config.ready_streams) and all(age < 10.0 for age in ages):
@@ -110,6 +170,8 @@ class MujocoEnvironment(Sim):
 
     def settle(self, budget_s: float) -> None:
         """At rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``."""
+        if self._truth_error is not None:
+            raise RuntimeError("sim2 truth recording failed") from self._truth_error
         recording = self._recording
         if recording is None or "coordinator_joint_state" not in recording.streams:
             super().settle(budget_s)

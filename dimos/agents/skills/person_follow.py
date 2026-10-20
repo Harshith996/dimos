@@ -64,6 +64,7 @@ class PersonFollowSkillContainer(Module):
     config: Config
 
     color_image: In[Image]
+    camera_info: In[CameraInfo]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
     tf: In[TFMessage]
@@ -83,11 +84,7 @@ class PersonFollowSkillContainer(Module):
 
         # Use simulator camera intrinsics in simulation mode
         camera_info = self.config.camera_info
-        if self.config.g.simulation == "mujoco":
-            from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
-            camera_info = MujocoConnection.camera_info_static
-        elif self.config.g.simulation == "dimsim":
+        if self.config.g.simulation == "dimsim":
             from dimos.robot.unitree.dimsim_connection import DimSimConnection
 
             camera_info = DimSimConnection.camera_info_static
@@ -100,6 +97,7 @@ class PersonFollowSkillContainer(Module):
         super().start()
         self._detection_navigation = DetectionNavigation(self.tfbuffer, self._camera_info)
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
         if self.config.use_3d_navigation:
             self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))
 
@@ -217,6 +215,16 @@ class PersonFollowSkillContainer(Module):
     def _on_color_image(self, image: Image) -> None:
         with self._lock:
             self._latest_image = image
+
+    def _on_camera_info(self, info: CameraInfo) -> None:
+        with self._lock:
+            if (info.width, info.height) != (
+                self._camera_info.width,
+                self._camera_info.height,
+            ) or not np.array_equal(info.K, self._camera_info.K):
+                self._visual_servo = VisualServoing2D(info, bool(self.config.g.simulation))
+                self._detection_navigation = DetectionNavigation(self.tfbuffer, info)
+            self._camera_info = info
 
     def _on_pointcloud(self, pointcloud: PointCloud2) -> None:
         with self._lock:
