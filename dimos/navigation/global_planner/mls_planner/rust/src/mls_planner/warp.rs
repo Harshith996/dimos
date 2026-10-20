@@ -155,10 +155,15 @@ impl Planner {
         let mut queries: Vec<[f32; 3]> = Vec::with_capacity(voxels.len() + node_at.len());
         let mut times: Vec<f64> = Vec::with_capacity(queries.capacity());
         for k in &voxels {
+            let r = self
+                .voxel_times
+                .as_ref()
+                .and_then(|t| t.residual.get(k).copied())
+                .unwrap_or([0.0; 3]);
             queries.push([
-                (k.0 as f32 + 0.5) * vs,
-                (k.1 as f32 + 0.5) * vs,
-                (k.2 as f32 + 0.5) * vs,
+                (k.0 as f32 + 0.5) * vs + r[0],
+                (k.1 as f32 + 0.5) * vs + r[1],
+                (k.2 as f32 + 0.5) * vs + r[2],
             ]);
             times.push(time_of(k));
         }
@@ -180,6 +185,15 @@ impl Planner {
         report.warp_ms = ms_since(stage);
 
         let (moved_voxels, rest) = warped.split_at(voxels.len());
+        // Each warped voxel's point after the move, off the center of the voxel it lands in.
+        let residuals: Vec<(VoxelKey, [f32; 3])> = moved_voxels
+            .iter()
+            .map(|w| {
+                let to = voxelize((w[0], w[1], w[2]), vs);
+                let c = [to.0, to.1, to.2].map(|k| (k as f32 + 0.5) * vs);
+                (to, [w[0] - c[0], w[1] - c[1], w[2] - c[2]])
+            })
+            .collect();
         let (moved_nodes, rest) = rest.split_at(node_at.len());
         let (moved_path, moved_held) = rest.split_at(path_cells.len());
         for (p, w) in held.iter_mut().zip(moved_held) {
@@ -203,6 +217,7 @@ impl Planner {
         if moved_count as f64 > warp.rebuild_fraction() * self.voxel_map.len() as f64 {
             let stage = Instant::now();
             self.rekey_voxels(&voxels, moved_voxels, vs);
+            self.set_residuals(&voxels, &residuals);
             report.voxels_moved = moved_count;
             report.voxel_ms = ms_since(stage);
             let stage = Instant::now();
@@ -215,6 +230,7 @@ impl Planner {
 
         let stage = Instant::now();
         let edits = self.warp_voxels(&voxels, moved_voxels, vs, &mut report);
+        self.set_residuals(&voxels, &residuals);
         report.voxel_ms = ms_since(stage);
 
         let moves: Vec<(usize, VoxelKey)> = node_at
@@ -280,6 +296,21 @@ impl Planner {
                         .and_modify(|e| *e = e.min(time))
                         .or_insert(time);
                 }
+            }
+        }
+    }
+
+    /// The warped voxels' residuals at the keys they landed in; the first to land in a key keeps it.
+    fn set_residuals(&mut self, warped: &[VoxelKey], residuals: &[(VoxelKey, [f32; 3])]) {
+        let Some(times) = &mut self.voxel_times else {
+            return;
+        };
+        for k in warped {
+            times.residual.remove(k);
+        }
+        for &(to, r) in residuals {
+            if self.voxel_map.contains(&to) {
+                times.residual.entry(to).or_insert(r);
             }
         }
     }

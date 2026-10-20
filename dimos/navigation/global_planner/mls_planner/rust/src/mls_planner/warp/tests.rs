@@ -243,3 +243,27 @@ fn a_warp_that_moves_most_of_the_map_rebuilds_and_matches_a_rebuild() {
 fn node_count(p: &Planner) -> usize {
     p.graph().nodes.len()
 }
+
+#[test]
+fn shifts_smaller_than_a_voxel_add_up_over_warps() {
+    let cfg = test_config();
+    let vs = cfg.voxel_size;
+    let all = big_world();
+    let mut p = Planner::new(cfg.worker_threads);
+    p.track_voxel_times();
+    p.update_global_map(&all, &cfg);
+    let before = voxel_set(&p);
+    // A third of a voxel keeps every voxel where it is; the second third takes
+    // them past the edge, one voxel over, as a rebuild of the shifted map has them.
+    let third = vs as f64 / 3.0 + 1e-4;
+    p.apply_warp(&warp_of(shift(third, 0.0), |_| true), &mut [], &cfg);
+    assert_eq!(voxel_set(&p), before);
+    p.apply_warp(&warp_of(shift(third, 0.0), |_| true), &mut [], &cfg);
+    let shifted: Vec<(f32, f32, f32)> = all
+        .iter()
+        .map(|q| (q.0 + 2.0 * third as f32, q.1, q.2))
+        .collect();
+    let mut rebuilt = Planner::new(cfg.worker_threads);
+    rebuilt.update_global_map(&shifted, &cfg);
+    assert_eq!(voxel_set(&p), voxel_set(&rebuilt));
+}
