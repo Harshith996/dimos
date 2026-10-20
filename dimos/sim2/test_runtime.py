@@ -60,7 +60,8 @@ def test_transient_channel_contention_does_not_kill_physics(worlds, clients, moc
     assert world.data.ctrl[world.robots["left"].actuators[0]] == pytest.approx(2)
 
 
-def test_scene_edit_preserves_robot_pose_and_invalidates_old_commands(worlds, clients):
+@pytest.mark.parametrize("disabled", [False, True])
+def test_scene_edit_preserves_robot_pose_and_motor_enable(worlds, clients, disabled):
     world = worlds()
     client = clients(world, writable=True)
     for _ in range(200):
@@ -71,6 +72,10 @@ def test_scene_edit_preserves_robot_pose_and_invalidates_old_commands(worlds, cl
         world.step()
     position = client.read().values["position"].copy()
     assert position[0] == pytest.approx(0.4, abs=0.03)
+    if disabled:
+        client.disable(observed=client.read())
+        world.step()
+        position = client.read().values["position"].copy()
 
     state = world.set_scene_state(SceneUpdate(poses={"box": Pose(2, 0, 0.3)}))
     assert client.read().values["position"] == pytest.approx(position)
@@ -79,6 +84,8 @@ def test_scene_edit_preserves_robot_pose_and_invalidates_old_commands(worlds, cl
     assert state.entities["box"].pose.position.to_tuple() == pytest.approx((2, 0, 0.3))
     assert client.read().values["position"][0] == pytest.approx(position[0], abs=0.002)
     assert world.robots["left"].idle_position[0] == pytest.approx(position[0])
+    assert world.robots["left"].enabled is not disabled
+    assert world.robots["left"].applied_action_sequence == 0
 
 
 def test_disabled_effort_outputs_do_not_reenable_when_command_expires(worlds, clients, mocker):

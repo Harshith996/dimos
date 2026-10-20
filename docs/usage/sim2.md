@@ -126,7 +126,8 @@ The world exposes `describe_scene`, `scene_state`, `set_scene_state`, `reset`,
 operator/evaluator APIs, not robot perception or ordinary agent skills.
 
 Scene edits validate the complete update before changing existing named bodies
-or joints. Reset restores the authored baseline. Both invalidate old motor
+or joints and preserve each robot's motor-enable state, including teleports.
+Reset restores the authored baseline. Both invalidate old motor
 commands and publish the new generation immediately. A policy result computed
 before a reset cannot command the new generation, including a reset racing with
 command publication. Application-level reset must also stop/reset controllers,
