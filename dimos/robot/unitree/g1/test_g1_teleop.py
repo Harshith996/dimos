@@ -21,11 +21,6 @@ import numpy as np
 import pytest
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    g1_arms,
-    g1_joints,
-    g1_legs_waist,
-)
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
@@ -38,7 +33,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_TELEOP_MODEL,
-    _G1GrootCoordinator,
     unitree_g1_groot_wbc,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
@@ -46,6 +40,12 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1ManipulationModule,
     unitree_g1_teleop,
 )
+from dimos.robot.unitree.g1.control_config import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
+from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
@@ -193,7 +193,7 @@ def test_g1_teleop_wires_manipulation_to_existing_coordinator() -> None:
     assert manipulation_kwargs["visualization"] == ViserVisualizationConfig(host="0.0.0.0")
     assert (
         unitree_g1_teleop.remapping_map[("G1Manipulation", "_control_coordinator")]
-        is _G1GrootCoordinator
+        is G1GrootCoordinator
     )
 
 

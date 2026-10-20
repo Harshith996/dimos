@@ -64,9 +64,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
-    _G1GrootCoordinator,
     _unitree_g1_groot_wbc_core,
 )
+from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
 from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
@@ -151,6 +151,6 @@ unitree_g1_teleop = autoconnect(
     [
         (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
         (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
+        (G1ManipulationModule, "_control_coordinator", G1GrootCoordinator),
     ]
 )
