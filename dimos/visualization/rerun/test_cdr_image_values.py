@@ -15,9 +15,15 @@
 import numpy as np
 import pytest
 import rerun as rr
+
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import compressed_image_from_image, image_from_array, image_from_compressed, image_view
+from dimos.msgs.image import (
+    compressed_image_from_image,
+    image_from_array,
+    image_from_compressed,
+    image_view,
+)
 from dimos.msgs.time import time_from_seconds
 from dimos.visualization.rerun.cdr import image_archetype
 
@@ -32,8 +38,10 @@ def rgb_image():
         data, encoding="rgb8", header=Header(frame_id="cam", stamp=time_from_seconds(1234.5678))
     )
 
+
 def test_to_rerun_is_encoded_image(rgb_image) -> None:
     assert isinstance(image_archetype(compressed_image_from_image(rgb_image)), rr.EncodedImage)
+
 
 @pytest.mark.parametrize("codec", ["png", "jxl"])
 def test_compressed_uint16_depth_keeps_units_and_rerun_depth(codec: str) -> None:

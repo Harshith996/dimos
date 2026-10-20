@@ -42,9 +42,9 @@ from dimos.messages.sensor_msgs.msg import (
 )
 from dimos.messages.tf2_msgs.msg import TFMessage as CdrTFMessage
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.msgs.time import message_header, to_nanoseconds
 from dimos.visualization.rerun.cdr import camera_pinhole, generated_archetypes, message_frame_id

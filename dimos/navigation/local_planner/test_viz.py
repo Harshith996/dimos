@@ -169,4 +169,7 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
         render_plan(Path(header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)), poses=[]))
         is None
     )
-    assert set(motion_visual_override(body_dilate_m=-0.03)) == {"world/path", "world/ground_support"}
+    assert set(motion_visual_override(body_dilate_m=-0.03)) == {
+        "world/path",
+        "world/ground_support",
+    }
