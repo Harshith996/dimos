@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.core import cdr_transport
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.global_config import GlobalConfig
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.drive_trains.transport.adapter import TransportTwistAdapter
 from dimos.messages.builtin_interfaces.msg import Time
@@ -48,7 +48,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MathVector
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.robot.galaxea.r1pro import lio
-from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 from dimos.utils.testing.waiting import wait_until
 
@@ -256,21 +255,6 @@ def test_lio_mount_math_preserves_exact_header_and_source_ownership(wires, mocke
         )
         source.header.stamp.nanosec = 2
         assert value.header.stamp.nanosec == 1
-
-
-def test_r1_blueprint_chassis_pins_match_default_factory(monkeypatch):
-    blueprint = r1pro_control()
-    # The existing R1 control subtree selects Zenoh for both adapter and driver.
-    assert blueprint.global_config_overrides["transport"] == "zenoh"
-    monkeypatch.setattr(global_config, "transport", "zenoh")
-    with ExitStack() as cleanup:
-        for name, kind in [("cmd_vel", Twist), ("odom", PoseStamped)]:
-            pin = blueprint.transport_map[("chassis_" + name, kind)].build()
-            default = make_transport("/chassis/" + name, kind)
-            cleanup.callback(pin.stop)
-            cleanup.callback(default.stop)
-            assert pin.channel == default.channel
-            assert pin._backend == default._backend == "zenoh"
 
 
 def test_lio_static_mounts_are_canonical_without_loading_external_urdf(mocker):

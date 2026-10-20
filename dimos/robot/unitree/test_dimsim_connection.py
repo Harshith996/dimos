@@ -27,7 +27,6 @@ import numpy as np
 import pytest
 
 from dimos.core import cdr_transport
-from dimos.core.global_config import GlobalConfig
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2, PointField
@@ -36,6 +35,7 @@ from dimos.msgs.image import image_view
 from dimos.protocol.service.lcmservice import LCMConfig
 from dimos.robot.unitree import dimsim_connection
 from dimos.robot.unitree.dimsim_connection import DimSimConnection, _odom_to_tf
+from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.utils.testing.waiting import wait_until
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -171,10 +171,10 @@ def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose
 ):
     monkeypatch.setattr(cdr_transport, "LCMConfig", partial(LCMConfig, url="memq://"))
     process = mocker.patch.object(dimsim_connection, "DimSimProcess").return_value
-    config = GlobalConfig(transport="lcm", dimsim_headless=headless)
+    config = DimSimConfig(headless=headless)
     sample = _samples()[0]
     with ExitStack() as cleanup:
-        connection = DimSimConnection(config)
+        connection = DimSimConnection(config, transport="lcm")
         cleanup.callback(connection.stop)
         observed = []
         cleanup.callback(connection._tf_transport.subscribe(observed.append))
