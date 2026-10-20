@@ -20,6 +20,7 @@ import cv2
 from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.cdr_transport import CdrTransport
 from dimos.mapping.costmapper import CostMapper
@@ -41,6 +42,7 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyCloud
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.data import get_data
+from dimos.utils.threadpool import get_max_workers
 
 
 @pytest.fixture(params=[(0, 0), (-1, 999999999), (1700000000, 123456789)])
@@ -131,7 +133,9 @@ def test_initial_safe_radius_uses_owned_cells_without_changing_metadata(mapper_f
     assert grid.info.map_load_time == original.stamp
 
 
-def test_costmapper_actual_generated_ports_deliver_cdr_without_network(mapper_factory):
+def test_costmapper_actual_generated_ports_deliver_cdr_without_network(
+    mapper_factory, owned_scheduler
+):
     create, cleanup = mapper_factory
     global_wire = CdrTransport("costmap_global", PointCloud2, backend="lcm", url="memq://")
     merged_wire = CdrTransport("costmap_merged", PointCloud2, backend="lcm", url="memq://")
@@ -219,3 +223,12 @@ def test_generated_real_pointcloud_costmap_matches_existing_golden(
 
     np.testing.assert_array_equal(pixels, expected)
     assert actual.header == header
+
+
+@pytest.fixture
+def owned_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=get_max_workers())
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
+    yield scheduler
+    scheduler.executor.shutdown(wait=True)

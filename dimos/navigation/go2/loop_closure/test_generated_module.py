@@ -17,6 +17,8 @@ from threading import Event
 
 from dimos_cdrgen.registry import encode
 import numpy as np
+import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.cdr_transport import CdrTransport
 from dimos.messages.dimos_msgs.msg import LineSegments3D
@@ -27,6 +29,7 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.loop_closure.module import PGOVoxelMapper
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.utils.threadpool import get_max_workers
 
 
 class MemoryRPC(LCMRPC):
@@ -34,7 +37,7 @@ class MemoryRPC(LCMRPC):
         super().__init__(url="memq://", **kwargs)
 
 
-def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry():
+def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry(owned_scheduler):
     with ExitStack() as cleanup:
         module = PGOVoxelMapper(rpc_transport=MemoryRPC, telemetry=True)
         cleanup.callback(module.stop)
@@ -97,3 +100,12 @@ def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry():
         assert received["pgo_loops"].header == header and received["pgo_loops"].segments == []
         assert received["mapper_frame_ms"].data >= 0
         assert encode(cloud) == before
+
+
+@pytest.fixture
+def owned_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=get_max_workers())
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
+    yield scheduler
+    scheduler.executor.shutdown(wait=True)

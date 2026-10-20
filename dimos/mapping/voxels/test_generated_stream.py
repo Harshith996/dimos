@@ -20,6 +20,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import open3d.core as o3c
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.cdr_transport import CdrTransport
 from dimos.mapping.costmapper import CostMapper
@@ -36,6 +37,7 @@ from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyCloud
 from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.utils.threadpool import get_max_workers
 
 
 class MemoryRPC(LCMRPC):
@@ -174,7 +176,7 @@ def test_voxel_mapper_real_generated_ports_accumulate_over_cdr_memory_transport(
         assert keys(pointcloud_xyz(received[0])) == {(0, 0, 0)}
 
 
-def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr():
+def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr(owned_scheduler):
     with ExitStack() as cleanup:
         source_wire = CdrTransport("voxel_chain_source", PointCloud2, backend="lcm", url="memq://")
         map_wire = CdrTransport("voxel_chain_map", PointCloud2, backend="lcm", url="memq://")
@@ -215,3 +217,12 @@ def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr():
         assert received[0].header == cloud.header
         assert received[0].info.map_load_time == cloud.header.stamp
         assert 100 in received[0].data
+
+
+@pytest.fixture
+def owned_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=get_max_workers())
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
+    yield scheduler
+    scheduler.executor.shutdown(wait=True)

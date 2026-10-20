@@ -19,7 +19,6 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.core.global_config import GlobalConfig
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -138,7 +137,7 @@ def test_generated_path_distances_and_lookahead_match_existing_geometry(index, e
 
 def test_generated_path_clearance_detects_new_obstacle_using_retained_path_mask():
     path = make_path()
-    helper = PathClearance(GlobalConfig(robot_width=0.2), path)
+    helper = PathClearance(0.2, path)
     assert helper.is_obstacle_ahead()
     cells = np.zeros((15, 15), dtype=np.int8)
     clear = grid_from_cells(cells)

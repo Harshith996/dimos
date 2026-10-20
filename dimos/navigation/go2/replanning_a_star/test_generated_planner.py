@@ -22,7 +22,6 @@ import numpy as np
 import pytest
 
 from dimos.core.cdr_transport import CdrTransport
-from dimos.core.global_config import GlobalConfig
 from dimos.messages.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -74,7 +73,7 @@ def odometry_at(pose):
     ],
 )
 def test_generated_p_controller_retains_advance_and_rotate_then_drive_commands(target, expected):
-    controller = PController(GlobalConfig(), 0.55, 10)
+    controller = PController(False, 0.55, 10)
     command = controller.advance(np.array(target), pose_at())
     assert (command.linear.x, command.angular.z) == expected
     assert (command.linear.y, command.linear.z, command.angular.x, command.angular.y) == (
@@ -87,7 +86,7 @@ def test_generated_p_controller_retains_advance_and_rotate_then_drive_commands(t
 
 
 def test_generated_pd_controller_retains_derivative_and_acceleration_state():
-    controller = PdController(GlobalConfig(), 0.55, 10)
+    controller = PdController(False, 0.55, 10)
     assert controller.rotate(1).angular.z == -0.2
     assert controller.rotate(1).angular.z == 0
     controller.reset_errors()
