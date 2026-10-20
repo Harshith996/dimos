@@ -220,18 +220,35 @@ def test_actual_cdr_movement_ports_keep_teleop_priority_and_resume_nav_at_cooldo
         stops = []
         received = Event()
         nav_ack = Event()
+        cancelled = Event()
+        stopped = Event()
+        on_nav = manager._on_nav
+
+        def handle_nav(value):
+            on_nav(value)
+            nav_ack.set()
+
+        def cancel(value):
+            cancellations.append(value)
+            cancelled.set()
+
+        def stop(value):
+            stops.append(value)
+            stopped.set()
+
+        monkeypatch.setattr(manager, "_on_nav", handle_nav)
 
         def receive(value):
             commands.append(value)
             received.set()
 
         cleanup.callback(wires["cmd_vel"].subscribe(receive))
-        cleanup.callback(wires["goal"].subscribe(cancellations.append))
-        cleanup.callback(wires["stop_movement"].subscribe(stops.append))
+        cleanup.callback(wires["goal"].subscribe(cancel))
+        cleanup.callback(wires["stop_movement"].subscribe(stop))
         manager.start()
-        cleanup.callback(wires["nav_cmd_vel"].subscribe(lambda _: nav_ack.set()))
         wires["tele_cmd_vel"].publish(_twist(0.3))
         assert received.wait(5)
+        assert cancelled.wait(5) and stopped.wait(5)
         assert commands == [_twist(0.3)]
         assert stops == [Bool(data=True)]
         assert cancellations[0].header.stamp == time_from_nanoseconds(1700000000123456789)
