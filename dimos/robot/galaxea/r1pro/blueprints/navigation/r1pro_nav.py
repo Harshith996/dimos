@@ -25,7 +25,6 @@ from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomi
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_lidar_odometry,
@@ -38,7 +37,7 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_URDF_MANAGER_CONFIG,
     make_r1pro_model_config,
 )
-from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth
+from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
@@ -74,7 +73,7 @@ r1pro_nav = autoconnect(
         ]
     ),
     r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S).remappings(
-        [(Depth2DepthCloud, "depth_cloud", "lidar")]
+        [(HeadFloorPrior, "head_cloud", "lidar")]
     ),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
