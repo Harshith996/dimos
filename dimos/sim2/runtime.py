@@ -226,13 +226,14 @@ class SimulationRuntime:
             self._apply_update(update)
             return self._finish_change()
 
-    def _finish_change(self) -> SceneState:
+    def _finish_change(self, *, enable: bool = True) -> SceneState:
         self.episode += 1
         self.snapshots.set_episode(self.episode)
         mujoco.mj_forward(self.model, self.data)
         for binding in self.robots.values():
             binding.channel.set_episode(self.episode)
-            binding.enabled = True
+            if enable:
+                binding.enabled = True
             binding.action = None
             binding.command_active = False
             binding.applied_action_sequence = 0
@@ -299,7 +300,12 @@ class SimulationRuntime:
 
     def set_paused(self, paused: bool) -> None:
         with self.lock:
+            self._require_live()
+            resumed = self.paused and not paused
             self.paused = paused
+            if resumed:
+                # Re-anchor sensor clocks and discard pre-pause commands/history.
+                self._finish_change(enable=False)
 
     def _body_pose(self, body: int) -> Pose:
         w, x, y, z = self.data.xquat[body]

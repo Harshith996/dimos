@@ -140,3 +140,49 @@ def test_robot_cannot_replace_world_snapshot_channel(worlds):
     config = worlds().config
     with pytest.raises(ValueError, match="'world' is reserved"):
         replace(config, robots={"world": config.robots["left"]})
+
+
+@pytest.mark.parametrize("disabled", [False, True])
+def test_resume_preserves_pose_and_motor_enable_but_invalidates_old_work(
+    worlds, clients, mocker, disabled
+):
+    world = worlds()
+    client = clients(world, writable=True)
+    if disabled:
+        client.disable(observed=client.read())
+    else:
+        client.write_motors(
+            MotorCommandArray(q=[0.4, 850], kp=[10, 0], kd=[1, 0]), observed=client.read()
+        )
+    world.step()
+    old_frame = client.read()
+    pose = world.data.qpos.copy()
+    sim_time = float(world.data.time)
+    previous = world.snapshots.read_observation()
+    world.set_paused(True)
+    mocker.patch("dimos.sim2.runtime.time.time", return_value=previous.values["wall_time"][0] + 10)
+
+    world.set_paused(False)
+
+    current = world.snapshots.read_observation()
+    assert current.metadata.episode_id == previous.metadata.episode_id + 1
+    assert current.metadata.sim_time == sim_time
+    assert current.values["wall_time"][0] == previous.values["wall_time"][0] + 10
+    np.testing.assert_array_equal(world.data.qpos, pose)
+    assert world.robots["left"].enabled is not disabled
+    assert not world.robots["left"].command_active
+    with pytest.raises(RuntimeError, match="reset"):
+        client.disable(observed=old_frame)
+    world.set_paused(False)
+    assert world.episode == current.metadata.episode_id
+    world.step()
+    assert world.robots["left"].applied_action_sequence == 0
+    assert world.robots["left"].enabled is not disabled
+
+
+def test_pause_cannot_restore_faulted_world(worlds):
+    world = worlds()
+    world.snapshots.set_lifecycle("faulted")
+    with pytest.raises(RuntimeError, match="faulted"):
+        world.set_paused(False)
+    assert world.snapshots.lifecycle == "faulted"
