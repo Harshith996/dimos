@@ -165,8 +165,8 @@ jobs:
           .viewer-build/bin/python -m pip install '.[message-build]' build
           .viewer-build/bin/python -m build --wheel --no-isolation
           uv venv .viewer-review --python 3.12 --seed
-          .viewer-review/bin/python -m pip install dist/*.whl pytest pytest-mock pytest-env pytest-asyncio
-          .viewer-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/visualization/rerun/test_cdr.py" "$PWD/dimos/visualization/rerun/test_cdr_e2e.py" "$PWD/dimos/visualization/rerun/test_cdr_image_values.py" "$PWD/dimos/visualization/rerun/test_cdr_sensor_docs.py" "$PWD/dimos/memory/cli/test_render.py" "$PWD/dimos/navigation/global_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_profile.py"
+          .viewer-review/bin/python -m pip install 'dimos[web,visualization]' dist/*.whl pytest pytest-mock pytest-env pytest-asyncio
+          .viewer-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/visualization/rerun/test_cdr.py" "$PWD/dimos/visualization/rerun/test_cdr_e2e.py" "$PWD/dimos/visualization/rerun/test_cdr_image_values.py" "$PWD/dimos/visualization/rerun/test_cdr_sensor_docs.py" "$PWD/dimos/memory/cli/test_render.py" "$PWD/dimos/navigation/global_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_profile.py"
 
   clean-generator:
     strategy:
