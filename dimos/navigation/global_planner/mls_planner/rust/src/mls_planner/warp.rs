@@ -18,7 +18,7 @@
 
 use super::*;
 use crate::columns::ColumnEdit;
-use crate::reform::{Tile, Warp};
+use crate::reform::{landing_keys, Tile, Warp};
 use crate::voxel::surface_point_xyz;
 
 /// A point's place before and after a warp.
@@ -208,11 +208,16 @@ impl Planner {
         report.warp_ms = ms_since(stage);
 
         let (moved_voxels, rest) = warped.split_at(voxels.len());
+        let moving: AHashSet<VoxelKey> = voxels.iter().copied().collect();
+        let landed = landing_keys(&voxels, moved_voxels, vs, |k| {
+            self.voxel_map.contains(k) && !moving.contains(k)
+        });
+        drop(moving);
         // Each warped voxel's point after the move, off the center of the voxel it lands in.
         let residuals: Vec<(VoxelKey, [f32; 3])> = moved_voxels
             .iter()
-            .map(|w| {
-                let to = voxelize((w[0], w[1], w[2]), vs);
+            .zip(&landed)
+            .map(|(w, &to)| {
                 let c = [to.0, to.1, to.2].map(|k| (k as f32 + 0.5) * vs);
                 (to, [w[0] - c[0], w[1] - c[1], w[2] - c[2]])
             })
@@ -235,12 +240,12 @@ impl Planner {
         report.rigid_voxels = rigid_tile_voxels(&voxels, moved_voxels, vs, warp);
         let moved_count = voxels
             .par_iter()
-            .zip(moved_voxels.par_iter())
-            .filter(|(k, w)| voxelize((w[0], w[1], w[2]), vs) != **k)
+            .zip(landed.par_iter())
+            .filter(|(k, to)| k != to)
             .count();
         if moved_count as f64 > warp.rebuild_fraction() * self.voxel_map.len() as f64 {
             let stage = Instant::now();
-            self.rekey_voxels(&voxels, moved_voxels, vs);
+            self.rekey_voxels(&voxels, landed);
             self.set_residuals(&voxels, &residuals);
             report.voxels_moved = moved_count;
             report.voxel_ms = ms_since(stage);
@@ -253,7 +258,7 @@ impl Planner {
         }
 
         let stage = Instant::now();
-        let edits = self.warp_voxels(&voxels, moved_voxels, vs, &mut report);
+        let edits = self.warp_voxels(&voxels, &landed, &mut report);
         self.set_residuals(&voxels, &residuals);
         report.voxel_ms = ms_since(stage);
 
@@ -293,11 +298,7 @@ impl Planner {
 
     /// Move every warped voxel to its new key at once, for a rebuild: each
     /// leaves its old key and lands in the new one with its time.
-    fn rekey_voxels(&mut self, voxels: &[VoxelKey], warped: &[[f32; 3]], vs: f32) {
-        let landed: Vec<VoxelKey> = warped
-            .par_iter()
-            .map(|w| voxelize((w[0], w[1], w[2]), vs))
-            .collect();
+    fn rekey_voxels(&mut self, voxels: &[VoxelKey], landed: Vec<VoxelKey>) {
         let times: Vec<f32> = match &self.voxel_times {
             Some(t) => voxels
                 .iter()
@@ -354,15 +355,13 @@ impl Planner {
     fn warp_voxels(
         &mut self,
         voxels: &[VoxelKey],
-        warped: &[[f32; 3]],
-        vs: f32,
+        landed_at: &[VoxelKey],
         report: &mut WarpReport,
     ) -> VoxelEdits {
         let mut vacated: AHashSet<VoxelKey> = AHashSet::new();
         // Each landing voxel keeps the earliest time of those landing in it.
         let mut landed: AHashMap<VoxelKey, f32> = AHashMap::new();
-        for (from, w) in voxels.iter().zip(warped) {
-            let to = voxelize((w[0], w[1], w[2]), vs);
+        for (from, &to) in voxels.iter().zip(landed_at) {
             if to == *from {
                 continue;
             }

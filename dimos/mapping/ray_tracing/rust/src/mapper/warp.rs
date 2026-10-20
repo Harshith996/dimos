@@ -192,7 +192,11 @@ impl Mapper {
         report.warp_ms = ms_since(stage);
 
         let stage = Instant::now();
-        let moves = voxel_moves(&keys, &means, &warped, vs);
+        let moving: ahash::AHashSet<VoxelKey> = keys.iter().copied().collect();
+        let voxels = &self.map.voxels;
+        let moves = voxel_moves(&keys, &means, &warped, vs, |k| {
+            voxels.contains_key(k) && !moving.contains(k)
+        });
         report.voxels_moved = moves.par_iter().filter(|m| m.from != m.to).count();
         report.rebuilt =
             report.voxels_moved as f64 > warp.rebuild_fraction() * self.map.voxels.len() as f64;

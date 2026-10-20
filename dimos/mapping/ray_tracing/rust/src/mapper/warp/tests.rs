@@ -165,7 +165,7 @@ fn voxels_land_where_plain_fast_reform_puts_them() {
     let times: Vec<f64> = keys.iter().map(|k| mapper.voxel_time(k)).collect();
     let means = mapper.map().voxel_means(&keys, VOXEL);
     let reference = warp_positions(&means, Some(&times), &warp.graph_delta().to_blend_arrays());
-    let expected = voxel_moves(&keys, &means, &reference, VOXEL);
+    let expected = voxel_moves(&keys, &means, &reference, VOXEL, |_| false);
     mapper.apply_warp(&warp);
     let landed = expected
         .iter()

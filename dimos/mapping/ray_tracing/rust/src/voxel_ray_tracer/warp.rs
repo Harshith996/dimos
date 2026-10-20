@@ -183,17 +183,20 @@ impl VoxelMap {
 /// Where each voxel lands when its point `from_points[i]` warps to `warped[i]`:
 /// the key of the warped point, and how far the old center lands from the new
 /// one, which re-centers the moments.
+/// Each voxel's move to the key its warped point lands in (see
+/// `reform::landing_keys`); `stays` says which keys hold voxels that do not move.
 pub fn voxel_moves(
     keys: &[VoxelKey],
     from_points: &[[f32; 3]],
     warped: &[[f32; 3]],
     voxel_size: f32,
+    stays: impl Fn(&VoxelKey) -> bool + Sync,
 ) -> Vec<VoxelMove> {
-    let inv = 1.0 / voxel_size;
+    let landed = crate::reform::landing_keys(keys, warped, voxel_size, stays);
     keys.par_iter()
+        .zip(landed.par_iter())
         .zip(from_points.par_iter().zip(warped.par_iter()))
-        .map(|(&from, (p, w))| {
-            let to = world_to_voxel(w[0], w[1], w[2], inv);
+        .map(|((&from, &to), (p, w))| {
             let (ox, oy, oz) = voxel_center(from, voxel_size);
             let (cx, cy, cz) = voxel_center(to, voxel_size);
             VoxelMove {

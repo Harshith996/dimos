@@ -143,7 +143,7 @@ fn moves_land_by_the_warped_center() {
     let centers = voxel_centers(&keys, 0.5);
     assert_eq!(centers[1], [-0.25, 1.25, 1.75]);
     let warped = [[0.6, 0.2, 0.2], [-0.25, 1.25, 1.75]];
-    let moves = voxel_moves(&keys, &centers, &warped, 0.5);
+    let moves = voxel_moves(&keys, &centers, &warped, 0.5, |_| false);
     assert_eq!(moves[0].to, (1, 0, 0));
     assert!((moves[0].offset - Vector3::new(-0.15, -0.05, -0.05)).norm() < 1e-6);
     assert_eq!((moves[1].from, moves[1].to), ((-1, 2, 3), (-1, 2, 3)));

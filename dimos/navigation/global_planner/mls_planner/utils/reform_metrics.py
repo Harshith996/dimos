@@ -49,7 +49,7 @@ import psutil
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
-from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
+from dimos.mapping.ray_tracing.voxel_map import ReformWarp, VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.robot.unitree.go2.nav_3d_config import mls_planner_config, ray_tracing_config
 
@@ -324,15 +324,36 @@ def lockstep_modules() -> tuple[VoxelRayMapper, MLSPlanner]:
     return tracer, planner
 
 
+def final_blend(keyframes: np.ndarray, sigma_m: float, time_sigma_s: float) -> ReformWarp:
+    """fast-reform's warp from every keyframe's raw pose to its final corrected one."""
+    raw_rotation = Rotation.from_quat(keyframes["raw"][:, 3:])
+    delta = Rotation.from_quat(keyframes["corrected"][:, 3:]) * raw_rotation.inv()
+    records = np.zeros(len(keyframes), CLOSURE_RECORD)
+    records["xyz"] = keyframes["raw"][:, :3]
+    records["id"] = np.arange(len(keyframes))
+    records["ts"] = keyframes["ts"]
+    records["q"] = keyframes["raw"][:, 3:]
+    records["dq"] = delta.as_quat()
+    records["dt"] = keyframes["corrected"][:, :3] - delta.apply(keyframes["raw"][:, :3])
+    poses = np.zeros(len(records), POSE_RECORD)
+    for name in ("xyz", "id", "ts", "q"):
+        poses[name] = records[name]
+    return ReformWarp(poses.tobytes(), records.tobytes(), sigma_m, time_sigma_s, 0.0)
+
+
 def lockstep(
-    db: Path, keyframes: np.ndarray, closures: list[tuple[float, np.ndarray]] | None
+    db: Path,
+    keyframes: np.ndarray,
+    closures: list[tuple[float, np.ndarray]] | None,
+    blended: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """Every scan in order through the module code with no timing or drops.
 
     closures given (A, the reform path): each scan is placed by the correction in
     force when it was taken, GSC's closures are applied as they happened, and the
     ray tracer and planner warp through them. closures None (B, the rebuild): each
-    scan is placed by its keyframe's FINAL correction and nothing is warped.
+    scan is placed by its keyframe's FINAL correction and nothing is warped; with
+    blended (B'), by fast-reform's blend of all the final corrections at its time.
     Returns the ray tracer's healthy voxel centers, the planner's surface and the
     closure reports.
     """
@@ -352,6 +373,15 @@ def lockstep(
         keyframes["raw"][:, :3]
     )
     raw_rotation = Rotation.from_quat(keyframes["raw"][:, 3:])
+    blend = (
+        final_blend(
+            keyframes,
+            tracer_params.reform_blend_sigma_m,
+            tracer_params.reform_blend_time_sigma_s,
+        )
+        if blended
+        else None
+    )
     offset = (Rotation.identity(), np.zeros(3))
     reports: list[dict] = []
     next_closure = 0
@@ -421,13 +451,18 @@ def lockstep(
             r_latest, t_latest = pose(odom[latest][1])
             r_near, t_near = pose(odom[nearest][1])
             world = r_near.apply(r_latest.inv().apply(points - t_latest)) + t_near
-            if closures is not None:
+            if blend is not None:
+                corrected = blend.apply(world.astype(np.float32), obs.ts)
+                origin = blend.apply(t_near[None].astype(np.float32), obs.ts)[0].astype(float)
+            elif closures is not None:
                 rotation, translation = offset
+                corrected = (rotation.apply(world) + translation).astype(np.float32)
+                origin = rotation.apply(t_near) + translation
             else:
                 k = max(int(np.searchsorted(keyframes["ts"], obs.ts, side="right")) - 1, 0)
                 rotation, translation = final_rotation[k], final_translation[k]
-            corrected = (rotation.apply(world) + translation).astype(np.float32)
-            origin = rotation.apply(t_near) + translation
+                corrected = (rotation.apply(world) + translation).astype(np.float32)
+                origin = rotation.apply(t_near) + translation
             tracer.set_clock(obs.ts)
             tracer.add_frame_world(corrected, tuple(map(float, origin)))
             cx, cy, radius, z_min, z_max = tracer.take_local_bounds()
@@ -453,6 +488,7 @@ def lockstep_score(db: Path, name: str, out: Path) -> dict:
     b_identity, b_identity_surface, _ = lockstep(db, identity, None)
     a, a_surface, reports = lockstep(db, keyframes, closures)
     b, b_surface, _ = lockstep(db, keyframes, None)
+    b_blend, b_blend_surface, _ = lockstep(db, keyframes, None, blended=True)
     metrics = {
         "recording": name,
         "keyframes": len(keyframes),
@@ -463,6 +499,12 @@ def lockstep_score(db: Path, name: str, out: Path) -> dict:
         },
         "tracer_vs_rebuild": agreement(b, a, voxel),
         "surface_vs_rebuild": agreement(b_surface, a_surface, voxel),
+        "tracer_vs_blended_rebuild": agreement(b_blend, a, voxel),
+        "surface_vs_blended_rebuild": agreement(b_blend_surface, a_surface, voxel),
+        "blended_rebuild_vs_rebuild": {
+            "tracer": agreement(b, b_blend, voxel),
+            "surface": agreement(b_surface, b_blend_surface, voxel),
+        },
         "closures_applied": {
             "tracer": sum(r["tracer"] is not None for r in reports),
             "planner": sum(r["planner"] is not None for r in reports),

@@ -914,6 +914,91 @@ impl Warp {
     }
 }
 
+/// A voxel grid key.
+pub type Key = (i32, i32, i32);
+
+fn key_of(p: &[f32; 3], voxel_size: f32) -> Key {
+    let inv = 1.0 / voxel_size;
+    (
+        (p[0] * inv).floor() as i32,
+        (p[1] * inv).floor() as i32,
+        (p[2] * inv).floor() as i32,
+    )
+}
+
+fn distance2_to_center(p: &[f32; 3], k: Key, voxel_size: f32) -> f32 {
+    let c = [k.0, k.1, k.2].map(|v| (v as f32 + 0.5) * voxel_size);
+    (p[0] - c[0]).powi(2) + (p[1] - c[1]).powi(2) + (p[2] - c[2]).powi(2)
+}
+
+fn neighbors(a: Key, b: Key) -> bool {
+    (a.0 - b.0).abs() <= 1 && (a.1 - b.1).abs() <= 1 && (a.2 - b.2).abs() <= 1
+}
+
+/// The key each warped voxel lands in. Re-quantizing a smoothly warped grid
+/// sends some neighbors to one key, which would merge them and thin the map a
+/// little at every closure; so where a voxel's key is taken by a former
+/// neighbor (another mover, or a voxel that stays: `stays(key)`), it takes the
+/// free key next to it nearest its point. Voxels that were apart before the
+/// warp and meet in one key are a surface the closure brings together, and merge.
+pub fn landing_keys(
+    from: &[Key],
+    warped: &[[f32; 3]],
+    voxel_size: f32,
+    stays: impl Fn(&Key) -> bool + Sync,
+) -> Vec<Key> {
+    let preferred: Vec<Key> = warped.par_iter().map(|p| key_of(p, voxel_size)).collect();
+    let mut order: Vec<usize> = (0..from.len()).collect();
+    order.par_sort_unstable_by(|&a, &b| {
+        preferred[a].cmp(&preferred[b]).then_with(|| {
+            distance2_to_center(&warped[a], preferred[a], voxel_size)
+                .total_cmp(&distance2_to_center(&warped[b], preferred[b], voxel_size))
+                .then_with(|| from[a].cmp(&from[b]))
+        })
+    });
+    let mut landed = preferred.clone();
+    let mut claimed: AHashMap<Key, Key> = AHashMap::with_capacity(from.len());
+    let mut displaced: Vec<usize> = Vec::new();
+    for (n, &i) in order.iter().enumerate() {
+        let key = preferred[i];
+        if (n == 0 || preferred[order[n - 1]] != key) && stays(&key) {
+            claimed.insert(key, key);
+        }
+        let holder = claimed.get(&key).copied();
+        match holder {
+            None => {
+                claimed.insert(key, from[i]);
+            }
+            Some(held_from) if neighbors(held_from, from[i]) => displaced.push(i),
+            Some(_) => {}
+        }
+    }
+    displaced.sort_unstable_by_key(|&i| from[i]);
+    for i in displaced {
+        let at = preferred[i];
+        let mut free: Option<(f32, Key)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let k = (at.0 + dx, at.1 + dy, at.2 + dz);
+                    if claimed.contains_key(&k) || stays(&k) {
+                        continue;
+                    }
+                    let d = distance2_to_center(&warped[i], k, voxel_size);
+                    if free.is_none_or(|(best, _)| d < best) {
+                        free = Some((d, k));
+                    }
+                }
+            }
+        }
+        if let Some((_, k)) = free {
+            claimed.insert(k, from[i]);
+            landed[i] = k;
+        }
+    }
+    landed
+}
+
 fn tile_of(x: f64, y: f64, edge: f64) -> Tile {
     ((x / edge).floor() as i32, (y / edge).floor() as i32)
 }
@@ -921,6 +1006,54 @@ fn tile_of(x: f64, y: f64, edge: f64) -> Tile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rotated_grid_keeps_every_voxel() {
+        let vs = 0.1_f32;
+        let from: Vec<Key> = (0..40)
+            .flat_map(|x| (0..40).map(move |y| (x, y, 0)))
+            .collect();
+        let (s, c) = 0.3_f32.sin_cos();
+        let warped: Vec<[f32; 3]> = from
+            .iter()
+            .map(|k| {
+                let (x, y) = ((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+                [c * x - s * y + 7.0, s * x + c * y - 3.0, 0.05]
+            })
+            .collect();
+        let plain: AHashSet<Key> = warped.iter().map(|p| key_of(p, vs)).collect();
+        assert!(
+            plain.len() < from.len() * 95 / 100,
+            "the plain re-quantization merges"
+        );
+        let landed = landing_keys(&from, &warped, vs, |_| false);
+        let unique: AHashSet<Key> = landed.iter().copied().collect();
+        assert_eq!(unique.len(), from.len());
+        for (p, k) in warped.iter().zip(&landed) {
+            assert!(distance2_to_center(p, *k, vs).sqrt() <= 1.5 * vs);
+        }
+    }
+
+    #[test]
+    fn voxels_that_were_apart_still_merge() {
+        let vs = 0.1_f32;
+        let from = [(0, 0, 0), (50, 0, 0)];
+        let warped = [[0.05, 0.05, 0.05], [0.06, 0.05, 0.05]];
+        assert_eq!(
+            landing_keys(&from, &warped, vs, |_| false),
+            vec![(0, 0, 0); 2]
+        );
+        let stays = |k: &Key| *k == (0, 0, 0);
+        assert_eq!(
+            landing_keys(&from[1..], &warped[1..], vs, stays),
+            vec![(0, 0, 0)]
+        );
+        let neighbor = [(1, 0, 0)];
+        assert_ne!(
+            landing_keys(&neighbor, &warped[1..], vs, |k| *k == (0, 0, 0))[0],
+            (0, 0, 0)
+        );
+    }
 
     fn yaw(rad: f64) -> Quat {
         Quat::new(0.0, 0.0, (rad / 2.0).sin(), (rad / 2.0).cos())
