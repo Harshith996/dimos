@@ -104,33 +104,20 @@ class HeadFloorPrior(Module):
         if floor_from_camera is None or world_from_camera is None:
             return
         points = cloud.points_f32().astype(np.float64)
-        in_floor = _apply(floor_from_camera, points)
-        camera_z = floor_from_camera[:3, 3][2]
         scans = [
             scan for scan in self._floor_scans if scan[0] >= cloud.ts - self.config.lidar_history_s
         ]
         if scans:
-            level = float(np.median([scan[2] for scan in scans]))
-            seen = np.concatenate([scan[1] for scan in scans] + [world_from_camera[:2, 3][None]])
-            # Rays heading down: how far each must stretch (or shrink) to end on the floor, and where it would.
-            down = np.flatnonzero(in_floor[:, 2] < camera_z - 1e-3)
-            scale = (level - camera_z) / (in_floor[down, 2] - camera_z)
-            hits = points[down] * scale[:, None]
-            distance, _ = cKDTree(seen).query(
-                _apply(world_from_camera, hits)[:, :2],
-                distance_upper_bound=self.config.floor_reach_m,
+            seen = np.concatenate([scan[1] for scan in scans])
+            points = onto_floor(
+                points,
+                floor_from_camera,
+                world_from_camera,
+                float(np.median([scan[2] for scan in scans])),
+                seen,
+                self.config,
             )
-            near = np.isfinite(distance)
-            down, scale, hits = down[near], scale[near], hits[near]
-            floor_like = grow_floor(
-                points[down],
-                np.log(scale),
-                in_floor[down, 2] - level,
-                self.config.floor_tolerance_m,
-                self.config.floor_smoothness,
-            )
-            points[down[floor_like]] = hits[floor_like]
-            in_floor[down[floor_like], 2] = level
+        in_floor = _apply(floor_from_camera, points)
         keep = (in_floor[:, 2] >= self.config.min_height_m) & (
             in_floor[:, 2] <= self.config.max_height_m
         )
@@ -150,6 +137,39 @@ class HeadFloorPrior(Module):
             warn=False,
         )
         return None if transform is None else transform.to_matrix()
+
+
+def onto_floor(
+    points: np.ndarray,
+    floor_from_camera: np.ndarray,
+    world_from_camera: np.ndarray,
+    level: float,
+    seen: np.ndarray,
+    config: HeadFloorPriorConfig,
+) -> np.ndarray:
+    """Camera-frame points with the floor-like ones slid along their rays onto the floor at height `level` in
+    floor_frame, where that lands within floor_reach_m of `seen` (world xy of lidar floor) or of the camera."""
+    points = points.copy()
+    in_floor = _apply(floor_from_camera, points)
+    camera_z = floor_from_camera[2, 3]
+    # Rays heading down: how far each must stretch (or shrink) to end on the floor, and where it would.
+    down = np.flatnonzero(in_floor[:, 2] < camera_z - 1e-3)
+    scale = (level - camera_z) / (in_floor[down, 2] - camera_z)
+    hits = points[down] * scale[:, None]
+    distance, _ = cKDTree(np.concatenate([seen, world_from_camera[:2, 3][None]])).query(
+        _apply(world_from_camera, hits)[:, :2], distance_upper_bound=config.floor_reach_m
+    )
+    near = np.isfinite(distance)
+    down, scale, hits = down[near], scale[near], hits[near]
+    floor_like = grow_floor(
+        points[down],
+        np.log(scale),
+        in_floor[down, 2] - level,
+        config.floor_tolerance_m,
+        config.floor_smoothness,
+    )
+    points[down[floor_like]] = hits[floor_like]
+    return points
 
 
 def grow_floor(
