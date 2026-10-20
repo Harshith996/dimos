@@ -142,7 +142,7 @@ def test_generated_empty_and_missing_points_keep_zero_source_stamp():
     assert result[0].ts == 123
 
 
-def test_voxel_mapper_real_generated_ports_accumulate_over_cdr_memory_transport():
+def test_voxel_mapper_real_generated_ports_accumulate_over_cdr_memory_transport(owned_scheduler):
     with ExitStack() as cleanup:
         incoming = CdrTransport("voxel_input", PointCloud2, backend="lcm", url="memq://")
         outgoing = CdrTransport("voxel_map", PointCloud2, backend="lcm", url="memq://")
