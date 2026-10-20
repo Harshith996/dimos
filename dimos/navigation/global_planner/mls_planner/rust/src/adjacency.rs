@@ -54,11 +54,25 @@ pub struct SurfaceCells {
     edges: Vec<Vec<Edge>>,
     by_coord: AHashMap<VoxelKey, CellId>,
     free: Vec<CellId>,
+    /// Whether every id was appended in coordinate order, as a full build does,
+    /// so ids order cells the way coordinates do. A reused slot breaks it.
+    coord_ordered: bool,
 }
 
 impl SurfaceCells {
     pub fn is_empty(&self) -> bool {
         self.by_coord.is_empty()
+    }
+
+    /// Forget that ids follow coordinates, so searches take the general path.
+    #[cfg(test)]
+    pub fn unorder(&mut self) {
+        self.coord_ordered = false;
+    }
+
+    /// Whether ids order live cells the way their coordinates do.
+    pub fn coord_ordered(&self) -> bool {
+        self.coord_ordered
     }
 
     /// Total slot count, including tombstoned cells.
@@ -86,6 +100,7 @@ impl SurfaceCells {
         self.coord.clear();
         self.by_coord.clear();
         self.free.clear();
+        self.coord_ordered = true;
         for e in self.edges.iter_mut() {
             e.clear();
         }
@@ -104,9 +119,17 @@ impl SurfaceCells {
         }
         let id = if let Some(free_id) = self.free.pop() {
             self.coord[free_id as usize] = k;
+            self.coord_ordered = false;
             free_id
         } else {
             let id = self.coord.len() as CellId;
+            if self
+                .coord
+                .last()
+                .is_some_and(|&last| last == TOMBSTONE || last >= k)
+            {
+                self.coord_ordered = false;
+            }
             self.coord.push(k);
             self.edges.push(Vec::new());
             id
