@@ -26,6 +26,7 @@ import math
 from pathlib import Path
 from threading import Event, Thread
 import time
+from typing import Any
 
 import mujoco
 import mujoco.viewer
@@ -368,6 +369,10 @@ class SimWorld(Module):
     _reset: tuple[float, float, float, float] | None = None
     _swap: tuple[Sim, Event] | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._started = Event()
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -377,6 +382,7 @@ class SimWorld(Module):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
         self._thread = Thread(target=self._run, daemon=True)
         self._thread.start()
+        self._started.set()
 
     @rpc
     def stop(self) -> None:
@@ -393,6 +399,8 @@ class SimWorld(Module):
     @rpc
     def load_scene(self, family: Family, seed: int, params: Params) -> None:
         """Swap in the scene with the robot at its start, returning once the sim runs it."""
+        if not self._started.wait(SCENE_SWAP_TIMEOUT_S):
+            raise TimeoutError("the world did not start")
         loaded = Event()
         self._swap = (self._load(family, seed, params), loaded)
         if not loaded.wait(SCENE_SWAP_TIMEOUT_S):

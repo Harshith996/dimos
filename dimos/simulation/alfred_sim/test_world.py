@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from threading import Thread
 import time
 
 import mujoco
@@ -36,7 +37,7 @@ from dimos.simulation.alfred_sim.world import (
     SimAlfredWorld,
 )
 from dimos.simulation.scenes.procedural import Scene, block, office
-from dimos.simulation.sim_world.world import Sim
+from dimos.simulation.sim_world.world import SCENE_SWAP_TIMEOUT_S, Sim
 
 pytestmark = pytest.mark.self_hosted
 
@@ -142,5 +143,39 @@ def test_the_world_swaps_scenes_and_hands_out_its_body_premap_and_model(tmp_path
         world.export_model(tmp_path / "robot.xml")
         model = mujoco.MjSpec.from_file(str(tmp_path / "robot.xml")).compile()
         assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE and model.nu == 0
+    finally:
+        world.stop()
+
+
+class _BuildsAfterStart(SimAlfredWorld):
+    """A world that can only build a scene once start has run, as SimGo2World loads its policy."""
+
+    def start(self) -> None:
+        self._can_build = True
+        super().start()
+
+    def _build(self, scene: Scene, seed: int) -> Sim:
+        assert self._can_build
+        return super()._build(scene, seed)
+
+
+def test_a_scene_asked_for_before_start_loads_once_the_world_starts() -> None:
+    world = _BuildsAfterStart()
+    world.cmd_vel.transport = LCMTransport("/test_alfred_sim_world/early/cmd_vel", Twist)
+    errors: list[Exception] = []
+
+    def load() -> None:
+        try:
+            world.load_scene("block", 2, {})
+        except Exception as error:
+            errors.append(error)
+
+    early = Thread(target=load)
+    early.start()
+    time.sleep(0.2)
+    world.start()
+    try:
+        early.join(timeout=SCENE_SWAP_TIMEOUT_S)
+        assert not early.is_alive() and errors == []
     finally:
         world.stop()
