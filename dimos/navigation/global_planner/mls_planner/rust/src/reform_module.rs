@@ -79,10 +79,6 @@ pub struct ReformConfig {
     /// waits for a later closure, so near no-op closures cost nothing.
     #[validate(range(min = 0.0))]
     pub reform_min_shift_m: f64,
-    /// Past this fraction of the voxels moving in one closure, the graph is
-    /// rebuilt from the warped voxels instead of repaired around them.
-    #[validate(range(min = 0.0))]
-    pub reform_rebuild_fraction: f64,
     /// Where to write the voxels and surface (little-endian f32 xyz, `.voxels` / `.surface`) every 10 s, empty for never.
     pub dump_path: String,
 }
@@ -125,7 +121,6 @@ impl ReformConfig {
             blend_sigma_m: self.reform_blend_sigma_m,
             blend_time_sigma_s: self.reform_blend_time_sigma_s,
             min_shift_m: self.reform_min_shift_m,
-            rebuild_fraction: self.reform_rebuild_fraction,
         }
     }
 }

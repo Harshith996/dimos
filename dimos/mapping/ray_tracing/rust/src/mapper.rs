@@ -121,6 +121,9 @@ impl Mapper {
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
         let pool = Arc::clone(&self.pool);
+        if self.voxel_times.is_some() {
+            pool.install(|| self.rebin_local(origin));
+        }
         self.live = pool.install(|| update_map(&mut self.map, origin, &points, &self.config));
         if let Some(times) = &self.voxel_times {
             times.stamp_hits(&mut self.map.voxels, &self.live.coarse);

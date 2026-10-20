@@ -246,7 +246,7 @@ impl VoxelRayMapper {
     /// Warp the map through raw loop_closure_event records (68 bytes each), as
     /// reform_ray_tracing does. None when no keyframe moved past min_shift_m,
     /// else a dict of what the warp did and cost.
-    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, rebuild_fraction = 1.0))]
+    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04))]
     fn apply_loop_closure<'py>(
         &mut self,
         py: Python<'py>,
@@ -254,7 +254,6 @@ impl VoxelRayMapper {
         blend_sigma_m: f64,
         blend_time_sigma_s: f64,
         min_shift_m: f64,
-        rebuild_fraction: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         if !records.len().is_multiple_of(68) {
             return Err(PyValueError::new_err(
@@ -267,7 +266,6 @@ impl VoxelRayMapper {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
-            rebuild_fraction,
         };
         let Some(warp) = self.reform.closure(&moved, &params) else {
             return Ok(None);
@@ -276,8 +274,7 @@ impl VoxelRayMapper {
         let report = py.allow_threads(|| mapper.apply_warp(&warp));
         let out = PyDict::new(py);
         out.set_item("voxels_warped", report.voxels_warped)?;
-        out.set_item("voxels_moved", report.voxels_moved)?;
-        out.set_item("rebuilt", report.rebuilt)?;
+        out.set_item("voxels_rebinned", report.voxels_rebinned)?;
         out.set_item("warp_ms", report.warp_ms)?;
         out.set_item("voxel_ms", report.voxel_ms)?;
         out.set_item("keyframes_moved", warp.moved_keyframes())?;
@@ -494,7 +491,6 @@ impl ReformWarp {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
-            rebuild_fraction: 1.0,
         };
         let warp = state
             .closure(&moved, &params)

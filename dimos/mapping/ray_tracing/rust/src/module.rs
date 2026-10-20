@@ -450,8 +450,7 @@ impl Worker {
                     median_shift_m,
                     max_shift_m,
                     voxels_warped = report.voxels_warped,
-                    voxels_moved = report.voxels_moved,
-                    decision = if report.rebuilt { "rebuild" } else { "repair" },
+                    voxels_rebinned = report.voxels_rebinned,
                     warp_ms = report.warp_ms,
                     voxel_ms = report.voxel_ms,
                     "Warped the map through a loop closure."

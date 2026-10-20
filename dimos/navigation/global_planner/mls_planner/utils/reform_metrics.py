@@ -412,17 +412,12 @@ def lockstep(
                     blend_time_sigma_s=tracer_params.reform_blend_time_sigma_s,
                     min_shift_m=tracer_params.reform_min_shift_m,
                 )
-                t = tracer.apply_loop_closure(
-                    records.tobytes(),
-                    rebuild_fraction=tracer_params.reform_rebuild_fraction,
-                    **common,
-                )
+                t = tracer.apply_loop_closure(records.tobytes(), **common)
                 p = planner.apply_loop_closure(
                     records.tobytes(),
                     blend_sigma_m=planner_params.reform_blend_sigma_m,
                     blend_time_sigma_s=planner_params.reform_blend_time_sigma_s,
                     min_shift_m=planner_params.reform_min_shift_m,
-                    rebuild_fraction=planner_params.reform_rebuild_fraction,
                 )
                 reports.append(
                     {

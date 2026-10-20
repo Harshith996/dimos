@@ -36,10 +36,6 @@ class ReformRayTracingVoxelMapConfig(RayTracingVoxelMapConfig):
     # A keyframe whose correction moves its surroundings less than this waits
     # for a later closure. Half a voxel moves no voxel.
     reform_min_shift_m: float = 0.04
-    # Past this fraction of the voxels moving in one closure, the map is
-    # rebuilt from the warped voxels instead of repaired around them: a repair
-    # touches each mover's neighborhood about three times, a rebuild once.
-    reform_rebuild_fraction: float = 0.25
     # Where to write the module's map state every 10 s for offline checks, empty for never.
     dump_path: str = ""
 

@@ -107,48 +107,56 @@ impl VoxelMap {
         }
     }
 
-    /// Rebuild the map with `moves` applied: every voxel taken out and put
-    /// back at its key in bulk, chunks built and supports counted in parallel,
-    /// for when most of the map moves.
-    pub fn rebuild_moved(&mut self, moves: &[VoxelMove]) {
-        let moving: AHashMap<VoxelKey, (VoxelKey, Vector3<f32>)> =
-            moves.iter().map(|m| (m.from, (m.to, m.offset))).collect();
-        let chunks: Vec<ChunkRef> = self.voxels.chunks().collect();
-        let mut landed: Vec<(VoxelKey, Voxel)> = chunks
-            .par_iter()
-            .flat_map_iter(|chunk| {
-                let moving = &moving;
-                chunk.iter().map(move |(key, v)| {
-                    let mut v = v.clone();
-                    v.normal = NormalFit::Stale;
-                    match moving.get(&key) {
-                        Some(&(to, offset)) => {
-                            v.shift(offset);
-                            (to, v)
-                        }
-                        None => (key, v),
-                    }
-                })
-            })
-            .collect();
-        let old_chunks: Vec<ChunkKey> = chunks.iter().map(|c| c.key).collect();
-        drop(chunks);
-        landed.par_sort_unstable_by_key(|(k, _)| (chunk_of(*k), *k));
-        // Voxels that landed on one key merge into the first.
-        let mut merged: Vec<(VoxelKey, Voxel)> = Vec::with_capacity(landed.len());
-        for (key, v) in landed {
-            match merged.last_mut() {
-                Some((last, existing)) if *last == key => {
-                    existing.absorb(&v);
-                    existing.health = existing.health.max(v.health);
-                }
-                _ => merged.push((key, v)),
+    /// Move every voxel's points by its offset, in `ChunkMap::iter` order,
+    /// keeping its key.
+    pub fn shift_in_place(&mut self, offsets: &[[f32; 3]]) {
+        self.voxels.par_for_each_mut(|i, _, v| {
+            let o = offsets[i];
+            if o != [0.0; 3] {
+                v.shift(Vector3::new(o[0], o[1], o[2]));
             }
-        }
-        self.changed_chunks.extend(old_chunks);
-        self.changed_chunks
-            .extend(merged.iter().map(|(k, _)| chunk_of(*k)));
-        self.voxels = ChunkMap::from_sorted(merged);
+        });
+        let chunks: Vec<ChunkKey> = self.voxels.chunk_keys().collect();
+        self.changed_chunks.extend(chunks);
+    }
+
+    /// Voxels whose points sit outside their key, either within `radius` of `origin`.
+    /// A warp can carry a voxel's points far from its key, so every voxel is looked at.
+    pub fn displaced_near(
+        &self,
+        origin: (f32, f32, f32),
+        radius: f32,
+        voxel_size: f32,
+    ) -> Vec<VoxelKey> {
+        let r2 = radius * radius;
+        let chunks: Vec<ChunkRef> = self.voxels.chunks().collect();
+        chunks
+            .par_iter()
+            .flat_map_iter(|c| {
+                c.iter()
+                    .filter_map(|(k, v)| {
+                        let placed = placed_key(k, v, voxel_size);
+                        if placed == k {
+                            return None;
+                        }
+                        // Near by where its points sit, or by the stale key rays would meet.
+                        let near = |key: VoxelKey| {
+                            let (x, y, z) = voxel_center(key, voxel_size);
+                            (x - origin.0).powi(2) + (y - origin.1).powi(2) + (z - origin.2).powi(2)
+                                <= r2
+                        };
+                        (near(placed) || near(k)).then_some(k)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Where a voxel's points sit, when that is not its own key.
+    pub fn displaced(&self, k: &VoxelKey, voxel_size: f32) -> Option<VoxelKey> {
+        let v = self.voxels.get(k)?;
+        let placed = placed_key(*k, v, voxel_size);
+        (placed != *k).then_some(placed)
     }
 }
 

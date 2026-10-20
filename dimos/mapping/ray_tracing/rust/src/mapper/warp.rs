@@ -20,7 +20,8 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use super::Mapper;
-use crate::reform::{Tile, Warp};
+use super::Point;
+use crate::reform::Warp;
 use crate::voxel_ray_tracer::{voxel_moves, ChunkMap, VoxelKey};
 
 /// A point's place before and after a warp.
@@ -29,12 +30,10 @@ pub type Displacement = ([f32; 3], [f32; 3]);
 /// What one warp did and what it cost.
 #[derive(Clone, Debug, Default)]
 pub struct WarpReport {
-    /// Voxels in tiles the warp reaches.
+    /// Voxels the warp moved in place.
     pub voxels_warped: usize,
-    /// Of those, the ones that landed in another voxel.
-    pub voxels_moved: usize,
-    /// Whether so much moved that the map was rebuilt instead of repaired.
-    pub rebuilt: bool,
+    /// Voxels re-keyed by their moved points, those in the local area.
+    pub voxels_rebinned: usize,
     pub warp_ms: f64,
     pub voxel_ms: f64,
     /// Voxels the warp sent somewhere non-finite or implausibly far, left in place.
@@ -151,9 +150,9 @@ impl Mapper {
         }
     }
 
-    /// Carry the map through a warp. When more than the warp's rebuild
-    /// fraction of the voxels land in another voxel, the map is rebuilt from
-    /// the warped voxels instead of repaired around each.
+    /// Carry the map through a warp: every voxel's points move in place by
+    /// fast-reform, keeping its key; only the voxels in the local area are
+    /// re-keyed by their moved points, the rest when the local area reaches them.
     pub fn apply_warp(&mut self, warp: &Warp) -> WarpReport {
         let pool = std::sync::Arc::clone(&self.pool);
         pool.install(|| self.apply_warp_in_pool(warp))
@@ -163,29 +162,7 @@ impl Mapper {
         let vs = self.config.voxel_size;
         let mut report = WarpReport::default();
         let stage = Instant::now();
-
-        // Which tiles the warp reaches, decided once per tile.
-        let chunks: Vec<_> = self.map.voxels.chunks().collect();
-        let mut tiles: Vec<Tile> = chunks
-            .par_iter()
-            .flat_map_iter(|c| c.iter().map(|(k, _)| tile_at(warp, k, vs)))
-            .collect();
-        tiles.par_sort_unstable();
-        tiles.dedup();
-        let reached: ahash::AHashSet<Tile> = tiles
-            .into_iter()
-            .filter(|&t| warp.affects_tile(t))
-            .collect();
-        let keys: Vec<VoxelKey> = chunks
-            .par_iter()
-            .flat_map_iter(|c| {
-                c.iter()
-                    .map(|(k, _)| k)
-                    .filter(|&k| reached.contains(&tile_at(warp, k, vs)))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        drop(chunks);
+        let keys: Vec<VoxelKey> = self.map.voxels.iter().map(|(k, _)| k).collect();
         report.voxels_warped = keys.len();
         if keys.is_empty() {
             return report;
@@ -198,26 +175,36 @@ impl Mapper {
         report.warp_ms = ms_since(stage);
 
         let stage = Instant::now();
-        let moving: ahash::AHashSet<VoxelKey> = keys.iter().copied().collect();
-        let voxels = &self.map.voxels;
-        let moves = voxel_moves(&keys, &means, &warped, vs, |k| {
-            voxels.contains_key(k) && !moving.contains(k)
-        });
-        report.voxels_moved = moves.par_iter().filter(|m| m.from != m.to).count();
-        report.rebuilt =
-            report.voxels_moved as f64 > warp.rebuild_fraction() * self.map.voxels.len() as f64;
-        if report.rebuilt {
-            self.map.rebuild_moved(&moves);
-        } else {
-            self.map.move_voxels(&moves);
-        }
+        let offsets: Vec<[f32; 3]> = means
+            .par_iter()
+            .zip(warped.par_iter())
+            .map(|(p, w)| [w[0] - p[0], w[1] - p[1], w[2] - p[2]])
+            .collect();
+        self.map.shift_in_place(&offsets);
+        report.voxels_rebinned = self.rebin_local(self.last_origin);
         report.voxel_ms = ms_since(stage);
         report
     }
-}
 
-fn tile_at(warp: &Warp, k: VoxelKey, vs: f32) -> Tile {
-    warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs)
+    /// Re-key the voxels within ray reach of `origin` whose points a warp moved
+    /// out of their key, so rays meet them where they are.
+    pub(super) fn rebin_local(&mut self, origin: Point) -> usize {
+        let vs = self.config.voxel_size;
+        let near = self.map.displaced_near(origin, self.config.max_range, vs);
+        if near.is_empty() {
+            return 0;
+        }
+        let map = &self.map;
+        let keys = crate::reform::with_chained(near, |k| map.displaced(k, vs));
+        let means = self.map.voxel_means(&keys, vs);
+        let moving: ahash::AHashSet<VoxelKey> = keys.iter().copied().collect();
+        let voxels = &self.map.voxels;
+        let moves = voxel_moves(&keys, &means, &means, vs, |k| {
+            voxels.contains_key(k) && !moving.contains(k)
+        });
+        self.map.move_voxels(&moves);
+        keys.len()
+    }
 }
 
 #[cfg(test)]
