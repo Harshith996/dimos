@@ -28,6 +28,7 @@ def simulation(
     *,
     scene: Path,
     robots: dict[str, RobotInstance],
+    sensors: tuple[Camera | Lidar, ...] = (),
     sim_id: str = "sim",
     viewer: bool = False,
     timestep: float = 0.005,
@@ -35,17 +36,21 @@ def simulation(
     """Build physics and declared sensing, without choosing a controller or robot driver."""
     modules = [
         SimulationModule.blueprint(
-            world=WorldConfig(scene=scene, robots=robots, timestep=timestep),
+            world=WorldConfig(scene=scene, robots=robots, timestep=timestep, sensors=sensors),
             sim_id=sim_id,
             viewer=viewer,
         )
     ]
     ports: tuple[str, ...]
-    for robot_id, instance in robots.items():
-        config = instance.config
-        for sensor in config.sensors:
+    sensor_groups = [(None, None, sensors)] + [
+        (robot_id, instance.config.root_body, instance.config.sensors)
+        for robot_id, instance in robots.items()
+    ]
+    for robot_id, root_body, devices in sensor_groups:
+        for sensor in devices:
+            owner = robot_id or "world"
             kwargs = dict(
-                instance_name=f"{robot_id}_{sensor.name}",
+                instance_name=f"{owner}_{sensor.name}",
                 robot_id=robot_id,
                 sensor=sensor,
                 rate_hz=sensor.rate_hz,
@@ -59,17 +64,17 @@ def simulation(
             elif isinstance(sensor, Lidar):
                 if sensor.imu is not None:
                     kwargs["rate_hz"] = max(sensor.rate_hz, sensor.imu.rate_hz)
-                blueprint = LidarModule.blueprint(**kwargs, root_body=config.root_body)
+                blueprint = LidarModule.blueprint(**kwargs, root_body=root_body)
                 ports = ("pointcloud", "raw_pointcloud", "imu_raw")
             elif isinstance(sensor, Imu):
                 # The robot client reads this IMU in the same frame as its joint feedback.
                 continue
             else:
                 raise TypeError(f"unsupported sensor configuration: {type(sensor).__name__}")
-            if len(robots) > 1 or sum(type(s) is type(sensor) for s in config.sensors) > 1:
+            if sensors or len(robots) > 1 or sum(type(s) is type(sensor) for s in devices) > 1:
                 blueprint = blueprint.remappings(
                     [
-                        (f"{robot_id}_{sensor.name}", port, f"{robot_id}/{sensor.name}/{port}")
+                        (f"{owner}_{sensor.name}", port, f"{owner}/{sensor.name}/{port}")
                         for port in ports
                     ]
                 )

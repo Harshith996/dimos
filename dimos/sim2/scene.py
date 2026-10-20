@@ -25,7 +25,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.sim2.scene_types import SceneDescription
-from dimos.sim2.sensors.spec import Camera, Imu, Mount
+from dimos.sim2.sensors.spec import Camera, Imu, Mount, Sensor, mounted_sensors
 from dimos.sim2.spec import RobotConfig, RobotInstance, WorldConfig
 from dimos.utils.data import LfsPath
 
@@ -57,75 +57,62 @@ def load_scene(config: WorldConfig, description: SceneDescription | None = None)
             root.mocap = True
         for key in list(robot.keys):
             robot.delete(key)
-        for sensor in instance.config.mounted_sensors:
-            attachment = sensor.camera if isinstance(sensor, Camera) else sensor.site
-            if isinstance(attachment, Mount):
-                body = robot.body(attachment.link)
-                if body is None:
-                    raise ValueError(f"{robot_id}/{sensor.name}: unknown body {attachment.link!r}")
-                if isinstance(sensor, Camera):
-                    body.add_camera(
-                        name=sensor.model_name,
-                        pos=attachment.xyz,
-                        quat=quaternion(attachment.rpy),
-                        fovy=60.0 if sensor.fovy is None else sensor.fovy,
-                    )
-                else:
-                    body.add_site(
-                        name=sensor.model_name,
-                        pos=attachment.xyz,
-                        quat=quaternion(attachment.rpy),
-                        size=(0.001, 0.001, 0.001),
-                        rgba=(0, 0, 0, 0),
-                    )
-            else:
-                target_kind = "camera" if isinstance(sensor, Camera) else "site"
-                target = (
-                    robot.camera(attachment)
-                    if isinstance(sensor, Camera)
-                    else robot.site(attachment)
-                )
-                if target is None:
-                    raise ValueError(
-                        f"{robot_id}/{sensor.name}: unknown {target_kind} {attachment!r}"
-                    )
-            if isinstance(sensor, Imu):
-                for suffix, kind in (
-                    ("gyro", mujoco.mjtSensor.mjSENS_GYRO),
-                    ("accel", mujoco.mjtSensor.mjSENS_ACCELEROMETER),
-                    ("quat", mujoco.mjtSensor.mjSENS_FRAMEQUAT),
-                ):
-                    robot.add_sensor(
-                        name=f"sensor/{sensor.name}/{suffix}",
-                        type=kind,
-                        objtype=mujoco.mjtObj.mjOBJ_SITE,
-                        objname=sensor.model_name,
-                    )
+        _attach_sensors(robot, instance.config.mounted_sensors, robot_id)
         frame = world.worldbody.add_frame(pos=instance.xyz, quat=quaternion(instance.rpy))
         world.attach(robot, prefix=robot_id + "/", frame=frame)
-    world.visual.global_.offwidth = max(
-        [
-            640,
-            *[
-                s.width
-                for r in config.robots.values()
-                for s in r.config.sensors
-                if isinstance(s, Camera)
-            ],
-        ]
-    )
-    world.visual.global_.offheight = max(
-        [
-            480,
-            *[
-                s.height
-                for r in config.robots.values()
-                for s in r.config.sensors
-                if isinstance(s, Camera)
-            ],
-        ]
-    )
+    _attach_sensors(world, mounted_sensors(config.sensors), "world")
+    cameras = [
+        s
+        for sensors in (config.sensors, *(r.config.sensors for r in config.robots.values()))
+        for s in sensors
+        if isinstance(s, Camera)
+    ]
+    world.visual.global_.offwidth = max(640, *(s.width for s in cameras)) if cameras else 640
+    world.visual.global_.offheight = max(480, *(s.height for s in cameras)) if cameras else 480
     return world.compile()
+
+
+def _attach_sensors(spec: mujoco.MjSpec, sensors: tuple[Sensor, ...], owner: str) -> None:
+    for sensor in sensors:
+        attachment = sensor.camera if isinstance(sensor, Camera) else sensor.site
+        if isinstance(attachment, Mount):
+            body = spec.body(attachment.link)
+            if body is None:
+                raise ValueError(f"{owner}/{sensor.name}: unknown body {attachment.link!r}")
+            if isinstance(sensor, Camera):
+                body.add_camera(
+                    name=sensor.model_name,
+                    pos=attachment.xyz,
+                    quat=quaternion(attachment.rpy),
+                    fovy=60.0 if sensor.fovy is None else sensor.fovy,
+                )
+            else:
+                body.add_site(
+                    name=sensor.model_name,
+                    pos=attachment.xyz,
+                    quat=quaternion(attachment.rpy),
+                    size=(0.001, 0.001, 0.001),
+                    rgba=(0, 0, 0, 0),
+                )
+        else:
+            kind = "camera" if isinstance(sensor, Camera) else "site"
+            target = (
+                spec.camera(attachment) if isinstance(sensor, Camera) else spec.site(attachment)
+            )
+            if target is None:
+                raise ValueError(f"{owner}/{sensor.name}: unknown {kind} {attachment!r}")
+        if isinstance(sensor, Imu):
+            for suffix, kind_id in (
+                ("gyro", mujoco.mjtSensor.mjSENS_GYRO),
+                ("accel", mujoco.mjtSensor.mjSENS_ACCELEROMETER),
+                ("quat", mujoco.mjtSensor.mjSENS_FRAMEQUAT),
+            ):
+                spec.add_sensor(
+                    name=f"sensor/{sensor.name}/{suffix}",
+                    type=kind_id,
+                    objtype=mujoco.mjtObj.mjOBJ_SITE,
+                    objname=sensor.model_name,
+                )
 
 
 def scene_path(value: str | None, default: str) -> Path:

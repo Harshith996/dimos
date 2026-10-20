@@ -107,8 +107,8 @@ class SimulationRuntime:
         snapshot_hz = config.snapshot_hz
         history_seconds = 0.0
         imu_strides: list[int] = []
-        for instance in config.robots.values():
-            for sensor in instance.config.sensors:
+        for sensors in (config.sensors, *(r.config.sensors for r in config.robots.values())):
+            for sensor in sensors:
                 if isinstance(sensor, Lidar):
                     pattern = sensor.model(**sensor.model_kwargs)
                     if isinstance(pattern, TimedRayPattern):

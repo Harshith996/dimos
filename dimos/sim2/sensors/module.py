@@ -32,8 +32,16 @@ logger = setup_logger()
 
 
 class SensorModuleConfig(ModuleConfig):
-    robot_id: str
+    robot_id: str | None = None
     rate_hz: float = 10.0
+
+    @property
+    def model_prefix(self) -> str:
+        return f"{self.robot_id}/" if self.robot_id is not None else ""
+
+    @property
+    def frame_prefix(self) -> str:
+        return f"{self.robot_id or 'world'}/"
 
 
 class SensorModule(Module, ABC):

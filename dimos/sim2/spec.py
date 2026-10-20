@@ -22,7 +22,7 @@ import math
 from pathlib import Path
 from typing import Literal
 
-from dimos.sim2.sensors.spec import Imu, Lidar, Mount as Mount, Sensor
+from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount as Mount, Sensor, mounted_sensors
 
 
 class ControlInterface(str, Enum):
@@ -105,15 +105,7 @@ class RobotConfig:
     @property
     def mounted_sensors(self) -> tuple[Sensor, ...]:
         """Physical mounts, including IMUs supplied as part of a lidar device."""
-        return tuple(
-            child
-            for sensor in self.sensors
-            for child in (
-                (sensor, sensor.imu)
-                if isinstance(sensor, Lidar) and sensor.imu is not None
-                else (sensor,)
-            )
-        )
+        return mounted_sensors(self.sensors)
 
     def with_sensor(self, sensor: Sensor) -> RobotConfig:
         sensors = tuple(s for s in self.sensors if s.name != sensor.name)
@@ -133,11 +125,16 @@ class WorldConfig:
     robots: dict[str, RobotInstance]
     timestep: float = 0.005
     snapshot_hz: float = 60.0
+    sensors: tuple[Camera | Lidar, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.robots or any(
-            not name or "/" in name or name == "world" for name in self.robots
-        ):
+        if any(not name or "/" in name or name == "world" for name in self.robots):
             raise ValueError("world requires nonempty, slash-free robot IDs; 'world' is reserved")
         if any(not math.isfinite(v) or v <= 0 for v in (self.timestep, self.snapshot_hz)):
             raise ValueError("world timestep and snapshot rate must be finite and positive")
+        sensors = mounted_sensors(self.sensors)
+        names = [sensor.name for sensor in sensors]
+        if len(set(names)) != len(names) or any(not name for name in names):
+            raise ValueError("world sensor names must be nonempty and unique")
+        if any(not math.isfinite(s.rate_hz) or s.rate_hz <= 0 for s in sensors):
+            raise ValueError("sensor rates must be finite and positive")

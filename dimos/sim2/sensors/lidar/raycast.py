@@ -23,7 +23,7 @@ class Raycaster:
     def __init__(
         self,
         model: mujoco.MjModel,
-        robot_root: int,
+        robot_root: int | None = None,
         *,
         self_occlusion: bool = False,
         excluded_meshes: tuple[str, ...] = (),
@@ -37,7 +37,7 @@ class Raycaster:
             while ancestor and ancestor != robot_root:
                 ancestor = int(model.body_parentid[ancestor])
             if (
-                (ancestor == robot_root and not self_occlusion)
+                (robot_root is not None and ancestor == robot_root and not self_occlusion)
                 or model.geom_rgba[geom, 3] == 0
                 or (
                     model.geom_type[geom] == mujoco.mjtGeom.mjGEOM_MESH

@@ -37,7 +37,7 @@ from dimos.sim2.sensors.spec import Lidar, RangeResponse, RayPattern, TimedRayPa
 
 class LidarModuleConfig(SensorModuleConfig):
     sensor: Lidar
-    root_body: str
+    root_body: str | None = None
 
 
 class LidarModule(SensorModule):
@@ -50,9 +50,9 @@ class LidarModule(SensorModule):
     def open(self) -> None:
         # Initialize PointCloud2's lazy Open3D dependency before high-rate acquisition.
         PointCloud2()
-        robot = self.config.robot_id
-        self._site = self.reader.model.site(f"{robot}/{self.config.sensor.model_name}").id
-        self._frame = f"{robot}/{self.config.sensor.name}"
+        prefix = self.config.model_prefix
+        self._site = self.reader.model.site(prefix + self.config.sensor.model_name).id
+        self._frame = self.config.frame_prefix + self.config.sensor.name
         self._model = self.config.sensor.model(**self.config.sensor.model_kwargs)
         self._rays = self._model.directions() if isinstance(self._model, RayPattern) else None
         if isinstance(self._model, TimedRayPattern):
@@ -64,7 +64,7 @@ class LidarModule(SensorModule):
         self._last_imu_time: float | None = None
         self._clock_origin = 0.0
         if self.config.sensor.imu is not None:
-            name = f"{robot}/sensor/{self.config.sensor.imu.name}"
+            name = f"{prefix}sensor/{self.config.sensor.imu.name}"
             self._gyro = self.reader.model.sensor(f"{name}/gyro").id
             self._accel = self.reader.model.sensor(f"{name}/accel").id
         self._scan_status: dict[str, Any] = {
@@ -77,9 +77,11 @@ class LidarModule(SensorModule):
         }
         self._raycaster = Raycaster(
             self.reader.model,
-            self.reader.model.body(f"{robot}/{self.config.root_body}").id,
+            self.reader.model.body(prefix + self.config.root_body).id
+            if self.config.root_body is not None
+            else None,
             self_occlusion=self.config.sensor.self_occlusion,
-            excluded_meshes=tuple(f"{robot}/{mesh}" for mesh in self.config.sensor.excluded_meshes),
+            excluded_meshes=tuple(prefix + mesh for mesh in self.config.sensor.excluded_meshes),
         )
 
     def capture(self) -> None:
@@ -164,7 +166,7 @@ class LidarModule(SensorModule):
                     angular_velocity=Vector3(*self.reader.data.sensor(self._gyro).data),
                     linear_acceleration=Vector3(*self.reader.data.sensor(self._accel).data),
                     orientation_covariance=[-1.0, 0, 0, 0, 0, 0, 0, 0, 0],
-                    frame_id=f"{self.config.robot_id}/{imu.name}",
+                    frame_id=self.config.frame_prefix + imu.name,
                     ts=self._clock_origin + t,
                 )
             )

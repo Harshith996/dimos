@@ -28,6 +28,24 @@ Multiple robots are composed into that world before MuJoCo compilation.
 motor-frame layout (complete PD commands or native position targets), not a
 public walking/arm interface or a robot brand.
 
+Scene-mounted devices use the same definitions and workers. A mount names a
+body in the scene; `world` is a fixed frame. A named MJCF camera keeps its
+authored intrinsics. No robot is required for a sensor-only world.
+
+```python skip
+from dimos.sim2.sensors.spec import Camera, Mount
+
+world = simulation(
+    scene=scene_path,
+    robots=robot_instances,
+    sensors=(Camera("overhead", Mount("world", xyz=(1.5, 0, 3))),),
+)
+```
+
+The external camera publishes on `world/overhead/color_image` with frame
+`world/overhead_optical`. When scene sensors or multiple robots are present,
+robot sensor topics are likewise qualified by robot and device name.
+
 ## Internal device interface
 
 The world's `describe()` RPC supplies the exact channel descriptor for each

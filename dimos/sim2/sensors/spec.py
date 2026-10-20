@@ -133,3 +133,16 @@ class Lidar:
 
 
 Sensor: TypeAlias = Camera | Lidar | Imu
+
+
+def mounted_sensors(sensors: tuple[Sensor, ...]) -> tuple[Sensor, ...]:
+    """Include the physical IMU attachment of an integrated lidar device."""
+    return tuple(
+        child
+        for sensor in sensors
+        for child in (
+            (sensor, sensor.imu)
+            if isinstance(sensor, Lidar) and sensor.imu is not None
+            else (sensor,)
+        )
+    )
