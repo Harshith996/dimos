@@ -138,7 +138,6 @@ def test_actual_raw_transport_delivers_cdr_without_external_network(backend):
         assert type(received[0]) is Int32
 
 
-
 @pytest.mark.parametrize("prefix,endian", [(b"\x00\x00\x00\x00", ">"), (b"\x00\x01\x00\x00", "<")])
 def test_shared_decoder_preserves_supported_xcdr1_byte_orders(prefix, endian):
     assert decode_cdr(prefix + struct.pack(endian + "i", 29), Int32) == Int32(29)
@@ -150,6 +149,7 @@ def test_shared_decoder_preserves_supported_xcdr1_byte_orders(prefix, endian):
 def test_shared_decoder_rejects_missing_or_unknown_encapsulation(payload):
     with pytest.raises(ValueError, match="XCDR1 encapsulation"):
         decode_cdr(payload, Int32)
+
 
 def test_deferred_cdr_spec_resolves_backend_namespace_and_qos_at_build(monkeypatch):
     monkeypatch.setattr(global_config, "transport", "lcm")
@@ -171,4 +171,3 @@ def test_default_backend_rejects_invalid_logical_topic(topic, monkeypatch):
     monkeypatch.setattr(global_config, "transport", "zenoh")
     with pytest.raises(ValueError, match="concrete, nonempty"):
         CdrTransport(topic, Int32)
-
