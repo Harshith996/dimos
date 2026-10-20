@@ -16,12 +16,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
 import math
 from pathlib import Path
 from typing import ClassVar, Literal, Protocol, runtime_checkable
 
+import mujoco
 from pydantic import BaseModel
 
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount as Mount, Sensor, mounted_sensors
@@ -50,6 +52,7 @@ class Joint:
     lower: float = -6.283185307179586
     upper: float = 6.283185307179586
     max_velocity: float = 3.141592653589793
+    actuator_time_constant: float = 0.0
 
     def __post_init__(self) -> None:
         if self.scale == 0 or not all(
@@ -65,11 +68,18 @@ class Joint:
                 self.lower,
                 self.upper,
                 self.max_velocity,
+                self.actuator_time_constant,
             )
         ):
             raise ValueError(f"joint {self.name!r} requires finite parameters and nonzero scale")
         if self.lower > self.upper or self.max_velocity < 0 or min(self.kp, self.kd) < 0:
             raise ValueError(f"joint {self.name!r} has invalid limits or gains")
+        if self.actuator_time_constant < 0 or (
+            self.actuator_time_constant and self.mode != "effort"
+        ):
+            raise ValueError(
+                "actuator lag requires an effort motor and a nonnegative time constant"
+            )
 
 
 @dataclass(frozen=True)
@@ -85,10 +95,15 @@ class RobotConfig:
     spawn_height: float = 0.0
     # Policy-controlled free bases must not fall while their controller loads.
     wait_for_first_command: bool = False
+    # Preserve calibrated dynamics when a fit was applied to a compiled model.
+    configure_physics: Callable[[mujoco.MjModel, str], None] | None = None
+    max_timestep: float = 0.005
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.spawn_height) or self.spawn_height < 0:
             raise ValueError("robot spawn height must be finite and nonnegative")
+        if not math.isfinite(self.max_timestep) or self.max_timestep <= 0:
+            raise ValueError("robot max_timestep must be finite and positive")
         if not self.joints:
             raise ValueError("robot must declare its controlled joints")
         for label, names in (

@@ -69,7 +69,11 @@ def load_scene(config: WorldConfig, description: SceneDescription | None = None)
     ]
     world.visual.global_.offwidth = max(640, *(s.width for s in cameras)) if cameras else 640
     world.visual.global_.offheight = max(480, *(s.height for s in cameras)) if cameras else 480
-    return world.compile()
+    model = world.compile()
+    for robot_id, instance in config.robots.items():
+        if instance.config.configure_physics is not None:
+            instance.config.configure_physics(model, robot_id + "/")
+    return model
 
 
 def _attach_sensors(spec: mujoco.MjSpec, sensors: tuple[Sensor, ...], owner: str) -> None:

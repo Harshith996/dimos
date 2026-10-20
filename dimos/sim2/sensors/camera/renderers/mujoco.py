@@ -20,8 +20,11 @@ from numpy.typing import NDArray
 
 
 class MujocoCamera:
-    def __init__(self, model: mujoco.MjModel, width: int, height: int) -> None:
+    def __init__(
+        self, model: mujoco.MjModel, width: int, height: int, *, shadows: bool = True
+    ) -> None:
         self._renderer = mujoco.Renderer(model, height=height, width=width)
+        self._shadows = shadows
         self._options = mujoco.MjvOption()
         # Source assets can put visible geometry in any MuJoCo group.
         self._options.geomgroup[:] = 1
@@ -31,6 +34,7 @@ class MujocoCamera:
     ) -> tuple[NDArray[np.uint8], NDArray[np.float32] | None]:
         self._renderer.disable_depth_rendering()
         self._renderer.update_scene(data, camera=camera, scene_option=self._options)
+        self._renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = self._shadows
         rgb = self._renderer.render().copy()
         distances = None
         if depth:

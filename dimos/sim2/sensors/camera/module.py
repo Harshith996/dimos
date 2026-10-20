@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoCamera
 from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
@@ -44,7 +45,9 @@ class SimCameraModule(SensorModule):
 
     def open(self) -> None:
         sensor = self.config.sensor
-        self._renderer = MujocoCamera(self.reader.model, sensor.width, sensor.height)
+        self._renderer = MujocoCamera(
+            self.reader.model, sensor.width, sensor.height, shadows=sensor.shadows
+        )
         self._camera = self.reader.model.camera(self.config.model_prefix + sensor.model_name).id
         self._frame = f"{self.config.frame_prefix}{sensor.name}_optical"
         fovy = float(self.reader.model.cam_fovy[self._camera])
@@ -80,12 +83,13 @@ class SimCameraModule(SensorModule):
         )
         info.ts = ts
         self.camera_info.publish(info)
-        self.color_image.publish(
-            Image(data=rgb, format=ImageFormat.RGB, frame_id=self._frame, ts=ts)
-        )
-        self.publish_depth(depth, info, ts)
+        color = Image(data=rgb, format=ImageFormat.RGB, frame_id=self._frame, ts=ts)
+        self.color_image.publish(color)
+        self.publish_depth(depth, info, color)
 
-    def publish_depth(self, depth: NDArray[np.float32] | None, info: CameraInfo, ts: float) -> None:
+    def publish_depth(
+        self, depth: NDArray[np.float32] | None, info: CameraInfo, color: Image
+    ) -> None:
         pass
 
     def close_sensor(self) -> None:
@@ -97,10 +101,15 @@ class SimCameraModule(SensorModule):
 class SimRGBDCameraModule(SimCameraModule):
     depth_image: Out[Image]
     depth_camera_info: Out[CameraInfo]
+    pointcloud: Out[PointCloud2]
 
-    def publish_depth(self, depth: NDArray[np.float32] | None, info: CameraInfo, ts: float) -> None:
+    def publish_depth(
+        self, depth: NDArray[np.float32] | None, info: CameraInfo, color: Image
+    ) -> None:
         assert depth is not None
-        self.depth_image.publish(
-            Image(data=depth, format=ImageFormat.DEPTH, frame_id=self._frame, ts=ts)
-        )
+        image = Image(data=depth, format=ImageFormat.DEPTH, frame_id=self._frame, ts=color.ts)
+        self.depth_image.publish(image)
         self.depth_camera_info.publish(info)
+        if self.config.sensor.pointcloud:
+            cloud = PointCloud2.from_rgbd(color, image, info, depth_scale=1.0)
+            self.pointcloud.publish(cloud.voxel_downsample(0.005))

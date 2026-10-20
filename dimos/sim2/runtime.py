@@ -450,6 +450,11 @@ class SimulationRuntime:
                 value = torque[i] if enabled else 0.0
             if self.model.actuator_ctrllimited[aid]:
                 value = np.clip(value, *self.model.actuator_ctrlrange[aid])
+            if joint.actuator_time_constant and enabled:
+                alpha = self.model.opt.timestep / (
+                    joint.actuator_time_constant + self.model.opt.timestep
+                )
+                value = self.data.ctrl[aid] + alpha * (value - self.data.ctrl[aid])
             self.data.ctrl[aid] = value
 
     def _publish(self, *, force_snapshot: bool = False) -> None:
