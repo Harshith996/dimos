@@ -210,7 +210,8 @@ def test_world_and_robot_cameras_have_distinct_output_topics(world_config):
 @pytest.mark.self_hosted
 def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, external_camera):
     image_ready, cloud_ready = threading.Event(), threading.Event()
-    images, clouds = {}, []
+    images, clouds, depth_clouds = {}, [], []
+    depth_cloud_ready = threading.Event()
     image_frames = {"left/camera_optical"}
     if external_camera:
         image_frames.add("world/overhead_optical")
@@ -225,6 +226,10 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
             clouds.append(value)
             cloud_ready.set()
 
+    def on_depth_cloud(value):
+        depth_clouds.append(value)
+        depth_cloud_ready.set()
+
     with ExitStack() as stack:
         prefix = "sim2-test/" + uuid4().hex
         image = ZenohTransport(prefix + "/image", Image)
@@ -234,7 +239,15 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
         stack.callback(image.subscribe(on_image))
         stack.callback(cloud.subscribe(on_cloud))
         sensors = (
-            (Camera("overhead", Mount("world", xyz=(1.5, 0, 3)), width=160, height=120),)
+            (
+                Camera(
+                    "overhead",
+                    Mount("world", xyz=(1.5, 0, 3)),
+                    width=160,
+                    height=120,
+                    pointcloud=True,
+                ),
+            )
             if external_camera
             else ()
         )
@@ -242,6 +255,10 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
         cloud_port = "left/lidar/pointcloud" if external_camera else "pointcloud"
         transports = {(image_port, Image): image, (cloud_port, PointCloud2): cloud}
         if external_camera:
+            depth_cloud = ZenohTransport(prefix + "/depth-cloud", PointCloud2)
+            stack.callback(depth_cloud.stop)
+            stack.callback(depth_cloud.subscribe(on_depth_cloud))
+            transports["world/overhead/pointcloud", PointCloud2] = depth_cloud
             robot_image = ZenohTransport(prefix + "/robot-image", Image)
             stack.callback(robot_image.stop)
             stack.callback(robot_image.subscribe(on_image))
@@ -261,6 +278,10 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
         assert images.keys() == image_frames
         assert all(value.data.std() > 15 for value in images.values())
         assert clouds[0].frame_id == "world"
+        if external_camera:
+            assert depth_cloud_ready.wait(15), "RGB-D worker did not publish a point cloud"
+            assert depth_clouds[0].frame_id == "world/overhead_optical"
+            assert len(depth_clouds[0].pointcloud.points) > 100
         assert sim.status()["running"]
         assert sim.status()["steps"] > 0
         descriptor = ChannelDescriptor.from_dict(sim.describe()["robots"]["left"])
