@@ -18,6 +18,7 @@ import math
 import numpy as np
 import pytest
 
+from dimos.manipulation.grasping.grasp_gen_x.test_remote import FakeServer
 from dimos.manipulation.grasping.grasp_proposals import (
     GraspProposals,
     ObjectCloudSpec,
@@ -139,6 +140,35 @@ def test_none_reachable_says_why(proposals: GraspProposals) -> None:
 
 def test_graspgenx_not_in_the_stack_points_to_the_heuristic(proposals: GraspProposals) -> None:
     assert 'use proposer="heuristic"' in proposals.grasps("blk", proposer="graspgenx")
+
+
+def test_graspgenx_from_a_server_when_not_in_the_stack() -> None:
+    server = FakeServer()
+    module = GraspProposals(graspgenx_url=server.url, graspgenx_seed=7)
+    module._localize = FakeLocalize({"blk": _block_cloud()})
+    module._reachability = FakeReachability()
+    try:
+        lines = module.grasps("blk", proposer="graspgenx").splitlines()
+    finally:
+        module.stop()
+        server.close()
+
+    assert lines[0].startswith("graspgenx: 1 grasp(s) for blk, the best 1 checked, 1 reachable")
+    assert "score 0.70" in lines[1] and "approach straight down" in lines[1]
+    assert server.requests[0]["seed"] == 7
+
+
+def test_a_graspgenx_server_down_points_to_the_heuristic() -> None:
+    module = GraspProposals(graspgenx_url="http://127.0.0.1:9")
+    module._localize = FakeLocalize({"blk": _block_cloud()})
+    module._reachability = FakeReachability()
+    try:
+        text = module.grasps("blk", proposer="graspgenx")
+    finally:
+        module.stop()
+
+    assert text.startswith("graspgenx failed: GraspGenX server http://127.0.0.1:9 unreachable")
+    assert text.endswith('Use proposer="heuristic".')
 
 
 def test_an_unknown_proposer_names_both(proposals: GraspProposals) -> None:

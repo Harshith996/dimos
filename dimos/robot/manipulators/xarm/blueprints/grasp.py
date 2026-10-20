@@ -32,6 +32,10 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x.xarm import (
+    XARM_GRASP_FRAME_TO_TCP,
+    XARM_GRIPPER_SWEEP_VOLUME,
+)
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -79,28 +83,6 @@ XARM_GRASP_PROMPTS = [
     # as a ring instead of a roll. Keep a shape-word fallback for that view.
     "green ring",
 ]
-
-# Measured off data/xarm_grasp_sim (mj_forward at the driver joint limits) and the
-# gripper URDF, expressed in GraspGenX's convention -- approach along +Z, jaws
-# closing along X -- with the origin on xarm_gripper_base_link, the frame
-# GraspGenX predicts into. The geometry is the real gripper's, so it holds on
-# hardware too.
-XARM_GRIPPER_SWEEP_VOLUME = {
-    "extents_open": (0.0889, 0.030, 0.0370),
-    "offset_open": (0.0, 0.0, 0.1421),
-    "extents_half_open": (0.0479, 0.030, 0.0370),
-    "offset_half_open": (0.0, 0.0, 0.1530),
-    "fingertip_depth": 0.1606,
-}
-# xarm_gripper_base_link -> link_tcp, the planning tip frame: +0.172 m along the
-# approach axis (xarm_gripper.urdf.xacro joint_tcp) plus the quarter turn that
-# takes GraspGenX's X closing axis onto the xArm gripper's Y.
-XARM_GRASP_FRAME_TO_TCP = (
-    (0.0, 1.0, 0.0, 0.0),
-    (-1.0, 0.0, 0.0, 0.0),
-    (0.0, 0.0, 1.0, 0.172),
-    (0.0, 0.0, 0.0, 1.0),
-)
 
 # Hand-eye calibration for the eye-in-hand RealSense. RealSenseCamera publishes
 # only its own subtree, so without this edge camera_link has no parent, nothing
