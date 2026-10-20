@@ -51,7 +51,14 @@ pub struct Edge {
 #[derive(Default)]
 pub struct SurfaceCells {
     coord: Vec<VoxelKey>,
-    edges: Vec<Vec<Edge>>,
+    /// Every cell's outgoing edges in one buffer, a cell's at its span. A full
+    /// build lays them out in id order; an edit that grows a cell's list moves it
+    /// to the end, and the buffer compacts once the stranded edges outweigh the live.
+    flat: Vec<Edge>,
+    /// Per slot: (start, len) into `flat`.
+    spans: Vec<(u32, u32)>,
+    /// Edges in `flat` no span covers.
+    stranded: usize,
     by_coord: AHashMap<VoxelKey, CellId>,
     free: Vec<CellId>,
     /// Whether every id was appended in coordinate order, as a full build does,
@@ -92,7 +99,7 @@ impl SurfaceCells {
 
     /// Edges held across every slot, tombstones included.
     pub fn edge_count(&self) -> usize {
-        self.edges.iter().map(Vec::len).sum()
+        self.flat.len() - self.stranded
     }
 
     /// Clear all vecs but keep allocated capacity.
@@ -101,9 +108,45 @@ impl SurfaceCells {
         self.by_coord.clear();
         self.free.clear();
         self.coord_ordered = true;
-        for e in self.edges.iter_mut() {
-            e.clear();
+        self.flat.clear();
+        self.spans.clear();
+        self.stranded = 0;
+    }
+
+    #[inline]
+    fn range(&self, id: CellId) -> std::ops::Range<usize> {
+        let (start, len) = self.spans[id as usize];
+        start as usize..(start + len) as usize
+    }
+
+    /// Replace a cell's outgoing edges, in place when they fit.
+    pub fn set_edges(&mut self, id: CellId, edges: &[Edge]) {
+        let (start, len) = self.spans[id as usize];
+        if edges.len() <= len as usize {
+            let start = start as usize;
+            self.flat[start..start + edges.len()].copy_from_slice(edges);
+            self.stranded += len as usize - edges.len();
+            self.spans[id as usize].1 = edges.len() as u32;
+            return;
         }
+        self.stranded += len as usize;
+        self.spans[id as usize] = (self.flat.len() as u32, edges.len() as u32);
+        self.flat.extend_from_slice(edges);
+        if self.stranded > self.flat.len() / 2 && self.flat.len() > 4096 {
+            self.compact();
+        }
+    }
+
+    /// Lay the live edges out in id order again, dropping the stranded ones.
+    fn compact(&mut self) {
+        let mut flat: Vec<Edge> = Vec::with_capacity(self.flat.len() - self.stranded);
+        for span in self.spans.iter_mut() {
+            let (start, len) = *span;
+            *span = (flat.len() as u32, len);
+            flat.extend_from_slice(&self.flat[start as usize..(start + len) as usize]);
+        }
+        self.flat = flat;
+        self.stranded = 0;
     }
 
     #[inline]
@@ -131,7 +174,7 @@ impl SurfaceCells {
                 self.coord_ordered = false;
             }
             self.coord.push(k);
-            self.edges.push(Vec::new());
+            self.spans.push((self.flat.len() as u32, 0));
             id
         };
         self.by_coord.insert(k, id);
@@ -141,10 +184,22 @@ impl SurfaceCells {
     /// Remove a cell, tombstoning its slot and dropping its edges.
     pub fn remove(&mut self, k: VoxelKey) -> Option<CellId> {
         let id = self.by_coord.remove(&k)?;
-        let outbound = std::mem::take(&mut self.edges[id as usize]);
-        for e in &outbound {
-            let neigh = &mut self.edges[e.dest as usize];
-            neigh.retain(|x| x.dest != id);
+        let outbound: Vec<CellId> = self.neighbors(id).iter().map(|e| e.dest).collect();
+        self.stranded += self.spans[id as usize].1 as usize;
+        self.spans[id as usize].1 = 0;
+        for dest in outbound {
+            // Drop the edges back to the removed cell, keeping the rest in order.
+            let range = self.range(dest);
+            let list = &mut self.flat[range.clone()];
+            let mut kept = 0;
+            for i in 0..list.len() {
+                if list[i].dest != id {
+                    list[kept] = list[i];
+                    kept += 1;
+                }
+            }
+            self.stranded += list.len() - kept;
+            self.spans[dest as usize].1 = kept as u32;
         }
         self.coord[id as usize] = TOMBSTONE;
         self.free.push(id);
@@ -165,48 +220,62 @@ impl SurfaceCells {
 
     #[inline]
     pub fn neighbors(&self, id: CellId) -> &[Edge] {
-        &self.edges[id as usize]
+        &self.flat[self.range(id)]
     }
 
     #[inline]
     pub fn edges_mut(&mut self, id: CellId) -> &mut [Edge] {
-        &mut self.edges[id as usize]
+        let range = self.range(id);
+        &mut self.flat[range]
     }
 
     #[cfg(test)]
     pub fn add_edge(&mut self, src: CellId, dest: CellId, cost: f32) {
-        self.edges[src as usize].push(Edge {
+        let mut edges = self.neighbors(src).to_vec();
+        edges.push(Edge {
             dest,
             base_cost: cost,
             rise: 0.0,
             cost,
         });
+        self.set_edges(src, &edges);
     }
 
     /// Iterate live cells: (id, outgoing edges).
     pub fn iter(&self) -> impl Iterator<Item = (CellId, &[Edge])> + '_ {
         self.coord.iter().enumerate().filter_map(move |(i, c)| {
             if *c != TOMBSTONE {
-                Some((i as CellId, self.edges[i].as_slice()))
+                Some((i as CellId, self.neighbors(i as CellId)))
             } else {
                 None
             }
         })
     }
 
-    /// Mutable per-cell edge iterator over live cells.
-    pub fn iter_edges_mut(&mut self) -> impl Iterator<Item = (CellId, &mut Vec<Edge>)> + '_ {
-        self.coord
+    /// Every live cell's outgoing edges, mutable and disjoint, for parallel passes.
+    pub fn edge_lists_mut(&mut self) -> Vec<(CellId, &mut [Edge])> {
+        let mut live: Vec<(u32, u32, CellId)> = self
+            .coord
             .iter()
-            .zip(self.edges.iter_mut())
+            .zip(&self.spans)
             .enumerate()
-            .filter_map(|(i, (c, e))| {
-                if *c != TOMBSTONE {
-                    Some((i as CellId, e))
-                } else {
-                    None
-                }
-            })
+            .filter(|(_, (c, (_, len)))| **c != TOMBSTONE && *len > 0)
+            .map(|(i, (_, &(start, len)))| (start, len, i as CellId))
+            .collect();
+        if !live.windows(2).all(|w| w[0].0 <= w[1].0) {
+            live.sort_unstable();
+        }
+        let mut out = Vec::with_capacity(live.len());
+        let mut rest: &mut [Edge] = &mut self.flat;
+        let mut at = 0u32;
+        for (start, len, id) in live {
+            let (_, tail) = rest.split_at_mut((start - at) as usize);
+            let (list, tail) = tail.split_at_mut(len as usize);
+            out.push((id, list));
+            rest = tail;
+            at = start + len;
+        }
+        out
     }
 
     pub fn ids(&self) -> impl Iterator<Item = CellId> + '_ {
@@ -242,45 +311,67 @@ pub fn build_surface_cells(
     cells.clear();
 
     let mut keys: Vec<(i32, i32)> = surface_lookup.keys().copied().collect();
-    keys.sort_unstable();
+    keys.par_sort_unstable();
+    let total: usize = surface_lookup.values().map(Vec::len).sum();
+    cells.by_coord.reserve(total);
+    cells.coord.reserve(total);
+    cells.spans.reserve(total);
     for &(ix, iy) in &keys {
         for &iz in &surface_lookup[&(ix, iy)] {
             cells.insert((ix, iy, iz));
         }
     }
 
-    let n = cells.coord.len();
-    cells.edges.resize_with(n, Vec::new);
+    // Each block of cells fills its own run, then the runs land in the buffer in id order.
+    const BLOCK: usize = 4096;
     let coord: &[VoxelKey] = &cells.coord;
     let by_coord: &AHashMap<VoxelKey, CellId> = &cells.by_coord;
-    cells
-        .edges
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(src_id, local)| {
-            let (ix, iy, iz) = coord[src_id];
-            for (dx, dy) in NEIGHBORS_4 {
-                let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
-                    continue;
-                };
-                for &nz in nzs {
-                    let dz = nz - iz;
-                    if dz.abs() > step_threshold_cells {
+    let blocks: Vec<(Vec<Edge>, Vec<u32>)> = coord
+        .par_chunks(BLOCK)
+        .map(|block| {
+            let mut edges: Vec<Edge> = Vec::with_capacity(block.len() * 8);
+            let mut lens: Vec<u32> = Vec::with_capacity(block.len());
+            for &(ix, iy, iz) in block {
+                let before = edges.len();
+                for (dx, dy) in NEIGHBORS_4 {
+                    let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
                         continue;
+                    };
+                    for &nz in nzs {
+                        let dz = nz - iz;
+                        if dz.abs() > step_threshold_cells {
+                            continue;
+                        }
+                        let dest = *by_coord
+                            .get(&(ix + dx, iy + dy, nz))
+                            .expect("neighbor cell exists in lookup");
+                        let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
+                        edges.push(Edge {
+                            dest,
+                            base_cost: cost,
+                            rise: rise(dz, voxel_size),
+                            cost,
+                        });
                     }
-                    let dest = *by_coord
-                        .get(&(ix + dx, iy + dy, nz))
-                        .expect("neighbor cell exists in lookup");
-                    let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                    local.push(Edge {
-                        dest,
-                        base_cost: cost,
-                        rise: rise(dz, voxel_size),
-                        cost,
-                    });
                 }
+                lens.push((edges.len() - before) as u32);
             }
-        });
+            (edges, lens)
+        })
+        .collect();
+    cells
+        .flat
+        .reserve(blocks.iter().map(|(e, _)| e.len()).sum());
+    let mut id = 0;
+    for (edges, lens) in blocks {
+        let mut start = cells.flat.len() as u32;
+        for len in lens {
+            cells.spans[id] = (start, len);
+            start += len;
+            id += 1;
+        }
+        cells.flat.extend_from_slice(&edges);
+    }
 }
 
 /// Recompute outgoing edges for the affected cells. Call after an incremental
@@ -323,7 +414,7 @@ pub fn rebuild_edges_around(
         })
         .collect();
     for (id, edges) in rebuilt {
-        cells.edges[id as usize] = edges;
+        cells.set_edges(id, &edges);
     }
 }
 
@@ -403,10 +494,10 @@ mod tests {
     #[test]
     fn clear_keeps_edge_vec_capacity() {
         let (_, mut sc) = build(&[(0, 0, 0), (1, 0, 0), (2, 0, 0)]);
-        let edge_vec_count = sc.edges.len();
+        let capacity = sc.flat.capacity();
         sc.clear();
         assert!(sc.is_empty());
-        assert_eq!(sc.edges.len(), edge_vec_count);
+        assert_eq!(sc.flat.capacity(), capacity);
     }
 
     #[test]
