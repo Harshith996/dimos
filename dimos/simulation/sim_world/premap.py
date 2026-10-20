@@ -60,7 +60,7 @@ def sensor_poses(
 
 
 def premap_cloud(scene: Scene, rig: Rig, route: NDArray[np.float64]) -> NDArray[np.float32]:
-    """The rig's Mid-360 returns walking the route through the scene, one world-frame point per voxel."""
+    """The rig's Mid-360 returns walking the route there and back, one world-frame point per voxel."""
     spec = mujoco.MjSpec()
     add_boxes(spec, scene)
     model = spec.compile()
@@ -72,7 +72,8 @@ def premap_cloud(scene: Scene, rig: Rig, route: NDArray[np.float64]) -> NDArray[
     dims = np.ceil((hi - lo) / VOXEL_M).astype(np.int64) + 3
     seen = np.zeros(dims, dtype=bool)
     kept = []
-    for position, rotation in sensor_poses(route, rig, PREMAP_STEP_M):
+    poses = sensor_poses(route, rig, PREMAP_STEP_M) + sensor_poses(route[::-1], rig, PREMAP_STEP_M)
+    for position, rotation in poses:
         returns = lidar.cast(position, rotation, per_pose).astype(np.float64)
         returns = returns[np.linalg.norm(returns, axis=1) >= rig.lio_blind_range]
         points = position + returns @ rotation.T

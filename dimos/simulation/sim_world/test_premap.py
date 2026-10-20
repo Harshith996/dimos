@@ -51,6 +51,14 @@ def test_a_premap_without_objects_shows_the_floor_where_the_block_stands() -> No
     assert on_the_block(premap_cloud(bare, GO2, walk)) == 0
 
 
+def test_the_premap_maps_the_floor_around_the_start_even_for_a_lidar_that_looks_ahead() -> None:
+    scene = office(1)
+    x, y, z0 = scene.start
+    cloud = premap_cloud(scene, ALFRED, np.array([[x, y, z0], [x + 3.0, y, z0]]))
+    floor = cloud[np.abs(cloud[:, 2] - z0) < 0.05]
+    assert np.sum(np.hypot(floor[:, 0] - x, floor[:, 1] - y) < 0.5) > 50
+
+
 def test_the_premap_keeps_the_blind_range_clear_of_the_sensor() -> None:
     scene = office(1)
     x, y, z0 = scene.start
