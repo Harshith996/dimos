@@ -125,16 +125,12 @@ class SimulationRuntime:
                             )
                         snapshot_hz = max(snapshot_hz, pattern.motion_sample_rate_hz)
                         if sensor.imu is not None:
-                            if (
-                                not math.isclose(
-                                    1 / sensor.imu.rate_hz / config.timestep,
-                                    round(1 / sensor.imu.rate_hz / config.timestep),
-                                )
-                                or sensor.imu.rate_hz > 1 / config.timestep
-                            ):
-                                raise ValueError("lidar IMU rate must divide the physics rate")
+                            if sensor.imu.rate_hz > 1 / config.timestep:
+                                raise ValueError("lidar IMU rate cannot exceed the physics rate")
                             snapshot_hz = max(snapshot_hz, sensor.imu.rate_hz)
-                            imu_strides.append(round(1 / sensor.imu.rate_hz / config.timestep))
+                            stride = 1 / sensor.imu.rate_hz / config.timestep
+                            if math.isclose(stride, round(stride)):
+                                imu_strides.append(round(stride))
                         history_seconds = max(history_seconds, 2 / sensor.rate_hz)
         ticks_per_snapshot = 1 / snapshot_hz / config.timestep
         self._snapshot_stride = max(

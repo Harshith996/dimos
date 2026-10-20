@@ -22,18 +22,21 @@ different rotor frequencies from the Go2 fit; it is not silently substituted.
 from dataclasses import dataclass
 from functools import lru_cache
 import math
+from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.sim2.sensors.spec import TimedRays
-from dimos.simulation.sensors.mid360.lidar import ReturnModel
+from dimos.simulation.sensors.mid360.lidar import OcclusionMap, ReturnModel
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE, Mid360Pattern
 from dimos.utils.data import get_data
 
 
-@lru_cache(maxsize=1)
-def _pattern() -> Mid360Pattern:
+@lru_cache(maxsize=2)
+def _pattern(calibration: str = "g1") -> Mid360Pattern:
+    if calibration == "go2":
+        return Mid360Pattern.load(get_data("go2_sim/mid360_pattern.npz"))
     with np.load(get_data("mid360_pattern/fourier.npz"), allow_pickle=False) as archive:
         return Mid360Pattern(
             float(archive["f1"]),
@@ -42,6 +45,11 @@ def _pattern() -> Mid360Pattern:
             int(archive["m2"]),
             np.asarray(archive["coefs"], dtype=np.float64),
         )
+
+
+@lru_cache(maxsize=1)
+def _go2_occlusion() -> OcclusionMap:
+    return OcclusionMap.load(get_data("go2_sim/go2_mid360_occlusion.npz"))
 
 
 @dataclass(frozen=True)
@@ -60,8 +68,14 @@ class Mid360:
     noise: bool = True
     dropout: bool = True
     seed: int = 0
+    calibration: Literal["g1", "go2"] = "g1"
+    mount_occlusion: bool = False
 
     def __post_init__(self) -> None:
+        if self.calibration not in ("g1", "go2"):
+            raise ValueError("Mid360 calibration must be g1 or go2")
+        if self.mount_occlusion and self.calibration != "go2":
+            raise ValueError("measured mount occlusion is only available for Go2")
         if self.point_rate_hz != POINT_RATE:
             raise ValueError("Mid360 fires at 200000 points/s; use downsample to reduce ray count")
         if not isinstance(self.downsample, int) or self.downsample < 1 or self.seed < 0:
@@ -84,7 +98,9 @@ class Mid360:
         offsets = (np.arange(0, count, 4 * self.downsample)[:, None] + np.arange(4)).ravel()
         indices = round(start * self.point_rate_hz) + offsets
         return TimedRays(
-            directions=_pattern().directions(round(start * self.point_rate_hz), count)[offsets],
+            directions=_pattern(self.calibration).directions(
+                round(start * self.point_rate_hz), count
+            )[offsets],
             offsets=offsets.astype(np.float64) / self.point_rate_hz,
             lines=(indices % 4).astype(np.uint8),
         )
@@ -96,6 +112,19 @@ class Mid360:
         rng = np.random.default_rng([self.seed, round(start * self.point_rate_hz)])
         cosine = np.clip(np.abs(cos_incidence), 0.0, 1.0)
         keep = (ranges >= self.min_range) & (ranges <= self.max_range)
+        if self.mount_occlusion:
+            # Same measured mask as the existing Go2 sensor, without another ray engine.
+            count = len(ranges)
+            offsets = (
+                np.arange(0, math.ceil(count / 4) * 4 * self.downsample, 4 * self.downsample)[
+                    :, None
+                ]
+                + np.arange(4)
+            ).ravel()[:count]
+            directions = _pattern(self.calibration).directions(
+                round(start * self.point_rate_hz), int(offsets[-1]) + 1
+            )[offsets]
+            keep &= rng.random(count) >= _go2_occlusion().lookup(directions)
         response = ReturnModel()
         if self.dropout:
             probability = np.interp(
