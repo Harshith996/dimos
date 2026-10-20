@@ -231,6 +231,46 @@ provides:
     /docs/search:
       get:
         summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
+  # the same as the shorthand Desktops 0.2.204 and older read (paths: is nothing to them): delete once they're gone
+  endpoints:
+    - { method: GET, path: "info" }
+    - { method: POST, path: "server/stop" }
+    - { method: GET, path: "catalog" }
+    - { method: GET, path: "catalog/blueprints" }
+    - { method: GET, path: "catalog/blueprints/{name}" }
+    - { method: GET, path: "catalog/blueprints/{name}/config" }
+    - { method: GET, path: "catalog/modules" }
+    - { method: GET, path: "catalog/modules/{name}" }
+    - { method: GET, path: "catalog/modules/{name}/config" }
+    - { method: GET, path: "catalog/msgs/{name}" }
+    - { method: GET, path: "catalog/robots" }
+    - { method: POST, path: "catalog/scan" }
+    - { method: POST, path: "catalog/scan/blueprints/{name}" }
+    - { method: GET, path: "catalog/skills" }
+    - { method: GET, path: "catalog/skills/{module}/{skill}" }
+    - { method: GET, path: "config/blueprints/{name}" }
+    - { method: PUT, path: "config/blueprints/{name}" }
+    - { method: GET, path: "config/global" }
+    - { method: PUT, path: "config/global" }
+    - { method: GET, path: "runs" }
+    - { method: POST, path: "runs" }
+    - { method: POST, path: "runs/exec" }
+    - { method: GET, path: "runs/log_hist" }
+    - { method: GET, path: "runs/log_hist/{runId}" }
+    - { method: GET, path: "runs/logs" }
+    - { method: POST, path: "runs/restart" }
+    - { method: GET, path: "runs/skills" }
+    - { method: POST, path: "runs/stop" }
+    - { method: GET, path: "cloud/account" }
+    - { method: POST, path: "cloud/login" }
+    - { method: DELETE, path: "cloud/login" }
+    - { method: GET, path: "cloud/uploads" }
+    - { method: POST, path: "cloud/uploads" }
+    - { method: DELETE, path: "cloud/uploads" }
+    - { method: GET, path: "extras" }
+    - { method: POST, path: "extras/install" }
+    - { method: GET, path: "jobs/{job}" }
+    - { method: GET, path: "docs/search" }
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |
