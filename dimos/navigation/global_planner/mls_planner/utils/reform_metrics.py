@@ -394,7 +394,13 @@ def lockstep(
             ),
             np.array([o.position.x, o.position.y, o.position.z]),
         )
+        start, span = odom_ts[0], max(odom_ts[-1] - odom_ts[0], 1e-9)
+        next_report = 0.05
         for obs in store.streams.lidar.order_by("ts"):
+            if (obs.ts - start) / span >= next_report:
+                which = "A" if closures is not None else "B"
+                print(f"lockstep {which}: {next_report:.0%}", flush=True)
+                next_report += 0.05
             while (
                 closures is not None
                 and next_closure < len(closures)
