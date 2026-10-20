@@ -109,6 +109,7 @@ DUAL_OPENYAM_WRIST_CAMERA_SERIALS = {"left": "260322272983", "right": "260322276
 DUAL_OPENYAM_COLLECTION_STREAMS = [
     "color_image",
     "coordinator_joint_state",
+    "coordinator_joint_command",
     "status",
     "left_wrist_color_image",
     "right_wrist_color_image",
@@ -121,15 +122,17 @@ DUAL_OPENYAM_COLLECTION_STREAMS = [
 
 
 class DualOpenYamCollectionRecorder(CollectionRecorder):
-    """The collection streams plus both wrist views and the operator's commands.
+    """The collection streams plus the commands, both wrist views and the buttons.
 
-    Wrist images are what a grasping policy looks at; the controller poses and
-    gripper commands are the actions the operator asked for, so a dataset can
-    use them instead of the measured state; the button word says when the grips
-    were held, which is when a controller pose was actually driving an arm.
+    coordinator_joint_command is the position command the coordinator sent each
+    tick, the action a policy is trained on. The controller poses and gripper
+    commands are what the operator asked for before IK; the button word says
+    when the grips were held. Wrist images are what a grasping policy looks at.
     DataPrep selects streams by name, so the extra streams cost nothing until a
     config asks for them.
     """
+
+    coordinator_joint_command: In[JointState]
 
     left_wrist_color_image: In[Image]
     right_wrist_color_image: In[Image]
