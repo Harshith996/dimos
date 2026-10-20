@@ -202,7 +202,8 @@ def grow_floor(
 
 
 def _apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
-    return points @ matrix[:3, :3].T + matrix[:3, 3]
+    moved: np.ndarray = points @ matrix[:3, :3].T + matrix[:3, 3]
+    return moved
 
 
 def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
@@ -219,10 +220,10 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 # Nothing above the lidar's plane spends the point budget; what is under the floor goes to HeadFloorPrior.
                 "height_frame": BASE_FRAME,
                 "max_height_m": HeadFloorPriorConfig.model_fields["max_height_m"].default,
-                # The ray tracer shares the Orin with everything else; one point per 11x11 pixels, at most 1500, keeps
-                # it near one Point-LIO's worth of work with every lidar ray traced.
-                "decimation": 11,
-                "max_points": 1500,
+                # One point per 8x8 pixels, at most 3000: replaying r1_live_20260930_1332 on the R1, floor near the robot
+                # rose from ~45% of the map at 11x11 / 1500 to 51%.
+                "decimation": 8,
+                "max_points": 3000,
                 # JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
                 "decode_scale": 4,
                 # One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
