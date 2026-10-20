@@ -16,6 +16,7 @@
 
 import math
 
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -53,13 +54,15 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
 
     config: DualOpenYamCoordinatorConfig
 
+    def _build_hardware(self) -> HardwareComponent:
+        """The dual-arm component; subclasses may adjust it before setup."""
+        return dual_openyam_hardware(
+            left_can_port=self.config.left_can_port,
+            right_can_port=self.config.right_can_port,
+        )
+
     def _setup_from_config(self) -> None:
-        self.config.hardware = [
-            dual_openyam_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
+        self.config.hardware = [self._build_hardware()]
         # Resolve assets at startup, using the same bounds as the planning model.
         component = self.config.hardware[0]
         assert component.limits is not None

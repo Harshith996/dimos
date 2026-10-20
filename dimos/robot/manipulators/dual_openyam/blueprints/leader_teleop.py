@@ -16,15 +16,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
+    DualOpenYamCoordinator,
+    DualOpenYamCoordinatorConfig,
+)
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
@@ -32,9 +37,71 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 )
 from dimos.teleop.yam_leader.teleop_module import YamLeaderTeleopModule
 
-# Per-joint follower speed cap for streamed leader targets: the dual_openyam.urdf
-# velocity limit, and the ceiling the WebXR teleop on this rig was validated at.
+# Per-joint follower speed caps for streamed leader targets. The big joints keep
+# the dual_openyam.urdf limit; a human wrist turns faster than that, and the
+# OpenArm leader runs its wrists at twice its arm cap for the same reason.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 2.0
+DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
+_WRIST_JOINT_INDICES = (3, 4, 5)  # joints 4 to 6 of each arm
+
+
+def dual_openyam_leader_velocity_limits() -> dict[str, float]:
+    """Arm joints at the URDF cap, wrist joints at the leader wrist cap."""
+    return {
+        joint: (
+            DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S
+            if index % 6 in _WRIST_JOINT_INDICES
+            else DUAL_OPENYAM_LEADER_VELOCITY_RAD_S
+        )
+        for index, joint in enumerate(DUAL_OPENYAM_ARM_JOINTS)
+    }
+
+
+def with_wrist_gains(
+    component: HardwareComponent, kp: float | None, kd: float | None
+) -> HardwareComponent:
+    """The component with joints 4 to 6 of each arm at the given MIT gains.
+
+    main drives the wrist motors at kp 10, kd 1.5, which follows a leader late;
+    the step tests of 2026-10-16 settled on kp 80, kd 1.5 for both arms.
+    """
+    if kp is None and kd is None:
+        return component
+    assert component.wb_config is not None
+    assert component.wb_config.kp is not None and component.wb_config.kd is not None
+    new_kp = list(component.wb_config.kp)
+    new_kd = list(component.wb_config.kd)
+    for index, joint in enumerate(component.joints):
+        if (
+            joint in DUAL_OPENYAM_ARM_JOINTS
+            and DUAL_OPENYAM_ARM_JOINTS.index(joint) % 6 in _WRIST_JOINT_INDICES
+        ):
+            if kp is not None:
+                new_kp[index] = kp
+            if kd is not None:
+                new_kd[index] = kd
+    return replace(
+        component, wb_config=replace(component.wb_config, kp=tuple(new_kp), kd=tuple(new_kd))
+    )
+
+
+class DualOpenYamLeaderCoordinatorConfig(DualOpenYamCoordinatorConfig):
+    """Dual OpenYAM coordinator config with optional wrist gain overrides."""
+
+    wrist_kp: float | None = None
+    wrist_kd: float | None = None
+
+
+class DualOpenYamLeaderCoordinator(DualOpenYamCoordinator):
+    """DualOpenYamCoordinator whose wrist motor gains can be set per run."""
+
+    config: DualOpenYamLeaderCoordinatorConfig
+
+    def _build_hardware(self) -> HardwareComponent:
+        return with_wrist_gains(
+            super()._build_hardware(), self.config.wrist_kp, self.config.wrist_kd
+        )
+
 
 # The robot's zenoh router for the split deployment. Named, not scouted.
 DUAL_OPENYAM_ROUTER = os.environ.get("DIMOS_OPENYAM_ROUTER", "tcp/127.0.0.1:7447")
@@ -50,9 +117,7 @@ def dual_openyam_leader_tasks() -> list[TaskConfig]:
             priority=10,
             params={
                 "start_position_tolerance": 0.05,
-                "velocity_limits": dict.fromkeys(
-                    DUAL_OPENYAM_ARM_JOINTS, DUAL_OPENYAM_LEADER_VELOCITY_RAD_S
-                ),
+                "velocity_limits": dual_openyam_leader_velocity_limits(),
             },
         ),
         TaskConfig(
@@ -74,7 +139,7 @@ def dual_openyam_leader_tasks() -> list[TaskConfig]:
 
 def _follower(visualization: ManipulationVisualizationConfig | dict[str, str]) -> Blueprint:
     return autoconnect(
-        DualOpenYamCoordinator.blueprint(
+        DualOpenYamLeaderCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=dual_openyam_leader_tasks(),
         ),
