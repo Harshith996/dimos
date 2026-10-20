@@ -61,10 +61,11 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_GRIPPER_JOINTS
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Table top below the arm mounting plates (tape, 2026-10-08). The workcell model
-# carries the slab 1 cm lower so objects resting on the table do not count as
-# in collision with it; no separate planner floor, it would overlap the slab.
-DUAL_OPENYAM_TABLE_TOP_Z = -0.042
+# Table top in the workcell frame, from the rig calibration of 2026-10-15
+# (dual_openyam_workcell_v2 SOURCE.md). The model carries the slab 1 cm lower so
+# objects resting on the table do not count as in collision with it; no separate
+# planner floor, it would overlap the slab.
+DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
 # {side}_grasp_frame sits 10 cm below the gripper link on its axis; the finger
 # pads of the URDF meet 3.7 cm further out. The printed fingers on the rig are
 # longer than the URDF's by this much per arm (tool height check, 2026-10-09).
@@ -80,13 +81,15 @@ DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-# Fixed camera on the centre post, in the frame midway between the arm bases
-# (x forward, y toward the left arm, z up). Solved 2026-10-13 from four AprilTags
-# laid by their corners from the J1 line and the X axis (97.5 mm black squares),
-# 0.66 px reprojection RMS over 16 corners; tape to the camera agrees within 1 cm.
+# Fixed camera on the centre post, in the workcell frame of dual_openyam_workcell_v2
+# (the rig frame of Mustafa's 2026-10-15 calibration: midway between the arm bases,
+# x forward, y toward the left arm, z up). The calibration solved the colour
+# optical frame in that rig frame; this is the same pose expressed as camera_link
+# (optical = link * color_frame * (-0.5, 0.5, -0.5, 0.5)). The 2026-10-13 AprilTag
+# solve agreed with it within 5 mm and 2 deg.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=-0.0121, y=0.0147, z=0.4069),
-    rotation=Quaternion(-0.01191, 0.48426, -0.01853, 0.87465),  # xyzw, pitched 58.0 deg down
+    translation=Vector3(x=-0.01684, y=0.01262, z=0.41508),
+    rotation=Quaternion(-0.02168, 0.47733, -0.00152, 0.87845),  # xyzw, pitched 57.0 deg down
     frame_id="world",
     child_frame_id="camera_link",
 )

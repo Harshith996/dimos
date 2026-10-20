@@ -51,9 +51,9 @@ Skills:
   get_robot_state: as named, each with planning_group {group}.
 - reset: Clear a FAULT state after a failed motion, before planning again.
 
-World frame (meters): origin on the table midway between the arm bases,
-X forward (away from the arms), Y toward the left arm, Z up. The table top is
-at Z=-0.042. The yellow bin spans X 0.40 to 0.69 and Y -0.11 to +0.11, rim at
+World frame (meters): origin midway between the arm bases at the height of
+their mounting blocks, X forward (away from the arms), Y toward the left arm,
+Z up. The table top is at Z=-0.035. The yellow bin spans X 0.40 to 0.69 and Y -0.11 to +0.11, rim at
 Z=0.068; it is an obstacle, not a place target: this stack places top-down
 only and cannot clear the rim. The drop zone is the marked tray square on the
 {side} side; "put it in the tray", "put it down" and "put it in the bin" all
