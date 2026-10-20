@@ -36,6 +36,10 @@ class ReformRayTracingVoxelMapConfig(RayTracingVoxelMapConfig):
     # A keyframe whose correction moves its surroundings less than this waits
     # for a later closure. Half a voxel moves no voxel.
     reform_min_shift_m: float = 0.04
+    # A warp blends one keyframe per cell of this size (and of the time width in
+    # time), m: the one nearest the cell's center. 0 picks the blend width,
+    # negative blends every keyframe.
+    reform_thin_cell_m: float = 0.0
     # Where to write the module's map state every 10 s for offline checks, empty for never.
     dump_path: str = ""
 

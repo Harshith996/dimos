@@ -101,6 +101,7 @@ fn closure(state: &mut ReformState) -> Warp {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.04,
+        thin_cell_m: -1.0,
     };
     state
         .closure(&moved, &params)
@@ -214,6 +215,7 @@ fn shifts_smaller_than_a_voxel_add_up_over_closures() {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 1.0,
         min_shift_m: 0.02,
+        thin_cell_m: -1.0,
     };
     // Each keyframe's pose before the nudge is where the last one left it.
     let nudge = |state: &mut ReformState, done: f64| {

@@ -447,6 +447,7 @@ impl Worker {
                 warn!(
                     keyframes = warp.keyframes(),
                     keyframes_moved = warp.moved_keyframes(),
+                    keyframes_blended = warp.blended_keyframes(),
                     median_shift_m,
                     max_shift_m,
                     voxels_warped = report.voxels_warped,

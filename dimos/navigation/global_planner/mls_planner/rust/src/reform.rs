@@ -304,6 +304,10 @@ pub struct ReformParams {
     /// A keyframe whose correction moves its surroundings less than this
     /// waits for a later closure.
     pub min_shift_m: f64,
+    /// A warp blends one keyframe per cell of this size in space (and of the
+    /// time width in time), m: the one nearest the cell's center. 0 picks the
+    /// blend width; negative blends every keyframe.
+    pub thin_cell_m: f64,
 }
 
 /// A keyframe as the map holds it.
@@ -383,6 +387,7 @@ impl ReformState {
             .applied
             .iter()
             .map(|(id, a)| Anchor {
+                id: *id,
                 position: a.pose.translation,
                 ts: a.ts,
                 correction: corrections.get(id).copied().unwrap_or(Pose::IDENTITY),
@@ -393,7 +398,21 @@ impl ReformState {
             let a = self.applied.get_mut(id).expect("inserted above");
             a.pose = correction.compose(&a.pose);
         }
-        Some(Warp::new(anchors, sigma, time_sigma, reach))
+        let cell = if params.thin_cell_m == 0.0 {
+            sigma
+        } else {
+            params.thin_cell_m.max(0.0)
+        };
+        let blended = thinned(&anchors, cell, time_sigma);
+        let blend = graph_delta(&blended, sigma, time_sigma).to_blend_arrays();
+        Some(Warp::new(
+            anchors,
+            blended.len(),
+            blend,
+            sigma,
+            time_sigma,
+            reach,
+        ))
     }
 }
 
@@ -485,19 +504,47 @@ fn mean_interval(times: impl Iterator<Item = f64>) -> f64 {
 
 #[derive(Clone, Copy, Debug)]
 struct Anchor {
+    id: u32,
     position: Vec3,
     ts: f64,
     correction: Pose,
     moved: bool,
 }
 
+/// One anchor per cell of `cell` meters and `time_sigma` seconds, the one
+/// nearest the cell's center; every anchor when `cell` is 0.
+fn thinned(anchors: &[Anchor], cell: f64, time_sigma: f64) -> Vec<Anchor> {
+    if cell <= 0.0 {
+        return anchors.to_vec();
+    }
+    let at = |v: f64, w: f64| (v / w).floor() as i64;
+    let off = |v: f64, w: f64| (v / w - (v / w).floor() - 0.5).powi(2);
+    let mut best: AHashMap<[i64; 4], (f64, usize)> = AHashMap::new();
+    for (i, a) in anchors.iter().enumerate() {
+        let p = a.position;
+        let key = [
+            at(p.x, cell),
+            at(p.y, cell),
+            at(p.z, cell),
+            at(a.ts, time_sigma),
+        ];
+        let d = off(p.x, cell) + off(p.y, cell) + off(p.z, cell) + off(a.ts, time_sigma);
+        let e = best.entry(key).or_insert((d, i));
+        if (d, a.id) < (e.0, anchors[e.1].id) {
+            *e = (d, i);
+        }
+    }
+    let mut kept: Vec<usize> = best.into_values().map(|(_, i)| i).collect();
+    kept.sort_unstable_by_key(|&i| anchors[i].id);
+    kept.into_iter().map(|i| anchors[i]).collect()
+}
+
 fn graph_delta(anchors: &[Anchor], sigma: f64, time_sigma: f64) -> fast_reform::GraphDelta3D {
     fast_reform::GraphDelta3D {
         nodes: anchors
             .iter()
-            .enumerate()
-            .map(|(i, a)| fast_reform::Node {
-                id: i as u64,
+            .map(|a| fast_reform::Node {
+                id: a.id as u64,
                 ts: a.ts,
                 position: a.position,
             })
@@ -518,6 +565,7 @@ fn graph_delta(anchors: &[Anchor], sigma: f64, time_sigma: f64) -> fast_reform::
 /// (identity for the unmoved), blended per point by plain fast-reform.
 pub struct Warp {
     anchors: Vec<Anchor>,
+    blended: usize,
     blend: fast_reform::graph::BlendDeltas,
     sigma: f64,
     time_sigma: f64,
@@ -525,10 +573,17 @@ pub struct Warp {
 }
 
 impl Warp {
-    fn new(anchors: Vec<Anchor>, sigma: f64, time_sigma: f64, reach: f64) -> Self {
-        let blend = graph_delta(&anchors, sigma, time_sigma).to_blend_arrays();
+    fn new(
+        anchors: Vec<Anchor>,
+        blended: usize,
+        blend: fast_reform::graph::BlendDeltas,
+        sigma: f64,
+        time_sigma: f64,
+        reach: f64,
+    ) -> Self {
         Self {
             anchors,
+            blended,
             blend,
             sigma,
             time_sigma,
@@ -550,6 +605,11 @@ impl Warp {
 
     pub fn keyframes(&self) -> usize {
         self.anchors.len()
+    }
+
+    /// Keyframes the blend uses after fast-reform's thinning.
+    pub fn blended_keyframes(&self) -> usize {
+        self.blended
     }
 
     /// How far the moved keyframes' own positions move: (median, max) in meters.
@@ -586,9 +646,25 @@ impl Warp {
         max_shift + max_angle * 3.0 * self.reach + self.reach
     }
 
-    /// The correction as one fast-reform graph over every keyframe.
+    /// The correction as the one fast-reform graph the warp blends.
     pub fn graph_delta(&self) -> fast_reform::GraphDelta3D {
-        graph_delta(&self.anchors, self.sigma, self.time_sigma)
+        fast_reform::GraphDelta3D {
+            nodes: (0..self.blend.len())
+                .map(|i| fast_reform::Node {
+                    id: i as u64,
+                    ts: self.blend.times[i],
+                    position: self.blend.positions[i],
+                })
+                .collect(),
+            transforms: (0..self.blend.len())
+                .map(|i| fast_reform::Transform {
+                    translation: self.blend.translations[i],
+                    rotation: self.blend.rotations[i],
+                })
+                .collect(),
+            blend_sigma: self.sigma,
+            blend_time_sigma: self.time_sigma,
+        }
     }
 
     /// Warp world points, each with the time it was observed, NaN for unknown
@@ -784,6 +860,74 @@ mod tests {
         println!("{} voxels: {:?}", landed.len(), started.elapsed());
     }
 
+    /// RT_THIN_BENCH=<gsc keyframes dump> cargo test --release --lib thinning_bench -- --ignored --nocapture
+    #[test]
+    #[ignore = "needs RT_THIN_BENCH, a gsc keyframes dump"]
+    fn thinning_bench() {
+        let raw = std::fs::read(std::env::var("RT_THIN_BENCH").unwrap()).unwrap();
+        let f: Vec<f64> = raw
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| f64::from_le_bytes(*b))
+            .collect();
+        let pose = |v: &[f64]| Pose {
+            translation: Vec3::new(v[0], v[1], v[2]),
+            rotation: Quat::new(v[3], v[4], v[5], v[6]).normalized_or_identity(),
+        };
+        let kfs: Vec<(KeyframeRecord, Pose)> = f
+            .as_chunks::<15>()
+            .0
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let raw = pose(&r[1..8]);
+                let corrected = pose(&r[8..15]);
+                (
+                    KeyframeRecord {
+                        id: i as u32,
+                        ts: r[0],
+                        pose: raw,
+                    },
+                    corrected.compose(&raw.inverse()),
+                )
+            })
+            .collect();
+        for cell in [-1.0, 0.0, 1.0, 2.0, 4.0] {
+            let mut state = ReformState::default();
+            state.add_keyframes(&kfs.iter().map(|k| k.0).collect::<Vec<_>>());
+            let params = ReformParams {
+                blend_sigma_m: 0.0,
+                blend_time_sigma_s: 5.0,
+                min_shift_m: 0.04,
+                thin_cell_m: cell,
+            };
+            // Half the drive corrected at once, then the rest: the second warm-starts.
+            for half in [kfs.len() / 2, 0] {
+                let moved: Vec<MovedRecord> = kfs[half..]
+                    .iter()
+                    .map(|(k, d)| MovedRecord {
+                        keyframe: KeyframeRecord {
+                            pose: state.applied[&k.id].pose,
+                            ..*k
+                        },
+                        delta: d.compose(&k.pose.compose(&state.applied[&k.id].pose.inverse())),
+                    })
+                    .collect();
+                let started = std::time::Instant::now();
+                let warp = state.closure(&moved, &params);
+                println!(
+                    "cell {cell}: {} keyframes -> {} blended (sigma {:.2} m, tau {:.2} s), {:?}",
+                    kfs.len(),
+                    warp.as_ref().map_or(0, |w| w.blended_keyframes()),
+                    warp.as_ref().map_or(0.0, |w| w.sigma()),
+                    warp.as_ref().map_or(0.0, |w| w.time_sigma()),
+                    started.elapsed()
+                );
+            }
+        }
+    }
+
     #[test]
     fn voxels_that_were_apart_still_merge() {
         let vs = 0.1_f32;
@@ -850,6 +994,7 @@ mod tests {
             blend_sigma_m: 1.0,
             blend_time_sigma_s: 1.0,
             min_shift_m: 0.02,
+            thin_cell_m: -1.0,
         }
     }
 

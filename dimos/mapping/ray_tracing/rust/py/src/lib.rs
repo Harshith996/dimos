@@ -246,7 +246,8 @@ impl VoxelRayMapper {
     /// Warp the map through raw loop_closure_event records (68 bytes each), as
     /// reform_ray_tracing does. None when no keyframe moved past min_shift_m,
     /// else a dict of what the warp did and cost.
-    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04))]
+    #[pyo3(signature = (records, blend_sigma_m = 0.0, blend_time_sigma_s = 0.0, min_shift_m = 0.04, thin_cell_m = 0.0))]
+    #[allow(clippy::too_many_arguments)]
     fn apply_loop_closure<'py>(
         &mut self,
         py: Python<'py>,
@@ -254,6 +255,7 @@ impl VoxelRayMapper {
         blend_sigma_m: f64,
         blend_time_sigma_s: f64,
         min_shift_m: f64,
+        thin_cell_m: f64,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
         if !records.len().is_multiple_of(68) {
             return Err(PyValueError::new_err(
@@ -266,6 +268,7 @@ impl VoxelRayMapper {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
+            thin_cell_m,
         };
         let Some(warp) = self.reform.closure(&moved, &params) else {
             return Ok(None);
@@ -278,6 +281,7 @@ impl VoxelRayMapper {
         out.set_item("warp_ms", report.warp_ms)?;
         out.set_item("voxel_ms", report.voxel_ms)?;
         out.set_item("keyframes_moved", warp.moved_keyframes())?;
+        out.set_item("keyframes_blended", warp.blended_keyframes())?;
         Ok(Some(out))
     }
 
@@ -491,6 +495,7 @@ impl ReformWarp {
             blend_sigma_m,
             blend_time_sigma_s,
             min_shift_m,
+            thin_cell_m: -1.0,
         };
         let warp = state
             .closure(&moved, &params)

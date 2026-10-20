@@ -40,6 +40,7 @@ fn params() -> ReformParams {
         blend_sigma_m: 1.0,
         blend_time_sigma_s: 0.0,
         min_shift_m: 0.02,
+        thin_cell_m: -1.0,
     }
 }
 
@@ -471,6 +472,7 @@ fn warp_bench() {
         blend_sigma_m: 0.0,
         blend_time_sigma_s: 5.0,
         min_shift_m: 0.04,
+        thin_cell_m: -1.0,
     };
     let warp = state
         .closure(&moved, &params)
