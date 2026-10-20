@@ -191,6 +191,192 @@ jobs:
         run: |
           .native-review/bin/python -m pip install mcap pytest-asyncio
           .native-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/memory/test_convert_recording.py" "$PWD/dimos/memory/test_recording_migration.py"
+      - name: Verify CDR robot and simulation boundaries with stubbed drivers
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_TRANSPORT: lcm
+          LCM_DEFAULT_URL: memq://
+        run: |
+          .native-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/hardware/whole_body/transport/test_adapter.py" "$PWD/dimos/robot/unitree/g1/test_wholebody_connection.py" "$PWD/dimos/simulation/engines/test_cdr_streams.py" "$PWD/dimos/simulation/engines/test_mujoco_sim_module.py" "$PWD/dimos/robot/galaxea/r1pro/test_cdr_streams.py" "$PWD/dimos/robot/galaxea/r1pro/test_head_cameras.py" "$PWD/dimos/robot/unitree/test_dimsim_connection.py" "$PWD/dimos/simulation/dimsim/test_dimsim_process.py" "$PWD/dimos/robot/unitree/go2/blueprints/basic/test_unitree_go2_basic.py" "$PWD/dimos/teleop/hosted/test_go2_driver_cdr.py"
+      - name: Verify generated occupancy values and retained numeric helpers
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos.msgs.occupancy as values; import pytest; import sys; assert "site-packages" in str(values.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_occupancy.py"
+          .native-review/bin/python -I -c 'import dimos.msgs.nav_msgs.OccupancyGrid; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/nav_msgs/test_OccupancyGrid.py" -k block_max_reduce
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/occupancy.py
+      - name: Verify occupancy algorithms preserve generated and existing value contracts
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import operations, gradient, inflation, extrude_occupancy; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (operations, gradient, inflation, extrude_occupancy)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_operations.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/operations.py dimos/mapping/occupancy/gradient.py dimos/mapping/occupancy/inflation.py dimos/mapping/occupancy/extrude_occupancy.py
+      - name: Verify generated pointcloud costmaps and real offline Module ports
+        if: runner.os == 'Linux'
+        env:
+          NUMBA_NUM_THREADS: '2'
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -m pip install 'numba==0.68.0'
+          .native-review/bin/python -I -c 'import dimos.mapping.costmapper as module; import dimos.mapping.pointclouds.occupancy as algorithms; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module, algorithms)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional project fixture case' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/mapping/test_generated_costmapper.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/pointclouds/occupancy.py dimos/mapping/costmapper.py
+      - name: Verify generated odometry history, exact stamps and Path rendering
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos.mapping.odometry_hist as history; import dimos.visualization.rerun.cdr as viewer; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (history, viewer)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/test_generated_odometry_hist.py" "$PWD/dimos/visualization/rerun/test_cdr.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/odometry_hist.py dimos/visualization/rerun/cdr.py
+      - name: Verify generated voxel streams and CPU stores over memory CDR
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          NUMBA_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.voxels import grid, module; from dimos.mapping.voxels.impl import packed, o3d; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (grid, module, packed, o3d)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/voxels/test_generated_stream.py" "$PWD/dimos/mapping/voxels/test_stamped.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/voxels/grid.py dimos/mapping/voxels/module.py dimos/mapping/voxels/impl/packed.py dimos/mapping/voxels/impl/o3d.py
+      - name: Verify generated navigation costmaps and Python/C++ A* paths
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_map; from importlib import import_module; astar = import_module("dimos.navigation.go2.replanning_a_star.min_cost_astar"); import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (path_map, astar)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_astar.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_map.py dimos/navigation/go2/replanning_a_star/min_cost_astar.py
+      - name: Verify generated path resampling and exact source metadata
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import path_resampling; import pytest; import sys; assert "site-packages" in str(path_resampling.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_path_resampling.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_resampling.py
+      - name: Verify generated occupancy/path rendering and safety masks
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.occupancy import operations, path_mask, visualizations, visualize_path; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (operations, path_mask, visualizations, visualize_path)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/occupancy/test_generated_rendering.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/operations.py dimos/mapping/occupancy/path_mask.py dimos/mapping/occupancy/visualizations.py dimos/mapping/occupancy/visualize_path.py
+      - name: Verify generated safe-goal searches and path clearance
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.replanning_a_star import goal_validator, path_clearance, path_distancer; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (goal_validator, path_clearance, path_distancer)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_safety.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/occupancy/path_mask.py dimos/navigation/go2/replanning_a_star/goal_validator.py dimos/navigation/go2/replanning_a_star/path_clearance.py dimos/navigation/go2/replanning_a_star/path_distancer.py
+      - name: Verify actual generated replanning Module and controller commands
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.replanning_a_star import module, global_planner, local_planner, controllers, navigation_map, position_tracker, replan_limiter; import dimos.msgs.occupancy as occupancy; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,global_planner,local_planner,controllers,navigation_map,position_tracker,replan_limiter,occupancy)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/replanning_a_star/test_generated_planner.py" "$PWD/dimos/navigation/go2/replanning_a_star/test_global_planner.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/msgs/occupancy.py dimos/navigation/base.py dimos/navigation/go2/replanning_a_star/{global_planner,local_planner,controllers,position_tracker,navigation_map,module,module_spec,spec,replan_limiter}.py
+      - name: Verify generated movement mux and exact TF pose liveness
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation import tf_pose; from dimos.navigation.movement_manager import movement_manager; from dimos.protocol.tf import tf; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (tf_pose,movement_manager,tf)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/test_tf_pose.py" "$PWD/dimos/navigation/movement_manager/test_movement_manager.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/tf_pose.py dimos/navigation/movement_manager/movement_manager.py
+      - name: Verify generated trajectory followers and actual Rust controller parity
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-controller-target
+        run: |
+          .native-review/bin/python -m pip install 'maturin==1.13.3'
+          .native-review/bin/maturin build --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features python --release --locked --jobs 2 --out build/controller-wheels --interpreter .native-review/bin/python
+          .native-review/bin/python -m pip install --no-deps build/controller-wheels/*.whl
+          .native-review/bin/python -I -c 'from dimos.navigation.trajectory_follower.basic import module as basic; from dimos.navigation.trajectory_follower.fancy import module, controller; from dimos.navigation.trajectory_follower.fancy.laws import seed,hinted; from dimos.navigation.local_planner import profile; import dimos_trajectory_follower; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (basic,module,controller,seed,hinted,profile,dimos_trajectory_follower)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/trajectory_follower/basic/test_module.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_module.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_controller.py" "$PWD/dimos/navigation/trajectory_follower/fancy/test_rust_parity.py" "$PWD/dimos/navigation/local_planner/test_profile.py" "$PWD/dimos/navigation/trajectory_follower/test_generated_ports.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/spec.py dimos/navigation/local_planner/profile.py dimos/navigation/trajectory_follower/basic/module.py dimos/navigation/trajectory_follower/fancy/{controller,module,laws/hinted,laws/seed}.py
+      - name: Verify exact native TF stamp metadata and retained seconds APIs
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml --features cdr --lib --jobs 2 tf::tests
+          cargo clippy --locked --manifest-path native/rust/dimos-module/Cargo.toml --features cdr --all-targets --jobs 2 -- -D warnings
+      - name: Verify native local planner CDR and actual Python interoperability
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module,test-bodies --jobs 2
+          cargo clippy --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module,test-bodies --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module --bin local_planner --jobs 2
+          export DIMOS_NATIVE_LOCAL_PLANNER_BINARY="$PWD/dimos/navigation/local_planner/rust/target/debug/local_planner"
+          .native-review/bin/python -I -c 'from dimos.navigation.local_planner import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/local_planner/test_generated_native.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/local_planner/native.py
+      - name: Verify native follower CDR drive, arrival and stop without hardware
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --jobs 2
+          cargo clippy --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --bin trajectory_follower --jobs 2
+          export DIMOS_NATIVE_FOLLOWER_BINARY="$PWD/dimos/navigation/trajectory_follower/fancy/rust/target/debug/trajectory_follower"
+          .native-review/bin/python -I -c 'from dimos.navigation.trajectory_follower.fancy import native; import pytest; import sys; assert "site-packages" in str(native.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/trajectory_follower/fancy/test_generated_native.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/trajectory_follower/fancy/native.py
+      - name: Verify generated navigation path and goal rendering
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.local_planner import viz as local; from dimos.navigation.global_planner import viz as global_; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (local,global_)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/local_planner/test_viz.py" "$PWD/dimos/navigation/global_planner/test_viz.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/local_planner/viz.py dimos/navigation/global_planner/viz.py
+      - name: Verify explicit region IDs, canonical dependency identities and MCAP schemas
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos.messages.dimos_msgs.msg; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_regions.py"
+      - name: Verify generated ray-tracing maps, region keys and native interoperability
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --lib --jobs 2
+          cargo clippy --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --bin voxel_ray_tracing --jobs 2
+          .venv/bin/maturin build --locked --profile dev --manifest-path dimos/mapping/ray_tracing/rust/py/Cargo.toml --jobs 2 --out build/mapper-python-wheels --interpreter .native-review/bin/python
+          .native-review/bin/python -m pip install --no-deps build/mapper-python-wheels/*.whl
+          export DIMOS_NATIVE_RAY_TRACING_BINARY="$PWD/dimos/mapping/ray_tracing/rust/target/debug/voxel_ray_tracing"
+          .native-review/bin/python -I -c 'from dimos.mapping.ray_tracing import module,transformer,viz; from dimos.mapping.ray_tracing.utils import loaded_map; import dimos_voxel_ray_tracing; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,transformer,viz,loaded_map,dimos_voxel_ray_tracing)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o $'markers=skipif_aarch64: optional architecture case\nskipif_macos: optional architecture case' -q "$PWD/dimos/mapping/ray_tracing/test_generated_native.py" "$PWD/dimos/mapping/ray_tracing/test_transformer.py" "$PWD/dimos/mapping/ray_tracing/test_viz.py" "$PWD/dimos/mapping/ray_tracing/utils/test_loaded_map.py" "$PWD/dimos/navigation/global_planner/test_viz.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/ray_tracing/{module,transformer,viz}.py dimos/mapping/ray_tracing/utils/loaded_map.py dimos/spec/mapping.py
+      - name: Verify canonical MLS regions, weighted edges and actual mapper-to-planner CDR
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --lib --jobs 2
+          cargo clippy --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --all-targets --jobs 2 -- -D warnings
+          cargo build --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --bin mls_planner --jobs 2
+          .venv/bin/maturin build --locked --profile dev --manifest-path dimos/navigation/global_planner/mls_planner/rust/py/Cargo.toml --jobs 2 --out build/mls-python-wheels --interpreter .native-review/bin/python
+          .native-review/bin/python -m pip install --no-deps build/mls-python-wheels/*.whl
+          export DIMOS_NATIVE_RAY_TRACING_BINARY="$PWD/dimos/mapping/ray_tracing/rust/target/debug/voxel_ray_tracing"
+          export DIMOS_NATIVE_MLS_BINARY="$PWD/dimos/navigation/global_planner/mls_planner/rust/target/debug/mls_planner"
+          .native-review/bin/python -I -c 'from dimos.navigation.global_planner.mls_planner import mls_planner_native,transformer,viz; import dimos_mls_planner; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (mls_planner_native,transformer,viz,dimos_mls_planner)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/global_planner/mls_planner/test_generated_native.py" "$PWD/dimos/navigation/global_planner/mls_planner/test_transformer.py" "$PWD/dimos/navigation/global_planner/mls_planner/test_viz.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/global_planner/mls_planner/{mls_planner_native,transformer,viz}.py dimos/navigation/spec.py
+      - name: Verify canonical observation pose payloads and lossless pose-fill
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.memory.type import observation; from dimos.mapping.cli import pose_fill; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (observation,pose_fill)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/memory/type/test_observation.py" "$PWD/dimos/mapping/cli/test_pose_fill.py" "$PWD/dimos/memory/test_stream.py::TestWithPose" "$PWD/dimos/memory/store/test_cdr_recording.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/memory/type/observation.py dimos/mapping/cli/pose_fill.py
+      - name: Verify canonical PGO, real ICP and stamped map rebuilding
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          # Preserve the repository's pytest override for GTSAM's upstream dev metadata.
+          .native-review/bin/python -m pip install --no-deps 'gtsam-extended==4.3a1.post1'
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.loop_closure import pgo,pgo_auto,pgo_map; from dimos.msgs import pointcloud; from dimos.mapping.voxels import grid; from dimos.mapping.voxels.impl import packed; import gtsam; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (pgo,pgo_auto,pgo_map,pointcloud,grid,packed,gtsam)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/loop_closure/test_pgo.py" "$PWD/dimos/navigation/go2/loop_closure/test_pgo_auto.py" "$PWD/dimos/navigation/go2/loop_closure/test_pgo_map.py" "$PWD/dimos/mapping/voxels/test_stamped.py" "$PWD/dimos/msgs/test_pointcloud.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/go2/loop_closure/{pgo,pgo_auto,pgo_map}.py dimos/msgs/pointcloud.py dimos/mapping/voxels/{grid,impl/packed}.py
+      - name: Verify offline map export, CDR replay and actual marker CLI
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.cli import map,view,replay,replay_marker; from dimos.visualization.rerun import cdr; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (map,view,replay,replay_marker,cdr)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/mapping/cli/test_cli.py::test_view_pc2"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/cli/{map,view,replay,replay_marker}.py dimos/visualization/rerun/cdr.py
+      - name: Verify actual CDR PGO Module ports and nanosecond stale-stamp repair
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.navigation.go2.loop_closure import module; from dimos.robot.unitree.type import lidar; import gtsam; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,gtsam)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/navigation/go2/loop_closure/test_generated_module.py" "$PWD/dimos/robot/unitree/type/test_lidar.py" -k 'not test_init'
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/navigation/go2/loop_closure/module.py dimos/robot/unitree/type/lidar.py
+      - name: Verify canonical premap loading, TF publication and CPU map placement
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.relocalization import module; from dimos.mapping.relocalization.lidar import module as lidar,relocalize; from dimos.mapping.relocalization.go2 import module as go2; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (module,lidar,relocalize,go2)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/test_module.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/{module,blueprints}.py dimos/mapping/relocalization/lidar/{module,relocalize}.py dimos/mapping/relocalization/go2/module.py
+      - name: Verify CDR relocalization replay and viewer adapters without benchmark studies
+        if: runner.os == 'Linux'
+        env:
+          OMP_NUM_THREADS: '2'
+          OPENBLAS_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.mapping.relocalization import blueprints; from dimos.mapping.relocalization.lidar import replay,tune; from dimos.visualization.rerun import cdr,init; import dimos_voxel_ray_tracing; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (blueprints,replay,tune,cdr,init,dimos_voxel_ray_tracing)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/lidar/test_replay.py" "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/visualization/rerun/test_cdr.py::test_cloud_renderer_filters_nonfinite_positions_with_matching_colors" "$PWD/dimos/visualization/rerun/test_cdr.py::test_fixed_display_color_overrides_sensor_rgb_after_invalid_points_filter" "$PWD/dimos/visualization/rerun/test_cdr.py::test_height_palette_uses_all_class_ids_at_the_recording_root"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/blueprints.py dimos/mapping/relocalization/lidar/{replay,tune}.py dimos/visualization/rerun/{cdr,init}.py
+
       - name: Verify installed generated-value utilities
         run: |
           uv venv .values-review --python 3.12 --seed
