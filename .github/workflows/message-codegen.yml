@@ -109,6 +109,72 @@ jobs:
 
 
 
+      - name: Verify generated Python camera producers without hardware
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/test_webcam.py" "$PWD/dimos/hardware/sensors/camera/test_webcam_backend.py" "$PWD/dimos/hardware/sensors/camera/test_module.py" "$PWD/dimos/hardware/sensors/camera/realsense/test_camera.py" "$PWD/dimos/hardware/sensors/camera/gstreamer/test_generated_frames.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/realsense/camera.py dimos/hardware/sensors/camera/spec.py dimos/hardware/sensors/camera/webcam.py dimos/hardware/sensors/camera/module.py dimos/hardware/sensors/camera/gstreamer/gstreamer_camera.py dimos/spec/perception.py dimos/visualization/vis_module.py
+      - name: Verify generated native V4L2 producer without a device
+        if: runner.os == 'Linux'
+        run: |
+          cargo test --manifest-path native/rust/dimos-module-macros/Cargo.toml --locked --lib --jobs 2
+          cargo test --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2
+          cargo clippy --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --locked --lib --jobs 2 -- -D warnings
+      - name: Verify generated TF buffers and recorded lookups
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'mcap==1.5.0'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o $'markers=self_hosted: optional host dependency case\nskipif_aarch64: optional architecture case' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/protocol/tf/test_tf.py" "$PWD/dimos/protocol/tf/test_static_tf_publisher.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/protocol/test_cdr_mcap.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/protocol/tf/tf.py dimos/protocol/tf/static_tf_publisher.py dimos/memory/tf.py
+      - name: Verify generated detection values and offline VLM image encoding
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'openai==2.21.0' 'transformers==4.53.3'
+          .native-review/bin/python -m pip install 'https://download-r2.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=8f8b3cfc53010a4b4a3c7ecb88c212e9decc4f5eeb6af75c3c803937d2d60947'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional project fixture case' --strict-markers -q "$PWD/dimos/perception/detection/type/detection2d/test_generated_bbox.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_filters.py" "$PWD/dimos/perception/detection/type/detection3d/test_imageDetections3D.py" "$PWD/dimos/perception/detection/type/detection3d/test_marker.py" "$PWD/dimos/models/vl/test_base.py" "$PWD/dimos/perception/detection/detectors/test_generated_images.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/type dimos/perception/detection/module2D.py dimos/perception/detection/module3D.py dimos/perception/detection/detectors/base.py dimos/perception/detection/detectors/yolo.py dimos/perception/detection/detectors/person/yolo.py dimos/perception/detection/detectors/grounding_dino.py dimos/perception/detection/detectors/omdet.py dimos/perception/detection/detectors/owlv2.py dimos/perception/detection/detectors/yoloe.py dimos/perception/experimental/moduleDB.py dimos/models/vl/base.py dimos/models/vl/qwen.py dimos/types/timestamped.py --exclude '(test_.*|conftest\.py)'
+      - name: Verify generated tracking and embedding image boundaries
+        if: runner.os == 'Linux'
+        env:
+          HF_HUB_OFFLINE: '1'
+          OMP_NUM_THREADS: '2'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/detection/reid/test_generated_module.py" "$PWD/dimos/models/embedding/test_generated_images.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/detection/person_tracker.py dimos/perception/detection/reid/module.py dimos/models/embedding/base.py dimos/models/embedding/clip.py dimos/models/embedding/dino.py dimos/models/embedding/siglip.py dimos/models/embedding/siglip2.py dimos/models/embedding/treid.py dimos/types/timestamped.py
+      - name: Verify generated fiducial detections and TF without hardware
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'reportlab==4.5.0'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/fiducial/test_helpers.py" "$PWD"/dimos/perception/fiducial/test_*.py "$PWD"/dimos/perception/fiducial/blueprints/test_*.py
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/fiducial/marker_pose.py dimos/perception/fiducial/marker_detect.py dimos/perception/fiducial/marker_transformer.py dimos/perception/fiducial/marker_detection_stream_module.py dimos/perception/fiducial/marker_tf_module.py dimos/perception/fiducial/blueprints/desk_marker_tf.py
+      - name: Verify generated query-time localization geometry
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/localize/test_rig.py" "$PWD/dimos/perception/detection/type/detection3d/test_generated_projection.py" "$PWD/dimos/memory/store/test_cdr_recording.py" "$PWD/dimos/memory/codecs/test_codecs.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/localize/association.py dimos/perception/localize/dandetect.py dimos/perception/localize/module.py dimos/perception/localize/rig.py dimos/perception/localize/support_plane.py dimos/perception/localize/types.py dimos/perception/localize/localize.py dimos/perception/localize/tools/tool_localize.py dimos/perception/localize/demo_blueprints/xarm_feed.py dimos/perception/detection/project.py dimos/memory/codecs/jpeg.py dimos/memory/codecs/base.py
+      - name: Verify generated experimental objects, tracking and segmentation boundaries
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install 'hydra-core==1.3.2'
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -o 'markers=self_hosted: optional heavyweight integration' --strict-markers -m 'not self_hosted' -q "$PWD/dimos/perception/experimental/test_object_generated.py" "$PWD/dimos/perception/experimental/test_object_scene_registration_temporal.py" "$PWD/dimos/perception/experimental/test_generated_tracker.py" "$PWD/dimos/perception/experimental/test_spatial_memory.py" "$PWD/dimos/models/segmentation/test_generated_edge_tam_images.py" "$PWD/dimos/models/segmentation/test_yoloe.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/experimental/object.py dimos/perception/experimental/objectDB.py dimos/perception/experimental/object_scene_registration.py dimos/perception/experimental/object_scene_registration_spec.py dimos/perception/experimental/object_tracker.py dimos/perception/experimental/object_tracker_2d.py dimos/perception/experimental/object_tracker_3d.py dimos/perception/experimental/spatial_perception.py dimos/models/segmentation/edge_tam.py dimos/models/segmentation/yoloe.py
+      - name: Verify generated temporal memory, PerceiveLoop and entity rendering
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'import dimos; import pytest; import sys; raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/experimental/temporal_memory/test_temporal_memory_module.py" "$PWD/dimos/perception/experimental/test_perceive_loop_skill.py" "$PWD/dimos/visualization/rerun/test_cdr.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/experimental/perceive_loop_skill.py dimos/perception/experimental/temporal_memory/clip_filter.py dimos/perception/experimental/temporal_memory/entity_graph_db.py dimos/perception/experimental/temporal_memory/frame_window_accumulator.py dimos/perception/experimental/temporal_memory/temporal_memory.py dimos/perception/experimental/temporal_memory/temporal_utils/helpers.py dimos/perception/experimental/temporal_memory/window_analyzer.py dimos/visualization/rerun/cdr.py
+      - name: Verify generated ZED frames without the proprietary SDK
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.hardware.sensors.camera.zed import messages, compat; import pytest; import sys; assert all("site-packages" in str(module.__file__) for module in (messages, compat)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/hardware/sensors/camera/zed/test_messages.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/hardware/sensors/camera/zed/camera.py dimos/hardware/sensors/camera/zed/compat.py dimos/hardware/sensors/camera/zed/messages.py
+      - name: Verify native generated depth-cloud messages and point layouts
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -I -c 'from dimos.perception.depth2depth_cloud import module; import pytest; import sys; assert "site-packages" in str(module.__file__); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/perception/depth2depth_cloud/test_depth2depth_cloud_config.py"
+          MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/depth2depth_cloud/module.py
+          cargo test --locked --manifest-path dimos/perception/depth2depth_cloud/rust/Cargo.toml -j 2 --lib
+
       - name: Verify installed generated-value utilities
         run: |
           uv venv .values-review --python 3.12 --seed
