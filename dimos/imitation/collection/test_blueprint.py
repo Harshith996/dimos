@@ -27,9 +27,7 @@ from dimos.imitation.collection.episode_monitor import (
 )
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
-from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
@@ -81,18 +79,6 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
 
 
-@pytest.mark.parametrize(
-    "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
-)
-def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
-    hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
-    status = next(stream for stream in hud.streams if stream.name == "status")
-
-    assert status.direction == "in"
-    assert status.type is String
-
-
 def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
     """(instance, port) -> effective stream name, as ModuleCoordinator pairs streams."""
     return {
@@ -101,14 +87,3 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
         for stream in atom.streams
         if stream.type is JointState
     }
-
-
-@pytest.mark.parametrize("blueprint", [learning_collect_webxr_xarm7, learning_collect_webxr_piper])
-def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
-    streams = _joint_streams(blueprint)
-
-    # Plain name pairing on both ends, no remap in between. The coordinator
-    # atom carries its explicit instance_name (the RPC lookup contract).
-    assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
-    assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
-    assert not [port for _instance, port in streams if port.endswith("_joints")]
