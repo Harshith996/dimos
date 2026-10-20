@@ -107,7 +107,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
         "commit": None,
         "tag": None,
     }
-    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.0.14b1 <0.1")
+    # the range is on the gateway API, not dimos's own version
+    major = int(API_VERSION.split(".")[0])
+    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", f">={major} <{major + 1}")
     assert client.get("/info").json()["inRange"] is True
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
     narrow = client.get("/info").json()
@@ -247,10 +249,14 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
 
 def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> None:
     manifest = yaml.safe_load((Path(__file__).parents[3] / "dimos.yaml").read_text())
-    assert manifest["api"]["version"] == API_VERSION
+    assert manifest["provides"]["info"]["version"] == API_VERSION
     routes = client.get("/openapi.json").json()["paths"]
     served = {
         f"{method.upper()} {path.lstrip('/')}" for path, ops in routes.items() for method in ops
     }
-    declared = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
+    declared = {
+        f"{method.upper()} {path.lstrip('/')}"
+        for path, ops in manifest["provides"]["paths"].items()
+        for method in ops
+    }
     assert declared == served
