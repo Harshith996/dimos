@@ -44,6 +44,9 @@ pub struct WarpReport {
     pub voxel_ms: f64,
     pub surface_ms: f64,
     pub graph_ms: f64,
+    /// Warped voxels in tiles that, with all their neighbors, moved by one whole-voxel
+    /// offset: what a rigid per-tile translation could move without recomputing.
+    pub rigid_voxels: usize,
     /// Points the warp sent somewhere non-finite or implausibly far, left in place.
     pub implausible: usize,
     /// The worst of those: where it was, where the warp sent it.
@@ -209,6 +212,7 @@ impl Planner {
             *cells = keys;
         }
 
+        report.rigid_voxels = rigid_tile_voxels(&voxels, moved_voxels, vs, warp);
         let moved_count = voxels
             .par_iter()
             .zip(moved_voxels.par_iter())
@@ -425,6 +429,36 @@ impl Planner {
         );
         self.replace_surface_region(&write, &new_cells)
     }
+}
+
+/// Voxels in tiles whose voxels all moved by one whole-voxel offset, shared by every neighboring tile.
+fn rigid_tile_voxels(voxels: &[VoxelKey], warped: &[[f32; 3]], vs: f32, warp: &Warp) -> usize {
+    // Per tile: its voxel count and its single offset, None once two differ.
+    let mut tiles: AHashMap<Tile, (usize, Option<VoxelKey>)> = AHashMap::new();
+    for (k, w) in voxels.iter().zip(warped) {
+        let to = voxelize((w[0], w[1], w[2]), vs);
+        let offset = (to.0 - k.0, to.1 - k.1, to.2 - k.2);
+        let tile = warp.tile((k.0 as f32 + 0.5) * vs, (k.1 as f32 + 0.5) * vs);
+        let entry = tiles.entry(tile).or_insert((0, Some(offset)));
+        entry.0 += 1;
+        if entry.1 != Some(offset) {
+            entry.1 = None;
+        }
+    }
+    tiles
+        .iter()
+        .filter(|(&(tx, ty), (_, offset))| {
+            offset.is_some()
+                && (-1..=1).all(|dx| {
+                    (-1..=1).all(|dy| {
+                        tiles
+                            .get(&(tx + dx, ty + dy))
+                            .is_none_or(|(_, other)| other == offset)
+                    })
+                })
+        })
+        .map(|(_, (count, _))| count)
+        .sum()
 }
 
 /// The surface cell whose top face a point sits on.

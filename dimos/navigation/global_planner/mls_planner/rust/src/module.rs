@@ -673,6 +673,7 @@ impl Worker {
             voxels_moved = report.voxels_moved,
             nodes_moved = report.nodes_moved,
             nodes = report.nodes,
+            rigid_voxels = report.rigid_voxels,
             decision = if report.rebuilt { "rebuild" } else { "repair" },
             "Loop closure applied in place."
         );

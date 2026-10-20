@@ -267,3 +267,77 @@ fn shifts_smaller_than_a_voxel_add_up_over_warps() {
     rebuilt.update_global_map(&shifted, &cfg);
     assert_eq!(voxel_set(&p), voxel_set(&rebuilt));
 }
+
+/// The stages of a full rebuild on a real map: MLS_REBUILD_BENCH=<planner .voxels dump>
+/// cargo test --release --lib rebuild_stage_bench -- --ignored --nocapture
+#[test]
+#[ignore = "needs MLS_REBUILD_BENCH, a mls_reform_planner voxels dump"]
+fn rebuild_stage_bench() {
+    use crate::adjacency::{build_surface_cells, build_surface_lookup};
+    use crate::edges::build_node_edges;
+    use crate::nodes::place_nodes;
+    use crate::surfaces::extract_surfaces;
+    let raw = std::fs::read(std::env::var("MLS_REBUILD_BENCH").unwrap()).unwrap();
+    // nav_3d_config's mls_planner_config.
+    let cfg = Config {
+        voxel_size: 0.08,
+        robot_height: 0.45,
+        start_z_offset_m: 0.287,
+        wall_clearance_m: 0.1,
+        wall_buffer_m: 0.75,
+        wall_buffer_weight: 100.0,
+        step_threshold_m: 0.16,
+        step_penalty_weight: 4.0,
+        ..test_config()
+    };
+    let points: Vec<(f32, f32, f32)> = raw
+        .as_chunks::<12>()
+        .0
+        .iter()
+        .map(|p| {
+            let f = |i: usize| f32::from_le_bytes(p[i..i + 4].try_into().unwrap());
+            (f(0), f(4), f(8))
+        })
+        .collect();
+    let mut p = Planner::new(4);
+    let pool = Arc::clone(&p.pool);
+    pool.install(|| {
+        for &q in &points {
+            p.voxel_map.insert(voxelize(q, cfg.voxel_size));
+        }
+        let t = Instant::now();
+        let mut surface = Vec::new();
+        extract_surfaces(
+            &p.voxel_map,
+            cfg.headroom_cells(),
+            cfg.closing_passes(),
+            &mut p.by_col,
+            &mut surface,
+        );
+        let surfaces = ms_since(t);
+        let t = Instant::now();
+        build_surface_lookup(&surface, &mut p.graph.surface_lookup);
+        let lookup = ms_since(t);
+        let t = Instant::now();
+        build_surface_cells(&mut p.graph.cells, &p.graph.surface_lookup, cfg.voxel_size, cfg.step_cells());
+        let cells = ms_since(t);
+        let t = Instant::now();
+        place_nodes(
+            &mut p.graph.cells,
+            &p.by_col,
+            &cfg.placement_params(),
+            &mut p.graph.wall_state,
+            &mut p.graph.node_scratch,
+            &mut p.graph.nodes,
+        );
+        let nodes = ms_since(t);
+        let t = Instant::now();
+        build_node_edges(&p.graph.cells, &p.graph.nodes, &mut p.graph.cell_state, &mut p.graph.node_edges);
+        let edges = ms_since(t);
+        println!(
+            "voxels {} surface cells {}: surfaces {surfaces:.0} lookup {lookup:.0} cells {cells:.0} nodes {nodes:.0} node_edges {edges:.0} ms",
+            p.voxel_map.len(),
+            surface.len()
+        );
+    });
+}

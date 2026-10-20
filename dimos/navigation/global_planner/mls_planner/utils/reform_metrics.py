@@ -95,6 +95,7 @@ def run(db: Path, name: str, out: Path, closures: bool) -> None:
     files = paths(out, name, mode)
     for key in ("tracer", "keyframes"):
         files[key].unlink(missing_ok=True)
+    Path(f"{files['keyframes']}.closures").unlink(missing_ok=True)
     span = recording_span_s(db)
     command = [
         "dimos",
