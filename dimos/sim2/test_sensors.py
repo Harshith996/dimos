@@ -98,6 +98,7 @@ def capture(tmp_path):
     return render
 
 
+@pytest.mark.self_hosted
 def test_world_snapshot_renders_nonblank_rgb_and_metric_depth(worlds, capture):
     world = worlds()
     rgb, depth = capture(world, "left/view")
@@ -169,6 +170,7 @@ def test_composition_contains_one_world_and_no_public_sim_connections(world_conf
     assert len({atom.name for atom in atoms}) == 6
 
 
+@pytest.mark.self_hosted
 def test_scene_devices_attach_without_a_fake_robot(world_config, worlds, capture):
     camera = Camera("overhead", Mount("world", xyz=(1.5, 0, 3)), width=160, height=120)
     lidar = Lidar("monitor", Mount("world", xyz=(0, 0, 0.3)), Fibonacci)
@@ -205,6 +207,7 @@ def test_world_and_robot_cameras_have_distinct_output_topics(world_config):
 
 
 @pytest.mark.parametrize("external_camera", [False, True])
+@pytest.mark.self_hosted
 def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, external_camera):
     image_ready, cloud_ready = threading.Event(), threading.Event()
     images, clouds = {}, []

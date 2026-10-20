@@ -20,7 +20,9 @@ from dataclasses import dataclass, replace
 from enum import Enum
 import math
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal, Protocol, runtime_checkable
+
+from pydantic import BaseModel
 
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount as Mount, Sensor, mounted_sensors
 
@@ -119,6 +121,16 @@ class RobotInstance:
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
+@runtime_checkable
+class SimRobotSpec(Protocol):
+    """A connection describes its simulated device without opening real hardware."""
+
+    default_sim_scene: ClassVar[str]
+
+    @staticmethod
+    def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance: ...
+
+
 @dataclass(frozen=True)
 class WorldConfig:
     scene: Path
@@ -128,8 +140,11 @@ class WorldConfig:
     sensors: tuple[Camera | Lidar, ...] = ()
 
     def __post_init__(self) -> None:
-        if any(not name or "/" in name or name == "world" for name in self.robots):
-            raise ValueError("world requires nonempty, slash-free robot IDs; 'world' is reserved")
+        if any(
+            not name or name.split("/")[0] == "world" or any(not part for part in name.split("/"))
+            for name in self.robots
+        ):
+            raise ValueError("world requires nonempty robot ID segments; 'world' is reserved")
         if any(not math.isfinite(v) or v <= 0 for v in (self.timestep, self.snapshot_hz)):
             raise ValueError("world timestep and snapshot rate must be finite and positive")
         sensors = mounted_sensors(self.sensors)

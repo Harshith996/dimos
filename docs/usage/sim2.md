@@ -5,8 +5,8 @@ Robot connections and policy hosts use `SimRobotClient` for internal motor IO.
 The core does not choose a locomotion policy or create public robot connections.
 
 This branch extracts the existing emulator onto current main. Robot blueprint
-migrations and automatic collection of robot descriptions are subsequent work;
-the existing MuJoCo blueprints have not been switched by this change.
+migrations are subsequent work; existing MuJoCo blueprints have not been
+switched by this core change.
 
 ## Ownership
 
@@ -22,6 +22,33 @@ the existing MuJoCo blueprints have not been switched by this change.
 world and the declared sensors. It does not return `HardwareComponent` entries,
 register coordinator adapters, or add a second public connection for a robot.
 Multiple robots are composed into that world before MuJoCo compilation.
+
+### Connection-owned robot definitions
+
+An opted-in connection declares `default_sim_scene` and the static method
+`describe_simulated_robot(resolved_config, scene: Path) -> RobotInstance`.
+The method must only describe the model, devices and placement; it must not
+instantiate a driver, open hardware, compile physics or start a policy.
+
+With `--simulation mujoco`, `ModuleCoordinator.build` collects these descriptions
+after configuration resolution and before deploying any workers. It adds one
+world and the declared sensor workers. Robot IDs are the connection's instance
+names, including namespaces. Two copies named `left/arm` and `right/arm` share
+one world and have separate device channels. Different default scenes require
+an explicit shared scene choice; there is no arbitrary winning robot.
+
+An explicitly supplied `SimulationModule` can set the scene, timestep, viewer
+and scene-mounted devices. Its settings are preserved while the robot map is
+completed. These are ordinary module configuration options when that module is
+declared in the input blueprint. Automatically generated devices take settings
+from the robot description, not additional CLI flags for undeclared modules.
+
+Collected sensor outputs are always qualified: `left/arm/wrist/color_image`,
+for example. The robot blueprint maps its consumers to those names; `.namespace()`
+then keeps the robot stack isolated. TF messages still share the `tf` stream.
+No real or DimSim connection is changed by collection. Adding another robot to
+a running world requires rebuilding the complete blueprint; cross-host shared
+memory clients are rejected.
 
 `RobotConfig` binds an MJCF model, joints/actuators and named sensor attachments.
 `RobotInstance` adds placement. Internal `ControlInterface` values select the
@@ -114,6 +141,7 @@ This extraction does not change process placement or DimOS transport behavior.
 
 ```bash
 uv run pytest dimos/sim2
+uv run pytest -m self_hosted dimos/sim2  # Requires a working native OpenGL renderer.
 uv run mypy --follow-imports=silent dimos/sim2
 ```
 

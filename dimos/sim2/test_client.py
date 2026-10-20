@@ -12,19 +12,158 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack
 from dataclasses import replace
 import json
 import multiprocessing
 import subprocess
 import sys
 import time
+from typing import ClassVar
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.client import SimRobotClient
+from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.ipc.abi import ChannelDescriptor
-from dimos.sim2.spec import ControlInterface, RobotInstance
+from dimos.sim2.module import SimulationModule, SimulationSpec
+from dimos.sim2.spec import ControlInterface, RobotConfig, RobotInstance
+
+
+class _RobotConfig(ModuleConfig):
+    robot: RobotConfig
+    x: float = 0.0
+
+
+class _RobotConnection(Module):
+    config: _RobotConfig
+    _simulation: SimulationSpec
+    default_sim_scene: ClassVar[str] = "workbench.xml"
+
+    @staticmethod
+    def describe_simulated_robot(config, scene):
+        assert scene.is_file()
+        return RobotInstance(config.robot, xyz=(config.x, 0, 0.3))
+
+    @rpc
+    def start(self):
+        super().start()
+        descriptor = self._simulation.describe()["robots"][self.config.instance_name]
+        self._client = SimRobotClient(ChannelDescriptor.from_dict(descriptor), writable=True)
+        self._client.connect()
+
+    @rpc
+    def read_position(self):
+        return self._client.read().values["root_position"].tolist()
+
+    @rpc
+    def stop(self):
+        client = getattr(self, "_client", None)
+        if client is not None:
+            client.close()
+        super().stop()
+
+
+def test_collection_uses_resolved_configuration_without_instantiating_driver(world_config, mocker):
+    blueprint = _RobotConnection.blueprint(
+        robot=world_config.robots["left"].config, instance_name="robot"
+    )
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--robot.x=2.5"],
+        environ={},
+        global_overrides={"simulation": "mujoco", "mujoco_scene": str(world_config.scene)},
+    )
+    constructor = mocker.patch.object(_RobotConnection, "__init__", side_effect=AssertionError)
+    kwargs = {a.name: parsed.module_kwargs(a.name) for a in blueprint.active_blueprints}
+    expanded, values = collect_simulation(
+        blueprint, kwargs, GlobalConfig(**parsed.global_config_values())
+    )
+    assert len([a for a in expanded.blueprints if a.module is SimulationModule]) == 1
+    assert values[SimulationModule.name]["world"].robots["robot"].xyz == (2.5, 0, 0.3)
+    assert expanded.remapping_map["robot_camera", "color_image"] == "robot/camera/color_image"
+    assert expanded.remapping_map["robot_lidar", "pointcloud"] == "robot/lidar/pointcloud"
+    constructor.assert_not_called()
+    parsed.assert_matches(blueprint)
+    assert parsed.module_kwargs("robot")["x"] == 2.5
+    assert not any(a.module is SimulationModule for a in blueprint.blueprints)
+
+
+@pytest.mark.parametrize("simulation_mode", ["none", "dimsim"])
+def test_collection_does_not_modify_other_backends(world_config, simulation_mode, mocker):
+    blueprint = _RobotConnection.blueprint(robot=world_config.robots["left"].config)
+    describe = mocker.patch.object(_RobotConnection, "describe_simulated_robot")
+    expanded, values = collect_simulation(blueprint, {}, GlobalConfig(simulation=simulation_mode))
+    assert expanded is blueprint
+    assert values == {}
+    describe.assert_not_called()
+
+
+def test_collection_rejects_two_physics_owners_before_deployment(world_config):
+    blueprint = autoconnect(
+        _RobotConnection.blueprint(robot=world_config.robots["left"].config),
+        SimulationModule.blueprint(world=world_config).namespace("a"),
+        SimulationModule.blueprint(world=world_config).namespace("b"),
+    )
+    with pytest.raises(ValueError, match="one shared SimulationModule"):
+        collect_simulation(blueprint, {}, GlobalConfig(simulation="mujoco"))
+
+
+def test_collection_preserves_explicit_world_and_rejects_duplicate_robot(world_config):
+    settings = replace(world_config, robots={}, timestep=0.002, snapshot_hz=200)
+    connection = _RobotConnection.blueprint(
+        robot=world_config.robots["left"].config, instance_name="left"
+    )
+    blueprint = autoconnect(connection, SimulationModule.blueprint(world=settings))
+    expanded, values = collect_simulation(
+        blueprint, {}, GlobalConfig(simulation="mujoco", mujoco_scene="not-used.xml")
+    )
+    world = values[SimulationModule.name]["world"]
+    assert world.scene == world_config.scene
+    assert world.timestep == 0.002
+    assert world.snapshot_hz == 200
+    assert set(world.robots) == {"left"}
+    assert len([a for a in expanded.blueprints if a.module is SimulationModule]) == 1
+    assert settings.robots == {}
+    with pytest.raises(ValueError, match="duplicate simulated robot definition"):
+        collect_simulation(
+            autoconnect(connection, SimulationModule.blueprint(world=world_config)),
+            {},
+            GlobalConfig(simulation="mujoco"),
+        )
+
+
+def test_two_namespaced_connections_deploy_into_one_world(world_config):
+    robot = world_config.robots["left"].config
+    robot = replace(robot, sensors=robot.sensors[:1])
+    connection = _RobotConnection.blueprint(robot=robot, instance_name="robot")
+    blueprint = autoconnect(connection.namespace("left"), connection.namespace("right"))
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--left/robot.x=-1.0", "--right/robot.x=1.0"],
+        environ={},
+        global_overrides={
+            "simulation": "mujoco",
+            "mujoco_scene": str(world_config.scene),
+            "n_workers": 1,
+            "transport": "zenoh",
+            "viewer": "none",
+        },
+    )
+    with ExitStack() as stack:
+        coordinator = ModuleCoordinator.build(blueprint, parsed)
+        stack.callback(coordinator.stop)
+        world = coordinator.get_instance(SimulationModule)
+        assert set(world.describe()["robots"]) == {"left/robot", "right/robot"}
+        assert coordinator.get_instance("left/robot").read_position() == pytest.approx([-1, 0, 0.3])
+        assert coordinator.get_instance("right/robot").read_position() == pytest.approx([1, 0, 0.3])
+        with pytest.raises(ValueError, match="before build"):
+            coordinator.load_blueprint(connection.namespace("late"))
 
 
 def command():
