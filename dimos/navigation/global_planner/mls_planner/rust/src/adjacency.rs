@@ -322,56 +322,68 @@ pub fn build_surface_cells(
         }
     }
 
-    // Each block of cells fills its own run, then the runs land in the buffer in id order.
+    // Count each cell's edges, lay the spans out in id order, then fill every
+    // block of cells' slice of the buffer in parallel, with no temporaries.
     const BLOCK: usize = 4096;
     let coord: &[VoxelKey] = &cells.coord;
-    let by_coord: &AHashMap<VoxelKey, CellId> = &cells.by_coord;
-    let blocks: Vec<(Vec<Edge>, Vec<u32>)> = coord
-        .par_chunks(BLOCK)
-        .map(|block| {
-            let mut edges: Vec<Edge> = Vec::with_capacity(block.len() * 8);
-            let mut lens: Vec<u32> = Vec::with_capacity(block.len());
-            for &(ix, iy, iz) in block {
-                let before = edges.len();
-                for (dx, dy) in NEIGHBORS_4 {
-                    let Some(nzs) = surface_lookup.get(&(ix + dx, iy + dy)) else {
-                        continue;
-                    };
-                    for &nz in nzs {
-                        let dz = nz - iz;
-                        if dz.abs() > step_threshold_cells {
-                            continue;
-                        }
-                        let dest = *by_coord
-                            .get(&(ix + dx, iy + dy, nz))
-                            .expect("neighbor cell exists in lookup");
-                        let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
-                        edges.push(Edge {
-                            dest,
-                            base_cost: cost,
-                            rise: rise(dz, voxel_size),
-                            cost,
-                        });
-                    }
-                }
-                lens.push((edges.len() - before) as u32);
-            }
-            (edges, lens)
+    let neighbors = |(ix, iy, iz): VoxelKey| {
+        NEIGHBORS_4.into_iter().flat_map(move |(dx, dy)| {
+            surface_lookup
+                .get(&(ix + dx, iy + dy))
+                .into_iter()
+                .flatten()
+                .filter(move |&&nz| (nz - iz).abs() <= step_threshold_cells)
+                .map(move |&nz| (dx, dy, nz))
         })
-        .collect();
+    };
     cells
-        .flat
-        .reserve(blocks.iter().map(|(e, _)| e.len()).sum());
-    let mut id = 0;
-    for (edges, lens) in blocks {
-        let mut start = cells.flat.len() as u32;
-        for len in lens {
-            cells.spans[id] = (start, len);
-            start += len;
-            id += 1;
-        }
-        cells.flat.extend_from_slice(&edges);
+        .spans
+        .par_iter_mut()
+        .zip(coord.par_iter())
+        .for_each(|(span, &k)| span.1 = neighbors(k).count() as u32);
+    let mut total = 0u32;
+    for span in cells.spans.iter_mut() {
+        span.0 = total;
+        total += span.1;
     }
+    let blank = Edge {
+        dest: 0,
+        base_cost: 0.0,
+        rise: 0.0,
+        cost: 0.0,
+    };
+    cells.flat.resize(total as usize, blank);
+    let mut slices: Vec<&mut [Edge]> = Vec::with_capacity(coord.len().div_ceil(BLOCK));
+    let mut rest: &mut [Edge] = &mut cells.flat;
+    for block in cells.spans.chunks(BLOCK) {
+        let len: u32 = block.iter().map(|s| s.1).sum();
+        let (head, tail) = rest.split_at_mut(len as usize);
+        slices.push(head);
+        rest = tail;
+    }
+    let by_coord: &AHashMap<VoxelKey, CellId> = &cells.by_coord;
+    slices
+        .into_par_iter()
+        .zip(coord.par_chunks(BLOCK))
+        .for_each(|(slice, block)| {
+            let mut at = 0;
+            for &(ix, iy, iz) in block {
+                for (dx, dy, nz) in neighbors((ix, iy, iz)) {
+                    let dz = nz - iz;
+                    let dest = *by_coord
+                        .get(&(ix + dx, iy + dy, nz))
+                        .expect("neighbor cell exists in lookup");
+                    let cost = ((dx * dx + dy * dy + dz * dz) as f32).sqrt() * voxel_size;
+                    slice[at] = Edge {
+                        dest,
+                        base_cost: cost,
+                        rise: rise(dz, voxel_size),
+                        cost,
+                    };
+                    at += 1;
+                }
+            }
+        });
 }
 
 /// Recompute outgoing edges for the affected cells. Call after an incremental
