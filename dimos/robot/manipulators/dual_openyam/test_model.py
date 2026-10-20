@@ -52,7 +52,7 @@ def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
 def test_model_package_is_versioned_and_self_contained() -> None:
     assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v2"
     assert Path(DUAL_OPENYAM_PACKAGE).name == DUAL_OPENYAM_ARTIFACT
-    assert DUAL_OPENYAM_MODEL_PATH.is_file()
+    assert Path(DUAL_OPENYAM_MODEL_PATH).is_file()
     assert DUAL_OPENYAM_PACKAGE_PATHS == {
         "dual_openyam_workcell": DUAL_OPENYAM_PACKAGE,
     }
