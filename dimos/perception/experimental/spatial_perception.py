@@ -26,6 +26,7 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
+from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -62,6 +63,8 @@ class SpatialConfig(ModuleConfig):
     output_dir: str | None = str(_SPATIAL_MEMORY_DIR)  # Directory for storing visual memory data
     chroma_client: Any = None  # Optional ChromaDB client for persistence
     visual_memory: VisualMemory | None = None  # Optional VisualMemory instance for storing images
+    # A remembered view counts as a find_location match at this similarity or above.
+    min_view_similarity: float = 0.23
 
 
 class SpatialMemory(Module):
@@ -526,13 +529,53 @@ class SpatialMemory(Module):
         """
         return {"frame_count": self.frame_count, "stored_frame_count": self.stored_frame_count}
 
-    @rpc
-    def tag_location(self, robot_location: RobotLocation) -> bool:
+    @skill
+    def tag_location(self, name: str) -> str:
+        """Tag the robot's current position with a name so find_location can return it later.
+
+        Args:
+            name: the name for this place, e.g. "kitchen".
+        """
+        tf = self.tfbuffer.get("world", "base_link")
+        if tf is None:
+            return "Nothing tagged: no robot position on tf."
+        x, y, z = tf.translation.x, tf.translation.y, tf.translation.z
+        euler = tf.rotation.to_euler()
+        location = RobotLocation(
+            name=name, position=(x, y, z), rotation=(euler.x, euler.y, euler.z)
+        )
         try:
-            self.vector_db.tag_location(robot_location)
+            self.vector_db.tag_location(location)
         except Exception:
-            return False
-        return True
+            logger.exception("Failed to tag location", name=name)
+            return f"Failed to store '{name}'."
+        return f"Tagged '{name}' at ({x:.2f}, {y:.2f})."
+
+    @skill
+    def find_location(self, query: str) -> str:
+        """Look up where a place or thing is, without moving. Pass the result to go_to.
+
+        Searches tagged locations first, then everything the camera has seen.
+
+        Args:
+            query: what to find, e.g. "kitchen" or "red couch".
+        """
+        tagged = self.query_tagged_location(query)
+        if tagged is not None:
+            x, y = tagged.position[0], tagged.position[1]
+            return f"Tagged location '{tagged.name}' at ({x:.2f}, {y:.2f}) in the world frame."
+
+        results = self.vector_db.query_by_text(query, limit=1)
+        if results and results[0].get("metadata"):
+            similarity = 1.0 - (results[0].get("distance") or 1.0)
+            if similarity >= self.config.min_view_similarity:
+                seen = results[0]["metadata"][0]
+                x, y = seen.get("pos_x", 0.0), seen.get("pos_y", 0.0)
+                return (
+                    f"Seen by the camera at ({x:.2f}, {y:.2f}) in the world frame, "
+                    f"similarity {similarity:.2f}."
+                )
+        return f"No tagged location or remembered view matches '{query}'."
 
     @rpc
     def query_tagged_location(self, query: str) -> RobotLocation | None:

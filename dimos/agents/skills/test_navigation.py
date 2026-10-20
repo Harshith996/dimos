@@ -30,15 +30,7 @@ class FakeCamera(Module):
     color_image: Out[Image]
 
 
-class FakeOdom(Module):
-    odom: Out[PoseStamped]
-
-
 class StubSpatialMemory(Module):
-    @rpc
-    def tag_location(self, robot_location: RobotLocation) -> bool:
-        return True
-
     @rpc
     def query_tagged_location(self, query: str) -> RobotLocation | None:
         return None
@@ -121,7 +113,6 @@ def test_stop_movement(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
             FakeCamera.blueprint(),
-            FakeOdom.blueprint(),
             MockedStopNavSkill.blueprint(),
             *_STUB_BLUEPRINTS,
         ],
@@ -135,7 +126,6 @@ def test_start_exploration(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
             FakeCamera.blueprint(),
-            FakeOdom.blueprint(),
             MockedExploreNavSkill.blueprint(),
             *_STUB_BLUEPRINTS,
         ],
@@ -151,7 +141,6 @@ def test_go_to_semantic_location(agent_setup) -> None:
     history = agent_setup(
         blueprints=[
             FakeCamera.blueprint(),
-            FakeOdom.blueprint(),
             MockedSemanticNavSkill.blueprint(),
             *_STUB_BLUEPRINTS,
         ],

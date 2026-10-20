@@ -32,7 +32,6 @@ from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
-from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -40,7 +39,6 @@ logger = setup_logger()
 
 class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
-    _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
@@ -49,7 +47,6 @@ class NavigationSkillContainer(Module):
     _object_tracking: ObjectTrackingSpec | None = None
 
     color_image: In[Image]
-    odom: In[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -64,7 +61,6 @@ class NavigationSkillContainer(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
 
     @rpc
@@ -73,43 +69,6 @@ class NavigationSkillContainer(Module):
 
     def _on_color_image(self, image: Image) -> None:
         self._latest_image = image
-
-    def _on_odom(self, odom: PoseStamped) -> None:
-        self._latest_odom = odom
-
-    @skill
-    def tag_location(self, location_name: str) -> str:
-        """Tag this location in the spatial memory with a name.
-
-        This associates the current location with the given name in the spatial memory, allowing you to navigate back to it.
-
-        Args:
-            location_name (str): the name for the location
-
-        Returns:
-            str: the outcome
-        """
-
-        if not self._skill_started:
-            raise ValueError(f"{self} has not been started.")
-
-        if not self._latest_odom:
-            return "No odometry data received yet, cannot tag location."
-
-        position = self._latest_odom.position
-        rotation = self._latest_odom.orientation
-
-        location = RobotLocation(
-            name=location_name,
-            position=(position.x, position.y, position.z),
-            rotation=(rotation.x, rotation.y, rotation.z),
-        )
-
-        if not self._spatial_memory.tag_location(location):
-            return f"Error: Failed to store '{location_name}' in the spatial memory"
-
-        logger.info(f"Tagged {location}")
-        return f"Tagged '{location_name}': ({position.x},{position.y})."
 
     # TODO(capabilities): this skill is `instant`, so the `movement` hold is
     # released the moment the call returns even though the tagged-location and

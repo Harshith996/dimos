@@ -19,6 +19,5 @@ from dimos.types.robot_location import RobotLocation
 
 
 class SpatialMemorySpec(Spec, Protocol):
-    def tag_location(self, robot_location: RobotLocation) -> bool: ...
     def query_tagged_location(self, query: str) -> RobotLocation | None: ...
     def query_by_text(self, text: str, limit: int = 5) -> list[dict]: ...  # type: ignore[type-arg]
