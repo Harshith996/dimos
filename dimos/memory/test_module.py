@@ -29,6 +29,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport_factory import make_transport
+from dimos.memory.buffer import Unbounded
 from dimos.memory.module import Recorder, StreamModule
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
@@ -186,7 +187,7 @@ def test_recorder_tf_cdr_boundary_records_each_transform_without_changing_header
         cleanup.callback(transport.stop)
         recorder.set_transport("tf", transport)
         recorder._record_tf()
-        live = recorder.store.streams.tf.live()
+        live = recorder.store.streams.tf.live(buffer=Unbounded())
         cleanup.callback(live.stop)
         cleanup.enter_context(live.subscribe(receive))
         transport.publish(TFMessage(transforms=transforms))
