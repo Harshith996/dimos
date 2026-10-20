@@ -206,5 +206,3 @@ def test_numpy_loader_never_unpickles_objects(tmp_path):
     np.save(path, np.array([[{}]], dtype=object), allow_pickle=True)
     with pytest.raises(ValueError, match="allow_pickle=False"):
         occupancy_from_file(path, header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)))
-
-

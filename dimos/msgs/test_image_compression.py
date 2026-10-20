@@ -133,8 +133,6 @@ def test_max_width_resizes(rgb_image) -> None:
     assert img.height <= 320
 
 
-
-
 def test_jxl_roundtrip_is_lossless_gray16() -> None:
     data = np.arange(100 * 80, dtype=np.uint16).reshape(100, 80)
     src = image_from_array(
@@ -179,8 +177,6 @@ def test_jxl_rejects_float64() -> None:
     depth = image_from_array(np.zeros((10, 10), dtype=np.float64), encoding="64FC1")
     with pytest.raises(ValueError, match="JXL cannot encode"):
         compressed_image_from_image(depth, format="jxl")
-
-
 
 
 @pytest.mark.parametrize("codec", ["png", "jxl"])
