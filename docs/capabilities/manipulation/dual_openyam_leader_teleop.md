@@ -72,8 +72,15 @@ The ports given select the sides; one leader blueprint serves one or two arms.
 Leader joint N drives follower joint N, clamped to the `dual_openyam.urdf`
 limits before publishing. A mapped jump above 0.75 rad between two reads drops
 that command, which is the intended response to a leader segment flipping
-past a limit while being handled. The follower trajectory task caps every
-joint at 2 rad/s.
+past a limit while being handled. The follower trajectory task caps the arm
+joints at 2 rad/s and the wrist joints at 4 rad/s.
+
+The wrist motors run main's gains, kp 10 and kd 1.5, which follow a leader
+smoothly but late. `--controlcoordinator.wrist-kp` and
+`--controlcoordinator.wrist-kd` change them for a run. On the rig, kp 25 to 80
+with kd 1.5 made the wrists timely but showed the 50 Hz staircase of streamed
+targets as a ticking; kd above 1.5 made the small wrist motors vibrate on
+their own, so leave kd alone.
 
 ## Smooth streaming
 
