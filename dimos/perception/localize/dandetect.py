@@ -97,6 +97,8 @@ class Option:
 EMBEDDERS: dict[str, Option] = {
     "siglip": Option("dimos.models.embedding.siglip:SigLIPModel"),
     "clip": Option("dimos.models.embedding.clip:CLIPModel"),
+    # SigLIP on a shared perception server (DIMOS_PERCEPTION_URL)
+    "remote": Option("dimos.perception.localize.remote.client:RemoteEmbedder"),
 }
 DETECTORS: dict[str, Option] = {
     "owlv2": Option(_owlv2),
@@ -108,11 +110,13 @@ DETECTORS: dict[str, Option] = {
         "dimos.perception.detection.detectors.grounding_dino:GroundingDinoDetector",
         {"candidate_floor": 0.35, "accept_score": 0.55},
     ),
+    "remote": Option("dimos.perception.localize.remote.client:RemoteDetector"),  # OWLv2, shared
 }
 SEGMENTERS: dict[str, Option] = {
     "edgetam": Option("dimos.models.segmentation.edge_tam:EdgeTAMImageSegmenter"),
     "yoloe": Option("dimos.models.segmentation.yoloe:YoloeBoxSegmenter"),
     "none": Option(NoSegmenter),
+    "remote": Option("dimos.perception.localize.remote.client:RemoteSegmenter"),  # EdgeTAM, shared
 }
 
 
