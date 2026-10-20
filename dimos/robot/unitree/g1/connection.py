@@ -23,8 +23,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.messages.geometry_msgs.msg import Twist as CdrTwist
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.config import connection_type
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
