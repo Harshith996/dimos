@@ -76,7 +76,8 @@ unitree_go2_mls_reform = autoconnect(
     ),
     MLSReformPlannerNative.blueprint(
         **mls_planner_config.model_copy(
-            update={"world_frame": "map", "viz_publish_hz": planner_viz_hz}
+            # 8 workers: on each loop closure the planner rebuilds its whole graph.
+            update={"world_frame": "map", "viz_publish_hz": planner_viz_hz, "worker_threads": 8}
         ).model_dump(exclude_unset=True)
     ).remappings(
         [

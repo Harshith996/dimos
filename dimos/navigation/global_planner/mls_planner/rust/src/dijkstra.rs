@@ -347,6 +347,60 @@ pub fn window_clusters(
     clusters
 }
 
+/// Every live cell split into its connected clusters, as window_clusters over
+/// all live cells gives them (clusters ordered by their least id), found in
+/// parallel by a lock-free union-find that links each root under the smaller.
+/// The cells within a cluster come in id order rather than walk order.
+pub fn all_clusters(cells: &SurfaceCells) -> Vec<Vec<CellId>> {
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    let n = cells.slot_capacity();
+    let parent: Vec<AtomicU32> = (0..n as u32).map(AtomicU32::new).collect();
+    let find = |mut v: u32| loop {
+        let p = parent[v as usize].load(Relaxed);
+        if p == v {
+            return v;
+        }
+        // Halve the path as it is walked.
+        let gp = parent[p as usize].load(Relaxed);
+        let _ = parent[v as usize].compare_exchange(p, gp, Relaxed, Relaxed);
+        v = gp;
+    };
+    (0..n as CellId)
+        .into_par_iter()
+        .filter(|&u| cells.is_live(u))
+        .for_each(|u| {
+            for e in cells.neighbors(u) {
+                let (mut a, mut b) = (find(u), find(e.dest));
+                while a != b {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    match parent[hi as usize].compare_exchange(hi, lo, Relaxed, Relaxed) {
+                        Ok(_) => break,
+                        Err(_) => {
+                            a = find(lo);
+                            b = find(hi);
+                        }
+                    }
+                }
+            }
+        });
+    let mut tagged: Vec<(CellId, CellId)> = (0..n as CellId)
+        .into_par_iter()
+        .filter(|&v| cells.is_live(v))
+        .map(|v| (find(v), v))
+        .collect();
+    tagged.par_sort_unstable();
+    let mut clusters: Vec<Vec<CellId>> = Vec::new();
+    let mut last = None;
+    for (root, v) in tagged {
+        if last != Some(root) {
+            clusters.push(Vec::new());
+            last = Some(root);
+        }
+        clusters.last_mut().expect("pushed above").push(v);
+    }
+    clusters
+}
+
 /// The cells a repair re-labels, split into the connected clusters the
 /// searches run over. The cluster index is assigned while it lives.
 pub struct RepairWindow<'a> {
@@ -863,6 +917,27 @@ mod tests {
             build_surface_cells(&mut sc, &lookup, 0.1, 2);
             uneven(&mut sc);
         }
+    }
+
+    #[test]
+    fn all_clusters_match_the_window_walk_over_every_cell() {
+        let cells: Vec<VoxelKey> = (-40i32..40)
+            .flat_map(|x| (-30i32..30).map(move |y| (x, y)))
+            .filter(|&(x, y)| x % 9 != 0 && (y + x) % 13 != 0)
+            .map(|(x, y)| (x, y, (x * y).rem_euclid(5)))
+            .collect();
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let mut sc = SurfaceCells::default();
+        build_surface_cells(&mut sc, &lookup, 0.1, 2);
+        let live: Vec<CellId> = sc.ids().collect();
+        let mut walked = window_clusters(&sc, &live, &mut Vec::new());
+        for c in &mut walked {
+            c.sort_unstable();
+        }
+        let found = all_clusters(&sc);
+        assert!(walked.len() > 1);
+        assert_eq!(found, walked);
     }
 
     #[test]
