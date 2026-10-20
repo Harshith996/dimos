@@ -24,7 +24,7 @@ from dimos.utils.data import LfsPath
 # The workcell package measures the physical rig: bases 0.43 m apart, joint 1
 # limits inside the measured stops. The ABC package keeps the 0.62 m spacing of
 # the ABC simulation bench for scenes that reproduce it.
-DUAL_OPENYAM_ARTIFACT = "dual_openyam_workcell_v1"
+DUAL_OPENYAM_ARTIFACT = "dual_openyam_workcell_v2"
 DUAL_OPENYAM_PACKAGE = LfsPath(DUAL_OPENYAM_ARTIFACT)
 DUAL_OPENYAM_MODEL_PATH = DUAL_OPENYAM_PACKAGE / "dual_openyam.urdf"
 DUAL_OPENYAM_PACKAGE_PATHS: dict[str, Path] = {

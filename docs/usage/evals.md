@@ -380,7 +380,7 @@ an **error**, not a score; the run continues.
 `Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
 for DimSim, `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
 
-`DimSimEnvironment` launches `dimos --simulation dimsim --dimsim-scene <scene> --record run
+`DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
@@ -430,10 +430,11 @@ For Habitat, select a downloaded dataset and its scene handle on the environment
 
 ```python session=evals ansi=false no-result
 from dimos.evals.environments.habitat import HabitatEnvironment
+from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
     blueprint=["habitat-nav", "mcp-server", "observe-skill"],
-    scene_dataset_config="target/habitat/data/versioned_data/hm3d-0.2/hm3d/example/hm3d_annotated_example_basis.scene_dataset_config.json",
+    scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
 )
@@ -485,9 +486,7 @@ waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
 `tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
-values, so a case can retune a module without a new blueprint. `scene` passes
-`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
-instead of its default `scene.xml`. `base_height` sets the planning model's
+values, so a case can retune a module without a new blueprint. `scene` selects a full MJCF, robot included, for `xarm-perception-sim`: it sets `mujocosimmodule.address`, and the coordinator's simulated arm attaches to that scene. `base_height` sets the planning model's
 existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
 the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene with the perception
@@ -511,7 +510,7 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 - **Python**: `EvalRunner().run(SUITE, agent, tags=frozenset({"encoding"}))`
 - **pytest**: suites are importable lists. Use
   `@pytest.mark.parametrize("case", SUITE)` and assert on `passed`
-  (gate live-model tests with `skipif_no_openai`).
+  (skip live-model tests when `OPENAI_API_KEY` is unset).
 - **MCP**: the `EvalModule` skills `run_evals` / `list_eval_suites` /
   `list_eval_agents` return the summary + run dir, so a coding agent can run
   evals, grep trajectories, edit prompts/encodings, and run again.
