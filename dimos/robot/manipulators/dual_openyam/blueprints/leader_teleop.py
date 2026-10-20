@@ -37,10 +37,11 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 )
 from dimos.teleop.yam_leader.teleop_module import YamLeaderTeleopModule
 
-# Per-joint follower speed caps for streamed leader targets. The big joints keep
-# the dual_openyam.urdf limit; a human wrist turns faster than that, and the
-# OpenArm leader runs its wrists at twice its arm cap for the same reason.
-DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 2.0
+# Per-joint follower speed caps for streamed leader targets. Leader-follower
+# needs human arm speeds: the OpenArm leader runs 3 rad/s on the arm and 6 on
+# the wrists. The YAM arm joints get 3 (the URDF's 2 felt slow next to the
+# wrists on the rig, 2026-10-20) and the wrists 4.
+DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
 DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
 _WRIST_JOINT_INDICES = (3, 4, 5)  # joints 4 to 6 of each arm
 
