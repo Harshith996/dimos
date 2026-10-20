@@ -179,7 +179,7 @@ def test_remote_masks_match_local(client: PerceptionClient, models: Any) -> None
 
 
 def test_image_embeddings_that_arrive_together_run_as_one_batch(models: Any) -> None:
-    server = PerceptionServer(*models, batch_wait_s=0.05)
+    server = PerceptionServer(*models, max_batch=16, batch_wait_s=0.05)
 
     async def three() -> list[Any]:
         return await asyncio.gather(*(server.embed_images([_image(i)]) for i in range(3)))

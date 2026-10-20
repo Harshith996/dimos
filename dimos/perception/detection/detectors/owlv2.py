@@ -151,6 +151,7 @@ class Owlv2Detector(HuggingFaceModel):
         image: Image,
         queries: list[str],
         threshold: float = 0.1,
+        pixel_values: torch.Tensor | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Score every query against every kept box; no argmax, no label.
 
@@ -161,10 +162,18 @@ class Owlv2Detector(HuggingFaceModel):
         image, so a seen frame re-scores from the feature cache. Returns
         pixel ``(x1, y1, x2, y2)`` boxes and their score rows.
         """
-        return self.query_score_rows_batch([image], queries, threshold)[0]
+        return self.query_score_rows_batch(
+            [image], queries, threshold, None if pixel_values is None else [pixel_values]
+        )[0]
+
+    def preprocess(self, image: Image) -> torch.Tensor:
+        """The image tower's input for one frame, on the CPU: the slow half of a cache miss,
+        which a caller may run on another thread (``pixel_values`` above)."""
+        pil = PILImage.fromarray(image.to_rgb().data)
+        return self._processor(images=pil, return_tensors="pt").pixel_values
 
     def _frame_features(
-        self, image: Image
+        self, image: Image, pixel_values: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Text-independent tower outputs for one frame, cached by (frame id, ts).
 
@@ -184,9 +193,9 @@ class Owlv2Detector(HuggingFaceModel):
         model = self._model
         head = model.class_head
         with torch.inference_mode(), self._autocast():
-            pixel_values = self._processor(images=pil, return_tensors="pt").pixel_values.to(
-                self.config.device
-            )
+            if pixel_values is None:
+                pixel_values = self.preprocess(image)
+            pixel_values = pixel_values.to(self.config.device)
             feature_map = model.image_embedder(pixel_values)[0]
             batch, height, width, dim = feature_map.shape
             image_feats = feature_map.reshape(batch, height * width, dim)
@@ -229,6 +238,7 @@ class Owlv2Detector(HuggingFaceModel):
         images: list[Image],
         queries: list[str],
         threshold: float = 0.1,
+        pixel_values: list[torch.Tensor] | None = None,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """``query_score_rows`` over several images: one ``(boxes, rows)`` each.
 
@@ -243,8 +253,10 @@ class Owlv2Detector(HuggingFaceModel):
                 torch.linalg.norm(query_embeds, dim=-1, keepdim=True) + 1e-6
             )
             out: list[tuple[np.ndarray, np.ndarray]] = []
-            for image in images:
-                class_embeds, logit_shift, logit_scale, boxes_px = self._frame_features(image)
+            for k, image in enumerate(images):
+                class_embeds, logit_shift, logit_scale, boxes_px = self._frame_features(
+                    image, None if pixel_values is None else pixel_values[k]
+                )
                 logits = (class_embeds @ query_embeds.T + logit_shift) * logit_scale
                 scores = torch.sigmoid(logits.to(torch.float32))
                 keep = scores.max(dim=-1).values > threshold
