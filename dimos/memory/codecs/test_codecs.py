@@ -26,6 +26,8 @@ import numpy as np
 import pytest
 
 from dimos.memory.codecs.base import Codec, codec_for, codec_id
+from dimos.memory.codecs.cdr import CdrCodec
+from dimos.messages.std_msgs.msg import Int32
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
@@ -238,3 +240,11 @@ class TestCodecFor:
         assert decoded.format == fmt
         assert decoded.frame_id == "depth_optical"
         np.testing.assert_array_equal(decoded.data, depth.data)
+
+
+@pytest.mark.parametrize("payload", [b"malformed", b"\x00\x07\x00\x00" + bytes(4)])
+def test_cdr_storage_rejects_wrong_encapsulation_before_decoding_fields(payload):
+    codec = CdrCodec(Int32)
+    with pytest.raises(ValueError, match="XCDR1 encapsulation"):
+        codec.decode(payload)
+    assert codec.decode(codec.encode(Int32(29))) == Int32(29)
