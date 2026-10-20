@@ -1,0 +1,75 @@
+# One message in Python, C++ and Rust
+
+This directory is a standalone message project. Install matching dimOS artifacts
+with the `message-build` extra, activate that Python environment, and provide
+normal CMake/C++ and Rust/Cargo toolchains. For source installation, pip's isolated
+build environment must receive the same matching wheel set.
+
+The definition and pyproject are the source of truth. No `dimos build` command or
+per-type generation flags are used. Python installation selects only Python;
+CMake and Cargo independently select their own outputs through the shared core.
+
+Set up installed native dependency locations once:
+
+```sh
+export CMAKE_PREFIX_PATH="$(python -m dimos.message_codegen.native cmake-prefix):${CMAKE_PREFIX_PATH:-}"
+python -m dimos.message_codegen.native configure-cargo
+```
+
+Then run the complete value/codec example:
+
+```sh
+pip install .
+python -I demo_reading.py write python.cdr
+cmake -S . -B build/cpp
+cmake --build build/cpp
+build/cpp/telemetry_relay python.cdr cpp.cdr
+cargo build --example relay
+./target/debug/examples/relay cpp.cdr rust.cdr
+python -I demo_reading.py verify rust.cdr
+```
+
+The final line prints:
+
+```text
+PASS: Python -> C++ -> Rust -> Python; one shared Header identity
+```
+
+These file codecs test values and wire interoperability; they are not SDK pub/sub
+or a coordinator demo. C++ and Rust construct/assign the dependency-owned Header.
+Python checks the final value and exact Header class. The expected value changes
+from `2.5` to `4.5`, the label becomes `sensor/cpp/rust`, and the source stamp
+`17s + 23ns` and frame `map` remain unchanged.
+
+The full guide with embedded definitions and language examples is
+[External message projects](../../docs/development/messages-external-project.md).
+The installed Python provider includes complete dependency schemas and native
+source inputs, not compiled message libraries. Do not commit `.cargo/config.toml`:
+it contains this environment's installed artifact locations.
+
+
+## Real coordinator and SDK ports
+
+With the SDK's C++20/liblcm and Zenoh-C/C++ development dependencies installed,
+the same message can pass through real SDK modules. The wheel supplies owned SDK
+sources; message-only builds above do not compile them.
+
+```sh
+python -m dimos.message_codegen.native configure-cargo
+cmake -S . -B build/cpp -DDIMOS_BUILD_MODULE_EXAMPLE=ON
+cmake --build build/cpp
+cargo build --locked --manifest-path modules/Cargo.toml
+python demo_modules.py
+```
+
+This starts a Python coordinator with a Python probe, C++ relay and Rust relay.
+A temporary loopback Zenoh router connects all three; discovery/multicast are
+disabled. The demo validates the exact same final values and Header identity and
+stops its modules and subscriptions. The SDK codecs are explicit, so existing
+module defaults are unchanged. See the embedded guide above for the port code.
+
+Run the manual coordinator demo in an interactive terminal and decline any
+optional host-memory setup recommendation from the existing coordinator.
+The demo refuses non-interactive manual startup so that recommendation cannot be
+auto-accepted. Its actual pytest acceptance uses the repository's normal test
+path that skips system configuration.

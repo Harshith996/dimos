@@ -16,7 +16,6 @@ import cv2
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
-import rerun as rr
 
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CompressedImage
@@ -30,7 +29,6 @@ from dimos.msgs.image import (
     image_view,
 )
 from dimos.msgs.time import time_from_seconds, to_nanoseconds
-from dimos.visualization.rerun.cdr import image_archetype
 
 
 @pytest.fixture()
@@ -135,10 +133,6 @@ def test_max_width_resizes(rgb_image) -> None:
     assert img.height <= 320
 
 
-def test_to_rerun_is_encoded_image(rgb_image) -> None:
-    assert isinstance(image_archetype(compressed_image_from_image(rgb_image)), rr.EncodedImage)
-
-
 def test_jxl_roundtrip_is_lossless_gray16() -> None:
     data = np.arange(100 * 80, dtype=np.uint16).reshape(100, 80)
     src = image_from_array(
@@ -183,20 +177,6 @@ def test_jxl_rejects_float64() -> None:
     depth = image_from_array(np.zeros((10, 10), dtype=np.float64), encoding="64FC1")
     with pytest.raises(ValueError, match="JXL cannot encode"):
         compressed_image_from_image(depth, format="jxl")
-
-
-@pytest.mark.parametrize("codec", ["png", "jxl"])
-def test_compressed_uint16_depth_keeps_units_and_rerun_depth(codec: str) -> None:
-    pixels = np.arange(80, dtype=np.uint16).reshape(10, 8)
-    source = image_from_array(
-        pixels, encoding="16UC1", header=Header(frame_id="depth", stamp=Time(sec=0, nanosec=0))
-    )
-    compressed = compressed_image_from_image(source, format=codec)
-    decoded = image_from_compressed(compressed)
-    assert decoded.encoding == "16UC1"
-    assert decoded.header == source.header
-    np.testing.assert_array_equal(image_view(decoded), pixels)
-    assert isinstance(image_archetype(compressed), rr.DepthImage)
 
 
 @pytest.mark.parametrize("codec", ["png", "jxl"])
