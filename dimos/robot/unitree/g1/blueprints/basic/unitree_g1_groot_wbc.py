@@ -12,36 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree G1 GR00T whole-body-control blueprint.
-
-One blueprint, ``--simulation`` flag picks the backend:
-
-Real hardware (default):
-    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) + transport_lcm
-    whole-body adapter. 500 Hz tick. Safety profile: unarmed + dry-run on
-    start; activate explicitly through ControlCoordinator RPC after
-    verifying commands. The policy ramps from the current pose to its
-    bent-knee default over 10 s before taking torque control. The 14 arm
-    joints accept bounded position commands through the lower-priority joint
-    trajectory task.
-
-Sim (``--simulation``):
-    MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
-    50 Hz tick (matches the rate the policy was trained at). No arming
-    ramp and no dry-run. The same bounded arm-command path is available in
-    simulation and on hardware.
-
-Usage:
-    dimos run unitree-g1-groot-wbc                 # real hardware
-    dimos --simulation mujoco run unitree-g1-groot-wbc    # sim
-    dimos --simulation mujoco --scene-package none run unitree-g1-groot-wbc
-    dimos --simulation mujoco --scene-package office run unitree-g1-groot-wbc
-    dimos --simulation mujoco --scene-package supermarket run unitree-g1-groot-wbc
-
-Overrides (replace the old env-var dance):
-    dimos run unitree-g1-groot-wbc \\
-        --network-interface=enp2s0
-"""
+"""G1 GR00T: one public robot connection; --simulation mujoco selects sim2 motor IO."""
 
 from __future__ import annotations
 
@@ -49,85 +20,44 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
+from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
+from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.connection import G1Connection
+from dimos.robot.unitree.g1.control_config import (
     G1_GROOT_KD,
     G1_GROOT_KP,
     g1_arms,
     g1_joints,
     g1_legs_waist,
 )
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
-from dimos.core.stream import Out
-from dimos.core.transport import LCMTransport
-from dimos.hardware.whole_body.spec import WholeBodyConfig
-from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.g1_rerun import (
     G1_RERUN_ROOT,
     g1_costmap,
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
 from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
+from dimos.robot.unitree.g1.motor_device import G1MotorConfig
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
-from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
 
 # Lazy data handles. LfsPath only triggers the LFS pull on first
 # str()/open(); using ``get_data(...)`` at import time would block the
 # whole CLI on a multi-GB download every time the module is imported.
 _GROOT_MODEL_DIR = LfsPath("groot")
-_MJCF_PATH = LfsPath("mujoco_sim/g1_gear_wbc.xml")
-_ROBOT_ONLY_MJCF_PATH = Path(__file__).resolve().parents[2] / "assets" / "g1_29dof.xml"
-_ROBOT_MESHDIR = LfsPath("g1_urdf/meshes")
-
-_adapter_address: str | Path
-_cmd_vel_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
-_MUJOCO_LIDAR_CAMERAS = (
-    "lidar_front_camera",
-    "lidar_left_camera",
-    "lidar_right_camera",
-)
-_MUJOCO_LIDAR_CAMERA = _MUJOCO_LIDAR_CAMERAS[0]
-_G1_NUM_MOTORS = len(g1_joints)
-# Robot geoms occupy groups 0/1. The legacy floor uses group 2, and cooked
-# scene packages/entities use group 3, so lidar should render world geometry.
-_MUJOCO_LIDAR_GEOM_GROUPS = (2, 3)
-assert G1.height_clearance is not None and G1.width_clearance is not None
-_MUJOCO_LIDAR_BASE_KWARGS: dict[str, Any] = {
-    "width": 320,
-    "height": 240,
-    "fps": 2,
-    "enable_color": False,
-    "enable_depth": False,
-    "enable_pointcloud": True,
-    "pointcloud_fps": 1.0,
-    "enable_mujoco_lidar": True,
-    "mujoco_lidar_geom_groups": list(_MUJOCO_LIDAR_GEOM_GROUPS),
-    "mujoco_lidar_raycast_width": 64,
-    "mujoco_lidar_raycast_height": 32,
-    "mujoco_lidar_robot_exclusion_radius": G1.width_clearance,
-}
-_G1_COMPOSED_MJB_KEY = "unitree-g1-groot-wbc_spawn_9p2_11p8_yaw_m1p57_static_only_lidar"
-_G1_COMPOSED_MJB_ROBOT = "unitree-g1-groot-wbc"
-_G1_COMPOSED_MJB_ENTITY_POLICY = "static-only"
 _G1_NAV_VOXEL_RESOLUTION = 0.05
 # go2 nav_3d resolution; 0.05 saturates the raytracer on the Orin.
 _G1_REAL_NAV_VOXEL_RESOLUTION = 0.08
@@ -137,146 +67,23 @@ _G1_NAV_ROTATION_DIAMETER = 0.8
 _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
-class _G1GrootCoordinator(TeleopControlCoordinator):
-    g1_joints: Out[JointState]
-
-
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
 # also fixes its Rerun entity path (`world/` + topic).
 _G1_JOINTS_TOPIC = "/g1/joints"
 _G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
 
 
-def _mujoco_lidar_kwargs(camera_name: str, camera_names: tuple[str, ...]) -> dict[str, Any]:
-    return {
-        "camera_name": camera_name,
-        "mujoco_lidar_camera_names": list(camera_names),
-        **_MUJOCO_LIDAR_BASE_KWARGS,
-    }
-
-
 if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
 
+_backend = G1Connection.blueprint(
+    controller="groot",
+    motors=G1MotorConfig(release_sport_mode=True, command_timeout_seconds=0.25),
+)
+
 if global_config.simulation == "mujoco":
     from dimos.mapping.voxels.module import VoxelGridMapper
-    from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
-    from dimos.simulation.engines.robot_sim_binding import (
-        RobotSimSpec,
-        mjcf_joint_names_from_hardware,
-    )
 
-    _g1_sim_joints = tuple(g1_joints)
-    _g1_sim_spec = RobotSimSpec(
-        robot_id="g1",
-        hardware_joints=_g1_sim_joints,
-        root_body_names=("pelvis",),
-        root_joint_names=("floating_base_joint",),
-        require_floating_base=True,
-        model_joint_names=mjcf_joint_names_from_hardware(_g1_sim_joints),
-        imu_gyro_names=(
-            "imu-pelvis-angular-velocity",
-            "imu-torso-angular-velocity",
-            "imu-angular-velocity",
-            "gyro_pelvis",
-            "imu_gyro",
-        ),
-        imu_accel_names=(
-            "imu-pelvis-linear-acceleration",
-            "imu-torso-linear-acceleration",
-            "imu-linear-acceleration",
-            "accelerometer_pelvis",
-            "imu_accel",
-        ),
-        require_imu=True,
-    )
-
-    def _legacy_mujoco_backend() -> Any:
-        return MujocoSimModule.blueprint(
-            address=_MJCF_PATH,
-            headless=True,
-            dof=_G1_NUM_MOTORS,
-            **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-            inject_legacy_assets=True,
-            robot_sim_spec=_g1_sim_spec,
-        )
-
-    def _scene_mujoco_backend() -> tuple[Any, str | Path]:
-        if global_config.scene_package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
-
-        scene_path = Path(str(global_config.scene_package)).expanduser()
-        if scene_path.suffix.lower() == ".mjb":
-            if not scene_path.exists():
-                raise FileNotFoundError(f"MuJoCo binary scene not found: {scene_path}")
-            return (
-                MujocoSimModule.blueprint(
-                    address=scene_path,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                scene_path,
-            )
-
-        from dimos.simulation.scenes.catalog import resolve_scene_package
-
-        package = resolve_scene_package(global_config.scene_package)
-        if package is None:
-            return _legacy_mujoco_backend(), _MJCF_PATH
-        if package.mujoco_scene_path is None:
-            raise ValueError(f"scene package has no MuJoCo scene artifact: {package.metadata_path}")
-
-        composed_scene = _precomposed_g1_scene(package)
-        if composed_scene is not None:
-            return (
-                MujocoSimModule.blueprint(
-                    address=composed_scene,
-                    headless=True,
-                    dof=_G1_NUM_MOTORS,
-                    **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                    robot_sim_spec=_g1_sim_spec,
-                ),
-                composed_scene,
-            )
-
-        return (
-            MujocoSimModule.blueprint(
-                scene_xml=package.mujoco_scene_path,
-                robot_mjcf=_ROBOT_ONLY_MJCF_PATH,
-                robot_meshdir=_ROBOT_MESHDIR,
-                robot_id="",
-                scene_entities=package.entities,
-                headless=True,
-                dof=_G1_NUM_MOTORS,
-                **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
-                robot_sim_spec=_g1_sim_spec,
-            ),
-            _ROBOT_ONLY_MJCF_PATH,
-        )
-
-    def _precomposed_g1_scene(package: ScenePackage) -> Path | None:
-        candidate = package.mujoco_composed_binary_path(
-            key=_G1_COMPOSED_MJB_KEY,
-            robot=_G1_COMPOSED_MJB_ROBOT,
-            entity_policy=_G1_COMPOSED_MJB_ENTITY_POLICY,
-        )
-        if candidate is None:
-            return None
-        if not candidate.exists():
-            raise FileNotFoundError(
-                f"scene package declares a composed MuJoCo binary that is missing: {candidate}"
-            )
-        return candidate
-
-    # Sim backend: MuJoCo engine via SHM.
-    _backend, _adapter_address = _scene_mujoco_backend()
-    # MujocoSimModule's ``odom`` Out is the sole producer of ``/odom``
-    # now - the coordinator no longer polls the whole-body adapter for
-    # base pose (read_odom was dropped from the Protocol). autoconnect
-    # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
-    _adapter_type = "sim_mujoco_g1"
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -305,12 +112,7 @@ else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
-    _adapter_type = "transport_lcm"
-    _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
@@ -450,7 +252,7 @@ def _g1_real_costmap(grid: Any) -> Any:
 _static_rerun_entities: dict[str, Any] = {
     _G1_ROOT: g1_urdf_static_robot(root_path=_G1_ROOT),
 }
-_static_rerun_entities.update(scene_package_static_entities(global_config.scene_package))
+
 
 _rerun_config: dict[str, Any] = {
     "blueprint": _g1_groot_rerun_blueprint,
@@ -496,20 +298,11 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-_coordinator = _G1GrootCoordinator.blueprint(
+_coordinator = G1GrootCoordinator.blueprint(
     instance_name="ControlCoordinator",
     publish_robot_joint_states=True,
     tick_rate=_tick_rate,
-    hardware=[
-        HardwareComponent(
-            hardware_id="g1",
-            hardware_type=HardwareType.WHOLE_BODY,
-            joints=g1_joints,
-            adapter_type=_adapter_type,
-            address=_adapter_address,
-            wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
-        ),
-    ],
+    motor_gains={"g1": WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD))},
     tasks=[
         TaskConfig(
             name="groot_wbc",
@@ -520,6 +313,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
             params={
                 "model_path": _GROOT_MODEL_DIR,
                 "hardware_id": "g1",
+                "all_joint_names": g1_joints,
                 "auto_arm": _auto_arm,
                 "auto_dry_run": _auto_dry_run,
                 "default_ramp_seconds": _default_ramp_seconds,
@@ -548,24 +342,22 @@ _coordinator = _G1GrootCoordinator.blueprint(
             },
         ),
     ],
-).transports(
-    {
-        ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
-        ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
-        # Real-hw only: the transport_lcm adapter speaks to
-        # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them; they're
-        # harmless when the sim engine doesn't expose those ports.
-        ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-        ("imu", Imu): LCMTransport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): LCMTransport("/g1/motor_command", MotorCommandArray),
-    }
 )
 
 _unitree_g1_groot_wbc_core = (
     autoconnect(_backend, _coordinator)
-    .remappings([(_G1GrootCoordinator, "twist_command", "cmd_vel")])
+    .remappings(
+        [
+            (G1Connection, "motor_command", "g1_motor_command"),
+            (G1Connection, "motor_states", "g1_motor_states"),
+            (G1Connection, "imu", "g1_imu"),
+            ("g1connection_lidar", "pointcloud", "pointcloud"),
+            ("g1connection_camera", "color_image", "color_image"),
+            ("g1connection_camera", "camera_info", "camera_info"),
+            ("g1connection_camera", "depth_image", "depth_image"),
+            ("g1connection_camera", "depth_camera_info", "depth_camera_info"),
+        ]
+    )
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )
 
