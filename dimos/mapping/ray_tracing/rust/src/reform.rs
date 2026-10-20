@@ -571,6 +571,40 @@ impl Warp {
         self.anchors.len()
     }
 
+    /// How far the moved keyframes' own positions move: (median, max) in meters.
+    pub fn keyframe_shift_m(&self) -> (f64, f64) {
+        let mut shifts: Vec<f64> = self
+            .anchors
+            .iter()
+            .filter(|a| a.moved)
+            .map(|a| {
+                let to = a.correction.apply(a.position);
+                ((to.x - a.position.x).powi(2)
+                    + (to.y - a.position.y).powi(2)
+                    + (to.z - a.position.z).powi(2))
+                .sqrt()
+            })
+            .collect();
+        if shifts.is_empty() {
+            return (0.0, 0.0);
+        }
+        shifts.sort_by(f64::total_cmp);
+        (shifts[shifts.len() / 2], shifts[shifts.len() - 1])
+    }
+
+    /// The farthest a warped point may sensibly land from where it was: the
+    /// largest keyframe shift plus a rotation's swing over a tile and its neighbors.
+    pub fn max_plausible_move_m(&self) -> f64 {
+        let (_, max_shift) = self.keyframe_shift_m();
+        let max_angle = self
+            .anchors
+            .iter()
+            .filter(|a| a.moved)
+            .map(|a| angle(a.correction.rotation))
+            .fold(0.0, f64::max);
+        max_shift + max_angle * 3.0 * self.reach + self.reach
+    }
+
     /// The same correction as one fast-reform graph over every keyframe, with
     /// no tiling or time windows, the reference the tiled warp approximates.
     pub fn graph_delta(&self) -> fast_reform::GraphDelta3D {

@@ -46,6 +46,9 @@ pub(crate) enum Job {
     Warp(Warp),
 }
 
+/// How often the reform ray tracer logs its memory and container sizes.
+const MEMORY_LOG_PERIOD: Duration = Duration::from_secs(10);
+
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
 
@@ -364,7 +367,20 @@ impl Worker {
             seed: SeedState::Idle,
             viz: RegionSweep::default(),
         };
+        let mut last_memory_log = Instant::now();
         loop {
+            if self.track_voxel_times && last_memory_log.elapsed() >= MEMORY_LOG_PERIOD {
+                last_memory_log = Instant::now();
+                let (voxels, chunks, voxel_times) = state.mapper.sizes();
+                warn!(
+                    rss_mb = crate::rss::rss_mb().unwrap_or(f64::NAN),
+                    voxels,
+                    chunks,
+                    voxel_times,
+                    queued_jobs = self.jobs.len(),
+                    "Ray tracer memory."
+                );
+            }
             let loading = matches!(state.seed, SeedState::Loading(_));
             match next_turn(&mut self.jobs, loading).await {
                 Turn::Job(job) => self.handle(&mut state, job).await,
@@ -400,15 +416,28 @@ impl Worker {
             Job::Warp(warp) => {
                 let mapper = &mut state.mapper;
                 let report = tokio::task::block_in_place(|| mapper.apply_warp(&warp));
-                info!(
-                    moved_keyframes = warp.moved_keyframes(),
+                let (median_shift_m, max_shift_m) = warp.keyframe_shift_m();
+                warn!(
+                    keyframes = warp.keyframes(),
+                    keyframes_moved = warp.moved_keyframes(),
+                    median_shift_m,
+                    max_shift_m,
                     voxels_warped = report.voxels_warped,
                     voxels_moved = report.voxels_moved,
-                    rebuilt = report.rebuilt,
+                    decision = if report.rebuilt { "rebuild" } else { "repair" },
                     warp_ms = report.warp_ms,
                     voxel_ms = report.voxel_ms,
                     "Warped the map through a loop closure."
                 );
+                if let Some((from, to)) = report.worst_implausible {
+                    warn!(
+                        held_in_place = report.implausible,
+                        limit_m = warp.max_plausible_move_m(),
+                        worst_from = ?from,
+                        worst_to = ?to,
+                        "A warp sent voxels somewhere non-finite or implausibly far; they stayed put."
+                    );
+                }
             }
         }
     }

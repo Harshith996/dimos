@@ -635,6 +635,7 @@ dependencies = [
  "dimos-module",
  "fast-reform",
  "lcm-msgs",
+ "libc",
  "nalgebra",
  "rayon",
  "serde",
