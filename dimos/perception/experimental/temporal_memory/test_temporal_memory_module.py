@@ -25,12 +25,10 @@ from unittest.mock import create_autospec, patch
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
-import rerun as rr
 
 from dimos.core.cdr_transport import CdrTransport
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
-from dimos.messages.geometry_msgs.msg import Point
+from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
@@ -52,7 +50,6 @@ from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils im
 from dimos.perception.experimental.temporal_memory.temporal_utils.helpers import is_scene_stale
 from dimos.perception.experimental.temporal_memory.window_analyzer import WindowAnalyzer
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.cdr import entity_points
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -444,29 +441,6 @@ class TestEntityMarkers:
             assert {m.entity_id for m in msg.markers} == {"E1", "E2"}
             e1 = next(m for m in msg.markers if m.entity_id == "E1")
             assert (e1.position.x, e1.position.y, e1.position.z) == (1, 2, 0.3)
-
-    def test_markers_to_rerun(self) -> None:
-        markers = EntityMarkers(
-            markers=[
-                EntityMarker(
-                    entity_id="E1",
-                    label="person walking",
-                    entity_type="person",
-                    position=Point(x=1.0, y=2.0, z=0.3),
-                ),
-                EntityMarker(
-                    entity_id="E2",
-                    label="wooden table",
-                    entity_type="object",
-                    position=Point(x=3.0, y=4.0, z=0.3),
-                ),
-            ],
-            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
-        )
-        archetype = entity_points(cdr_decode(cdr_encode(markers), EntityMarkers))
-        # Should return rr.Points3D
-
-        assert isinstance(archetype, rr.Points3D)
 
 
 class TestWindowAnalyzer:

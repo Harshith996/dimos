@@ -44,7 +44,6 @@ threads = 2
 [package.metadata.dimos.module.local_planner.inputs]
 local_map = "sensor_msgs/msg/PointCloud2"
 planner_path = "nav_msgs/msg/Path"
-ground_support = "sensor_msgs/msg/PointCloud2"
 tf = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.local_planner.outputs]
