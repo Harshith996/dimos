@@ -9,6 +9,8 @@ import sys
 
 import pytest
 
+import dimos
+
 
 def main() -> int:
     paths = [Path(p).resolve() for p in sys.argv[1:]]
@@ -21,7 +23,6 @@ def main() -> int:
             filename = getattr(module, "__file__", None)
             if filename:
                 assert "site-packages" in filename, (name, filename)
-    import dimos
 
     print("Installed production root:", dimos.__file__, flush=True)
     return pytest.main(
