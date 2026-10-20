@@ -339,7 +339,7 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only_stale_ones(
+def test_robot_description_names_meshes_by_package_and_hash_and_mesh_request_serves_only_stale_ones(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
@@ -359,7 +359,7 @@ def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only
 
     assert f'filename="{name}"' in module._urdf_xml
     assert str(tmp_path) not in module._urdf_xml
-    # the name as urdf_info gives it, with or without its hash, or with a stale have= gets the file; have= of the
+    # the name as robot_description gives it, with or without its hash, or with a stale have= gets the file; have= of the
     # current file (a fresh cached copy) and a filesystem path get nothing
     plain = "package://box/meshes/cube.stl"
     for request in (name, plain, f"{name}&have=0", f"{name}&have={name.split('=')[1]}", str(urdf)):
@@ -370,10 +370,10 @@ def test_urdf_info_names_meshes_by_package_and_hash_and_mesh_request_serves_only
     assert decoded.data == cube
 
 
-def test_an_empty_mesh_request_sends_urdf_info_right_away(make_filter, monkeypatch):
+def test_an_empty_mesh_request_sends_robot_description_right_away(make_filter, monkeypatch):
     module = make_filter()
     sent: list[String] = []
-    monkeypatch.setattr(module.urdf_info, "publish", sent.append)
+    monkeypatch.setattr(module.robot_description, "publish", sent.append)
     monkeypatch.setattr(
         module.mesh_info, "publish", lambda mesh: pytest.fail("no mesh for an empty request")
     )
