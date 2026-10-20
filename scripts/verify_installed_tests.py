@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 Dimensional Inc.
 # SPDX-License-Identifier: Apache-2.0
 """Run checkout tests against wheel modules without pytest replacing package parents."""
