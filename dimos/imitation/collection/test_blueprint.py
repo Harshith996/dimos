@@ -26,10 +26,7 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModuleConfig,
 )
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
-
-AGGREGATE = "coordinator_joint_state"
 
 
 @pytest.mark.parametrize(
@@ -79,11 +76,3 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
 
 
-def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
-    """(instance, port) -> effective stream name, as ModuleCoordinator pairs streams."""
-    return {
-        (atom.name, stream.name): blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-        for atom in blueprint.active_blueprints
-        for stream in atom.streams
-        if stream.type is JointState
-    }
