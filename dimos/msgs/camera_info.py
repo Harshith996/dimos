@@ -105,7 +105,7 @@ def camera_info_from_yaml(path: str | Path, *, header: Header) -> CameraInfo:
     with Path(path).open() as source:
         data = yaml.safe_load(source)
     if not isinstance(data, dict):
-        raise ValueError("Calibration YAML must contain a mapping")
+        raise TypeError("Calibration YAML must contain a mapping")
     width, height = data["image_width"], data["image_height"]
     _dimensions(width, height)
     return CameraInfo(
