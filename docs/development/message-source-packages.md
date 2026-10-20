@@ -1,5 +1,9 @@
 # CDR generation in dimOS
 
+> CDR migration is still in progress. The generator is integrated on main.
+> This unit adds built-in messages in [#4366](https://github.com/dimensionalOS/dimos/pull/4366).
+> Runtime defaults, recording, viewers, and legacy cleanup remain separate units.
+
 dimOS uses the published `dimos-cdrgen==0.1.1` package directly. Its parser,
 generators, ownership checks, codecs and native build recipes live in the
 [independent library](https://github.com/TomCC7/dimos-cdrgen).
