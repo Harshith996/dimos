@@ -74,5 +74,3 @@ def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None
 )
 def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
     assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
-
-

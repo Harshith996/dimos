@@ -19,13 +19,10 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
-
-import json
-from pathlib import Path
-
 from contextlib import ExitStack
 from functools import partial
-
+import json
+from pathlib import Path
 import threading
 import time
 from unittest.mock import MagicMock
@@ -37,11 +34,8 @@ import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
 
-
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-
 import dimos.core.cdr_transport as cdr_module
-
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport_factory import make_transport
 from dimos.messages.builtin_interfaces.msg import Time
