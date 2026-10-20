@@ -143,6 +143,31 @@ jobs:
         run: |
           .record-review/bin/python -m pytest --noconftest -o addopts='' -o 'markers=self_hosted: native recording acceptance' -q dimos/experimental/memory/test_rust_recorder_e2e.py -k cdr_native
 
+  viewers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: denoland/setup-deno@v2
+      - name: Build and check browser consumers
+        run: |
+          cd web/sdk
+          deno task test src/decoders/cdr.test.ts
+          deno task check
+          deno task build
+          cd ../cockpit
+          deno task test src/subscriptions.test.ts
+          deno task check
+          deno task build
+      - name: Build wheel and verify installed viewer adapters
+        run: |
+          uv venv .viewer-build --python 3.12 --seed
+          .viewer-build/bin/python -m pip install '.[message-build]' build
+          .viewer-build/bin/python -m build --wheel --no-isolation
+          uv venv .viewer-review --python 3.12 --seed
+          .viewer-review/bin/python -m pip install 'dimos[web,visualization]' dist/*.whl pytest pytest-mock pytest-env pytest-asyncio
+          .viewer-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/web/test_cdr_codec.py" "$PWD/dimos/web/relay_bridge/test_relay_bridge_authoring.py" "$PWD/dimos/visualization/rerun/test_cdr.py" "$PWD/dimos/visualization/rerun/test_cdr_e2e.py" "$PWD/dimos/visualization/rerun/test_cdr_image_values.py" "$PWD/dimos/visualization/rerun/test_cdr_sensor_docs.py" "$PWD/dimos/memory/cli/test_render.py" "$PWD/dimos/navigation/global_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_viz.py" "$PWD/dimos/navigation/local_planner/test_profile.py"
+
   clean-generator:
     strategy:
       fail-fast: false
