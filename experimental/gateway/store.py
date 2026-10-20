@@ -163,7 +163,7 @@ def info(dimos_dir: Path) -> dict[str, Any]:
     from experimental.gateway.state import API_VERSION
 
     found, version = checkout_version(dimos_dir)
-    # the dimos range Desktop supports (its DESKTOP_DIMOS_RANGE); Desktop's installer requires both keys
+    # the gateway APIs Desktop supports (its DESKTOP_DIMOS_RANGE); Desktop's installer requires both keys
     range_text = os.environ.get("DESKTOP_DIMOS_RANGE", "")
     return {
         "dir": str(dimos_dir),
@@ -171,7 +171,7 @@ def info(dimos_dir: Path) -> dict[str, Any]:
         "installed": found and dimos_bin(dimos_dir).exists(),
         "version": version,
         "range": range_text,
-        "inRange": version is not None and (not range_text or satisfies(version, range_text)),
+        "inRange": found and (not range_text or satisfies(API_VERSION, range_text)),
         "api": API_VERSION,
         "commit": git(dimos_dir, "rev-parse", "--short=10", "HEAD"),
         "tag": git(
