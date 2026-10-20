@@ -21,6 +21,7 @@ from threading import Event
 
 from dimos_cdrgen.registry import encode
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.cdr_transport import CdrTransport
 from dimos.core.transport import pLCMTransport, pZenohTransport
@@ -42,9 +43,18 @@ from dimos.teleop.utils.recorder import TeleopRecorder
 from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
+@pytest.fixture
+def recording_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=2)
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
+    yield scheduler
+    scheduler.executor.shutdown(wait=True)
+
+
 @pytest.mark.parametrize("backend", ["lcm", "zenoh"])
 def test_hosted_and_webxr_ports_record_canonical_values_and_report_after_reopen(
-    tmp_path, backend, mocker
+    tmp_path, backend, mocker, recording_scheduler
 ):
     options = (
         {"url": "memq://"}
