@@ -105,7 +105,7 @@ jobs:
         run: |
           .native-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/core/test_cdr_transport.py" "$PWD/dimos/protocol/pubsub/impl/webrtc/test_transport.py" "$PWD/dimos/protocol/pubsub/impl/test_cdr_ros_conversion.py"
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
-          cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib cdr::tests --jobs 2
+          cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib --jobs 2
 
 
 
