@@ -90,7 +90,11 @@ def collect_simulation(
     if hosted.intersection(robots):
         raise ValueError("sim2 robot device clients must run on the same host as physics")
 
-    world = replace(settings.world, robots=robots)
+    timestep = settings.world.timestep
+    limit = min(robot.config.max_timestep for robot in robots.values())
+    if worlds and timestep > limit:
+        raise ValueError(f"world timestep {timestep} exceeds robot limit {limit}")
+    world = replace(settings.world, robots=robots, timestep=min(timestep, limit))
     generated = simulation(
         scene=world.scene,
         robots=world.robots,
