@@ -126,7 +126,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake nasm pkg-config libsqlite3-dev
           uv venv .record-review --python 3.12 --seed
-          .record-review/bin/python -m pip install -e . mcap pytest pytest-mock pytest-env pytest-asyncio
+          .record-review/bin/python -m pip install -e '.[web,unitree]' mcap onnxruntime pytest pytest-mock pytest-env pytest-asyncio
       - name: Verify schema planning and wrapper compatibility
         run: .record-review/bin/python -m pytest --noconftest -o addopts='' -q dimos/experimental/memory/test_cdr_schema.py dimos/experimental/memory/test_rust_recorder.py
       - name: Verify recording replay collection and dataset boundaries
