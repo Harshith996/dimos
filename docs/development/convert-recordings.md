@@ -2,8 +2,8 @@
 
 Conversion is an explicit offline command. It never starts a robot, downloads data,
 or negotiates an old runtime wire format. Install this proposal's DimOS package;
-built-in generated messages are included in it. The optional historical LCM decoder
-is `dimos-lcm==0.1.4` (already retained while the runtime migration is incomplete).
+built-in generated messages are included in it. The historical LCM decoder comes from the retained `dimos-lcm>=0.1.6`
+dependency while runtime migration is incomplete.
 
 Use your existing local MCAP or memory SQLite file and choose a **new** output name:
 

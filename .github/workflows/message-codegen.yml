@@ -109,6 +109,11 @@ jobs:
 
 
 
+      - name: Verify offline recording conversion and fidelity audit
+        if: runner.os == 'Linux'
+        run: |
+          .native-review/bin/python -m pip install mcap pytest-asyncio
+          .native-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/memory/test_convert_recording.py" "$PWD/dimos/memory/test_recording_migration.py"
       - name: Verify installed generated-value utilities
         run: |
           uv venv .values-review --python 3.12 --seed
