@@ -17,12 +17,26 @@
 Not named ``test_*``/``*_test`` so pytest does not collect it; both
 ``test_control.py`` and ``test_coordinator_routing.py`` import ``RecordingTask``
 from here rather than reaching into each other's test modules.
+
+``turning_joints`` writes out a test robot's ``ControlDescription`` by hand,
+for tests that have no robot model.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from dimos.control.connection.connection_module import ConnectionDescription
+from dimos.control.contract.convert import JOINT_STATE_FIELDS, POSE_INTERFACES, TWIST_INTERFACES
+from dimos.control.contract.description import (
+    ControlDescription,
+    Limits,
+    Resource,
+    ResourceKind,
+)
+from dimos.control.contract.keys import Interface, Unit
+from dimos.control.contract.ports import JointPort, MotorPort, PortSpec, TwistPort
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
@@ -31,6 +45,43 @@ from dimos.control.task import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+def connection_contract(
+    description: ControlDescription, session: str = "test-session"
+) -> ConnectionDescription:
+    """Give hand-written test descriptions explicit conventional test ports.
+
+    Production discovery uses the driver's config and actual stream names.
+    """
+    commands: dict[str, PortSpec] = {}
+    readings: dict[type, str] = {}
+    joints = [r for r in description.resources if r.kind is ResourceKind.JOINT]
+    motors = [r.name for r in joints if Interface.KP in r.command_interfaces]
+    if motors:
+        commands["motor_command"] = MotorPort(joints=motors)
+    for interface in JOINT_STATE_FIELDS:
+        names = [
+            r.name for r in joints if interface in r.command_interfaces and r.name not in motors
+        ]
+        if names:
+            commands[f"{interface}_command"] = JointPort(joints=names, interface=interface)
+    if any(r.state_interfaces for r in joints):
+        readings[JointState] = "joint_state"
+    for resource in description.resources:
+        if resource.kind is ResourceKind.BASE:
+            if resource.command_interfaces:
+                commands["base_command"] = TwistPort(range=Twist())
+            if set(POSE_INTERFACES) <= set(resource.state_interfaces):
+                readings[PoseStamped] = "odom"
+            if set(TWIST_INTERFACES) <= set(resource.state_interfaces):
+                readings[Twist] = "base_velocity"
+        elif resource.kind is ResourceKind.SENSOR:
+            readings[Imu] = "imu"
+    return ConnectionDescription(session, description, commands, readings)
 
 
 class RecordingTask(BaseControlTask):
@@ -90,3 +141,57 @@ class RecordingTask(BaseControlTask):
     def on_teleop_buttons(self, msg: Any, t_now: float) -> bool:
         # Mirrors TeleopIKTask: the uniform handler delegates to on_buttons.
         return self.on_buttons(msg)
+
+
+#: The unit of each joint interface, for a joint that turns.
+_TURNING: Mapping[str, Unit] = {
+    Interface.POSITION: Unit.RAD,
+    Interface.VELOCITY: Unit.RAD_PER_S,
+    Interface.EFFORT: Unit.NM,
+    Interface.KP: Unit.UNITLESS,
+    Interface.KD: Unit.UNITLESS,
+}
+
+
+def turning_joints(
+    source: str,
+    joints: Sequence[str],
+    *,
+    state: Sequence[Interface],
+    command: Sequence[Interface],
+    limits: Mapping[str, Limits] | None = None,
+    others: Sequence[Resource] = (),
+    state_rate_hz: float = 100.0,
+    deadman_timeout_s: float = 0.1,
+) -> ControlDescription:
+    """Describe a robot of turning joints by hand, without a robot model.
+
+    Args:
+        source: The robot's name, the first part of every key, e.g. "mock".
+        joints: The joint names, in order.
+        state: What each joint reports.
+        command: What each joint can be told.
+        limits: Limits by full name, such as "mock/joint1/position". A
+            command with no limit is unlimited.
+        others: Parts to add after the joints, such as an IMU.
+        state_rate_hz: How many times a second it reports.
+        deadman_timeout_s: How long it waits for a command, in seconds,
+            before halting.
+    """
+    resources = tuple(
+        Resource(
+            name=joint,
+            kind=ResourceKind.JOINT,
+            state_interfaces=tuple(state),
+            command_interfaces=tuple(command),
+            units={interface: _TURNING[interface] for interface in (*state, *command)},
+        )
+        for joint in joints
+    )
+    return ControlDescription(
+        source=source,
+        resources=(*resources, *others),
+        limits=dict(limits or {}),
+        state_rate_hz=state_rate_hz,
+        deadman_timeout_s=deadman_timeout_s,
+    )
