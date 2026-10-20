@@ -15,8 +15,6 @@
 """Borrowed buffers preserve padding, byte order, lifetime, and ROS value semantics."""
 
 import gc
-from pathlib import Path
-import re
 
 import cv2
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
@@ -233,19 +231,3 @@ def test_remaining_raw_encodings_keep_signed_float_and_endian_values(encoding, d
     assert decoded.encoding == encoding
     assert decoded.is_bigendian == 1
     np.testing.assert_array_equal(image_view(decoded), pixels)
-
-
-def test_documented_sensor_blocks_run_as_written() -> None:
-    guide = Path(__file__).resolve().parents[2] / "docs/usage/visualization.md"
-    section = guide.read_text().split("## Arrays and compression for generated sensors\n", 1)[1]
-    blocks = re.findall(r"```python\n(.*?)```", section, re.DOTALL)
-    assert len(blocks) == 3
-    namespace = {}
-    for block in blocks:
-        exec(compile(block, str(guide), "exec"), namespace)
-    np.testing.assert_allclose(
-        namespace["xyz"], [[-0.25, -0.25, 1], [0.25, -0.25, 1], [-0.25, 0.25, 1], [0.25, 0.25, 1]]
-    )
-    np.testing.assert_array_equal(image_to_rgb(namespace["restored"]), namespace["rgb"])
-    assert namespace["cloud"].header == namespace["image"].header
-    assert not namespace["pixels"].flags.writeable

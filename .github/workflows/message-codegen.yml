@@ -7,6 +7,8 @@ on:
       - MANIFEST.in
       - packages/dimos-generated/**
       - scripts/*builtin*
+      - dimos/msgs/*.py
+      - dimos/msgs/nav_msgs/OccupancyGrid.py
       - examples/message-package/**
       - examples/external-messages/**
       - dimos/message_codegen/**
@@ -102,6 +104,13 @@ jobs:
           .venv/bin/python -m pytest --noconftest --import-mode=importlib -o addopts='' -o 'markers=native_e2e: compiled native consumer acceptance' -q dimos/message_codegen/test_project_native.py -k actual_coordinator
           cargo test --manifest-path native/rust/dimos-module/Cargo.toml --locked --features cdr --lib cdr::tests --jobs 2
 
+
+
+      - name: Verify installed generated-value utilities
+        run: |
+          uv venv .values-review --python 3.12 --seed
+          .values-review/bin/python -m pip install dist/*.whl pytest pytest-mock pytest-env
+          .values-review/bin/python -I -m pytest --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/msgs/test_time.py" "$PWD/dimos/msgs/test_geometry.py" "$PWD/dimos/msgs/test_camera_info.py" "$PWD/dimos/msgs/test_image_views.py" "$PWD/dimos/msgs/test_image_compression.py" "$PWD/dimos/msgs/test_pointcloud.py" "$PWD/dimos/msgs/test_pointcloud_colors.py" "$PWD/dimos/msgs/test_occupancy.py"
 
   clean-generator:
     strategy:
