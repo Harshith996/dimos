@@ -28,6 +28,8 @@ from dimos.utils.data import LfsPath
 DEFAULT_ADDRESS = "172.6.2.20:11323"
 ALFRED_DESCRIPTION = LfsPath("alfred_description")
 ALFRED_URDF = ALFRED_DESCRIPTION / "urdf" / "alfred_v1.urdf"
+# The Mid-360 sees the lower body box out to 0.61 m.
+LIO_BLIND_M = 0.65
 
 
 @cache
@@ -50,7 +52,6 @@ class AlfredConfig:
     """Physical metadata used by Alfred navigation and sensor blueprints."""
 
     name: str
-    body_height: float
     height_clearance: float
     width_clearance: float
     mid360_ip: str
@@ -60,9 +61,6 @@ class AlfredConfig:
 
 ALFRED = AlfredConfig(
     name="alfred",
-    # The vertical span the MLS planner requires to be free above a cell before it will
-    # plan through it. The mast reaches higher, but nothing up there is a collision risk.
-    body_height=0.5,
     height_clearance=2.0,  # meters
     width_clearance=1.0,
     # The Mid-360 is on the Jetson's wired 192.168.1.100/24 link.

@@ -26,19 +26,22 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
+from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
+from dimos.navigation.local_planner.native import LocalPlannerNative
+from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.diy.alfred.config import ALFRED, alfred_model
+from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.robot.diy.alfred.config import alfred_model
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 
 ALFRED_RERUN_ROOT = "world/alfred"
 
 VOXEL_SIZE_METERS = 0.05
-WALL_CLEARANCE_M = 0.2
+WALL_CLEARANCE_M = 0.20
+STEP_THRESHOLD_M = 0.05
+BODY_DILATE_M = 0.0
 PLANNER_VIZ_HZ = 2.0
 MID360_MAX_RANGE_METERS = 15.0
 """The Mid-360 reaches far past this, but the voxel map raytraces every point from the
@@ -82,8 +85,8 @@ def _alfred_rerun_config() -> dict[str, Any]:
             "world/nodes": 1.0,
         },
         "visual_override": {
-            # The MLS planner path; the local planner's path keeps the stock green.
             "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
+            **motion_visual_override(embodiment=ALFRED, body_dilate_m=BODY_DILATE_M),
             # The planner publishes its surface and edges by cell.
             **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_METERS, WALL_CLEARANCE_M),
         },
@@ -99,8 +102,9 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
         ).remappings([(RayTracingVoxelMap, "lidar", map_cloud_topic)]),
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
-            robot_height=ALFRED.body_height,
+            robot_height=ALFRED.height,
             wall_clearance_m=WALL_CLEARANCE_M,
+            step_threshold_m=STEP_THRESHOLD_M,
             step_penalty_weight=1.0,
             viz_publish_hz=PLANNER_VIZ_HZ,
         ).remappings(
@@ -109,11 +113,7 @@ def _alfred_nav(*, map_cloud_topic: str, map_max_range: float) -> Blueprint:
                 (MLSPlannerNative, "path", "planner_path"),
             ]
         ),
-        # Solely the tf-driven start_pose source for the dannav odom remaps below.
-        StartRelay.blueprint(),
-        DanLocalPlanner.blueprint(resample_spacing_m=0.1).remappings(
-            [(DanLocalPlanner, "odom", "start_pose")]
-        ),
-        DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
+        LocalPlannerNative.blueprint(embodiment=ALFRED, body_dilate_m=BODY_DILATE_M),
+        TrajectoryFollowerNative.blueprint(embodiment=ALFRED),
         MovementManager.blueprint(),
     )

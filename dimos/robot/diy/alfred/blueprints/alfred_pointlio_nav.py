@@ -29,13 +29,13 @@ from dimos.robot.diy.alfred.blueprints.alfred_nav import (
     _alfred_nav,
     _alfred_rerun_config,
 )
-from dimos.robot.diy.alfred.config import ALFRED
+from dimos.robot.diy.alfred.config import ALFRED, LIO_BLIND_M
 from dimos.visualization.vis_module import vis_module
 
 alfred_pointlio_nav = autoconnect(
     _alfred_lidar_hardware,
     mid360_for_pointlio(lidar_ip=ALFRED.mid360_ip),
-    PointLio.blueprint(),
+    PointLio.blueprint(blind=LIO_BLIND_M),
     _alfred_nav(map_cloud_topic="lidar", map_max_range=MID360_MAX_RANGE_METERS),
     vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
 ).global_config(n_workers=11, robot_model="alfred")

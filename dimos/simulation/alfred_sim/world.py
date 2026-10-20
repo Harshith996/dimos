@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from functools import partial
 
-from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+from dimos.robot.diy.alfred.config import LIO_BLIND_M
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevelConfig
 from dimos.simulation.alfred_sim.body import BASE_BODY, PARTS, alfred_spec, mid360_mount
 from dimos.simulation.scenes.procedural import Scene
@@ -53,7 +53,7 @@ ALFRED = Rig(
     command_timeout=AlfredHighLevelConfig.model_fields["cmd_vel_timeout"].default,
     shape=SHAPE,
     tune=tune_velocity_gains,
-    lio_blind_range=PointLioConfig.model_fields["blind"].default,
+    lio_blind_range=LIO_BLIND_M,
 )
 
 
