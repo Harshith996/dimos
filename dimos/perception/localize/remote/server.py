@@ -17,8 +17,9 @@
 points at it (``DIMOS_PERCEPTION_URL``); see ``client.py``.
 
 Stateless per call: images, queries and boxes in, embeddings, scores and masks out. The
-models run on one worker thread, in arrival order; image embeddings that arrive together run
-as one batch. Each reply carries how long the call waited and computed.
+models run on one worker thread, in arrival order (OWLv2's CPU preprocessing beside it);
+with ``--max-batch`` above 1, image embeddings that arrive together run as one batch, which
+moves them ~1e-3 from what a local model gives. Each reply carries how long the call waited and computed.
 
     python -m dimos.perception.localize.remote.server --port 8765
 """
@@ -59,7 +60,7 @@ class PerceptionServer:
         embedder: Any = None,
         detector: Any = None,
         segmenter: Any = None,
-        max_batch: int = 16,
+        max_batch: int = 1,
         batch_wait_s: float = 0.005,
     ) -> None:
         if embedder is None or detector is None or segmenter is None:
@@ -71,6 +72,8 @@ class PerceptionServer:
         self.embedder, self.detector, self.segmenter = embedder, detector, segmenter
         self.max_batch, self.batch_wait_s = max_batch, batch_wait_s
         self._gpu = ThreadPoolExecutor(max_workers=1, thread_name_prefix="perception-gpu")
+        # OWLv2's CPU preprocessing (~0.13 s a frame) runs here, beside the GPU worker.
+        self._cpu = ThreadPoolExecutor(max_workers=8, thread_name_prefix="perception-cpu")
         self._embeds: asyncio.Queue[_Pending] | None = None
         self.calls = 0
 
@@ -165,6 +168,7 @@ class PerceptionServer:
 
     def close(self) -> None:
         self._gpu.shutdown(wait=True)
+        self._cpu.shutdown(wait=True)
 
     def health(self) -> dict[str, Any]:
         reply: dict[str, Any] = {
@@ -217,12 +221,11 @@ class PerceptionServer:
         async def query_score_rows(request: Request) -> Response:
             body = wire.unpack(await request.body())
             image = wire.image_from_wire(body["image"], body.get("client", ""))
-            (boxes, rows), wait, compute = await self._run(
-                self.detector.query_score_rows,
-                image,
-                list(body["queries"]),
-                float(body["threshold"]),
-            )
+            args = [image, list(body["queries"]), float(body["threshold"])]
+            if hasattr(self.detector, "preprocess"):
+                loop = asyncio.get_running_loop()
+                args.append(await loop.run_in_executor(self._cpu, self.detector.preprocess, image))
+            (boxes, rows), wait, compute = await self._run(self.detector.query_score_rows, *args)
             return reply({"boxes": boxes, "rows": rows}, wait, compute)
 
         async def segment(request: Request) -> Response:
@@ -249,7 +252,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--max-batch", type=int, default=16, help="image embeddings per forward")
+    parser.add_argument(
+        "--max-batch",
+        type=int,
+        default=1,
+        help="image embeddings per forward; above 1, embeddings drift ~1e-3 from a local model's",
+    )
     args = parser.parse_args()
 
     import uvicorn
