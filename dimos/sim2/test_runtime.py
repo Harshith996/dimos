@@ -23,6 +23,28 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.scene_types import SceneUpdate
 
 
+def test_startup_wait_keeps_feedback_live_then_releases_once(worlds, clients, world_config):
+    instance = world_config.robots["left"]
+    instance = replace(instance, config=replace(instance.config, wait_for_first_command=True))
+    world = worlds(config=replace(world_config, robots={"left": instance}))
+    client = clients(world, writable=True)
+    before = client.read()
+    for _ in range(20):
+        world.step()
+    current = client.read()
+    assert world.tick == 0
+    assert current.metadata.sequence > before.metadata.sequence
+    np.testing.assert_array_equal(current.values["position"], before.values["position"])
+    client.write_motors(MotorCommandArray(q=[0.1, 850], kp=[10, 0], kd=[1, 0]), observed=current)
+    world.step()
+    assert world.tick == 1
+    assert not world.waiting_for_control
+    client.disable(observed=client.read())
+    world.step()
+    assert world.tick == 2
+    assert not world.robots["left"].enabled
+
+
 def test_expired_motor_command_stops_using_feedforward(worlds, clients, mocker):
     world = worlds()
     client = clients(world, writable=True)

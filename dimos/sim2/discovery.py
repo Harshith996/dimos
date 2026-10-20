@@ -64,7 +64,7 @@ def collect_simulation(
         world_name = atom.name
     else:
         defaults = {cast("SimRobotSpec", a.module).default_sim_scene for a in providers}
-        selected = config.mujoco_scene or config.scene_package
+        selected = config.scene_package
         if not selected and len(defaults) != 1:
             raise ValueError(
                 "robots have different default scenes; select one shared --scene-package"

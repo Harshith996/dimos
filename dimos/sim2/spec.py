@@ -83,6 +83,8 @@ class RobotConfig:
     floating: bool = False
     # Root height above a scene's support pose; explicit instances stay absolute.
     spawn_height: float = 0.0
+    # Policy-controlled free bases must not fall while their controller loads.
+    wait_for_first_command: bool = False
 
     def __post_init__(self) -> None:
         if not math.isfinite(self.spawn_height) or self.spawn_height < 0:

@@ -207,6 +207,7 @@ class SimulationModule(Module):
                     "steps": runtime.tick,
                     "episode": runtime.episode,
                     "paused": runtime.paused,
+                    "waiting_for_control": sorted(runtime.waiting_for_control),
                     "truth_enabled": self._truth_enabled,
                     "error": self._failure,
                     "robots": {
