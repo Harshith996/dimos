@@ -22,6 +22,7 @@ from functools import partial
 import threading
 
 import pytest
+from reactivex.scheduler import ThreadPoolScheduler
 
 import dimos.core.cdr_transport as cdr_module
 from dimos.core.global_config import GlobalConfig
@@ -41,6 +42,7 @@ from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.service.lcmservice import LCMConfig
+from dimos.utils.threadpool import get_max_workers
 
 
 class Double(Transformer[int, int]):
@@ -143,9 +145,19 @@ class MemqRPC(LCMRPC):
         super().__init__(url="memq://", **kwargs)
 
 
+@pytest.fixture
+def tf_recording_scheduler(monkeypatch):
+    scheduler = ThreadPoolScheduler(max_workers=get_max_workers())
+    monkeypatch.setattr("dimos.utils.reactive.get_scheduler", lambda: scheduler)
+    monkeypatch.setattr("dimos.utils.threadpool.get_scheduler", lambda: scheduler)
+    yield scheduler
+    scheduler.executor.shutdown(wait=True)
+
+
 def test_recorder_tf_cdr_boundary_records_each_transform_without_changing_header(
-    mocker, monkeypatch, tmp_path
+    mocker, monkeypatch, tmp_path, tf_recording_scheduler
 ):
+    monkeypatch.setenv("LCM_DEFAULT_URL", "memq://")
     monkeypatch.setattr(cdr_module, "LCMConfig", partial(LCMConfig, url="memq://"))
     mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
     mocker.patch.object(LCMRPC, "start")
