@@ -19,7 +19,6 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
@@ -61,8 +60,7 @@ def lookahead_distance(speed: float, time_s: float, lo: float, hi: float) -> flo
 class BasicPathFollower(Module, spec.TrajectoryFollower):
     """Follow a planned path by chasing a lookahead point with P-controlled heading.
 
-    Publishes nav_cmd_vel until the last waypoint is within goal tolerance, then
-    goal_reached. stop_movement cancels the current path.
+    Publishes nav_cmd_vel until the last waypoint is within goal tolerance.
     """
 
     # While the tf chain is incomplete, retry the lookup at most this often.
@@ -72,11 +70,9 @@ class BasicPathFollower(Module, spec.TrajectoryFollower):
     config: BasicPathFollowerConfig
 
     path: In[Path]
-    stop_movement: In[Bool]
     tf: IO[TFMessage]
 
     nav_cmd_vel: Out[Twist]
-    goal_reached: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -93,8 +89,6 @@ class BasicPathFollower(Module, spec.TrajectoryFollower):
         # path arrives, else the cold-start miss arms a full retry backoff.
         self.tfbuffer  # noqa: B018
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
-        if self.stop_movement.transport is not None:
-            self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
         self._thread = Thread(target=self._follow, daemon=True)
         self._thread.start()
 
@@ -126,12 +120,6 @@ class BasicPathFollower(Module, spec.TrajectoryFollower):
         with self._lock:
             self._waypoints = waypoints
 
-    def _on_stop(self, msg: Bool) -> None:
-        if msg.data:
-            with self._lock:
-                self._waypoints = None
-            self.nav_cmd_vel.publish(Twist())
-
     def _follow(self) -> None:
         period = 1.0 / self.config.control_frequency
         while not self._stop_event.is_set():
@@ -151,7 +139,6 @@ class BasicPathFollower(Module, spec.TrajectoryFollower):
             with self._lock:
                 if self._waypoints is waypoints:
                     self._waypoints = None
-            self.goal_reached.publish(Bool(True))
             logger.info("Goal reached")
             return
 

@@ -24,7 +24,6 @@ use dimos_local_planner::planner::Emb;
 use dimos_module::{native_config, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::Twist;
 use lcm_msgs::nav_msgs::Path;
-use lcm_msgs::std_msgs::Bool;
 // serde derives come in through #[native_config]
 use tracing::info;
 
@@ -124,9 +123,6 @@ pub struct TrajectoryFollower {
     #[output(encode = Twist::encode)]
     nav_cmd_vel: Output<Twist>,
 
-    #[output(encode = Bool::encode)]
-    goal_reached: Output<Bool>,
-
     #[config]
     config: Config,
 
@@ -143,7 +139,6 @@ impl TrajectoryFollower {
             shared: Arc::clone(&self.shared),
             config: self.config.clone(),
             nav_cmd_vel: self.nav_cmd_vel.clone(),
-            goal_reached: self.goal_reached.clone(),
             tf: self.tf.clone(),
         };
         self.worker = Some(tokio::spawn(worker.run()));
@@ -236,7 +231,6 @@ struct Worker {
     shared: Arc<Mutex<Shared>>,
     config: Config,
     nav_cmd_vel: Output<Twist>,
-    goal_reached: Output<Bool>,
     tf: Tf,
 }
 
@@ -294,7 +288,6 @@ impl Worker {
                 }
                 Tick::Arrived => {
                     self.publish_twist(0.0, 0.0, 0.0).await;
-                    msg::publish(&self.goal_reached, &Bool { data: true }).await;
                     info!("Goal reached");
                 }
                 Tick::Holding => {

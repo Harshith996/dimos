@@ -63,8 +63,7 @@ class DanHolonomicTC(Module):
 
     Consumes the robot's ``PoseStamped`` odom directly. An empty path stops the
     follow, a non-empty path replaces the active one. Publishes ``nav_cmd_vel``
-    until the goal is within tolerance, then ``goal_reached``. ``stop_movement``
-    cancels the current path.
+    until the goal is within tolerance. ``stop_movement`` cancels the current path.
     """
 
     config: DanHolonomicTCConfig
@@ -74,7 +73,6 @@ class DanHolonomicTC(Module):
     stop_movement: In[Bool]
 
     nav_cmd_vel: Out[Twist]
-    goal_reached: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -142,7 +140,6 @@ class DanHolonomicTC(Module):
                 if cmd is not None:
                     self.nav_cmd_vel.publish(cmd)
                 if not self._controller.active:
-                    self.goal_reached.publish(Bool(True))
                     logger.info("Goal reached")
 
     @rpc

@@ -131,12 +131,6 @@ def _driven(follower: TrajectoryFollower) -> list:
     return out
 
 
-def _reached(follower: TrajectoryFollower) -> list:
-    out: list = []
-    follower.goal_reached.subscribe(out.append)
-    return out
-
-
 def test_a_stale_path_zeroes_the_twist():
     follower = _follower()
     out = _driven(follower)
@@ -151,16 +145,16 @@ def test_a_stale_path_zeroes_the_twist():
 
 def test_a_stale_path_outranks_an_arrival():
     follower = _follower()
-    out, reached = _driven(follower), _reached(follower)
+    out = _driven(follower)
     path = _straight_path(0.5)
     follower._on_path(path)
     at_goal = PoseStamped(ts=0.0, frame_id="odom", position=Vector3(0.5, 0.0, 0.01))
     follower.step(at_goal, path, age=9.0)
     assert out[-1].linear.x == 0.0
-    assert not reached
+    assert not follower._latch.reached
     # and the same tick against a fresh path is the arrival
     follower.step(at_goal, path, age=0.0)
-    assert [m.data for m in reached] == [True]
+    assert follower._latch.reached
 
 
 class _Clock:

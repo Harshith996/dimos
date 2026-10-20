@@ -31,7 +31,6 @@ from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
@@ -64,7 +63,7 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
 
 
 class TrajectoryFollowerNative(NativeModule, spec.TrajectoryFollower):
-    """Track the planned path; stop and latch goal_reached on arrival."""
+    """Track the planned path; stop and hold on arrival."""
 
     config: TrajectoryFollowerNativeConfig
 
@@ -72,7 +71,6 @@ class TrajectoryFollowerNative(NativeModule, spec.TrajectoryFollower):
     tf: IO[TFMessage]  # IO, not In: see planner_native.py
 
     nav_cmd_vel: Out[Twist]
-    goal_reached: Out[Bool]
 
 
 if TYPE_CHECKING:

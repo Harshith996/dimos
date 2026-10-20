@@ -67,7 +67,6 @@ class _DirectTransport(Transport):  # type: ignore[type-arg]
 @dataclass
 class _Captured:
     cmd_vel: list[Twist] = field(default_factory=list)
-    goal_reached: list[Bool] = field(default_factory=list)
 
 
 def _yaw_quaternion(yaw_rad: float) -> Quaternion:
@@ -153,10 +152,7 @@ def _running_module(**config: Any) -> Iterator[_ModuleHarness]:
     module.odom.transport = _DirectTransport()
     module.stop_movement.transport = _DirectTransport()
     captured = _Captured()
-    unsubs = [
-        module.nav_cmd_vel.subscribe(captured.cmd_vel.append),
-        module.goal_reached.subscribe(captured.goal_reached.append),
-    ]
+    unsubs = [module.nav_cmd_vel.subscribe(captured.cmd_vel.append)]
     module.start()
     harness = _ModuleHarness(module, captured, unsubs)
     try:
@@ -165,10 +161,13 @@ def _running_module(**config: Any) -> Iterator[_ModuleHarness]:
         harness.close()
 
 
+def _idle(h: _ModuleHarness) -> bool:
+    return h.module.get_state() == NavigationState.IDLE
+
+
 def _assert_route_cleared(h: _ModuleHarness) -> None:
-    assert _wait_until(lambda: h.module.get_state() == NavigationState.IDLE)
+    assert _wait_until(lambda: _idle(h))
     assert _wait_until(lambda: bool(h.captured.cmd_vel) and _is_zero_twist(h.captured.cmd_vel[-1]))
-    assert not h.captured.goal_reached
 
 
 @pytest.mark.parametrize("cancel_via", ["empty_path", "stop_movement"])
@@ -191,22 +190,20 @@ def test_hot_update_path_swaps_route_to_new_goal() -> None:
     with _running_module(goal_tolerance=0.2) as h:
         h.feed_odom(1.0, 0.0, 0.0)
         h.feed_path(_path_from_points([(0.0, 0.0), (2.0, 0.0)]))
-        assert not _wait_until(lambda: bool(h.captured.goal_reached), timeout=0.2)
+        assert not _wait_until(lambda: _idle(h), timeout=0.2)
 
         h.feed_path(_path_from_points([(0.0, 0.0), (1.0, 0.0)]))
 
-        assert _wait_until(lambda: bool(h.captured.goal_reached))
-        assert h.captured.goal_reached[-1].data is True
+        assert _wait_until(lambda: _idle(h))
 
 
-def test_arrival_publishes_goal_reached_without_final_spin() -> None:
+def test_arrival_stops_without_final_spin() -> None:
     # Odom on the goal with misaligned heading: arrival is on position alone,
     # never spinning to align the final yaw.
     with _running_module(goal_tolerance=0.2) as h:
         h.feed_odom(1.0, 0.0, 1.2)
         h.feed_path(_path_from_points([(0.0, 0.0), (1.0, 0.0)]))
 
-        assert _wait_until(lambda: bool(h.captured.goal_reached))
-        assert h.captured.goal_reached[-1].data is True
+        assert _wait_until(lambda: _idle(h))
         assert h.captured.cmd_vel
         assert all(abs(float(cmd.angular.z)) < 1e-6 for cmd in h.captured.cmd_vel)

@@ -53,7 +53,6 @@ tf = "tf2_msgs.TFMessage"
 
 [package.metadata.dimos.module.trajectory_follower.outputs]
 nav_cmd_vel = "geometry_msgs.Twist"
-goal_reached = "std_msgs.Bool"
 
 [profile.release]
 lto = "thin"

@@ -36,7 +36,6 @@ from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
@@ -91,7 +90,7 @@ class TrajectoryFollowerConfig(ModuleConfig):
 
 
 class TrajectoryFollower(Module, spec.TrajectoryFollower):
-    """Track the planned path; stop and latch goal_reached on arrival."""
+    """Track the planned path; stop and hold on arrival."""
 
     config: TrajectoryFollowerConfig
 
@@ -99,7 +98,6 @@ class TrajectoryFollower(Module, spec.TrajectoryFollower):
     tf: IO[TFMessage]
 
     nav_cmd_vel: Out[Twist]
-    goal_reached: Out[Bool]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -184,7 +182,6 @@ class TrajectoryFollower(Module, spec.TrajectoryFollower):
             arrived, reached = self._latch.arrive(xy), self._latch.reached
         if arrived:
             self.nav_cmd_vel.publish(Twist())
-            self.goal_reached.publish(Bool(True))
             logger.info("goal reached", x=round(xy[0], 2), y=round(xy[1], 2))
             return
         if reached:

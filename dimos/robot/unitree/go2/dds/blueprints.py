@@ -203,7 +203,6 @@ def nav_viewer(
                 "map_regions",
                 "goal",
                 "way_point",
-                "goal_reached",
                 # h264 or jpeg, whichever GO2DDS's video_encoding serves
                 "video",
                 "image",
