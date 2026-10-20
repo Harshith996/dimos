@@ -140,3 +140,10 @@ def test_stamp_copy_preserves_calibration_and_does_not_mutate_prior_publish():
     assert original.k[0] == 500 and original.roi.x_offset == 12
     assert original.header.stamp == Time(sec=1, nanosec=987654321)
     assert copied.header.stamp.nanosec == 123456789
+
+
+def test_calibration_yaml_rejects_non_mapping_input(tmp_path):
+    source = tmp_path / "calibration.yaml"
+    source.write_text("- width\n- height\n")
+    with pytest.raises(TypeError, match="Calibration YAML must contain a mapping"):
+        camera_info_from_yaml(source, header=Header())
