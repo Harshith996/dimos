@@ -175,6 +175,17 @@ jobs:
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/perception/depth2depth_cloud/module.py
           cargo test --locked --manifest-path dimos/perception/depth2depth_cloud/rust/Cargo.toml -j 2 --lib
 
+      - name: Verify CDR control and teleop boundaries without hardware
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_TRANSPORT: lcm
+          LCM_DEFAULT_URL: memq://
+        run: |
+          .native-review/bin/python -m pip install 'dimos[web,unitree]' 'onnxruntime' pytest-asyncio
+          cd web/sdk
+          deno install
+          cd ../..
+          .native-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/control/test_coordinator_routing.py" "$PWD/dimos/control/test_per_robot_joint_states.py" "$PWD/dimos/control/test_frame_pose_tf.py" "$PWD/dimos/control/tasks/cartesian_ik_task/test_cartesian_ik_task.py" "$PWD/dimos/control/tasks/teleop_ik_task/test_teleop_ik_task.py" "$PWD/dimos/control/tasks/eef_twist_task/test_eef_twist_task.py" "$PWD/dimos/control/tasks/gripper_task/test_gripper_task.py" "$PWD/dimos/teleop/webxr/test_module.py" "$PWD/dimos/teleop/webxr/test_body_tracking.py" "$PWD/dimos/teleop/webxr/test_blueprints.py" "$PWD/dimos/teleop/hosted/test_arm_command.py" "$PWD/dimos/teleop/keyboard/test_keyboard_teleop_module.py" "$PWD/dimos/core/test_cdr_transport.py" "$PWD/dimos/control/test_joint_commands.py" "$PWD/dimos/teleop/hosted/test_go2_command.py" "$PWD/dimos/teleop/hosted/test_map_compress.py"
       - name: Verify installed generated-value utilities
         run: |
           uv venv .values-review --python 3.12 --seed
