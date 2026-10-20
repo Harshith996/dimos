@@ -1,0 +1,201 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Internal motor IO for a robot connection or policy host, not a DimOS Module."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+import math
+from pathlib import Path
+import tempfile
+import threading
+import time
+from typing import Any
+
+from filelock import FileLock, Timeout as FileLockTimeout
+import numpy as np
+
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
+from dimos.sim2.spec import ControlInterface
+
+
+class SimRobotClient:
+    """Attach using the world's descriptor; readers cannot accidentally command a robot.
+
+    One writable client owns the complete actuator set. Commands name the observation
+    they were computed from, so reset invalidates in-flight policy results as well as
+    held targets. Joint order is descriptor.joint_names; IMU quaternions are WXYZ.
+    """
+
+    def __init__(
+        self,
+        descriptor: ChannelDescriptor,
+        *,
+        writable: bool = False,
+        feedback_timeout: float = 0.25,
+        command_timeout: float = 0.25,
+    ) -> None:
+        if descriptor.dof == 0:
+            raise ValueError("SimRobotClient requires a robot channel, not a world snapshot")
+        if any(not math.isfinite(v) or v <= 0 for v in (feedback_timeout, command_timeout)):
+            raise ValueError("client timeouts must be finite and positive")
+        self.descriptor = descriptor
+        self.feedback_timeout = feedback_timeout
+        self.command_timeout = command_timeout
+        self._channel: RobotChannel | None = None
+        self._last_observation: ChannelFrame | None = None
+        self._lock = threading.RLock()
+        self._writer = (
+            FileLock(
+                Path(tempfile.gettempdir()) / f"{descriptor.shm_name}.writer.lock",
+                timeout=0,
+                thread_local=False,
+            )
+            if writable
+            else None
+        )
+
+    def connect(self, timeout: float = 30.0) -> None:
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("connect timeout must be finite and nonnegative")
+        with self._lock:
+            if self._channel is not None:
+                raise RuntimeError("sim2 client is already connected")
+            try:
+                if self._writer is not None:
+                    try:
+                        self._writer.acquire()
+                    except FileLockTimeout as error:
+                        raise RuntimeError(
+                            f"robot {self.descriptor.robot_id!r} already has a command owner"
+                        ) from error
+                self._channel = RobotChannel.attach(self.descriptor)
+                deadline = time.monotonic() + timeout
+                while self._channel.lifecycle == "starting":
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("sim2 robot did not become ready")
+                    time.sleep(0.01)
+                self.read()
+            except BaseException:
+                self.close()
+                raise
+
+    def _require_channel(self) -> RobotChannel:
+        if self._channel is None:
+            raise RuntimeError("sim2 client is disconnected")
+        if self._channel.lifecycle != "ready":
+            raise RuntimeError(f"sim2 robot is {self._channel.lifecycle}")
+        return self._channel
+
+    def _validate_observation(self, frame: ChannelFrame, channel: RobotChannel) -> None:
+        if frame.metadata.episode_id != channel.episode_id:
+            raise RuntimeError("sim2 robot was reset; read a new observation before commanding")
+        age = time.monotonic() - float(frame.values["monotonic_time"][0])
+        if not 0 <= age <= self.feedback_timeout:
+            raise TimeoutError("sim2 robot feedback is stale")
+
+    def read(self) -> ChannelFrame:
+        """Read one coherent joint/IMU/base sample; never mix separate physics ticks."""
+        with self._lock:
+            channel = self._require_channel()
+            frame = channel.read_observation()
+            if frame is None:
+                raise RuntimeError("sim2 robot has no observation")
+            self._validate_observation(frame, channel)
+            self._last_observation = frame
+            return frame
+
+    def write_motors(self, command: MotorCommandArray, *, observed: ChannelFrame) -> int:
+        """Write complete PD/feedforward targets in descriptor joint order."""
+        if self.descriptor.control_interface != ControlInterface.WHOLE_BODY:
+            raise ValueError("this robot accepts position targets, not per-command PD gains")
+        values = np.asarray([command.q, command.dq, command.kp, command.kd, command.tau])
+        if values.shape != (5, self.descriptor.dof) or not np.isfinite(values).all():
+            raise ValueError(f"expected {self.descriptor.dof} finite q/dq/kp/kd/tau values")
+        if np.any(values[2:4] < 0):
+            raise ValueError("motor gains must be nonnegative")
+        q, dq, kp, kd, effort = values
+        return self._write(
+            dict(position=q, velocity=dq, kp=kp, kd=kd, effort=effort),
+            observed,
+            enabled=True,
+        )
+
+    def write_positions(self, positions: Sequence[float], *, observed: ChannelFrame) -> int:
+        """Write native joint targets, including grippers in their declared units."""
+        if self.descriptor.control_interface != ControlInterface.MANIPULATOR:
+            raise ValueError("this robot requires complete motor commands")
+        q = np.asarray(positions, dtype=np.float64)
+        if q.shape != (self.descriptor.dof,) or not np.isfinite(q).all():
+            raise ValueError(f"expected {self.descriptor.dof} finite joint positions")
+        return self._write(
+            dict(position=q, velocity=np.zeros_like(q), effort=np.zeros_like(q)),
+            observed,
+            enabled=True,
+        )
+
+    def disable(self, *, observed: ChannelFrame) -> int:
+        """Disable effort outputs; native position servos hold their current position.
+
+        This is device control, not a promise that a floating robot remains upright.
+        """
+        values = dict(
+            position=observed.values["position"],
+            velocity=np.zeros(self.descriptor.dof),
+            effort=np.zeros(self.descriptor.dof),
+        )
+        if self.descriptor.control_interface == ControlInterface.WHOLE_BODY:
+            values.update(kp=np.zeros(self.descriptor.dof), kd=np.zeros(self.descriptor.dof))
+        return self._write(values, observed, enabled=False)
+
+    def _write(self, values: dict[str, Any], observed: ChannelFrame, *, enabled: bool) -> int:
+        with self._lock:
+            channel = self._require_channel()
+            if self._writer is None or not self._writer.is_locked:
+                raise PermissionError("sim2 client is read-only")
+            if observed is not self._last_observation:
+                raise ValueError("command must use this client's latest observation")
+            self._validate_observation(observed, channel)
+            values.update(
+                enabled=[int(enabled)], expires_at=[time.monotonic() + self.command_timeout]
+            )
+            return channel.publish_action(
+                values,
+                FrameMetadata(
+                    0,
+                    observed.metadata.episode_id,
+                    observed.metadata.physics_tick,
+                    0,
+                    observed.metadata.sim_time,
+                ),
+            )
+
+    def close(self) -> None:
+        with self._lock:
+            if self._channel is not None:
+                self._channel.close()
+                self._channel = None
+                self._last_observation = None
+            if self._writer is not None:
+                self._writer.release()
+
+    def __enter__(self) -> SimRobotClient:
+        self.connect()
+        return self
+
+    def __exit__(self, *_: Any) -> None:
+        self.close()
