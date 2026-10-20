@@ -227,3 +227,6 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
         for method in ops
     }
     assert declared == served
+    # the shorthand Desktops 0.2.204 and older read says the same
+    legacy = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
+    assert legacy == served
