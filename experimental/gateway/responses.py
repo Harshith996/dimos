@@ -203,6 +203,9 @@ class BlueprintDetail(BlueprintFields, total=False):
     file: str | None
     line: int | None
     modules: list[BlueprintModule]
+    # set while it runs from another checkout: the one it was read from, or why that failed
+    checkout: str | None
+    checkoutError: str | None
 
 
 class BlueprintList(Body, total=False):

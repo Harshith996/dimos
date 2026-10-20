@@ -14,6 +14,25 @@ export interface Launch {
   steps?: { code: string; state: string; data?: { deployed?: number } }[];
 }
 
+/** A live run in dimos's run registry (GET /runs' runs): Desktop's, or one started in a terminal. */
+export interface RegistryRun {
+  run_id: string;
+  pid: number;
+  blueprint: string;
+  started_at: string;
+  log_dir: string;
+}
+
+/** This blueprint's live run, however it was started: the one asked for (&run=), else the newest. */
+export function liveRunOf(
+  runs: RegistryRun[],
+  name: string,
+  wanted: string | null,
+): RegistryRun | null {
+  const mine = runs.filter((run) => run.blueprint === name);
+  return mine.find((run) => run.run_id === wanted) ?? mine[0] ?? null;
+}
+
 /** A relaunch in flight: stopping the live run, then waiting for the new one. */
 export type Relaunching = false | "stopping" | "starting";
 

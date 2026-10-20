@@ -8,7 +8,7 @@ install: |
   set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
 # Desktop's gateway contract; its implementation and metadata stay experimental.
 api:
-  version: "5.1.0"
+  version: "5.2.0"
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
@@ -30,10 +30,10 @@ provides:
       description: 'Every blueprint, including external ones and ones that don''t import, with what the last scan found.'
     - method: GET
       path: catalog/blueprints/{name}
-      description: 'A blueprint, plus its file and line and its modules'' streams, RPCs and skills. (slow: imports python)'
+      description: 'A blueprint, plus its file and line and its modules'' streams, RPCs and skills; while it runs from another checkout, read from that one (`checkout`, `checkoutError`). (slow: imports python)'
     - method: GET
       path: catalog/blueprints/{name}/config
-      description: 'The blueprint''s config schema: GlobalConfig''s fields and each module''s, with types, defaults and choices. (slow: imports python)'
+      description: 'The blueprint''s config schema: GlobalConfig''s fields and each module''s, with types, defaults and choices; read from the checkout of its live run, like catalog/blueprints/{name}. (slow: imports python)'
     - method: GET
       path: catalog/modules
       description: 'Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only those (dot paths)'

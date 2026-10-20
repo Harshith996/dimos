@@ -82,6 +82,39 @@ def registry_runs() -> list[dict[str, Any]]:
     return sorted(runs, key=lambda run: str(run["run_id"]), reverse=True)
 
 
+def run_of(blueprint: str) -> dict[str, Any] | None:
+    """The newest live run of this blueprint, however it was started (Desktop, a terminal, tmux)."""
+    return next((run for run in registry_runs() if run["blueprint"] == blueprint), None)
+
+
+@dataclass(frozen=True)
+class RunSource:
+    """Where a run's dimos came from: its checkout, and the python it runs on."""
+
+    checkout: Path
+    python: str
+    run_id: str
+
+
+def run_source(run_id: str) -> RunSource | None:
+    """Where a run's dimos came from (None when it isn't a checkout, as for a pip install)."""
+    entry = next((e for e in list_runs(alive_only=True) if e.run_id == run_id), None)
+    if entry is None:
+        return None
+    try:
+        command = psutil.Process(entry.pid).cmdline()
+    except psutil.Error:
+        command = []
+    paths = [Path(p) for p in [*entry.original_argv[:1], *command[:2]] if p.startswith("/")]
+    for path in [*paths, Path(entry.log_dir)]:
+        root = next((p for p in path.parents if store.checkout_version(p)[0]), None)
+        if root is not None:
+            ran_on = command[0] if command else ""
+            is_python = ran_on.startswith("/") and Path(ran_on).name.startswith("python")
+            return RunSource(root, ran_on if is_python else store.python_for(root), run_id)
+    return None
+
+
 def alive(pid: int, group: bool = True) -> bool:
     try:
         (os.killpg if group else os.kill)(pid, 0)
