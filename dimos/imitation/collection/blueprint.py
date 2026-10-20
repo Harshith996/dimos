@@ -31,10 +31,15 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
+    DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
     DualOpenYamCollectionRecorder,
     DualOpenYamHomeButtonModule,
+    DualOpenYamLeaderCollectionRecorder,
     dual_openyam_wrist_camera,
     teleop_webxr_dual_openyam_collection,
+)
+from dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop import (
+    teleop_dual_openyam_leader,
 )
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
@@ -110,5 +115,19 @@ learning_collect_webxr_dual_openyam = autoconnect(
     EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM"),
     DualOpenYamHomeButtonModule.blueprint(),
     teleop_webxr_dual_openyam_collection,
+    *_dual_openyam_cameras_if_real(),
+)
+
+
+# Leader arms instead of the headset: no buttons, so episodes are marked with
+# EpisodeMonitorModule.command("toggle" / "discard") over RPC.
+learning_collect_leader_dual_openyam = autoconnect(
+    DualOpenYamLeaderCollectionRecorder.blueprint(
+        db_path=_session_db("dual_openyam_leader"),
+        poseless_streams=DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
+        record_tf=False,
+    ),
+    EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM with the leader arms"),
+    teleop_dual_openyam_leader,
     *_dual_openyam_cameras_if_real(),
 )

@@ -29,12 +29,14 @@ from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
     DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
     DUAL_OPENYAM_COLLECTION_STREAMS,
+    DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
     DUAL_OPENYAM_PLANNING_GROUPS,
     DUAL_OPENYAM_WRIST_CAMERA_SERIALS,
     DualOpenYamCollectionRecorder,
     DualOpenYamCollectionTeleopModule,
     DualOpenYamHomeButtonConfig,
     DualOpenYamHomeButtonModule,
+    DualOpenYamLeaderCollectionRecorder,
     dual_openyam_collection_teleop_task,
     dual_openyam_home_targets,
     dual_openyam_wrist_camera,
@@ -213,3 +215,13 @@ def test_home_button_skips_the_move_when_already_home() -> None:
     module._latest_joints = None
     with module._lock:
         assert module._distance_to_home_locked() is None
+
+
+def test_leader_recorder_declares_every_leader_stream_as_an_input() -> None:
+    atom = DualOpenYamLeaderCollectionRecorder.blueprint().blueprints[0]
+    inputs = {s.name for s in atom.streams if s.direction == "in"}
+
+    assert set(DUAL_OPENYAM_LEADER_COLLECTION_STREAMS) <= inputs
+    assert "coordinator_joint_command" in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS
+    assert "joint_command" in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS
+    assert "teleop_buttons" not in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS

@@ -106,6 +106,33 @@ Without a coordinator link (the split operator blueprint) or with
 `trajectory_horizon_s` set to `None`, targets go out on `joint_command` as
 before.
 
+## Record a session
+
+`learning-collect-leader-dual-openyam` is the leader graph plus the episode
+monitor, the overhead and wrist cameras and a recorder. It stores the
+measured joint state, the coordinator's intended joint commands (the dataset
+action), the leaders' targets, the gripper commands, the three colour streams
+and the episode status, as `learning-collect-webxr-dual-openyam` does for the
+headset.
+
+```bash
+dimos run learning-collect-leader-dual-openyam --port-left /dev/ttyACM0 --port-right /dev/ttyACM1 \
+  --yamleaderteleopmodule.gripper-travel-radians 1.5 \
+  --controlcoordinator.left-can-port follower_l --controlcoordinator.right-can-port follower_r
+```
+
+The leaders have no buttons, so episodes are marked over RPC from a second
+terminal: `toggle` starts an episode and saves the one in progress, `discard`
+drops it.
+
+```bash
+python -c "from dimos import Dimos; app = Dimos.connect(); print(app.EpisodeMonitorModule.command('toggle')); app.stop()"
+```
+
+Export with the same DataPrep config as the headset sessions:
+`action` reads `coordinator_joint_command` with
+`source_kind: joint_position_updates`.
+
 ## Before enabling the follower
 
 - Start with the followers at their zero pose so the first streamed target is

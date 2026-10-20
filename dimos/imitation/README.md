@@ -36,7 +36,9 @@ coordinator's intended joint commands, both wrist cameras, the operator's
 controller poses, gripper commands and button word, and binds two parking
 buttons: **A** plans both arms to the home pose and runs it
 slowly (refused while a grip is held), **X** makes the current pose the home
-pose for the rest of the session.
+pose for the rest of the session. `learning-collect-leader-dual-openyam` records
+the same session from the YAM leader arms; episodes are marked with the
+episode monitor's `command` RPC, since the leaders have no buttons.
 
 ### Controls (WebXR)
 

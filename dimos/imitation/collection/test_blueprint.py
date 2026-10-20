@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
+    learning_collect_leader_dual_openyam,
     learning_collect_webxr_dual_openyam,
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
@@ -30,10 +31,13 @@ from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
+    DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
     DualOpenYamCollectionRecorder,
+    DualOpenYamLeaderCollectionRecorder,
 )
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.yam_leader.teleop_module import YamLeaderTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
@@ -44,6 +48,7 @@ AGGREGATE = "coordinator_joint_state"
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
         learning_collect_webxr_dual_openyam,
+        learning_collect_leader_dual_openyam,
         unitree_g1_teleop,
     ],
 )
@@ -83,6 +88,7 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
         learning_collect_webxr_dual_openyam,
+        learning_collect_leader_dual_openyam,
     ],
 )
 def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
@@ -95,6 +101,7 @@ def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
         learning_collect_webxr_dual_openyam,
+        learning_collect_leader_dual_openyam,
     ],
 )
 def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> None:
@@ -133,6 +140,7 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
         learning_collect_webxr_dual_openyam,
+        learning_collect_leader_dual_openyam,
     ],
 )
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
@@ -168,3 +176,20 @@ def test_dual_openyam_collection_records_wrist_views_and_commands() -> None:
         if stream.direction == "out"
     }
     assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= outputs
+
+
+def test_leader_collection_records_the_leader_targets_and_intended_commands() -> None:
+    blueprint = learning_collect_leader_dual_openyam
+    recorder = next(
+        atom for atom in blueprint.blueprints if atom.module is DualOpenYamLeaderCollectionRecorder
+    )
+    assert recorder.kwargs["poseless_streams"] == DUAL_OPENYAM_LEADER_COLLECTION_STREAMS
+    assert recorder.kwargs["record_tf"] is False
+    assert any(atom.module is YamLeaderTeleopModule for atom in blueprint.blueprints)
+    outputs = {
+        blueprint.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in blueprint.blueprints
+        for stream in atom.streams
+        if stream.direction == "out"
+    }
+    assert set(DUAL_OPENYAM_LEADER_COLLECTION_STREAMS) <= outputs

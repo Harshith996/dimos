@@ -314,6 +314,32 @@ class DualOpenYamHomeButtonModule(Module):
         )
 
 
+# Leader-follower sessions: the leaders' joint targets stand in for the WebXR
+# controller poses, and there is no button word (episodes are marked by RPC).
+DUAL_OPENYAM_LEADER_COLLECTION_STREAMS = [
+    "color_image",
+    "coordinator_joint_state",
+    "coordinator_joint_command",
+    "status",
+    "left_wrist_color_image",
+    "right_wrist_color_image",
+    "joint_command",
+    "left_gripper_command",
+    "right_gripper_command",
+]
+
+
+class DualOpenYamLeaderCollectionRecorder(CollectionRecorder):
+    """The collection streams plus the leaders' targets and both wrist views."""
+
+    coordinator_joint_command: In[JointState]
+    joint_command: In[JointState]
+    left_wrist_color_image: In[Image]
+    right_wrist_color_image: In[Image]
+    left_gripper_command: In[Float32]
+    right_gripper_command: In[Float32]
+
+
 def dual_openyam_wrist_camera(side: str) -> Blueprint:
     """A wrist D405 whose streams carry a ``{side}_wrist_`` prefix, so they never
     collide with the overhead camera. Colour only at 640x480 30 fps: the three
