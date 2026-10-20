@@ -153,7 +153,8 @@ def test_invalid_sensor_parameters_are_rejected(kwargs):
 
 
 @pytest.fixture
-def history(tmp_path):
+def history(tmp_path, request):
+    timestep = getattr(request, "param", 0.005)
     model = mujoco.MjModel.from_xml_string("""
     <mujoco><option timestep="0.005"/><worldbody>
       <body name="g1/pelvis" gravcomp="1"><freejoint/><geom size="0.1"/>
@@ -167,6 +168,7 @@ def history(tmp_path):
       <accelerometer name="g1/sensor/lidar_imu/accel" site="g1/mid360_link"/>
     </sensor></mujoco>
     """)
+    model.opt.timestep = timestep
     data = mujoco.MjData(model)
     nstate = mujoco.mj_stateSize(model, STATE)
     desc = replace(
@@ -178,7 +180,7 @@ def history(tmp_path):
             control_interface=ControlInterface.WHOLE_BODY,
             joint_names=(),
             dof=0,
-            physics_dt=0.005,
+            physics_dt=timestep,
             control_decimation=1,
         ),
         observation_layout=FrameLayout(
@@ -207,7 +209,7 @@ def history(tmp_path):
             writer.set_episode(episode)
             writer.publish_observation(
                 {"state": state, "wall_time": [1000 + t + wall_jitter]},
-                FrameMetadata(0, episode, round(t / 0.005), 0, t),
+                FrameMetadata(0, episode, round(t / timestep), 0, t),
             )
 
         try:
@@ -425,9 +427,32 @@ def test_contended_imu_history_is_retried_without_losing_samples(history, scanne
     assert [call.args[0].ts for call in output.call_args_list] == pytest.approx([1000, 1000.005])
 
 
+@pytest.mark.parametrize("history", [0.002], indirect=True)
+def test_200hz_imu_samples_500hz_physics_without_losing_every_other_sample(
+    history,
+    scanner,
+    mocker,
+):
+    reader, _, publish = history
+    module, _, _ = scanner
+    module.config.sensor = replace(module.config.sensor, imu=Imu("lidar_imu", "mid360_link"))
+    module.open()
+    output = mocker.patch.object(module.imu_raw, "publish")
+    for tick in range(51):
+        publish(tick * 0.002, omega=0.2)
+        assert reader.update()
+        module.capture()
+    samples = [call.args[0] for call in output.call_args_list]
+    assert len(samples) == 21
+    assert [s.ts for s in samples] == pytest.approx(1000 + np.arange(21) * 0.005)
+    assert [s.angular_velocity.z for s in samples] == pytest.approx([0.2] * 21)
+    assert module.sensor_status()["dropped_imu_samples"] == 0
+
+
 @pytest.mark.self_hosted
-def test_installed_calibration_is_continuous_and_covers_full_sensor_field():
-    pattern = Mid360(noise=False, dropout=False)
+@pytest.mark.parametrize("calibration", ["g1", "go2"])
+def test_installed_calibration_is_continuous_and_covers_full_sensor_field(calibration):
+    pattern = Mid360(noise=False, dropout=False, calibration=calibration)
     first = pattern.scan(0, 0.1)
     second = pattern.scan(0.1, 0.1)
     entire = pattern.scan(0, 0.2)

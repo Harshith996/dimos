@@ -60,7 +60,6 @@ class LidarModule(SensorModule):
             self._model.scan(0.0, 1 / self.config.sensor.rate_hz)
         self._episode = -1
         self._last_scan = 0
-        self._last_imu_sequence = -1
         self._last_imu_time: float | None = None
         self._clock_origin = 0.0
         if self.config.sensor.imu is not None:
@@ -90,7 +89,6 @@ class LidarModule(SensorModule):
                 self._episode = self.reader.episode
                 self._clock_origin = self.reader.timestamp - float(self.reader.data.time)
                 self._last_scan = 0
-                self._last_imu_sequence = -1
                 self._last_imu_time = None
             self._capture_imu()
             self._capture_rolling(self._model)
@@ -156,13 +154,27 @@ class LidarModule(SensorModule):
             frame
             for frame in observations
             if frame.metadata.episode_id == self._episode
-            and self._last_imu_sequence < frame.metadata.sequence <= self.reader.sequence
+            and frame.metadata.sequence <= self.reader.sequence
         ]
-        for frame in frames:
-            t = frame.metadata.sim_time
-            if not math.isclose(t * imu.rate_hz, round(t * imu.rate_hz), abs_tol=1e-7):
+        if not frames:
+            return
+        first = max(
+            math.ceil((frames[0].metadata.sim_time - 1e-9) * imu.rate_hz),
+            0 if self._last_imu_time is None else round(self._last_imu_time * imu.rate_hz) + 1,
+        )
+        last = math.floor((frames[-1].metadata.sim_time + 1e-9) * imu.rate_hz)
+        times = np.array([frame.metadata.sim_time for frame in frames])
+        for sample in range(first, last + 1):
+            t = sample / imu.rate_hz
+            exact = np.flatnonzero(np.isclose(times, t, rtol=0, atol=1e-9))
+            if len(exact):
+                self.reader.restore(frames[int(exact[0])])
+            elif self.reader.history(t, t):
+                # A 200 Hz IMU also works with 500 Hz physics: sample the
+                # bracketing states rather than silently publishing at 100 Hz.
+                self.reader.restore_at(t)
+            else:
                 continue
-            self.reader.restore(frame)
             if self.reader.channel.episode_id != self._episode:
                 return
             self.imu_raw.publish(
@@ -182,7 +194,6 @@ class LidarModule(SensorModule):
                     )
             self._last_imu_time = t
         if frames:
-            self._last_imu_sequence = frames[-1].metadata.sequence
             self.reader.restore(frames[-1])
 
     def _capture_rolling(self, pattern: TimedRayPattern) -> None:
