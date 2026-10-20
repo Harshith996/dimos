@@ -27,15 +27,14 @@ import numpy as np
 import pytest
 
 from dimos.memory.codecs.base import Codec, codec_for, codec_from_id, codec_id
-from dimos.memory.codecs.jpeg import JpegCdrCodec, JpegCodec
 from dimos.memory.codecs.cdr import CdrCodec
-from dimos.messages.std_msgs.msg import Int32
+from dimos.memory.codecs.jpeg import JpegCdrCodec, JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image as GeneratedImage, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos.messages.std_msgs.msg import Header, Int32
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.image import image_from_array, image_to_rgb
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
