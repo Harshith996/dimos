@@ -28,12 +28,8 @@ from pytest_mock import MockerFixture
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
-    PREEMPT_CANCELED,
-    PREEMPT_REPLACED,
-    MLSPlannerNative,
-    goal_id,
-)
+from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.spec import PREEMPT_CANCELED, PREEMPT_REPLACED, goal_id
 
 _GOAL = PoseStamped(ts=1000.25, position=(1.0, 0.0, 0.0))
 
@@ -158,11 +154,27 @@ def test_go_to_sends_nothing_without_a_pose(rig: _Rig) -> None:
     assert rig.sent == []
 
 
-def test_a_second_go_to_is_refused_while_one_is_under_way(rig: _Rig) -> None:
+def test_a_second_go_to_replaces_the_one_under_way(rig: _Rig) -> None:
+    rig.module._goal = _GOAL
+    rig.pose.return_value = PoseStamped(position=(1.0, 0.0, 0.3))
+
+    _result(rig.module.go_to(4.0, 2.0))
+
+    assert rig.updates() == [
+        "Replaced by another goal; robot at (1.00, 0.00), 0.00 m from the target."
+    ]
+    (point,) = rig.sent
+    assert (point.x, point.y) == (4.0, 2.0)
+    assert rig.module._goal is not _GOAL
+
+
+def test_a_go_to_without_a_pose_cancels_the_one_under_way(rig: _Rig) -> None:
     rig.module._goal = _GOAL
 
-    assert _result(rig.module.go_to(4.0, 2.0)).startswith("Already navigating")
-    assert rig.sent == []
+    assert _result(rig.module.go_to(4.0, 2.0)).startswith("No goal sent")
+    (cancel,) = rig.sent
+    assert math.isnan(cancel.x)
+    assert rig.module._goal is None
 
 
 def test_stop_navigation_cancels_the_goal_and_reports_how_far_it_was(rig: _Rig) -> None:

@@ -34,21 +34,11 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
-from dimos.types.timestamped import Timestamped
-
-PREEMPT_REPLACED = "replaced"
-PREEMPT_CANCELED = "canceled"
 
 
 def holds_goal(status: int) -> bool:
     """Whether a status means the planner still holds the goal."""
     return status in (GoalStatus.PENDING, GoalStatus.ACTIVE)
-
-
-def goal_id(goal: Timestamped) -> str:
-    """The id nav_status reports carry for a goal, which is its stamp."""
-    sec, nsec = goal.ros_timestamp()
-    return f"{sec}.{nsec:09d}"
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -113,7 +103,6 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     tf: In[TFMessage]
 
     path: Out[Path]
-    # Each goal's status under the id of the message that set it.
     nav_status: Out[GoalStatus]
     surface_map: Out[PointCloud2]
     nodes: Out[PointCloud2]
@@ -147,12 +136,12 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     def _on_nav_status(self, msg: GoalStatus) -> None:
         with self._goal_lock:
             goal = self._goal
-        if goal is None or msg.goal_id.id != goal_id(goal) or holds_goal(msg.status):
+        if goal is None or msg.goal_id.id != spec.goal_id(goal) or holds_goal(msg.status):
             return
         if msg.status == GoalStatus.SUCCEEDED:
             outcome = "Reached the target"
         elif msg.status == GoalStatus.PREEMPTED:
-            replaced = msg.text == PREEMPT_REPLACED
+            replaced = msg.text == spec.PREEMPT_REPLACED
             outcome = "Replaced by another goal" if replaced else "Canceled"
         elif msg.status == GoalStatus.REJECTED:
             outcome = f"Failed: {msg.text}"
@@ -167,21 +156,18 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     async def go_to(self, x: float, y: float) -> str:
         """Start driving to a point in the world frame and return immediately.
 
-        A tool update reports where the robot is and how far from the point when it stops,
-        which can be short of it. Call stop_navigation before sending another go_to.
+        Replaces any goal under way. A tool update reports where the robot is and how far
+        from the point when it stops, which can be short of it.
 
         Args:
             x: target x in meters, world frame.
             y: target y in meters, world frame.
         """
+        pose = self._pose()
+        # Close the old go_to's stream first so start_tool opens a new one for this call.
+        self._finish("Replaced by another goal", cancel=pose is None)
         # Opened before any return so the movement claim always has a stream to release it.
         self.start_tool("go_to")
-        with self._goal_lock:
-            busy = self._goal is not None
-        if busy:
-            return "Already navigating. Call stop_navigation first."
-
-        pose = self._pose()
         if pose is None:
             self.stop_tool("go_to")
             return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
