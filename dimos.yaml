@@ -9,109 +9,206 @@ install: |
 # What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
 # A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
 provides:
-  # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
-  # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-  version: "5.0.0"
-  description: >-
-    The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; and runs (launch, stop, logs, skills).
-    Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
-  endpoints:
-    - method: GET
-      path: info
-      description: 'Whether dimos is found and installed, its version, the gateway API version, the checkout''s commit and desktop-gateway tag, its python, its checkout, runs, log and recordings directories, and this process'
-    - method: POST
-      path: server/stop
-      description: Stop this gateway (a running blueprint keeps running)
-    - method: GET
-      path: catalog
-      description: 'Every blueprint, module, skill and robot from the last scan (cached on disk), with how stale it is (scan: finished_at, age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)'
-    - method: GET
-      path: catalog/blueprints
-      description: 'Every blueprint, including external ones and ones that don''t import, with what the last scan found.'
-    - method: GET
-      path: catalog/blueprints/{name}
-      description: 'A blueprint, plus its file and line and its modules'' streams, RPCs and skills. (slow: imports python)'
-    - method: GET
-      path: catalog/blueprints/{name}/config
-      description: 'The blueprint''s config schema: GlobalConfig''s fields and each module''s, with types, defaults and choices. (slow: imports python)'
-    - method: GET
-      path: catalog/modules
-      description: 'Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only those (dot paths)'
-    - method: GET
-      path: catalog/modules/{name}
-      description: 'A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class). (slow: imports python)'
-    - method: GET
-      path: catalog/modules/{name}/config
-      description: 'The module''s config fields with the code''s defaults; saved values are per blueprint (/config/blueprints/{name}). (slow: imports python)'
-    - method: GET
-      path: catalog/msgs/{name}
-      description: 'A message type''s definition, by the type name topics use (e.g. sensor_msgs.Image). Not filled in yet.'
-    - method: GET
-      path: catalog/robots
-      description: 'Every robot dimos supports, by type, with its blueprints by name.'
-    - method: POST
-      path: catalog/scan
-      description: '202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes; follow it at jobs/{job}'
-    - method: POST
-      path: catalog/scan/blueprints/{name}
-      description: 'Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).'
-    - method: GET
-      path: catalog/skills
-      description: 'Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint''s are at /runs/skills.'
-    - method: GET
-      path: catalog/skills/{module}/{skill}
-      description: 'One skill from the last scan: its doc, params and rpc name; ?namespace= names it as that namespace would'
-    - method: GET
-      path: config/blueprints/{name}
-      description: 'The values saved for this blueprint: `global` (over /config/global) and each module''s; the schema is at /catalog/blueprints/{name}/config.'
-    - method: PUT
-      path: config/blueprints/{name}
-      description: Replace the values saved for this blueprint; a 400 lists every key dimos would refuse.
-    - method: GET
-      path: config/global
-      description: 'GlobalConfig''s schema and defaults, and the values saved for every launch.'
-    - method: PUT
-      path: config/global
-      description: 'Save GlobalConfig values used by every launch ({overrides}); a secret sent back as ••• keeps its saved value'
-    - method: GET
-      path: runs
-      description: 'The running dimos runs (run id, pid, blueprint, start, log dir) and the launch this gateway started'
-    - method: POST
-      path: runs
-      description: 'Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call a skill of the running blueprint ({skill: {module, name, args}})'
-    - method: POST
-      path: runs/exec
-      description: 'Run exactly `dimos run <args>` (args[0] is the blueprint or module), without the saved config.'
-    - method: GET
-      path: runs/log_hist
-      description: 'Every run with a log, newest first.'
-    - method: GET
-      path: runs/log_hist/{runId}
-      description: 'A run''s structured log records, current or past, from ?after= on (?level=, ?q=, ?limit=)'
-    - method: GET
-      path: runs/logs
-      description: 'The running run''s log, or the latest run''s when nothing runs, from ?after= on (?level=, ?q=, ?limit=)'
-    - method: POST
-      path: runs/restart
-      description: 'Stop the run {runId} and launch it again'
-    - method: GET
-      path: runs/skills
-      description: 'The running blueprint''s skills, live, with each one''s JSON schema; call one with POST /runs {skill}.'
-    - method: POST
-      path: runs/stop
-      description: 'Stop the run {runId}'
-    - method: GET
-      path: extras
-      description: 'dimos''s optional extras: installed, applicable, missing, download size'
-    - method: POST
-      path: extras/install
-      description: '202 {job, command}: install extras with uv; follow it at jobs/{job}'
-    - method: GET
-      path: jobs/{job}
-      description: 'A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after='
-    - method: GET
-      path: docs/search
-      description: 'Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)'
+  openapi: 3.1.0
+  info:
+    title: dimos gateway
+    # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
+    # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
+    version: 5.0.0
+    description: >-
+      The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; and runs (launch, stop,
+      logs, skills). Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
+  paths:
+    /info:
+      get:
+        description: >-
+          Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
+          tag, its python, its checkout, runs, log and recordings directories, and this process
+    /server/stop:
+      post:
+        summary: Stop this gateway (a running blueprint keeps running)
+    /catalog:
+      get:
+        description: >-
+          Every blueprint, module, skill and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
+    /catalog/blueprints:
+      get:
+        summary: Every blueprint, including external ones and ones that don't import, with what the last scan found.
+    /catalog/blueprints/{name}:
+      get:
+        description: >-
+          A blueprint, plus its file and line and its modules' streams, RPCs and skills. (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/blueprints/{name}/config:
+      get:
+        description: >-
+          The blueprint's config schema: GlobalConfig's fields and each module's, with types, defaults and choices. (slow:
+          imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules:
+      get:
+        description: >-
+          Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only
+          those (dot paths)
+    /catalog/modules/{name}:
+      get:
+        description: >-
+          A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class). (slow: imports
+          python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules/{name}/config:
+      get:
+        description: >-
+          The module's config fields with the code's defaults; saved values are per blueprint (/config/blueprints/{name}).
+          (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/msgs/{name}:
+      get:
+        description: >-
+          A message type's definition, by the type name topics use (e.g. sensor_msgs.Image). Not filled in yet.
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/robots:
+      get:
+        summary: Every robot dimos supports, by type, with its blueprints by name.
+    /catalog/scan:
+      post:
+        description: >-
+          202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes;
+          follow it at jobs/{job}
+    /catalog/scan/blueprints/{name}:
+      post:
+        description: >-
+          Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/skills:
+      get:
+        description: >-
+          Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint's are at
+          /runs/skills.
+    /catalog/skills/{module}/{skill}:
+      get:
+        description: >-
+          One skill from the last scan: its doc, params and rpc name; ?namespace= names it as that namespace would
+        parameters:
+          - name: module
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: skill
+            in: path
+            required: true
+            schema:
+              type: string
+    /config/blueprints/{name}:
+      get:
+        description: >-
+          The values saved for this blueprint: `global` (over /config/global) and each module's; the schema is at /catalog/blueprints/{name}/config.
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+      put:
+        summary: Replace the values saved for this blueprint; a 400 lists every key dimos would refuse.
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /config/global:
+      get:
+        summary: GlobalConfig's schema and defaults, and the values saved for every launch.
+      put:
+        description: >-
+          Save GlobalConfig values used by every launch ({overrides}); a secret sent back as ••• keeps its saved value
+    /runs:
+      get:
+        summary: The running dimos runs (run id, pid, blueprint, start, log dir) and the launch this gateway started
+      post:
+        description: >-
+          Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call a skill of
+          the running blueprint ({skill: {module, name, args}})
+    /runs/exec:
+      post:
+        summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module), without the saved config.
+    /runs/log_hist:
+      get:
+        summary: Every run with a log, newest first.
+    /runs/log_hist/{runId}:
+      get:
+        summary: A run's structured log records, current or past, from ?after= on (?level=, ?q=, ?limit=)
+        parameters:
+          - name: runId
+            in: path
+            required: true
+            schema:
+              type: string
+    /runs/logs:
+      get:
+        description: >-
+          The running run's log, or the latest run's when nothing runs, from ?after= on (?level=, ?q=, ?limit=)
+    /runs/restart:
+      post:
+        summary: Stop the run {runId} and launch it again
+    /runs/skills:
+      get:
+        summary: The running blueprint's skills, live, with each one's JSON schema; call one with POST /runs {skill}.
+    /runs/stop:
+      post:
+        summary: Stop the run {runId}
+    /extras:
+      get:
+        summary: 'dimos''s optional extras: installed, applicable, missing, download size'
+    /extras/install:
+      post:
+        summary: '202 {job, command}: install extras with uv; follow it at jobs/{job}'
+    /jobs/{job}:
+      get:
+        description: >-
+          A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after=
+        parameters:
+          - name: job
+            in: path
+            required: true
+            schema:
+              type: string
+    /docs/search:
+      get:
+        summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |
