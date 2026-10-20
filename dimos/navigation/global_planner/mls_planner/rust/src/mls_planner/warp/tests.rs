@@ -435,8 +435,55 @@ fn warp_bench() {
     let threads = std::env::var("MLS_BENCH_THREADS").map_or(8, |t| t.parse().unwrap());
     let mut p = Planner::new(threads);
     p.track_voxel_times();
-    p.set_clock(keyframes.last().unwrap().0);
+    p.set_clock(keyframes[0].0);
     p.update_global_map(&points, &cfg);
+    // Each voxel stamped as live stamps it: about when the drive passed it, here the
+    // time of its nearest keyframe (1 m grid lookup, widened until one is found).
+    let mut grid: AHashMap<(i32, i32), Vec<usize>> = AHashMap::new();
+    for (k, (_, pose, _)) in keyframes.iter().enumerate() {
+        let t = pose.translation;
+        grid.entry((t.x.floor() as i32, t.y.floor() as i32))
+            .or_default()
+            .push(k);
+    }
+    let nearest_time = |(x, y, z): (f32, f32, f32)| {
+        let (cx, cy) = (x.floor() as i32, y.floor() as i32);
+        for r in 0..200 {
+            let mut best: Option<(f64, f64)> = None;
+            for dx in -r..=r {
+                for dy in -r..=r {
+                    for &k in grid.get(&(cx + dx, cy + dy)).into_iter().flatten() {
+                        let t = keyframes[k].1.translation;
+                        let d = (t.x - x as f64).powi(2)
+                            + (t.y - y as f64).powi(2)
+                            + (t.z - z as f64).powi(2);
+                        if best.is_none_or(|(bd, _)| d < bd) {
+                            best = Some((d, keyframes[k].0));
+                        }
+                    }
+                }
+            }
+            if let Some((_, ts)) = best {
+                return ts;
+            }
+        }
+        keyframes[0].0
+    };
+    let times = p.voxel_times.as_mut().unwrap();
+    let epoch = times.epoch.unwrap();
+    let stamped: Vec<(VoxelKey, f32)> = times
+        .by_key
+        .keys()
+        .map(|&k| {
+            let c = (
+                (k.0 as f32 + 0.5) * 0.08,
+                (k.1 as f32 + 0.5) * 0.08,
+                (k.2 as f32 + 0.5) * 0.08,
+            );
+            (k, (nearest_time(c) - epoch) as f32)
+        })
+        .collect();
+    times.by_key.extend(stamped);
     let records: Vec<KeyframeRecord> = keyframes
         .iter()
         .enumerate()
