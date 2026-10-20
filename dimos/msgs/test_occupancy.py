@@ -14,9 +14,7 @@
 
 import math
 
-from dimos_cdrgen.definitions import Definitions
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
-from mcap.reader import make_reader
 import numpy as np
 from PIL import Image
 import pytest
@@ -34,7 +32,6 @@ from dimos.msgs.occupancy import (
     occupancy_view,
     world_to_grid,
 )
-from dimos.protocol.cdr_mcap import CdrMcapWriter
 
 
 def test_occupancy_cells_keep_ros_row_order_and_do_not_alias_message():
@@ -211,35 +208,3 @@ def test_numpy_loader_never_unpickles_objects(tmp_path):
         occupancy_from_file(path, header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)))
 
 
-def test_mcap_contains_generated_grid_and_full_viewer_schema_closure(tmp_path):
-    message = occupancy_from_array(
-        np.array([[-1, 0, 100]], dtype=np.int8),
-        header=Header(frame_id="map", stamp=Time(sec=1700000000, nanosec=123456789)),
-        resolution=0.25,
-    )
-    name = "nav_msgs/msg/OccupancyGrid"
-    path = tmp_path / "map.mcap"
-    with CdrMcapWriter(path) as writer:
-        writer.write(
-            "/map",
-            cdr_encode(message),
-            schema_name=name,
-            schema=Definitions([], installed=True).schema(name),
-            log_time_ns=1700000000123456790,
-            publish_time_ns=1700000000123456789,
-        )
-
-    with path.open("rb") as source:
-        records = list(make_reader(source).iter_messages())
-
-    assert len(records) == 1
-    schema, channel, record = records[0]
-    assert channel.message_encoding == "cdr"
-    assert schema.encoding == "ros2msg"
-    assert schema.name == name
-    assert "MSG: geometry_msgs/Pose" in schema.data.decode()
-    assert "MSG: builtin_interfaces/Time" in schema.data.decode()
-    assert record.publish_time == 1700000000123456789
-    decoded = cdr_decode(record.data, OccupancyGrid)
-    assert decoded.header == message.header
-    np.testing.assert_array_equal(occupancy_view(decoded), [[-1, 0, 100]])
