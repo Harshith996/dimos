@@ -15,12 +15,10 @@
 import numpy as np
 import pytest
 
-
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.occupancy import occupancy_from_array
 from dimos.msgs.time import time_from_nanoseconds
-
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 
 
@@ -44,7 +42,6 @@ def test_find_wide_path_with_start_inside_inflation(planner) -> None:
         resolution=resolution,
         header=Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789)),
     )
-
 
     planner.handle_global_costmap(costmap)
 
