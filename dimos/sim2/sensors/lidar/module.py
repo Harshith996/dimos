@@ -148,9 +148,13 @@ class LidarModule(SensorModule):
         imu = self.config.sensor.imu
         if imu is None:
             return
+        try:
+            observations = self.reader.channel.read_observations()
+        except BlockingIOError:
+            return
         frames = [
             frame
-            for frame in self.reader.channel.read_observations()
+            for frame in observations
             if frame.metadata.episode_id == self._episode
             and self._last_imu_sequence < frame.metadata.sequence <= self.reader.sequence
         ]

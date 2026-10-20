@@ -19,23 +19,30 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import threading
 import time
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 from reactivex import Subject
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
-from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
-from dimos.simulation.mujoco.config import MujocoConfig
+from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection, go2_connection
+from dimos.robot.unitree.go2.sim_device import Go2SimDevice
+from dimos.sim2.module import SimulationModule
+from dimos.sim2.scene import scene_path
 
 
 @pytest.fixture
@@ -61,24 +68,20 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
     path = tmp_path / "robot.json"
     path.write_text(
-        json.dumps({"go2connection": {"mujoco": {"room": "custom", "steps_per_frame": 4}}})
+        json.dumps({"go2connection": {"policy": "/models/walk.onnx", "spawn": "entry"}})
     )
-    parsed = BlueprintConfigParser(
-        GO2Connection.blueprint(obstacle_avoidance=False, mujoco={"shadows": "off"})
-    ).parse(
-        ["--go2connection.mujoco.steps-per-frame", "9", "--go2connection.dimsim.headless=false"],
+    parsed = BlueprintConfigParser(GO2Connection.blueprint(obstacle_avoidance=False)).parse(
+        ["--go2connection.spawn", "hall", "--go2connection.dimsim.headless=false"],
         config_path=path,
         environ={
             "GO2CONNECTION__AES_128_KEY": "test-aes-key",
-            "GO2CONNECTION__MUJOCO__STEPS_PER_FRAME": "6",
-            "GO2CONNECTION__MUJOCO__START_POS": "[2.5, -3]",
+            "GO2CONNECTION__SPAWN": "door",
         },
     )
     config = ConnectionConfig(**parsed.module_kwargs("go2connection"))
 
-    assert config.mujoco == MujocoConfig(
-        room="custom", steps_per_frame=9, start_pos=(2.5, -3), shadows="off"
-    )
+    assert config.policy == Path("/models/walk.onnx")
+    assert config.spawn == "hall"
     assert config.dimsim.headless is False
     assert config.aes_128_key == "test-aes-key"
     assert config.obstacle_avoidance is False
@@ -211,10 +214,6 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     assert conn.odom.publish.call_count == 1
 
 
-class _StopLoopError(Exception):
-    pass
-
-
 def test_camera_info_is_restamped_on_each_publish(
     connection: Callable[[bool], GO2Connection], mocker: MockerFixture
 ) -> None:
@@ -223,14 +222,13 @@ def test_camera_info_is_restamped_on_each_publish(
     conn.camera_info = MagicMock()
     conn.camera_info_static = CameraInfo(frame_id="camera_optical", ts=1.0)
 
-    def sleep(_seconds: float) -> None:
+    def wait(_seconds: float) -> None:
         if conn.camera_info.publish.call_count >= 2:
-            raise _StopLoopError
+            conn._stop_event.set()
 
-    mocker.patch.object(go2_conn.time, "sleep", side_effect=sleep)
+    mocker.patch.object(conn._stop_event, "wait", side_effect=wait)
     before = time.time()
-    with pytest.raises(_StopLoopError):
-        conn.publish_camera_info()
+    conn.publish_camera_info()
 
     published = [call.args[0] for call in conn.camera_info.publish.call_args_list]
     assert [info.ts >= before for info in published] == [True, True]
@@ -252,3 +250,59 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+def test_mujoco_selects_internal_device_not_another_world():
+    cfg = ConnectionConfig(g=GlobalConfig(simulation="mujoco"))
+    device = go2_conn.make_connection(None, cfg)
+    assert isinstance(device, Go2SimDevice)
+    with pytest.raises(RuntimeError, match="collected sim2 world"):
+        device.start()
+
+
+@pytest.mark.parametrize("duration,velocity", [(-1, 0), (1, float("nan")), (float("inf"), 1)])
+def test_sim_device_rejects_invalid_movement(duration, velocity):
+    with pytest.raises(ValueError, match="finite"):
+        Go2SimDevice().move(Twist(Vector3(velocity, 0, 0)), duration)
+
+
+@pytest.fixture
+def walking_stack():
+    blueprint = go2_connection()
+    parsed = BlueprintConfigParser(blueprint).parse(
+        [],
+        environ={},
+        global_overrides={
+            "simulation": "mujoco",
+            "transport": "zenoh",
+            "viewer": "none",
+            "scene_package": str(scene_path(None, "logistics.xml")),
+            "n_workers": 2,
+        },
+    )
+    with ExitStack() as stack:
+        app = ModuleCoordinator.build(blueprint, parsed)
+        stack.callback(app.stop)
+        yield app
+
+
+@pytest.mark.self_hosted
+def test_existing_policy_walks_through_public_connection(walking_stack):
+    world = walking_stack.get_instance(SimulationModule)
+    robot = walking_stack.get_instance(GO2Connection)
+    start = world.status()
+    positions = []
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        robot.move(Twist(Vector3(0.35, 0, 0)))
+        positions.append(world.status()["robots"][GO2Connection.name])
+        time.sleep(0.1)  # The commanded input rate.
+    robot.stop_movement()
+    end = world.status()
+    samples = np.asarray(positions)
+    assert end["error"] is None
+    assert end["steps"] - start["steps"] > 3000
+    assert np.isfinite(samples).all()
+    assert samples[:, 2].min() > 0.2
+    assert samples[-1, 0] - samples[0, 0] > 0.8
+    assert robot.status().last_error is None
