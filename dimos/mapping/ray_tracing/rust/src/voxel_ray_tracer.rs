@@ -49,6 +49,12 @@ pub fn region_of(chunk: ChunkKey, voxel_size: f32, region_m: f32) -> Cell {
     )
 }
 
+/// The region grid cell a world point falls in.
+pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> Cell {
+    let cell_m = region_m.max(CHUNK_EDGE as f32 * voxel_size);
+    ((x / cell_m).floor() as i32, (y / cell_m).floor() as i32)
+}
+
 #[inline]
 fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;
@@ -115,14 +121,16 @@ pub struct Config {
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
-    /// Edge of the square regions a seed load is handed on in and the map
-    /// viz publishes by.
+    /// Edge of the square regions a seed load is handed on in.
     #[validate(range(exclusive_min = 0.0))]
     pub region_m: f32,
-    /// Publish the regions whose chunks changed every Nth frame. Zero disables it.
+    /// Edge of the square cells the map viz publishes by, at least a chunk edge.
+    #[validate(range(exclusive_min = 0.0))]
+    pub viz_cell_m: f32,
+    /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
-    /// Unchanged regions republished per viz tick, round robin. Zero turns the sweep off.
-    pub viz_sweep_regions: u32,
+    /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
+    pub viz_sweep_cells: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -361,30 +369,6 @@ impl VoxelMap {
         }
         if (was > 0) != now_healthy {
             self.health_crossed(key, now_healthy);
-        }
-        removed
-    }
-
-    /// Delete voxels outright, whatever their health, keeping every neighbor's
-    /// `support` count in sync. Unknown keys are skipped. Returns how many voxels
-    /// were removed.
-    ///
-    /// This is the escape hatch for space a sensor cannot ray-trace clear: a
-    /// wrist camera's own arm occludes the volume behind it, so no ray ever
-    /// fires a miss there and the arm's own returns would sit in the map
-    /// forever. A caller that knows those keys are free names them here.
-    pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) -> usize {
-        let mut removed = 0;
-        for key in keys {
-            let Some(voxel) = self.voxels.remove(&key) else {
-                continue;
-            };
-            // The fine-cell bitmask rides inside the removed voxel, so the fine
-            // layer needs no separate cleanup.
-            if voxel.health > 0 {
-                self.health_crossed(key, false);
-            }
-            removed += 1;
         }
         removed
     }
@@ -1254,19 +1238,6 @@ const KEY_LIMIT: f32 = (1 << 30) as f32;
 #[inline]
 fn in_key_range(x: f32, y: f32, z: f32, inv: f32) -> bool {
     (x * inv).abs() < KEY_LIMIT && (y * inv).abs() < KEY_LIMIT && (z * inv).abs() < KEY_LIMIT
-}
-
-/// Quantize world-frame metric points to voxel keys the same way returns are
-/// quantized, so a caller naming voxels by position lands on the ones the map
-/// actually holds.
-pub fn metric_voxel_keys(
-    points: impl IntoIterator<Item = (f32, f32, f32)>,
-    voxel_size: f32,
-) -> impl Iterator<Item = VoxelKey> {
-    let inv = 1.0 / voxel_size;
-    points
-        .into_iter()
-        .map(move |(x, y, z)| world_to_voxel(x, y, z, inv))
 }
 
 /// Fine cells of `key` crossed by the ray segment between `t0` and `t1`,

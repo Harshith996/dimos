@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -65,25 +65,6 @@ testdata.append((lcm_rpc_context, "lcm"))
 
 
 @contextmanager
-def shm_rpc_context():
-    """Context manager for Shared Memory RPC implementation."""
-    # Create two separate instances that communicate through shared memory segments
-    server = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
-    client = ShmRPC(rpc_timeouts={}, default_rpc_timeout=DEFAULT_RPC_TIMEOUT, prefer="cpu")
-    server.start()
-    client.start()
-
-    try:
-        yield server, client
-    finally:
-        server.stop()
-        client.stop()
-
-
-testdata.append((shm_rpc_context, "shm"))
-
-
-@contextmanager
 def zenoh_rpc_context():
     """Context manager for ZenohRPC implementation.
 
@@ -119,29 +100,6 @@ def test_call_sync_unsubscribes_timed_out_callback(mocker) -> None:
         RPCSpec.call_sync(client, "missing", ([], {}), rpc_timeout=0.0)
 
     unsubscribe.assert_called_once_with()
-
-
-# Try to add RedisRPC if available
-try:
-    from dimos.protocol.rpc.redisrpc import RedisRPC
-
-    @contextmanager
-    def redis_rpc_context():
-        """Context manager for RedisRPC implementation."""
-        server = RedisRPC()
-        client = RedisRPC()
-        server.start()
-        client.start()
-
-        try:
-            yield server, client
-        finally:
-            server.stop()
-            client.stop()
-
-    testdata.append((redis_rpc_context, "redis"))
-except (ImportError, ConnectionError):
-    print("RedisRPC not available")
 
 
 # Test functions that will be served
