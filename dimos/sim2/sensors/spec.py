@@ -82,6 +82,7 @@ class Camera:
     rate_hz: float = 10.0
     depth: bool = True
     pointcloud: bool = False
+    shadows: bool = True
 
     def __post_init__(self) -> None:
         if self.pointcloud and not self.depth:
