@@ -365,6 +365,13 @@ jobs:
           .native-review/bin/python -I -c 'from dimos.mapping.relocalization import blueprints; from dimos.mapping.relocalization.lidar import replay,tune; from dimos.visualization.rerun import cdr,init; import dimos_voxel_ray_tracing; import pytest; import sys; assert all("site-packages" in str(value.__file__) for value in (blueprints,replay,tune,cdr,init,dimos_voxel_ray_tracing)); raise SystemExit(pytest.main(sys.argv[1:]))' --noconftest --import-mode=importlib -o addopts='' -q "$PWD/dimos/mapping/relocalization/lidar/test_replay.py" "$PWD/dimos/mapping/cli/test_generated_cli.py" "$PWD/dimos/visualization/rerun/test_cdr.py::test_cloud_renderer_filters_nonfinite_positions_with_matching_colors" "$PWD/dimos/visualization/rerun/test_cdr.py::test_fixed_display_color_overrides_sensor_rgb_after_invalid_points_filter" "$PWD/dimos/visualization/rerun/test_cdr.py::test_height_palette_uses_all_class_ids_at_the_recording_root"
           MYPYPATH="$PWD/build/message-source/python" .native-review/bin/python -m mypy --follow-imports=silent dimos/mapping/relocalization/blueprints.py dimos/mapping/relocalization/lidar/{replay,tune}.py dimos/visualization/rerun/{cdr,init}.py
 
+      - name: Verify CDR robot and simulation boundaries with stubbed drivers
+        if: runner.os == 'Linux'
+        env:
+          DIMOS_TRANSPORT: lcm
+          LCM_DEFAULT_URL: memq://
+        run: |
+          .native-review/bin/python -I scripts/verify_installed_tests.py "$PWD/dimos/robot/unitree/go2/test_connection.py" "$PWD/dimos/robot/unitree/g1/test_cdr_boundaries.py" "$PWD/dimos/robot/unitree/g1/test_g1_tf_publisher.py" "$PWD/dimos/hardware/whole_body/transport/test_adapter.py" "$PWD/dimos/robot/unitree/g1/test_wholebody_connection.py" "$PWD/dimos/simulation/engines/test_cdr_streams.py" "$PWD/dimos/simulation/engines/test_mujoco_sim_module.py" "$PWD/dimos/robot/galaxea/r1pro/test_cdr_streams.py" "$PWD/dimos/robot/galaxea/r1pro/test_head_cameras.py" "$PWD/dimos/robot/unitree/test_dimsim_connection.py" "$PWD/dimos/simulation/dimsim/test_dimsim_process.py" "$PWD/dimos/robot/unitree/go2/blueprints/basic/test_unitree_go2_basic.py" "$PWD/dimos/teleop/hosted/test_go2_driver_cdr.py"
       - name: Verify offline recording conversion and fidelity audit
         if: runner.os == 'Linux'
         run: |
