@@ -20,7 +20,7 @@ name = "tf_broadcaster"
 path = "src/tf_broadcaster.rs"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "daa87cb57fbff1cea730cbfa4ce994a731609833" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "557cb3799c887102892fe1ae41bdc7cf8d6fb9db" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
