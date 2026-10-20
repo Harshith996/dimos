@@ -60,7 +60,7 @@ def simulation(
                 blueprint = module.blueprint(**kwargs)
                 ports = ("color_image", "camera_info")
                 if sensor.depth:
-                    ports += ("depth_image", "depth_camera_info")
+                    ports += ("depth_image", "depth_camera_info", "pointcloud")
             elif isinstance(sensor, Lidar):
                 if sensor.imu is not None:
                     kwargs["rate_hz"] = max(sensor.rate_hz, sensor.imu.rate_hz)

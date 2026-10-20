@@ -76,6 +76,9 @@ class SimulationRuntime:
         self.tick = 0
         self._closed = False
         self.paused = False
+        self.waiting_for_control = {
+            name for name, robot in config.robots.items() if robot.config.wait_for_first_command
+        }
         self._bodies = {
             key: self.model.body(e.body).id for key, e in self.description.entities.items()
         }
@@ -383,6 +386,14 @@ class SimulationRuntime:
                 return
             for binding in self.robots.values():
                 self._apply(binding)
+            self.waiting_for_control.difference_update(
+                name
+                for name, binding in self.robots.items()
+                if binding.command_active and binding.enabled
+            )
+            if self.waiting_for_control:
+                self._publish(force_snapshot=True)
+                return
             mujoco.mj_step(self.model, self.data)
             self.tick += 1
             self._publish()
@@ -439,6 +450,11 @@ class SimulationRuntime:
                 value = torque[i] if enabled else 0.0
             if self.model.actuator_ctrllimited[aid]:
                 value = np.clip(value, *self.model.actuator_ctrlrange[aid])
+            if joint.actuator_time_constant and enabled:
+                alpha = self.model.opt.timestep / (
+                    joint.actuator_time_constant + self.model.opt.timestep
+                )
+                value = self.data.ctrl[aid] + alpha * (value - self.data.ctrl[aid])
             self.data.ctrl[aid] = value
 
     def _publish(self, *, force_snapshot: bool = False) -> None:

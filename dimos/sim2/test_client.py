@@ -78,7 +78,7 @@ def test_collection_uses_resolved_configuration_without_instantiating_driver(wor
     parsed = BlueprintConfigParser(blueprint).parse(
         ["--robot.x=2.5"],
         environ={},
-        global_overrides={"simulation": "mujoco", "mujoco_scene": str(world_config.scene)},
+        global_overrides={"simulation": "mujoco", "scene_package": str(world_config.scene)},
     )
     constructor = mocker.patch.object(_RobotConnection, "__init__", side_effect=AssertionError)
     kwargs = {a.name: parsed.module_kwargs(a.name) for a in blueprint.active_blueprints}
@@ -122,7 +122,7 @@ def test_collection_preserves_explicit_world_and_rejects_duplicate_robot(world_c
     )
     blueprint = autoconnect(connection, SimulationModule.blueprint(world=settings))
     expanded, values = collect_simulation(
-        blueprint, {}, GlobalConfig(simulation="mujoco", mujoco_scene="not-used.xml")
+        blueprint, {}, GlobalConfig(simulation="mujoco", scene_package="not-used.xml")
     )
     world = values[SimulationModule.name]["world"]
     assert world.scene == world_config.scene
@@ -149,7 +149,7 @@ def test_two_namespaced_connections_deploy_into_one_world(world_config):
         environ={},
         global_overrides={
             "simulation": "mujoco",
-            "mujoco_scene": str(world_config.scene),
+            "scene_package": str(world_config.scene),
             "n_workers": 1,
             "transport": "zenoh",
             "viewer": "none",

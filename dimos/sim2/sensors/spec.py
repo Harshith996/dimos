@@ -81,8 +81,12 @@ class Camera:
     fovy: float | None = None
     rate_hz: float = 10.0
     depth: bool = True
+    pointcloud: bool = False
+    shadows: bool = True
 
     def __post_init__(self) -> None:
+        if self.pointcloud and not self.depth:
+            raise ValueError("camera point clouds require depth")
         if isinstance(self.camera, str) and self.fovy is not None:
             raise ValueError("set named camera calibration in the MJCF asset, not RobotConfig")
 

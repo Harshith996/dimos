@@ -23,6 +23,70 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.scene_types import SceneUpdate
 
 
+def _calibrate_motor(model, prefix):
+    joint = model.joint(prefix + "hinge").id
+    model.dof_damping[model.jnt_dofadr[joint]] = 2.75
+
+
+def test_compiled_calibration_is_scoped_to_its_robot(worlds, world_config):
+    instance = world_config.robots["left"]
+    fitted = replace(instance.config, configure_physics=_calibrate_motor)
+    world = worlds(
+        config=replace(
+            world_config,
+            robots={
+                "left": replace(instance, config=fitted),
+                "right": replace(instance, xyz=(2, 0, 0.3)),
+            },
+        )
+    )
+    left = world.robots["left"].dofs[0]
+    right = world.robots["right"].dofs[0]
+    assert world.model.dof_damping[[left, right]] == pytest.approx([2.75, 1])
+
+
+def test_calibrated_actuator_lag_and_immediate_disable(worlds, clients, world_config):
+    instance = world_config.robots["left"]
+    joint, gripper = instance.config.joints
+    robot = replace(instance.config, joints=(replace(joint, actuator_time_constant=0.02), gripper))
+    world = worlds(config=replace(world_config, robots={"left": replace(instance, config=robot)}))
+    client = clients(world, writable=True)
+    client.write_motors(
+        MotorCommandArray(q=[0.1, 850], kp=[0, 0], kd=[0, 0], tau=[3, 0]),
+        observed=client.read(),
+    )
+    world.step()
+    aid = world.robots["left"].actuators[0]
+    assert world.data.ctrl[aid] == pytest.approx(0.6)
+    world.step()
+    assert world.data.ctrl[aid] == pytest.approx(1.08)
+    client.disable(observed=client.read())
+    world.step()
+    assert world.data.ctrl[aid] == 0.0
+
+
+def test_startup_wait_keeps_feedback_live_then_releases_once(worlds, clients, world_config):
+    instance = world_config.robots["left"]
+    instance = replace(instance, config=replace(instance.config, wait_for_first_command=True))
+    world = worlds(config=replace(world_config, robots={"left": instance}))
+    client = clients(world, writable=True)
+    before = client.read()
+    for _ in range(20):
+        world.step()
+    current = client.read()
+    assert world.tick == 0
+    assert current.metadata.sequence > before.metadata.sequence
+    np.testing.assert_array_equal(current.values["position"], before.values["position"])
+    client.write_motors(MotorCommandArray(q=[0.1, 850], kp=[10, 0], kd=[1, 0]), observed=current)
+    world.step()
+    assert world.tick == 1
+    assert not world.waiting_for_control
+    client.disable(observed=client.read())
+    world.step()
+    assert world.tick == 2
+    assert not world.robots["left"].enabled
+
+
 def test_expired_motor_command_stops_using_feedforward(worlds, clients, mocker):
     world = worlds()
     client = clients(world, writable=True)

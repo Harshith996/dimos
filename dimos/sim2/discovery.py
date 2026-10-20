@@ -64,7 +64,7 @@ def collect_simulation(
         world_name = atom.name
     else:
         defaults = {cast("SimRobotSpec", a.module).default_sim_scene for a in providers}
-        selected = config.mujoco_scene or config.scene_package
+        selected = config.scene_package
         if not selected and len(defaults) != 1:
             raise ValueError(
                 "robots have different default scenes; select one shared --scene-package"
@@ -90,7 +90,11 @@ def collect_simulation(
     if hosted.intersection(robots):
         raise ValueError("sim2 robot device clients must run on the same host as physics")
 
-    world = replace(settings.world, robots=robots)
+    timestep = settings.world.timestep
+    limit = min(robot.config.max_timestep for robot in robots.values())
+    if worlds and timestep > limit:
+        raise ValueError(f"world timestep {timestep} exceeds robot limit {limit}")
+    world = replace(settings.world, robots=robots, timestep=min(timestep, limit))
     generated = simulation(
         scene=world.scene,
         robots=world.robots,
