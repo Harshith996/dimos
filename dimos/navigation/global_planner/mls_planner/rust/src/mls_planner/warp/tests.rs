@@ -368,9 +368,11 @@ fn rebuild_rss_bench() {
             (f(0), f(4), f(8))
         })
         .collect();
-    let mut p = Planner::new(4);
+    let threads = std::env::var("MLS_BENCH_THREADS").map_or(4, |t| t.parse().unwrap());
+    let mut p = Planner::new(threads);
     p.track_voxel_times();
-    for i in 0..12 {
+    let rounds = std::env::var("MLS_BENCH_ROUNDS").map_or(12, |t| t.parse().unwrap());
+    for i in 0..rounds {
         let shifted: Vec<(f32, f32, f32)> = points
             .iter()
             .map(|q| (q.0 + 0.03 * i as f32, q.1, q.2))
