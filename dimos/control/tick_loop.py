@@ -32,6 +32,7 @@ import time
 from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.components import HardwareType
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -40,6 +41,7 @@ from dimos.control.task import (
     ResourceClaim,
     SensorStateSnapshot,
 )
+from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -51,7 +53,6 @@ if TYPE_CHECKING:
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
-    from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -88,6 +89,7 @@ class TickLoop:
         task_lock: Lock protecting tasks dict
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
+        publish_command_callback: Optional callback for intended position-command updates
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
         publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
         frame_pose_hz: Maximum rate for publish_tf_callback
@@ -115,6 +117,7 @@ class TickLoop:
         log_ticks: bool = False,
         connections: dict[str, ConnectionSource] | None = None,
         command_callback: Callable[[str, dict[str, float]], None] | None = None,
+        publish_command_callback: Callable[[JointState], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -127,6 +130,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._publish_command_callback = publish_command_callback
         self._publish_robot_callback = publish_robot_callback
         self._publish_tf_callback = publish_tf_callback
         self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
@@ -466,11 +470,22 @@ class TickLoop:
     ) -> None:
         """Write commands to all hardware interfaces."""
         hardware = self._hardware
+        joint_commands: dict[str, float] = {}
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
                     if not hardware[hw_id].ready_for_control():
                         continue
+                    if (
+                        self._publish_command_callback is not None
+                        and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+                        and hardware[hw_id].component.hardware_type != HardwareType.BASE
+                    ):
+                        joint_commands.update(
+                            (name, positions[name])
+                            for name in hardware[hw_id].joint_names
+                            if name in positions
+                        )
                     try:
                         accepted = hardware[hw_id].write_command(positions, mode)
                         if not accepted:
@@ -479,6 +494,32 @@ class TickLoop:
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
+                elif (
+                    hw_id in self._connections
+                    and self._publish_command_callback is not None
+                    and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+                ):
+                    source = self._connections[hw_id]
+                    if source.ready_for_control(time.monotonic()):
+                        joint_commands.update(
+                            (name, positions[name])
+                            for name in source.joint_names
+                            if name in positions
+                        )
+        if joint_commands and self._publish_command_callback is not None:
+            try:
+                self._publish_command_callback(
+                    JointState(
+                        ts=time.time(),
+                        frame_id=self._frame_id,
+                        name=list(joint_commands),
+                        position=list(joint_commands.values()),
+                        velocity=[],
+                        effort=[],
+                    )
+                )
+            except Exception:
+                logger.exception("Failed to publish joint commands")
 
     def _write_all_connections(
         self,

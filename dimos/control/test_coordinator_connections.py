@@ -643,12 +643,12 @@ def test_clearing_the_estop_holds_each_joint_where_the_robot_now_is(
     # Halted short of where it was told to go.
     r.report("arm_joint_state", arm_reading(0.4, 0.0))
     r.tick()
-    assert len(r.sent) == 1
+    assert r.positions_sent() == [[0.5, 0.0]]
 
     assert r.coordinator.set_estop(False)
     # The last reading may predate the halt: nothing is sent until the next.
     r.tick()
-    assert len(r.sent) == 1
+    assert r.positions_sent() == [[0.5, 0.0]]
     r.report("arm_joint_state", arm_reading(0.41, 0.0))
     r.tick()
 
