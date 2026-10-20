@@ -43,7 +43,9 @@ from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 
 
 @pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_hosted_and_webxr_ports_record_canonical_values_and_report_after_reopen(tmp_path, backend):
+def test_hosted_and_webxr_ports_record_canonical_values_and_report_after_reopen(
+    tmp_path, backend, mocker
+):
     options = (
         {"url": "memq://"}
         if backend == "lcm"
@@ -66,6 +68,7 @@ def test_hosted_and_webxr_ports_record_canonical_values_and_report_after_reopen(
     events = {name: Event() for name in names}
     with ExitStack() as cleanup:
         stats = HostedStatsModule()
+        mocker.patch.object(stats, "go2", None)
         cleanup.callback(stats.stop)
         recorder = TeleopRecorder(
             db_path=tmp_path / "recording_teleop.db", record_tf=False, poseless_streams=names
