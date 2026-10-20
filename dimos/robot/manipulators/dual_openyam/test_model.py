@@ -38,14 +38,18 @@ def _joint(root: ET.Element, name: str) -> ET.Element:
     return result
 
 
-def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
+def _origin(joint: ET.Element, key: str) -> tuple[float, float, float]:
     origin = joint.find("origin")
     assert origin is not None
-    return tuple(float(value) for value in origin.attrib["xyz"].split())
+    return tuple(float(value) for value in origin.attrib[key].split())
+
+
+def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
+    return _origin(joint, "xyz")
 
 
 def test_model_package_is_versioned_and_self_contained() -> None:
-    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v1"
+    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v2"
     assert Path(DUAL_OPENYAM_PACKAGE).name == DUAL_OPENYAM_ARTIFACT
     assert DUAL_OPENYAM_MODEL_PATH.is_file()
     assert DUAL_OPENYAM_PACKAGE_PATHS == {
@@ -58,7 +62,7 @@ def test_model_package_is_versioned_and_self_contained() -> None:
         assert (Path(DUAL_OPENYAM_PACKAGE) / uri.removeprefix(prefix)).is_file()
 
 
-def test_model_has_one_geometry_free_root_and_the_measured_arm_spacing() -> None:
+def test_model_has_one_geometry_free_root_and_the_calibrated_base_poses() -> None:
     root = _tree()
     shared_base = root.find("./link[@name='dual_openyam_base']")
     assert shared_base is not None
@@ -71,10 +75,23 @@ def test_model_has_one_geometry_free_root_and_the_measured_arm_spacing() -> None
         if (child := joint.find("child")) is not None
     }
     assert link_names - child_names == {"dual_openyam_base"}
-    left = _origin_xyz(_joint(root, "left_arm_fixed_joint"))
-    right = _origin_xyz(_joint(root, "right_arm_fixed_joint"))
-    assert left == (0.0, 0.215, 0.0)
-    assert right == (0.0, -0.215, 0.0)
+    # Mustafa's rig calibration 2026-10-15: bases 444.4 mm apart, the right one
+    # 17 mm forward and 11 mm higher than the left and rolled -3.7 deg (SOURCE.md).
+    left = _joint(root, "left_arm_fixed_joint")
+    right = _joint(root, "right_arm_fixed_joint")
+    assert _origin_xyz(left) == (-0.00862, 0.22219, -0.00559)
+    assert _origin(left, "rpy") == (0.0, 0.0, 0.0)
+    assert _origin_xyz(right) == (0.00862, -0.22219, 0.00559)
+    assert _origin(right, "rpy") == pytest.approx((-0.064743, 0.029942, 0.020931))
+
+
+def test_joint_three_origins_carry_the_calibrated_zero_offsets() -> None:
+    # True joint 3 angle = encoder reading - offset; the offset is folded into the
+    # joint origin as a rotation about the joint axis (y), so the joint variable
+    # stays the encoder reading.
+    root = _tree()
+    assert _origin(_joint(root, "left_joint3"), "rpy") == pytest.approx((0.0, -0.04907, -3.14159))
+    assert _origin(_joint(root, "right_joint3"), "rpy") == pytest.approx((0.0, -0.06793, -3.14159))
 
 
 def test_joint_one_limits_sit_inside_the_measured_stops() -> None:
@@ -98,6 +115,10 @@ def test_both_arm_chains_are_symmetric_and_use_two_rad_s_limits() -> None:
             left_element = left.find(element_name)
             right_element = right.find(element_name)
             assert left_element is not None and right_element is not None
+            if element_name == "origin" and index == 3:
+                # Only the calibrated zero offset differs between the arms.
+                assert left_element.attrib["xyz"] == right_element.attrib["xyz"]
+                continue
             assert left_element.attrib == right_element.attrib
         limit = left.find("limit")
         assert limit is not None
