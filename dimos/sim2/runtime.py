@@ -296,7 +296,7 @@ class SimulationRuntime:
         with self.lock:
             self._require_live()
             self._apply_update(update)
-            return self._finish_change()
+            return self._finish_change(enable=False)
 
     def set_paused(self, paused: bool) -> None:
         with self.lock:
