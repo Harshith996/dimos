@@ -16,6 +16,7 @@
 
 from contextlib import ExitStack
 import pickle
+import struct
 import threading
 
 from dimos_cdrgen.registry import encode
@@ -24,6 +25,7 @@ import pytest
 import dimos.core.cdr_transport as transport_module
 from dimos.core.cdr_transport import CdrTransport
 from dimos.messages.std_msgs.msg import Float32, Int32
+from dimos.msgs.protocol import decode_cdr
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohQoS
 
 
@@ -60,6 +62,8 @@ def test_subscriber_delivers_owned_value_skips_malformed_and_disposes(raw_transp
     callback.assert_called_once_with(Int32(17))
     assert type(callback.call_args.args[0]) is Int32
     receive(b"invalid", transport.topic)
+    receive(b"malformed", transport.topic)
+    receive(b"\x00\x07\x00\x00" + struct.pack("<i", 17), transport.topic)
     callback.assert_called_once_with(Int32(17))
     dispose()
     factory.return_value.subscribe.return_value.assert_called_once_with()
@@ -130,3 +134,16 @@ def test_actual_raw_transport_delivers_cdr_without_external_network(backend):
         assert ready.wait(5), "local subscriber did not receive the CDR payload"
         assert received == [Int32(29)]
         assert type(received[0]) is Int32
+
+
+@pytest.mark.parametrize("prefix,endian", [(b"\x00\x00\x00\x00", ">"), (b"\x00\x01\x00\x00", "<")])
+def test_shared_decoder_preserves_supported_xcdr1_byte_orders(prefix, endian):
+    assert decode_cdr(prefix + struct.pack(endian + "i", 29), Int32) == Int32(29)
+
+
+@pytest.mark.parametrize(
+    "payload", [b"", b"\x00\x01", b"malformed", b"\x00\x07\x00\x00" + bytes(4)]
+)
+def test_shared_decoder_rejects_missing_or_unknown_encapsulation(payload):
+    with pytest.raises(ValueError, match="XCDR1 encapsulation"):
+        decode_cdr(payload, Int32)
