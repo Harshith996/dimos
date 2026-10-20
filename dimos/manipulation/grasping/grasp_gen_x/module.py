@@ -69,6 +69,8 @@ class GraspGenXConfig(IsolatedPythonModuleConfig):
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     max_candidates: PositiveCount = 100
+    # Grasps sampled per call, before ranking and the max_candidates cut.
+    num_grasps: PositiveCount = 200
 
     # Relational matrix properties cannot be expressed through scalar Field constraints.
     @field_validator("grasp_frame_to_tcp")

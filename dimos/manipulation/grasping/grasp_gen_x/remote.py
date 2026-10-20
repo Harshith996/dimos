@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -33,6 +34,9 @@ from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # The request and response format this client speaks (graspgenx_runtime.server).
 PROTOCOL_VERSION = 1
@@ -55,6 +59,24 @@ class RemoteGraspGenX(GraspGenSpec):
             result: dict[str, object] = json.load(response)
             return result
 
+    def _post(self, request: Request, attempts: int = 2) -> Any:
+        """The server's reply; a server error (5xx) or an unreachable server is tried once more."""
+        for attempt in range(1, attempts + 1):
+            try:
+                with urlopen(request, timeout=self.timeout) as response:
+                    return json.load(response)
+            except HTTPError as exc:
+                detail = exc.read().decode(errors="replace")[:500]
+                error = GraspGenXError(f"GraspGenX server {self.url}: {exc.code} {detail}")
+                if exc.code < 500 or attempt == attempts:
+                    raise error from exc
+            except (URLError, TimeoutError, OSError) as exc:
+                error = GraspGenXError(f"GraspGenX server {self.url} unreachable: {exc}")
+                if attempt == attempts:
+                    raise error from exc
+            logger.warning(f"{error}; trying again ({attempt}/{attempts - 1})")
+        raise AssertionError("unreachable")
+
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         if object_pointcloud.ts is None:
             raise ValueError("object pointcloud must have a timestamp")
@@ -70,14 +92,7 @@ class RemoteGraspGenX(GraspGenSpec):
         request = Request(
             f"{self.url}/propose", data=body, headers={"Content-Type": "application/json"}
         )
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
-                reply = json.load(response)
-        except HTTPError as exc:
-            detail = exc.read().decode(errors="replace")[:500]
-            raise GraspGenXError(f"GraspGenX server {self.url}: {exc.code} {detail}") from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            raise GraspGenXError(f"GraspGenX server {self.url} unreachable: {exc}") from exc
+        reply = self._post(request)
         if reply.get("protocol") != PROTOCOL_VERSION:
             raise GraspGenXError(
                 f"GraspGenX server {self.url} speaks protocol {reply.get('protocol')}, "

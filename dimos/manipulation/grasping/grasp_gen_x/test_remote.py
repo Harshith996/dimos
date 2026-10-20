@@ -28,9 +28,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class FakeServer:
-    """Answers /propose with one grasp above the cloud's mean, scored by the seed it was sent."""
+    """Answers /propose with one grasp above the cloud's mean, scored by the seed it was sent;
+    the first ``failures`` requests get a 500 instead."""
 
-    def __init__(self, protocol: int = PROTOCOL_VERSION, status: int = 200) -> None:
+    def __init__(
+        self, protocol: int = PROTOCOL_VERSION, status: int = 200, failures: int = 0
+    ) -> None:
         self.requests: list[dict[str, Any]] = []
         fake = self
 
@@ -52,8 +55,9 @@ class FakeServer:
                         }
                     ],
                 }
-                data = json.dumps(reply if status == 200 else {"error": "boom"}).encode()
-                self.send_response(status)
+                code = 500 if len(fake.requests) <= failures else status
+                data = json.dumps(reply if code == 200 else {"error": "boom"}).encode()
+                self.send_response(code)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -108,6 +112,26 @@ def test_a_server_error_is_a_graspgenx_error() -> None:
     try:
         with pytest.raises(GraspGenXError, match="500"):
             RemoteGraspGenX(fake.url).propose_grasps(_cloud())
+        assert len(fake.requests) == 2  # tried once more
+    finally:
+        fake.close()
+
+
+def test_one_server_error_is_tried_again() -> None:
+    fake = FakeServer(failures=1)
+    try:
+        (grasp,) = RemoteGraspGenX(fake.url).propose_grasps(_cloud()).candidates
+        assert len(fake.requests) == 2
+    finally:
+        fake.close()
+
+
+def test_a_bad_request_is_not_tried_again() -> None:
+    fake = FakeServer(status=400)
+    try:
+        with pytest.raises(GraspGenXError, match="400"):
+            RemoteGraspGenX(fake.url).propose_grasps(_cloud())
+        assert len(fake.requests) == 1
     finally:
         fake.close()
 

@@ -59,12 +59,17 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 # Bumped when the request or response format changes.
 PROTOCOL_VERSION = 1
 MAX_POINTS = 200_000
+SERVED_GRASPS = 400
 
 
 def xarm_config() -> GraspGenXConfig:
     return GraspGenXConfig(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,  # type: ignore[arg-type]
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        # Sampled and returned in full: the client checks them against the scene before any cut
+        # (on a low open container most of the model's best grasps pass through the table).
+        num_grasps=SERVED_GRASPS,
+        max_candidates=SERVED_GRASPS,
     )
 
 

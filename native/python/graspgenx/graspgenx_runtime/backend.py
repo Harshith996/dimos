@@ -88,10 +88,16 @@ class GraspGenXRuntime:
             fingertip_depth=config.gripper.fingertip_depth,
         )
         self._sampler = GraspGenXSampler(model_config, gripper_info=gripper_info)
+        self._num_grasps = config.num_grasps
 
     def infer(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Run inference and copy the known torch tensors to CPU NumPy arrays."""
-        poses, scores = GraspGenXSampler.run_inference(points, self._sampler)
+        poses, scores = GraspGenXSampler.run_inference(
+            points,
+            self._sampler,
+            num_grasps=self._num_grasps,
+            topk_num_grasps=self._num_grasps,  # the library keeps its best 100 otherwise
+        )
         return (
             poses.detach().cpu().numpy(),
             scores.detach().cpu().numpy(),
