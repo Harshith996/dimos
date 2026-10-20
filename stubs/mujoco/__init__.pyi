@@ -54,7 +54,15 @@ class MjvOption:
     geomgroup: NDArray[np.uint8]
     def __init__(self) -> None: ...
 
+class MjvScene:
+    flags: NDArray[np.uint8]
+
+class mjtRndFlag:
+    mjRND_SHADOW: int
+
 class Renderer:
+    @property
+    def scene(self) -> MjvScene: ...
     def __init__(self, model: MjModel, height: int = ..., width: int = ...) -> None: ...
     def update_scene(
         self,
