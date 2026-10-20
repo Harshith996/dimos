@@ -297,6 +297,26 @@ pub struct PlannerSizes {
 }
 
 impl Planner {
+    /// Voxel centers and surface cell points, flat xyz triples, for offline checks.
+    pub fn dump_centers(&self, voxel_size: f32) -> (Vec<f32>, Vec<f32>) {
+        let half = voxel_size * 0.5;
+        let voxels = self
+            .voxel_map
+            .iter()
+            .flat_map(|&(x, y, z)| [x, y, z].map(|k| k as f32 * voxel_size + half))
+            .collect();
+        let surface = self
+            .graph
+            .cells
+            .live_coords()
+            .flat_map(|(ix, iy, iz)| {
+                let (x, y, z) = crate::voxel::surface_point_xyz(ix, iy, iz, voxel_size);
+                [x, y, z]
+            })
+            .collect();
+        (voxels, surface)
+    }
+
     pub fn sizes(&self) -> PlannerSizes {
         PlannerSizes {
             voxels: self.voxel_map.len(),
