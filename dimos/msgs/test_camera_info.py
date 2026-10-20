@@ -146,4 +146,4 @@ def test_calibration_yaml_rejects_non_mapping_input(tmp_path):
     source = tmp_path / "calibration.yaml"
     source.write_text("- width\n- height\n")
     with pytest.raises(TypeError, match="Calibration YAML must contain a mapping"):
-        camera_info_from_yaml(source, header=Header())
+        camera_info_from_yaml(source, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
