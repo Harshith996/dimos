@@ -190,6 +190,12 @@ class FailingWrite(MockConnectionModule):
         raise RuntimeError("motor said no")
 
 
+class FailingHalt(MockConnectionModule):
+    def halt(self) -> None:
+        super().halt()
+        raise RuntimeError("brake said no")
+
+
 class Watched(MockConnectionModule):
     """Remembers whether ``connect`` was called."""
 
@@ -496,7 +502,7 @@ def test_any_accepted_command_feeds_the_one_deadman(rig: Callable[..., Rig]) -> 
         r.send("base_command", forward)
         time.sleep(DEADMAN_S / 5)
     assert r.module.halts == 0
-    assert wait_until(lambda: r.module.status().deadman_fired)
+    assert wait_until(lambda: r.module.status().deadman_fired and r.module.halts == 1)
     assert r.module.halts == 1
 
 
@@ -543,9 +549,49 @@ def test_stopping_halts_once_and_a_second_stop_is_harmless(rig: Callable[..., Ri
     assert writes(r) == []
 
 
-def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> None:
-    assert "status" in MockConnectionModule.rpcs
-    assert "describe_control" not in MockConnectionModule.rpcs
+def test_halt_robot_halts_at_once_every_time_it_is_called(rig: Callable[..., Rig]) -> None:
+    # A driver overrides halt, so halting on request needs an RPC of its own.
+    assert "halt_robot" in MockConnectionModule.rpcs
+    r = rig()
+    assert r.module.halt_robot()
+    assert r.module.halt_robot()
+    assert r.module.halts == 2
+
+
+def test_halt_robot_says_so_when_halt_fails(rig: Callable[..., Rig]) -> None:
+    r = rig(FailingHalt)
+    assert r.module.halt_robot() is False
+    assert "brake said no" in str(r.module.status().last_error)
+
+
+def test_halt_robot_waits_for_a_write_in_progress(rig: Callable[..., Rig]) -> None:
+    r = rig(SlowWrite, deadman_timeout_s=10.0)
+    module = r.module
+    assert isinstance(module, SlowWrite)
+    r.move(joint1=0.1)
+    assert module.inside.wait(2.0)
+
+    halting = threading.Thread(target=module.halt_robot)
+    halting.start()
+    time.sleep(0.05)
+    assert module.halts == 0
+    module.release.set()
+    halting.join(2.0)
+    assert module.halts == 1
+    assert writes(r) == [{JOINT1: 0.1}]
+
+
+def test_halt_robot_after_stop_does_nothing(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    r.module.stop()
+    assert r.module.halt_robot() is False
+    assert r.module.halts == 1
+
+
+def test_describe_control_and_status_are_rpcs_that_cross_processes(
+    rig: Callable[..., Rig],
+) -> None:
+    assert {"describe_control", "status"} <= set(MockConnectionModule.rpcs)
     r = rig()
     assert wait_until(lambda: r.module.status().last_state_time is not None)
     status = r.module.status()
@@ -557,6 +603,12 @@ def test_status_is_an_rpc_that_crosses_processes(rig: Callable[..., Rig]) -> Non
     assert status.deadman_fired is False
     assert status.last_rejection is None
     assert status.last_error is None
+    described = r.module.describe_control()
+    assert pickle.loads(pickle.dumps(described)) == described
+    assert described.session_id == status.session_id
+    assert described.description == r.module.description
+    assert described.command_ports["position_command"].joints == [f"joint{i}" for i in range(1, 8)]
+    assert described.reading_ports == {JointState: "joint_state"}
 
 
 def test_the_session_id_is_new_each_start_and_steady_in_between(

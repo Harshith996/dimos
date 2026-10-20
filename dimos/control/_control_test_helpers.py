@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from dimos.control.connection.connection_module import ConnectionDescription
+from dimos.control.contract.convert import JOINT_STATE_FIELDS, POSE_INTERFACES, TWIST_INTERFACES
 from dimos.control.contract.description import (
     ControlDescription,
     Limits,
@@ -34,6 +36,7 @@ from dimos.control.contract.description import (
     ResourceKind,
 )
 from dimos.control.contract.keys import Interface, Unit
+from dimos.control.contract.ports import JointPort, MotorPort, PortSpec, TwistPort
 from dimos.control.task import (
     BaseControlTask,
     CoordinatorState,
@@ -42,6 +45,43 @@ from dimos.control.task import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+def connection_contract(
+    description: ControlDescription, session: str = "test-session"
+) -> ConnectionDescription:
+    """Give hand-written test descriptions explicit conventional test ports.
+
+    Production discovery uses the driver's config and actual stream names.
+    """
+    commands: dict[str, PortSpec] = {}
+    readings: dict[type, str] = {}
+    joints = [r for r in description.resources if r.kind is ResourceKind.JOINT]
+    motors = [r.name for r in joints if Interface.KP in r.command_interfaces]
+    if motors:
+        commands["motor_command"] = MotorPort(joints=motors)
+    for interface in JOINT_STATE_FIELDS:
+        names = [
+            r.name for r in joints if interface in r.command_interfaces and r.name not in motors
+        ]
+        if names:
+            commands[f"{interface}_command"] = JointPort(joints=names, interface=interface)
+    if any(r.state_interfaces for r in joints):
+        readings[JointState] = "joint_state"
+    for resource in description.resources:
+        if resource.kind is ResourceKind.BASE:
+            if resource.command_interfaces:
+                commands["base_command"] = TwistPort(range=Twist())
+            if set(POSE_INTERFACES) <= set(resource.state_interfaces):
+                readings[PoseStamped] = "odom"
+            if set(TWIST_INTERFACES) <= set(resource.state_interfaces):
+                readings[Twist] = "base_velocity"
+        elif resource.kind is ResourceKind.SENSOR:
+            readings[Imu] = "imu"
+    return ConnectionDescription(session, description, commands, readings)
 
 
 class RecordingTask(BaseControlTask):
