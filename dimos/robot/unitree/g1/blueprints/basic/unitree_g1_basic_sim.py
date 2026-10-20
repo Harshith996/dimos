@@ -13,19 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 sim stack: base sensors plus sim connection and planner."""
+"""Basic G1 simulation with the same GR00T motor/controller path as the WBC stack."""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+    _unitree_g1_groot_wbc_core,
+)
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
     unitree_g1_primitive_no_nav,
 )
-from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
 
 unitree_g1_basic_sim = autoconnect(
     unitree_g1_primitive_no_nav,
-    G1SimConnection.blueprint(),
+    _unitree_g1_groot_wbc_core,
     ReplanningAStarPlanner.blueprint(),
     MovementManager.blueprint(),
 )
