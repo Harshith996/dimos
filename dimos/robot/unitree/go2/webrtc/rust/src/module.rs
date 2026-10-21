@@ -15,9 +15,11 @@
 //! GO2Connection's real-robot side: the Go2 over its WebRTC link. `cmd_vel` and `go2_request` (GO2Connection's
 //! RPCs as JSON) in; `odom` (+ its tf chain), `lidar`, the decoded front camera on `color_image`, `camera_info` and
 //! the RPC answers on `go2_response` out. Poses are stamped with the Go2's own stamp moved onto the host clock
-//! (clock.rs); frames and scans with their arrival, since the Go2 sends no usable capture time for them.
+//! (clock.rs); frames with their first packet's arrival, de-jittered by their RTP tick spacing (CaptureClock), and
+//! scans with their arrival, since the Go2 sends no usable capture time for either.
 //! One thread decodes video, one the data channel; tokio runs the session and the requests.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -35,7 +37,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
-use crate::clock::{now_ns, place, HostClock};
+use crate::clock::{now_ns, place, CaptureClock, HostClock};
 use crate::conn::{Conn, Event};
 use crate::h264::{Depacketizer, Packet};
 use crate::lidar::decode_voxels;
@@ -828,6 +830,9 @@ impl VideoLoop {
             }
         };
         let mut depacketizer = Depacketizer::default();
+        let mut capture = CaptureClock::default();
+        // when each RTP time's first packet arrived (a frame's packets share one)
+        let mut first_arrival: VecDeque<(u32, u64)> = VecDeque::new();
         let mut rgb = Vec::new();
         let mut last_info_ns = 0u64;
         let mut stats = Stats::default();
@@ -838,7 +843,17 @@ impl VideoLoop {
             if self.dropped.swap(false, Ordering::Relaxed) {
                 // packets were dropped before this one: the frame in progress is broken
                 depacketizer = Depacketizer::default();
+                capture = CaptureClock::default();
                 self.want_keyframe();
+            }
+            if first_arrival
+                .back()
+                .is_none_or(|&(rtp, _)| rtp != packet.header.timestamp)
+            {
+                first_arrival.push_back((packet.header.timestamp, arrived_ns));
+                if first_arrival.len() > 64 {
+                    first_arrival.pop_front();
+                }
             }
             let was_synced = depacketizer.synced();
             let view = Packet {
@@ -852,20 +867,25 @@ impl VideoLoop {
                 self.want_keyframe();
             }
             let Some(unit) = unit else { continue };
+            let unit_first_arrival = first_arrival
+                .iter()
+                .find(|&&(rtp, _)| rtp == unit.rtp_ts)
+                .map_or(arrived_ns, |&(_, at)| at);
+            capture.submitted(unit.rtp_ts, unit_first_arrival);
             let decoded = match decoder.decode(&unit.data) {
                 Ok(Some(yuv)) => yuv,
                 Ok(None) => continue,
                 Err(err) => {
                     warn!("H.264 decode failed ({err}); waiting for a keyframe");
                     depacketizer = Depacketizer::default();
+                    capture = CaptureClock::default();
                     self.want_keyframe();
                     continue;
                 }
             };
-            // the Go2's RTP time steps a fixed 60 per frame, not with its clock: the frame's last packet
-            // arriving is the earliest real time for it (the decoder has no delay, so this unit is the picture)
-            let ns = arrived_ns;
-            stats.frame(arrived_ns, now_ns());
+            // the Go2 sends no capture time for a frame: its arrival, de-jittered by the RTP tick spacing
+            let ns = capture.decoded().unwrap_or(arrived_ns);
+            stats.frame(ns, now_ns());
             use openh264::formats::YUVSource;
             let (width, height) = decoded.dimensions();
             rgb.resize(width * height * 3, 0);
@@ -912,9 +932,9 @@ impl Stats {
         self.report(arrived_ns, clock.offset_ns(), "pose");
     }
 
-    fn frame(&mut self, arrived_ns: u64, published_ns: u64) {
-        self.frame.push((published_ns - arrived_ns) as i64);
-        self.report(arrived_ns, None, "video");
+    fn frame(&mut self, stamp_ns: u64, published_ns: u64) {
+        self.frame.push(published_ns as i64 - stamp_ns as i64);
+        self.report(stamp_ns, None, "video");
     }
 
     fn report(&mut self, now: u64, offset_ns: Option<i64>, stream: &str) {
@@ -942,7 +962,7 @@ impl Stats {
             stream,
             offset_ms = offset_ns.map(|o| o as f64 / 1e6),
             pose_capture_to_arrival = ms(&mut self.pose),
-            video_arrival_to_published = ms(&mut self.frame),
+            video_stamp_to_published = ms(&mut self.frame),
             "[go2 clock]"
         );
         self.pose.clear();

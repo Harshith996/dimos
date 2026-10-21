@@ -16,7 +16,8 @@
 //! arrival - stamp seen in a sliding window: the message that crossed fastest, so neither a wrong
 //! robot clock nor queueing moves it. Same estimator as the Go2 DDS module's `HostClock`.
 
-use std::collections::VecDeque;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
@@ -92,6 +93,66 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
         .map_or(arrival_ns, |at| at.min(arrival_ns))
 }
 
+/// Capture times for the camera's frames (Go2 Ctrl's `CaptureClock`). The Go2's RTP time steps a fixed ~60 ticks a
+/// frame, not with a clock, so its rate is measured from arrivals: an anchor is a frame whose ticks top every earlier
+/// one, and the rate is ns per tick from the second anchor's first-packet arrival to the latest's (the first is left
+/// out: frames right after it go out a reorder window early). A frame lands at the second anchor's arrival plus its
+/// ticks at that rate: its arrival with the network's jitter taken out. The decoder hands frames out in display order,
+/// which a stream with reordered frames doesn't send them in, so a decoded frame takes the earliest ticks waiting.
+#[derive(Debug, Default)]
+pub struct CaptureClock {
+    /// frames given to the decoder and not yet out of it: unwrapped ticks and their first packet's arrival
+    waiting: BinaryHeap<Reverse<(i64, u64)>>,
+    last_rtp: Option<u32>,
+    unwrapped: i64,
+    second: Option<(i64, u64)>,
+    latest: Option<(i64, u64)>,
+    anchors: u32,
+}
+
+impl CaptureClock {
+    fn unwrap(&mut self, rtp: u32) -> i64 {
+        if let Some(last) = self.last_rtp {
+            self.unwrapped += rtp.wrapping_sub(last) as i32 as i64;
+        } else {
+            self.unwrapped = rtp as i64;
+        }
+        self.last_rtp = Some(rtp);
+        self.unwrapped
+    }
+
+    /// A frame went into the decoder: its RTP time and when its first packet arrived.
+    pub fn submitted(&mut self, rtp: u32, first_arrival_ns: u64) {
+        let ticks = self.unwrap(rtp);
+        if self.latest.is_none_or(|(t, _)| ticks > t) {
+            self.anchors += 1;
+            if self.anchors == 2 {
+                self.second = Some((ticks, first_arrival_ns));
+            }
+            self.latest = Some((ticks, first_arrival_ns));
+        }
+        self.waiting.push(Reverse((ticks, first_arrival_ns)));
+        // a frame the decoder never hands out mustn't shift every later frame's time
+        while self.waiting.len() > 16 {
+            self.waiting.pop();
+        }
+    }
+
+    /// The capture time of the frame the decoder just handed out; its first packet's arrival until the rate is known
+    /// (three anchors).
+    pub fn decoded(&mut self) -> Option<u64> {
+        let Reverse((ticks, first_arrival_ns)) = self.waiting.pop()?;
+        let placed = match (self.second, self.latest) {
+            (Some((t0, a0)), Some((t1, a1))) if t1 > t0 && a1 > a0 => {
+                let ns_per_tick = (a1 - a0) as f64 / (t1 - t0) as f64;
+                (a0 as i64 + ((ticks - t0) as f64 * ns_per_tick) as i64).max(0) as u64
+            }
+            _ => first_arrival_ns,
+        };
+        Some(placed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +198,36 @@ mod tests {
             place(&mut clock, Some(1_100 * MS), (2_150 * MS) as u64),
             (2_100 * MS) as u64
         );
+    }
+
+    #[test]
+    fn frames_land_on_their_tick_spacing_at_the_measured_rate() {
+        // 60 ticks a frame, a frame every 70 ms, arrivals jittered by 0..9 ms
+        let mut clock = CaptureClock::default();
+        let base = 1_700_000_000_000 * MS as u64;
+        let mut stamps = Vec::new();
+        for i in 0..100u64 {
+            let jitter = (i * 7 % 10) * MS as u64;
+            clock.submitted(1_000 + 60 * i as u32, base + i * 70 * MS as u64 + jitter);
+            stamps.push(clock.decoded().unwrap());
+        }
+        for (i, stamp) in stamps.iter().enumerate().skip(3) {
+            let capture = base + i as u64 * 70 * MS as u64;
+            let off = *stamp as i64 - capture as i64;
+            // within the jitter band: the anchors carry their own jitter
+            assert!((-MS..=10 * MS).contains(&off), "frame {i}: {off} ns");
+        }
+    }
+
+    #[test]
+    fn a_reordered_frame_takes_the_earliest_ticks_waiting() {
+        let mut clock = CaptureClock::default();
+        // decode order I P B: the decoder hands out I, then B (ticks 60) before P (ticks 120)
+        clock.submitted(0, 1_000);
+        assert_eq!(clock.decoded(), Some(1_000));
+        clock.submitted(120, 2_000);
+        clock.submitted(60, 2_100);
+        assert_eq!(clock.decoded(), Some(2_100));
+        assert_eq!(clock.decoded(), Some(2_000));
     }
 }
