@@ -57,7 +57,7 @@ class FakeBus:
 def bus(state: State, monkeypatch: pytest.MonkeyPatch) -> FakeBus:
     fake = FakeBus()
     state.skills = skills.Skills(fake)
-    monkeypatch.setattr(skills, "live_run", lambda: skills.Run("run-1", "demo", None))
+    monkeypatch.setattr(skills, "live_run", lambda: skills.Run("run-1", "demo"))
     return fake
 
 
@@ -68,7 +68,7 @@ def test_skills_are_listed_and_called(client: TestClient, bus: FakeBus) -> None:
         (s["name"], s["module"], s["description"], s["required"]) for s in listed["skills"]
     ] == [("speak", "Speaker", "Say something.", ["text"])]
     called = client.post("/runs", json={"skill": {"name": "speak", "args": {"text": "hi"}}}).json()
-    assert called["ok"] and called["text"] == "said hi" and called["via"] == "rpc"
+    assert called["ok"] and called["text"] == "said hi"
     failed = client.post(
         "/runs", json={"skill": {"name": "speak", "args": {"text": "explode"}}}
     ).json()
@@ -99,20 +99,3 @@ def test_a_namespaced_skill_is_called_on_its_namespaced_module(
     assert answer.status_code == 404 and "speak" in answer.json()["error"]
     both = client.post("/runs", json={"blueprint": "demo", "skill": {"name": "speak"}})
     assert both.status_code == 400
-
-
-def test_a_capability_skill_never_bypasses_mcp(
-    client: TestClient, bus: FakeBus, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    get_skills = bus.call
-
-    def with_uses(name: str, args: list[Any], kwargs: dict[str, Any], timeout: float) -> Any:
-        answer = get_skills(name, args, kwargs, timeout)
-        if name == "Speaker/get_skills":
-            answer[0].uses = ["movement"]
-        return answer
-
-    monkeypatch.setattr(bus, "call", with_uses)
-    refused = client.post("/runs", json={"skill": {"name": "speak", "args": {"text": "hi"}}})
-    assert refused.status_code == 409 and "movement" in refused.json()["error"]
-    assert not [name for name, _ in bus.calls if name == "Speaker/speak"]

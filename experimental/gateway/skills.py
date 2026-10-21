@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import json
@@ -22,7 +21,6 @@ import threading
 import time
 from typing import Any, Protocol
 
-from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
 
 PING_TIMEOUT_S = 1.0
@@ -63,7 +61,6 @@ class CoordinatorBus:
 class Run:
     run_id: str | None
     blueprint: str | None
-    mcp_url: str | None
 
 
 def live_run() -> Run:
@@ -71,9 +68,8 @@ def live_run() -> Run:
 
     entries = sorted(list_runs(alive_only=True), key=lambda e: str(e.run_id), reverse=True)
     if not entries:
-        return Run(None, None, None)
-    # dimos run records its McpServer's URL (None without one)
-    return Run(str(entries[0].run_id), str(entries[0].blueprint), entries[0].mcp_url)
+        return Run(None, None)
+    return Run(str(entries[0].run_id), str(entries[0].blueprint))
 
 
 def _skill(module: str, info: Any, run: Run) -> dict[str, Any]:
@@ -96,11 +92,8 @@ def _skill(module: str, info: Any, run: Run) -> dict[str, Any]:
 
 
 class Skills:
-    def __init__(
-        self, bus: Bus | None = None, adapter: Callable[[str, int], McpAdapter] = McpAdapter
-    ) -> None:
+    def __init__(self, bus: Bus | None = None) -> None:
         self.bus = bus or CoordinatorBus()
-        self.adapter = adapter
         self.cache: tuple[Any, float, dict[str, Any]] | None = None
         self.lock = threading.Lock()
 
@@ -141,22 +134,6 @@ class Skills:
             self.cache = (key, time.monotonic(), answer)
         return dict(answer)
 
-    def _through_mcp(
-        self, url: str, skill: str, args: dict[str, Any]
-    ) -> tuple[list[Any], bool] | None:
-        try:
-            if not any(
-                t.get("name") == skill for t in self.adapter(url, int(LIST_TIMEOUT_S)).list_tools()
-            ):
-                return None
-        except (McpError, OSError, ValueError):
-            return None
-        try:
-            result = self.adapter(url, int(CALL_TIMEOUT_S)).call_tool(skill, args)
-        except (McpError, OSError, ValueError) as error:
-            raise SkillError(500, f"calling {skill} failed: {type(error).__name__}: {error}")
-        return list(result.get("content") or []), not result.get("isError", False)
-
     def call(
         self, skill: str, args: dict[str, Any], module: str | None = None, run_id: str | None = None
     ) -> dict[str, Any]:
@@ -191,35 +168,21 @@ class Skills:
         if problems:
             takes = ", ".join(known_args) or "no arguments"
             raise SkillError(400, f"{skill}: {'; '.join(problems)} (it takes {takes})")
-        through = (
-            self._through_mcp(run.mcp_url, skill, args) if target["uses"] and run.mcp_url else None
-        )
-        if target["uses"] and through is None:
-            # the MCP server is what refuses a skill whose capability (movement…) another skill holds
-            raise SkillError(
-                409,
-                f"{skill} uses {', '.join(target['uses'])}, so it only runs through the blueprint's MCP server,"
-                " which isn't answering for it",
-            )
-        if through is not None:
-            (content, ok), via = through, "mcp"
-        else:
-            via = "rpc"
-            try:
-                result = self.bus.call(f"{target['module']}/{skill}", [], args, CALL_TIMEOUT_S)
-                encoded = result.agent_encode() if hasattr(result, "agent_encode") else None
-                content, ok = list(encoded or [{"type": "text", "text": str(result)}]), True
-            except TimeoutError:
-                raise SkillError(500, f"{skill} didn't answer within {int(CALL_TIMEOUT_S)} s")
-            except Exception as error:
-                text = f"Error running {skill}: {type(error).__name__}: {error}"
-                content, ok = [{"type": "text", "text": text}], False
+        # plain RPC, so MCP's capability holds (movement…) don't apply: this API is for buttons, agents use the python API
+        try:
+            result = self.bus.call(f"{target['module']}/{skill}", [], args, CALL_TIMEOUT_S)
+            encoded = result.agent_encode() if hasattr(result, "agent_encode") else None
+            content, ok = list(encoded or [{"type": "text", "text": str(result)}]), True
+        except TimeoutError:
+            raise SkillError(500, f"{skill} didn't answer within {int(CALL_TIMEOUT_S)} s")
+        except Exception as error:
+            text = f"Error running {skill}: {type(error).__name__}: {error}"
+            content, ok = [{"type": "text", "text": text}], False
         return {
             "skill": skill,
             "module": target["module"],
             "runId": run.run_id,
             "blueprint": run.blueprint,
-            "via": via,
             "ok": ok,
             "text": "\n".join(str(b.get("text", "")) for b in content if b.get("type") == "text"),
             "content": content,

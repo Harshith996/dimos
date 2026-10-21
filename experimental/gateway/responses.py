@@ -481,7 +481,6 @@ class SkillResult(Body):
     module: str
     runId: str | None
     blueprint: str | None
-    via: Literal["mcp", "rpc"]
     ok: bool
     text: str
     content: list[dict[str, Any]]
