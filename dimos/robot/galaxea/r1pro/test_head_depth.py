@@ -23,7 +23,6 @@ from dimos.robot.galaxea.r1pro.head_depth import (
     onto_floor,
 )
 
-LEVEL = 0.02
 # A box on the floor ahead of the robot, in floor_frame: x, y extents and its height above the floor.
 BOX_X, BOX_Y, BOX_HEIGHT = (1.2, 1.6), (-0.2, 0.2), 0.25
 # Optical frame (z forward, y down) to a base whose x is forward and z up.
@@ -47,10 +46,10 @@ def _scene(floor_from_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     rays = np.stack([u.ravel(), v.ravel(), np.ones(u.size)], axis=1)
     origin, direction = floor_from_camera[:3, 3], rays @ floor_from_camera[:3, :3].T
     rays, direction = rays[direction[:, 2] < -0.05], direction[direction[:, 2] < -0.05]
-    t_floor = (LEVEL - origin[2]) / direction[:, 2]
+    t_floor = -origin[2] / direction[:, 2]
     # Ray against the box (slab method), whose top is BOX_HEIGHT over the floor.
-    lo = np.array([BOX_X[0], BOX_Y[0], LEVEL])
-    hi = np.array([BOX_X[1], BOX_Y[1], LEVEL + BOX_HEIGHT])
+    lo = np.array([BOX_X[0], BOX_Y[0], 0.0])
+    hi = np.array([BOX_X[1], BOX_Y[1], BOX_HEIGHT])
     with np.errstate(divide="ignore"):
         t1, t2 = (lo - origin) / direction, (hi - origin) / direction
     t_near, t_far = np.minimum(t1, t2).max(axis=1), np.maximum(t1, t2).min(axis=1)
@@ -75,7 +74,7 @@ def _misread(points: np.ndarray) -> np.ndarray:
 def test_the_frame_fit_puts_the_floor_on_the_floor_and_keeps_the_box(
     camera_height_m: float, pitch_deg: float
 ) -> None:
-    """The head rides an articulated torso: whatever its height and pitch, the corrected floor lands on the lidar's floor
+    """The head rides an articulated torso: whatever its height and pitch, the corrected floor lands on base_link's z = 0
     and the box keeps its height, since the whole frame shares one correction."""
     floor_from_camera = _pose(
         Rotation.from_euler("y", pitch_deg, degrees=True).as_matrix() @ OPTICAL,
@@ -84,13 +83,11 @@ def test_the_frame_fit_puts_the_floor_on_the_floor_and_keeps_the_box(
     truth, box = _scene(floor_from_camera)
     assert box.sum() > 10
 
-    corrected = fit_depth_to_floor(
-        _misread(truth), floor_from_camera, LEVEL, HeadFloorPriorConfig()
-    )
+    corrected = fit_depth_to_floor(_misread(truth), floor_from_camera, HeadFloorPriorConfig())
 
     np.testing.assert_allclose(corrected, truth, rtol=1e-3)
     assert _in_floor(floor_from_camera, corrected[box])[:, 2].max() == pytest.approx(
-        LEVEL + BOX_HEIGHT, abs=1e-3
+        BOX_HEIGHT, abs=1e-3
     )
 
 
@@ -100,43 +97,34 @@ def test_too_few_floor_rays_leave_the_frame_alone() -> None:
     )
     points = _misread(_scene(floor_from_camera)[0])[:5]
     np.testing.assert_array_equal(
-        fit_depth_to_floor(points, floor_from_camera, LEVEL, HeadFloorPriorConfig()), points
+        fit_depth_to_floor(points, floor_from_camera, HeadFloorPriorConfig()), points
     )
 
 
-def test_points_just_off_the_floor_slide_onto_it_where_the_lidar_saw_floor() -> None:
-    """Seen from a base that has driven and turned in the world; a point far from any lidar floor is left alone."""
+@pytest.mark.parametrize(
+    ("offset_m", "slides"),
+    [(0.03, True), (-0.1, True), (0.1, False), (-0.3, False)],
+    ids=["just-above", "under", "obstacle-height", "drop"],
+)
+def test_points_near_the_floor_slide_onto_it(offset_m: float, slides: bool) -> None:
+    """Within floor_tolerance_m above or min_height_m below the floor a point is floor; higher is an obstacle, and deeper
+    is a drop, which stays where it is (and is cut by the height band) rather than becoming floor."""
     floor_from_camera = _pose(
         Rotation.from_euler("y", 30, degrees=True).as_matrix() @ OPTICAL, [0.1, 0.0, 1.1]
     )
-    world_from_floor = _pose(
-        Rotation.from_euler("z", 130, degrees=True).as_matrix(), [4.0, -2.0, 0.3]
-    )
     truth, box = _scene(floor_from_camera)
-    floor = truth[~box]
-    # 3 cm over the floor (inside floor_tolerance_m): each ray stops short of the floor by that much height.
-    raised = floor * ((LEVEL + 0.03 - 1.1) / (LEVEL - 1.1))
-    # The lidar saw floor only around 1 m ahead, so floor_reach_m covers up to 2.5 m.
-    seen = (world_from_floor @ np.array([[1.0, 0.0, LEVEL, 1.0]]).T)[:2].T
-    reached = np.hypot(*(_in_floor(floor_from_camera, floor)[:, :2] - [1.0, 0.0]).T) < 1.4
+    # Each ray stopped (or carried on) until it met a plane offset_m from the floor.
+    moved = truth[~box] * ((offset_m - 1.1) / -1.1)
 
-    slid = onto_floor(
-        raised,
-        floor_from_camera,
-        world_from_floor @ floor_from_camera,
-        LEVEL,
-        seen,
-        HeadFloorPriorConfig(),
-    )
+    heights = _in_floor(
+        floor_from_camera, onto_floor(moved, floor_from_camera, HeadFloorPriorConfig())
+    )[:, 2]
 
-    heights = _in_floor(floor_from_camera, slid)[:, 2]
-    np.testing.assert_allclose(heights[reached], LEVEL, atol=1e-6)
-    far = np.hypot(*(_in_floor(floor_from_camera, floor)[:, :2] - [1.0, 0.0]).T) > 1.6
-    np.testing.assert_allclose(heights[far], LEVEL + 0.03, atol=1e-6)
+    np.testing.assert_allclose(heights, 0.0 if slides else offset_m, atol=1e-6)
 
 
 def test_the_footprint_is_a_disc_of_floor() -> None:
-    under = footprint_floor(0.325, LEVEL, 0.05)
+    under = footprint_floor(0.325, 0.05)
     assert np.hypot(under[:, 0], under[:, 1]).max() <= 0.325
-    assert (under[:, 2] == LEVEL).all()
+    assert (under[:, 2] == 0.0).all()
     assert len(under) == pytest.approx(np.pi * 0.325**2 / 0.05**2, rel=0.15)
