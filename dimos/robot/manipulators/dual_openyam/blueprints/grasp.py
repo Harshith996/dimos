@@ -67,10 +67,12 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 # planner floor, it would overlap the slab.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
 # {side}_grasp_frame sits 10 cm below the gripper link on its axis; the finger
-# pads of the URDF meet 3.7 cm further out. The printed fingers on the rig are
-# longer than the URDF's by this much per arm (tool height check, 2026-10-09).
+# pads of the URDF meet 3.7 cm further out. The printed fingers measure the same
+# as stock, fingertip 0.146 m below the gripper link (Mustafa, calipers,
+# 2026-10-15), so the tool point is 9 mm past the pad centre on both arms. The
+# 2026-10-09 ruler check that gave 45 and 60 mm was wrong.
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
-DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.045, "right": 0.060}
+DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
 # Pink's defaults do not converge on this model; the WebXR teleop uses these.
 DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
     dt=0.01,
