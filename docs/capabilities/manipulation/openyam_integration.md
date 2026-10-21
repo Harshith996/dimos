@@ -85,11 +85,25 @@ component.
 
 The xArm grasp stack on the workcell, both grippers bound to their planning groups:
 
+The three D405 serials are rig configuration, not source. Put them in a
+config file outside the checkout and pass it with `--config`:
+
+```json
+{
+  "realsensecamera": {"serial_number": "230322272156"},
+  "left_wrist_camera": {"serial_number": "260322272983"},
+  "right_wrist_camera": {"serial_number": "260322276650"}
+}
+```
+
 ```bash
-dimos run dual-openyam-grasp --left-can-port follower_l --right-can-port follower_r
-dimos run dual-openyam-grasp-agent --left-can-port follower_l --right-can-port follower_r
+dimos run dual-openyam-grasp-agent --config ~/workcell.json --left-can-port follower_l --right-can-port follower_r
 dimos humancli      # second terminal: "scan for a soup can", "pick up the soup can", "put it in the tray"
 ```
+
+`dual-openyam-grasp` is the same stack without the agent. Without the config
+file each camera module opens the first D405 it finds, so set it before the
+first run on a new host.
 
 Every skill takes a planning group, `left_manipulator` or `right_manipulator`;
 the agent picks the arm on the object's side and the manipulation module routes

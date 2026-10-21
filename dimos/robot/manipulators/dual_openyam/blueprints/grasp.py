@@ -82,9 +82,6 @@ DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     frame_id="world",
     child_frame_id="camera_link",
 )
-# Override with --realsensecamera.serial-number and --{side}-wrist-camera.serial-number.
-DUAL_OPENYAM_OVERHEAD_CAMERA_SERIAL = "230322272156"
-DUAL_OPENYAM_WRIST_CAMERA_SERIALS = {"left": "260322272983", "right": "260322276650"}
 DUAL_OPENYAM_RECORD_TOPICS = ",".join(
     [
         "coordinator_joint_state",
@@ -215,7 +212,6 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
         enable_depth=False,
         align_depth_to_color=False,
         enable_pointcloud=False,
-        serial_number=DUAL_OPENYAM_WRIST_CAMERA_SERIALS[side],
     )
     streams = [stream.name for stream in camera.blueprints[0].streams]
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
@@ -242,7 +238,6 @@ def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
             height=480,
             fps=30,
             enable_pointcloud=True,
-            serial_number=DUAL_OPENYAM_OVERHEAD_CAMERA_SERIAL,
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
