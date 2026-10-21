@@ -45,7 +45,6 @@ else:
 
 logger = setup_logger()
 
-MAX_ERRORS = 50
 ITEM_TIMEOUT_S = 120.0
 JOB_KEEP_S = 30 * 60
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -122,6 +121,8 @@ def saved_scan_file(dimos_dir: Path) -> Path:
 
 
 FINGERPRINT_TTL_S = 2.0
+# a saved scan in an older format reads as never scanned (2: modules carry rpcs, not skills)
+SCAN_FORMAT = 2
 
 
 class Scanner:
@@ -153,7 +154,11 @@ class Scanner:
         if not self.looked:
             self.looked = True
             saved = store.read_json(saved_scan_file(self.dimos_dir))
-            if isinstance(saved, dict) and {"results", "modules", "finished_at"} <= saved.keys():
+            if (
+                isinstance(saved, dict)
+                and saved.get("format") == SCAN_FORMAT
+                and {"results", "modules", "finished_at"} <= saved.keys()
+            ):
                 self.saved = saved
         return self.saved
 
@@ -232,6 +237,7 @@ class Scanner:
                     self.blueprints[name] = failed_record(name, problem or "no answer")
                 found = await asyncio.to_thread(self.finish)
                 cache = self.cache() or {
+                    "format": SCAN_FORMAT,
                     "fingerprint": None,
                     "finished_at": None,
                     "results": {},
@@ -289,6 +295,7 @@ class Scanner:
             results = await asyncio.to_thread(self.finish)
             finished = now_iso()
             self.saved = {
+                "format": SCAN_FORMAT,
                 "fingerprint": before,
                 "finished_at": finished,
                 "results": {n: {**r, "scanned_at": finished} for n, r in results.items()},
@@ -394,44 +401,6 @@ class Scanner:
         cache = self.cache()
         record = cache["results"].get(entry["name"]) if cache else None
         return {**entry, **{k: record.get(k) for k in SCANNED}} if record else entry
-
-    def catalog(self) -> dict[str, Any]:
-        cache = self.cache() or {"results": {}, "modules": {}, "errors": []}
-        records = list(cache["results"].values())
-        used_by: dict[str, set[str]] = {}
-        for record in records:
-            for module in record["modules"]:
-                if record["robot"]:
-                    used_by.setdefault(module["class"], set()).add(record["robot"])
-        blueprints = [
-            {
-                "name": r["name"],
-                "ref": r["ref"],
-                "robot": r["robot"],
-                "modules": [m["module"] for m in r["modules"]],
-                "doc": r.get("doc", ""),
-            }
-            for r in records
-            if r["importable"] and r["builtin"]
-        ]
-        modules, skills = [], []
-        for record in sorted(cache["modules"].values(), key=lambda m: m["name"]):
-            owners = sorted(used_by.get(record["class"], ()))
-            modules.append(
-                {
-                    **{k: v for k, v in record.items() if k != "skills"},
-                    "robots": owners,
-                    "skills": [s["name"] for s in record["skills"]],
-                }
-            )
-            skills += [{**s, "module": record["name"], "robots": owners} for s in record["skills"]]
-        errors = [
-            f"blueprint {r['name']}: {r['import_error']}" for r in records if not r["importable"]
-        ]
-        errors += [e for e in cache.get("errors", []) if e.startswith("module ")]
-        if len(errors) > MAX_ERRORS:
-            errors = [*errors[:MAX_ERRORS], f"... and {len(errors) - MAX_ERRORS} more"]
-        return {"blueprints": blueprints, "modules": modules, "skills": skills, "errors": errors}
 
 
 def is_checkout(dimos_dir: Path) -> bool:

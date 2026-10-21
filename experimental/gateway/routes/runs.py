@@ -22,25 +22,24 @@ from pydantic import BaseModel, JsonValue
 
 from experimental.gateway import launches, logs, overrides as ov, responses, store
 from experimental.gateway.launches import LaunchConfig
-from experimental.gateway.skills import SkillError
+from experimental.gateway.rpcs import RpcError
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter()
 
 
-class SkillCall(BaseModel):
-    module: str | None = None
+class RpcCall(BaseModel):
+    module: str
     name: str
     args: dict[str, JsonValue] = {}
-    namespace: str | None = None
 
 
 class LaunchRequest(BaseModel):
-    """Exactly one of: a blueprint or a module to launch (with one-off `config`), or a skill to call."""
+    """Exactly one of: a blueprint or a module to launch (with one-off `config`), or an RPC to call."""
 
     blueprint: str | None = None
     module: str | None = None
-    skill: SkillCall | None = None
+    rpc: RpcCall | None = None
     config: JsonValue = None
 
 
@@ -103,20 +102,17 @@ async def run_list() -> dict[str, Any]:
     }
 
 
-@router.post("/runs", response_model=responses.Launch | responses.SkillResult)
+@router.post("/runs", response_model=responses.Launch | responses.RpcResult)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    """Launch a blueprint or a module with the saved config plus this launch's `config`, or call a skill of the running blueprint."""
-    given = [k for k in ("blueprint", "module", "skill") if getattr(request, k) is not None]
+    """Launch a blueprint or a module with the saved config plus this launch's `config`, or call an RPC of the running blueprint."""
+    given = [k for k in ("blueprint", "module", "rpc") if getattr(request, k) is not None]
     if len(given) != 1:
-        raise ApiError(400, "give exactly one of blueprint, module or skill")
-    if request.skill is not None:
-        call = request.skill
-        module = (
-            f"{call.namespace}/{call.module}" if call.namespace and call.module else call.module
-        )
+        raise ApiError(400, "give exactly one of blueprint, module or rpc")
+    if request.rpc is not None:
+        call = request.rpc
         try:
-            return await asyncio.to_thread(state.skills.call, call.name, call.args, module)
-        except SkillError as error:
+            return await asyncio.to_thread(state.rpcs.call, call.module, call.name, call.args)
+        except RpcError as error:
             raise ApiError(error.status, str(error))
     name = str(request.blueprint or request.module)
     if not name or name.startswith("-"):
@@ -133,10 +129,13 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
     return await started(state, name, LaunchConfig(args=rest, exact=True))
 
 
-@router.get("/runs/skills", response_model=responses.Skills)
-async def skill_list(state: GatewayState) -> dict[str, Any]:
-    """The running blueprint's skills, live, with each one's JSON schema; call one with POST /runs {skill}."""
-    return await asyncio.to_thread(state.skills.listed)
+@router.get("/runs/rpcs", response_model=responses.Rpcs)
+async def rpc_list(state: GatewayState) -> dict[str, Any]:
+    """The running blueprint's RPCs, live (doc, params and skill flag from the last scan); call one with POST /runs {rpc}.
+
+    This API is for buttons: RPCs are called directly, not through MCP, so skills' capability holds (movement...) don't
+    apply. Agents use the python API."""
+    return await asyncio.to_thread(state.rpcs.listed, state.scanner.cache())
 
 
 @router.post("/runs/stop", response_model=responses.Stopped)

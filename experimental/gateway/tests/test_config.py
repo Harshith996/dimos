@@ -57,6 +57,8 @@ REMOVED = [
     ("get", "/global-config"),
     ("get", "/skills"),
     ("post", "/skills/call"),
+    ("get", "/runs/skills"),
+    ("get", "/catalog/skills"),
     ("get", "/runs/latest/log"),
 ]
 
@@ -99,7 +101,7 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
-    assert {"/runs", "/runs/skills", "/catalog", "/config/global"} <= set(routes)
+    assert {"/runs", "/runs/rpcs", "/catalog/rpcs", "/catalog", "/config/global"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
     assert slow == {
         "/catalog/blueprints/{name}",
@@ -196,7 +198,7 @@ def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
         ]
         modules: list[dict[str, Any]] = [
             {"name": "mapper", "class": "x.Mapper", "doc": "", "summary": "", "streams": streams}
-            | {"rpcs": [], "skills": [], "file": None, "line": None}
+            | {"rpcs": [], "file": None, "line": None}
         ]
         return {"name": args[1], "file": None, "line": None, "modules": modules}
 

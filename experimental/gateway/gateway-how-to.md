@@ -73,32 +73,36 @@ const old = await (await fetch(`../../dimos-gateway/runs/log_hist/${runs[1].runI
 
 ```js
 const { modules } = await (await fetch("../../dimos-gateway/catalog/blueprints/unitree-go2")).json()
-// modules[i]: { name, rpcs, skills, streams: [{ name, type, direction, topic }] }
+// modules[i]: { name, rpcs: [{ name, params, doc, skill }], streams: [{ name, type, direction, topic }] }
 ```
 
 ## How do I list every module's inputs and outputs?
 
 ```js
-const { modules } = await (await fetch("../../dimos-gateway/catalog/modules")).json() // [{ name, inputs, outputs, skills, blueprints }]
-const cam = await (await fetch("../../dimos-gateway/catalog/modules/go2_connection")).json() // + rpcs, skill_methods, file, line
+const { modules } = await (await fetch("../../dimos-gateway/catalog/modules")).json() // [{ name, inputs, outputs, rpcs, blueprints }]
+const cam = await (await fetch("../../dimos-gateway/catalog/modules/go2_connection")).json() // + rpcs (with params, doc, skill), file, line
 ```
 
-## How do I list skills?
+## How do I list RPCs (and skills)?
 
 ```js
-const { skills } = await (await fetch("../../dimos-gateway/runs/skills")).json() // the running blueprint's: [{ name, module, params }]
-const { skills: all } = await (await fetch("../../dimos-gateway/catalog/skills")).json() // every module's, from the last scan
+const { rpcs } = await (await fetch("../../dimos-gateway/runs/rpcs")).json() // the running blueprint's: [{ name, module, rpc, params, skill }]
+const { rpcs: all } = await (await fetch("../../dimos-gateway/catalog/rpcs")).json() // every module's, from the last scan
+const skills = rpcs.filter((r) => r.skill)
 ```
 
-## How do I call a skill?
+## How do I call an RPC (or a skill)?
 
 ```js
-const result = await (await fetch("../../dimos-gateway/runs", {
+const answer = await (await fetch("../../dimos-gateway/runs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ skill: { name: "execute_sport_command", args: { command_name: "FrontJump" } } }),
-})).json() // { ok, text }; this acts on the robot, so call it only from a user's action
+    body: JSON.stringify({ rpc: { module: "UnitreeSkillContainer", name: "execute_sport_command", args: { command_name: "FrontJump" } } }),
+})).json() // { ok, result, error }; this acts on the robot, so call it only from a user's action
 ```
+
+This is for buttons: the call goes straight to the module, not through MCP, so a skill's capability hold (movement...)
+doesn't apply. Agents use the python API.
 
 ## How do I list robots and their recommended blueprints?
 

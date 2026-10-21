@@ -14,10 +14,10 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 5.2.0
+    version: 6.0.0
     description: >-
-      The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; and runs (launch, stop,
-      logs, skills). Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
+      The dimos gateway: the catalog of blueprints, modules, RPCs and robots; their saved config; and runs (launch, stop,
+      logs, RPCs). Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
     /info:
       get:
@@ -30,7 +30,7 @@ provides:
     /catalog:
       get:
         description: >-
-          Every blueprint, module, skill and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
           age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
     /catalog/blueprints:
       get:
@@ -38,7 +38,7 @@ provides:
     /catalog/blueprints/{name}:
       get:
         description: >-
-          A blueprint, plus its file and line and its modules' streams, RPCs and skills; while it runs from another checkout, read
+          A blueprint, plus its file and line and its modules' streams and RPCs; while it runs from another checkout, read
           from that one (`checkout`, `checkoutError`). (slow: imports python)
         parameters:
           - name: name
@@ -60,12 +60,12 @@ provides:
     /catalog/modules:
       get:
         description: >-
-          Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only
+          Every module the last scan found, with its streams, robots, RPCs and the blueprints using it; ?fields= keeps only
           those (dot paths)
     /catalog/modules/{name}:
       get:
         description: >-
-          A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class). (slow: imports
+          A module, the blueprints using it, and its RPCs (`name` is its registry name or class). (slow: imports
           python)
         parameters:
           - name: name
@@ -112,22 +112,22 @@ provides:
             required: true
             schema:
               type: string
-    /catalog/skills:
+    /catalog/rpcs:
       get:
         description: >-
-          Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint's are at
-          /runs/skills.
-    /catalog/skills/{module}/{skill}:
+          Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that
+          namespace would. The running blueprint's are at /runs/rpcs.
+    /catalog/rpcs/{module}/{name}:
       get:
         description: >-
-          One skill from the last scan: its doc, params and rpc name; ?namespace= names it as that namespace would
+          One RPC from the last scan: its doc, params, skill flag and rpc name; ?namespace= names it as that namespace would
         parameters:
           - name: module
             in: path
             required: true
             schema:
               type: string
-          - name: skill
+          - name: name
             in: path
             required: true
             schema:
@@ -161,8 +161,8 @@ provides:
         summary: The running dimos runs (run id, pid, blueprint, start, log dir) and the launch this gateway started
       post:
         description: >-
-          Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call a skill of
-          the running blueprint ({skill: {module, name, args}})
+          Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call an RPC of
+          the running blueprint ({rpc: {module, name, args}})
     /runs/exec:
       post:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module), without the saved config.
@@ -190,9 +190,11 @@ provides:
     /runs/restart:
       post:
         summary: Stop the run {runId} and launch it again
-    /runs/skills:
+    /runs/rpcs:
       get:
-        summary: The running blueprint's skills, live, with each one's JSON schema; call one with POST /runs {skill}.
+        description: >-
+          The running blueprint's RPCs, live (doc, params and skill flag from the last scan); call one with POST /runs {rpc}.
+          For buttons: called directly, not through MCP, so skills' capability holds don't apply; agents use the python API.
     /runs/stop:
       post:
         summary: Stop the run {runId}

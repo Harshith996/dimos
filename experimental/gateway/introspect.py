@@ -232,21 +232,22 @@ def base_rpcs() -> frozenset[str]:
     return frozenset(dict(Module.rpcs))
 
 
-def methods(cls: Any) -> dict[str, list[dict[str, Any]]]:
-    rpcs: list[dict[str, Any]] = []
-    skills: list[dict[str, Any]] = []
+def rpcs(cls: Any) -> list[dict[str, Any]]:
+    """The module's own RPCs (not every Module's), each saying whether it's also a skill."""
+    found = []
     for name, fn in sorted(dict(getattr(cls, "rpcs", {}) or {}).items()):
         skill = bool(getattr(fn, "__skill__", False))
-        if not skill and name in base_rpcs():
-            continue
-        entry = {
-            "name": name,
-            "params": params(fn),
-            "return_type": return_type(fn),
-            "doc": inspect.getdoc(fn) or "",
-        }
-        (skills if skill else rpcs).append(entry)
-    return {"rpcs": rpcs, "skills": skills}
+        if skill or name not in base_rpcs():
+            found.append(
+                {
+                    "name": name,
+                    "params": params(fn),
+                    "return_type": return_type(fn),
+                    "doc": inspect.getdoc(fn) or "",
+                    "skill": skill,
+                }
+            )
+    return found
 
 
 def spec_topic(spec: Any) -> str | None:
@@ -319,7 +320,7 @@ def blueprint(name: str) -> dict[str, Any]:
                 "doc": doc,
                 "summary": doc.split("\n\n")[0].replace("\n", " ")[:300],
                 "streams": entry["streams"],
-                **methods(atom.module),
+                "rpcs": rpcs(atom.module),
                 **source_of(atom.module),
             }
         )
@@ -464,13 +465,7 @@ def module_class(name: str) -> tuple[str, Any]:
 def module(name: str) -> dict[str, Any]:
     registry, cls = module_class(name)
     record = module_record(registry, cls)
-    found = methods(cls)
-    return {
-        **{k: v for k, v in record.items() if k not in ("kind", "skills")},
-        "rpcs": found["rpcs"],
-        "skill_methods": found["skills"],
-        **source_of(cls),
-    }
+    return {**{k: v for k, v in record.items() if k != "kind"}, **source_of(cls)}
 
 
 def module_config(name: str) -> dict[str, Any]:
@@ -502,11 +497,6 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
     from dimos.core.coordination.blueprints import BlueprintAtom
 
     streams = list(BlueprintAtom.create(cls, {}).streams)
-    skills = [
-        {"name": skill, "doc": first_line(fn), "params": params(fn)}
-        for skill, fn in sorted(dict(getattr(cls, "rpcs", {}) or {}).items())
-        if getattr(fn, "__skill__", False)
-    ]
     return {
         "kind": "module",
         "name": name,
@@ -518,7 +508,7 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
         "outputs": [
             {"name": s.name, "type": s.type.__name__} for s in streams if s.direction != "in"
         ],
-        "skills": skills,
+        "rpcs": rpcs(cls),
     }
 
 
