@@ -68,16 +68,8 @@ async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]
         raise ApiError(400, "give either path or retry")
     if request.path is None:
         assert request.retry is not None
-        try:
-            return state.uploads.retry(request.retry)
-        except KeyError as error:
-            raise ApiError(404, error.args[0])
-        except ValueError as error:
-            raise ApiError(409, str(error))
-    try:
-        return state.uploads.enqueue(request.path, request.robotId, request.kind)
-    except ValueError as error:
-        raise ApiError(400, str(error))
+        return state.uploads.retry(request.retry)
+    return state.uploads.enqueue(request.path, request.robotId, request.kind)
 
 
 @router.delete("/cloud/uploads", response_model=responses.Uploads)
@@ -86,8 +78,5 @@ async def remove(state: GatewayState, id: str | None = None) -> dict[str, Any]:
     if id is None:
         state.uploads.clear_finished()
     else:
-        try:
-            state.uploads.cancel(id)
-        except KeyError as error:
-            raise ApiError(404, error.args[0])
+        state.uploads.cancel(id)
     return {**state.uploads.listing(), **state.uploads.uploaded()}

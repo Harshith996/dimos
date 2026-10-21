@@ -27,6 +27,8 @@ import sys
 import tempfile
 from typing import Any
 
+from experimental.gateway.errors import ApiError
+
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
 RUNTIME_FILE = Path(__file__).parent / "assets" / "msgs" / "runtime.ts"
 BUILD_TIMEOUT_S = 120
@@ -178,10 +180,10 @@ async def built_js(cache_dir: Path) -> Path:
             _, err = await asyncio.wait_for(child.communicate(), BUILD_TIMEOUT_S)
         except asyncio.TimeoutError:
             child.kill()
-            raise RuntimeError(f"building msgs.js took over {BUILD_TIMEOUT_S} s") from None
+            raise ApiError(503, f"building msgs.js took over {BUILD_TIMEOUT_S} s") from None
         if child.returncode != 0:
             last = err.decode(errors="replace").strip().splitlines()[-1:] or ["no output"]
-            raise RuntimeError(f"building msgs.js failed: {last[0]}")
+            raise ApiError(503, f"building msgs.js failed: {last[0]}")
         for old in cache_dir.glob("msgs-*.js"):
             if old != target:
                 old.unlink(missing_ok=True)

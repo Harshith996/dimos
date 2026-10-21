@@ -22,7 +22,6 @@ from pydantic import BaseModel, JsonValue
 
 from experimental.gateway import launches, logs, overrides as ov, responses, store
 from experimental.gateway.launches import LaunchConfig
-from experimental.gateway.rpcs import RpcError
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter()
@@ -64,32 +63,21 @@ def with_saved(name: str, one_off: ov.LaunchOverrides, args: list[str]) -> Launc
     effective = ov.merge(
         ov.merge(store.global_config_overrides(), saved["global"]), one_off.global_
     )
-    try:
-        ov.check_global(effective)
-    except ValueError as error:
-        raise ApiError(400, str(error))
+    ov.check_global(effective)
     modules = ov.merge_modules(saved["modules"], one_off.modules)
     return LaunchConfig(effective, modules, one_off, list(args))
 
 
 async def launch_config(state: State, name: str, config: JsonValue) -> LaunchConfig:
-    try:
-        one_off = ov.parse(config)
-        one_off.global_ = ov.without_hidden(one_off.global_)
-        one_off.modules = {m: ov.without_hidden(f) for m, f in one_off.modules.items()}
-        ov.check_global(one_off.global_)
-    except ValueError as error:
-        raise ApiError(400, str(error))
+    one_off = ov.parse(config)
+    one_off.global_ = ov.without_hidden(one_off.global_)
+    one_off.modules = {m: ov.without_hidden(f) for m, f in one_off.modules.items()}
+    ov.check_global(one_off.global_)
     return with_saved(name, one_off, [])
 
 
 async def started(state: State, name: str, config: LaunchConfig) -> dict[str, Any]:
-    try:
-        launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
-    except launches.StillRunningError as error:
-        raise ApiError(400, str(error))
-    except launches.RunError as error:
-        raise ApiError(500, str(error))
+    launch = await asyncio.to_thread(launches.start, state.dimos_dir, name, config)
     state.bus.launch(launch)
     return launch
 
@@ -110,10 +98,7 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
         raise ApiError(400, "give exactly one of blueprint, module or rpc")
     if request.rpc is not None:
         call = request.rpc
-        try:
-            return await asyncio.to_thread(state.rpcs.call, call.module, call.name, call.args)
-        except RpcError as error:
-            raise ApiError(error.status, str(error))
+        return await asyncio.to_thread(state.rpcs.call, call.module, call.name, call.args)
     name = str(request.blueprint or request.module)
     if not name or name.startswith("-"):
         raise ApiError(400, f"bad name: {name}")
@@ -143,10 +128,6 @@ async def stop(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     """Stop the run `runId`."""
     try:
         return {"output": await launches.stop(request.runId)}
-    except launches.NoSuchRunError as error:
-        raise ApiError(400, str(error))
-    except launches.RunError as error:
-        raise ApiError(500, str(error))
     finally:
         state.bus.launch(await asyncio.to_thread(launches.current_launch))
 
@@ -162,23 +143,13 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     current = await asyncio.to_thread(launches.current_launch)
     active = ours and current is not None and current["phase"] in launches.ACTIVE
     # a run started outside the gateway (e.g. `dimos run` in a terminal) restarts as a copy of its process
-    try:
-        run = (
-            None
-            if ours and not active
-            else await asyncio.to_thread(launches.run_to_relaunch, run_id)
-        )
-    except launches.RunError as error:
-        raise ApiError(400, str(error))
+    run = None if ours and not active else await asyncio.to_thread(launches.run_to_relaunch, run_id)
     if run is not None:
-        try:
-            command, cwd, env = await asyncio.to_thread(launches.snapshot, int(run["pid"]))
-            await launches.stop(run_id)
-            started = await asyncio.to_thread(
-                launches.relaunch, str(run["blueprint"]), command, cwd, env
-            )
-        except launches.RunError as error:
-            raise ApiError(500, str(error))
+        command, cwd, env = await asyncio.to_thread(launches.snapshot, int(run["pid"]))
+        await launches.stop(run_id)
+        started = await asyncio.to_thread(
+            launches.relaunch, str(run["blueprint"]), command, cwd, env
+        )
         state.bus.launch(started)
         return started
     last = launches.last_launch_args()
@@ -191,12 +162,9 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
         if previous.exact
         else with_saved(blueprint, previous.one_off, [])
     )
-    try:
-        if active:
-            await launches.stop(run_id)
-        started = await asyncio.to_thread(launches.start, state.dimos_dir, blueprint, config)
-    except launches.RunError as error:
-        raise ApiError(500, str(error))
+    if active:
+        await launches.stop(run_id)
+    started = await asyncio.to_thread(launches.start, state.dimos_dir, blueprint, config)
     state.bus.launch(started)
     return started
 
