@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The Go2 over its WebRTC link (the one the Unitree app uses), ported from Go2 Ctrl (dim-go2-dash): signaling,
-//! the data channel, the camera's H.264 and the lidar's voxels, as GO2Connection's native module.
+//! The Go2 over its WebRTC link (the one the Unitree app uses): signaling, the data channel, the camera's H.264
+//! and the lidar's voxels, as GO2Connection's native module.
 
 pub mod clock;
 pub mod conn;

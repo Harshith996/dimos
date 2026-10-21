@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! H.264 RTP depacketizer (RFC 6184): the WebRTC camera track reassembled into Annex-B access
-//! units, each handed on at its marker packet (aiortc and webrtc-rs's SampleBuilder hold a frame
-//! until the next one's first packet, about a frame interval). Copied from the Go2 DDS module.
+//! units, each handed on at its marker packet.
 
 pub struct Packet<'a> {
     pub sequence_number: u16,

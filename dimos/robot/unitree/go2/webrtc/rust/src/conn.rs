@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! One WebRTC session with a Go2, the one the Unitree app opens: the signaling handshake, a data channel for
-//! validation, heartbeat, subscriptions and requests, and the receive-only H.264 camera track. Ported from dim-go2-dash's `robot_rtc.rs`; requests wait for their answer like
-//! unitree_webrtc_connect's `publish_request_new`.
+//! validation, heartbeat, subscriptions and requests, and the receive-only H.264 camera track. A request waits for
+//! its answer.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -101,7 +101,7 @@ fn robot_api(timing: &Timing) -> Result<webrtc::api::API, String> {
     let mut registry = Registry::new();
     registry = configure_nack(registry, &mut media);
     registry = configure_rtcp_reports(registry);
-    // ride out a Wi-Fi blip: the link only counts as lost after link_lost_timeout of silence
+    // the link is lost after link_lost_timeout of silence
     let mut settings = SettingEngine::default();
     settings.set_ice_timeouts(
         Some(secs(timing.link_quiet_timeout)),
@@ -300,7 +300,7 @@ impl Conn {
             let closed = closed.clone();
             pc.on_peer_connection_state_change(Box::new(move |state| {
                 info!(%state, "Go2 peer connection");
-                // Disconnected is a blip that may recover; Failed is link_lost_timeout of silence
+                // Disconnected can recover; Failed is link_lost_timeout of silence
                 if matches!(
                     state,
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed

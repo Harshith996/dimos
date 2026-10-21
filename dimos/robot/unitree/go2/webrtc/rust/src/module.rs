@@ -106,7 +106,7 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-/// python's `CameraInfo` config dict <-> the message; the stamp is set per publish. (As the Go2 DDS module's.)
+/// python's `CameraInfo` config dict <-> the message; the stamp is set per publish.
 mod camera_info_dict {
     use lcm_msgs::sensor_msgs::CameraInfo;
     use lcm_msgs::std_msgs::Header;
@@ -242,7 +242,7 @@ impl Shared {
         self.request(SPORT, api_id, parameter).await
     }
 
-    /// One velocity command, as GO2Connection sent it: the stick emulation, or sport Move with velocity_api.
+    /// One velocity command: the stick emulation, or sport Move with velocity_api.
     async fn drive(&self, x: f64, y: f64, yaw: f64) -> Result<(), String> {
         let conn = self.conn()?;
         if self.config.velocity_api {
@@ -563,7 +563,7 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
     }
 }
 
-/// What every connection needs: big messages unthrottled, the "ai" controller (unitree_webrtc_connect's default),
+/// What every connection needs: big messages unthrottled, the "ai" controller,
 /// the subscriptions and the camera.
 async fn link_up(shared: &Shared, conn: &Conn) -> Result<(), String> {
     conn.send_raw(
@@ -594,7 +594,7 @@ async fn link_up(shared: &Shared, conn: &Conn) -> Result<(), String> {
     Ok(())
 }
 
-/// GO2Connection.start's sequence on the robot: motion mode, stand, balance, rage, obstacle avoidance.
+/// The start sequence: motion mode, stand, balance, rage, obstacle avoidance.
 async fn start_sequence(shared: &Shared) {
     let config = &shared.config;
     if !config.motion_mode.is_empty() {
@@ -776,7 +776,7 @@ impl DataLoop {
     }
 }
 
-/// xyz float32 points as a PointCloud2 in "world", as GO2Connection published the voxel map.
+/// xyz float32 points as a PointCloud2 in "world".
 fn cloud(ns: u64, points: Vec<[f32; 3]>) -> PointCloud2 {
     let field = |name: &str, offset: i32| PointField {
         name: name.into(),

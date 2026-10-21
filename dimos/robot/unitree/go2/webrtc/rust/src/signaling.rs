@@ -15,7 +15,6 @@
 //! The Go2's signaling handshake over its HTTP port, as the Unitree app does it:
 //! `con_notify` (RSA public key, AES-128-GCM wrapped on newer firmware), then the SDP offer
 //! AES-256-ECB under a fresh session key that rides RSA-wrapped, posted to `con_ing_*`.
-//! Ported from dim-go2-dash's `robot_rtc.rs`.
 
 use std::time::Duration;
 

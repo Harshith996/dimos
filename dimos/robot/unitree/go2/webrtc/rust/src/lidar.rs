@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! The Go2's binary data-channel messages and its compressed voxel map (`rt/utlidar/voxel_map_compressed`),
-//! as unitree_webrtc_connect's native decoder reads them. Ported from dim-go2-dash's `sensors.rs`.
+//! decoded.
 
 use serde_json::Value;
 

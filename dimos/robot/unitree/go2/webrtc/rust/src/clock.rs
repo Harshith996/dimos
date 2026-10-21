@@ -14,7 +14,7 @@
 
 //! The Go2's clock on the host's. A stream's own stamps (a data-channel message's) are moved onto the host clock by the smallest
 //! arrival - stamp seen in a sliding window: the message that crossed fastest, so neither a wrong
-//! robot clock nor queueing moves it. Same estimator as the Go2 DDS module's `HostClock`.
+//! robot clock nor queueing moves it.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -102,7 +102,7 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
         .map_or(arrival_ns, |at| at.min(arrival_ns))
 }
 
-/// Estimates when each camera frame was captured (ported from Go2 Ctrl's `CaptureClock`).
+/// Estimates when each camera frame was captured.
 ///
 /// Example: frames 0, 1, 2, 3, 4 arrive at 0, 75, 130, 210, 280 ms. The camera shoots evenly (about every 70 ms);
 /// the bumps are Wi-Fi delay, not when the picture was taken. So frame N gets `first arrival + N x average spacing`,
