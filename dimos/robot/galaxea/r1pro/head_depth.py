@@ -44,6 +44,11 @@ class HeadFloorPriorConfig(ModuleConfig):
     # The floor under the robot, which it stands on and no sensor sees, as points this far apart; 0 radius adds none.
     footprint_radius_m: float = 0.0
     footprint_spacing_m: float = 0.05
+    # Floor between the footprint and the camera's lowest ray, which nothing sees: per view_fill_bin_deg bearing, filled
+    # out to the nearest head point within view_fill_reach_m where that point is floor (an obstacle there leaves the
+    # bearing unfilled, as does a bearing the camera doesn't see); 0 reach fills none.
+    view_fill_reach_m: float = 0.0
+    view_fill_bin_deg: float = 5.0
 
 
 class HeadFloorPrior(Module):
@@ -72,6 +77,15 @@ class HeadFloorPrior(Module):
             in_floor[:, 2] <= self.config.max_height_m
         )
         points = points[keep]
+        if self.config.view_fill_reach_m > 0:
+            unseen = view_floor(
+                _apply(floor_from_camera, points),
+                self.config.footprint_radius_m,
+                self.config.view_fill_reach_m,
+                self.config.view_fill_bin_deg,
+                self.config.footprint_spacing_m,
+            )
+            points = np.concatenate([points, _apply(np.linalg.inv(floor_from_camera), unseen)])
         if self.config.footprint_radius_m > 0:
             under = footprint_floor(self.config.footprint_radius_m, self.config.footprint_spacing_m)
             points = np.concatenate([points, _apply(np.linalg.inv(floor_from_camera), under)])
@@ -118,6 +132,34 @@ def footprint_floor(radius: float, spacing: float) -> np.ndarray:
     return points
 
 
+def view_floor(
+    in_floor: np.ndarray, inner: float, reach: float, bin_deg: float, spacing: float
+) -> np.ndarray:
+    """Floor points in floor_frame on a `spacing` grid from radius `inner` out to, per `bin_deg` bearing, the nearest of
+    `in_floor` (floor_frame points) within `reach`, on the bearings where that nearest point is on the floor."""
+    bins = int(np.ceil(360.0 / bin_deg))
+    radius = np.hypot(in_floor[:, 0], in_floor[:, 1])
+    near = (radius > inner) & (radius < reach)
+    bearing = _bin(in_floor[near, 0], in_floor[near, 1], bin_deg)
+    order = np.lexsort((radius[near], bearing))
+    first = order[np.unique(bearing[order], return_index=True)[1]]
+    nearest = np.zeros(bins)
+    floor_bearings = first[np.abs(in_floor[near][first, 2]) < 1e-3]
+    nearest[bearing[floor_bearings]] = radius[near][floor_bearings]
+    grid = np.arange(-reach, reach + 1e-9, spacing)
+    xx, yy = np.meshgrid(grid, grid)
+    xx, yy = xx.ravel(), yy.ravel()
+    cell_radius = np.hypot(xx, yy)
+    fill = (cell_radius > inner) & (cell_radius < nearest[_bin(xx, yy, bin_deg)])
+    points: np.ndarray = np.c_[xx[fill], yy[fill], np.zeros(int(fill.sum()))]
+    return points
+
+
+def _bin(x: np.ndarray, y: np.ndarray, bin_deg: float) -> np.ndarray:
+    bearing: np.ndarray = (np.degrees(np.arctan2(y, x)) % 360.0 // bin_deg).astype(int)
+    return bearing
+
+
 def _apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
     moved: np.ndarray = points @ matrix[:3, :3].T + matrix[:3, 3]
     return moved
@@ -160,6 +202,10 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
             ]
         ),
         HeadFloorPrior.blueprint(
-            tf_tolerance_s=tf_tolerance_s, footprint_radius_m=R1PRO_CHASSIS_WIDTH_M / 2
+            tf_tolerance_s=tf_tolerance_s,
+            footprint_radius_m=R1PRO_CHASSIS_WIDTH_M / 2,
+            # From a cold start the head's lowest ray meets the floor ~0.74 m out; without this the floor under and
+            # around the robot is an island MLS can't leave.
+            view_fill_reach_m=1.5,
         ).remappings([(HeadFloorPrior, "depth_cloud", "head_depth_raw")]),
     )
