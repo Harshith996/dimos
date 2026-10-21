@@ -51,9 +51,9 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
 
 def test_teleop_cancel_reaches_the_planner() -> None:
     def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
-        (atom,) = (a for a in go2_dds_nav.active_blueprints if a.module is module)
+        (atom,) = (a for a in go2_nav.active_blueprints if a.module is module)
         (stream,) = (s for s in atom.streams if s.name == "goal")
-        return go2_dds_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+        return go2_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
 
     assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 
