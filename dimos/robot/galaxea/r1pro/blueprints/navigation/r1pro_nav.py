@@ -70,7 +70,8 @@ r1pro_nav = autoconnect(
         head_right=False,
     ).remappings([(R1ProConnection, "odometry", "slam_sources")]),
     r1pro_fused_odometry().remappings([(PointLio, "lidar", "lidar_with_robot")]),
-    # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans.
+    # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans and
+    # the head depth (which sees the arms) alike.
     UrdfManager.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
         tf_tolerance_s=TF_TOLERANCE_S,
@@ -82,7 +83,7 @@ r1pro_nav = autoconnect(
         ]
     ),
     r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S).remappings(
-        [(HeadFloorPrior, "head_cloud", "lidar")]
+        [(HeadFloorPrior, "head_cloud", "lidar_with_robot")]
     ),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
