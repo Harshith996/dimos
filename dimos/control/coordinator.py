@@ -42,7 +42,7 @@ from dimos.control.components import (
     split_joint_name,
 )
 from dimos.control.connection.connection_module import ConnectionStatus
-from dimos.control.connection_source import ConnectionSource
+from dimos.control.connection.source import ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,

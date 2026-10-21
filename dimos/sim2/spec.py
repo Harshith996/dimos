@@ -25,7 +25,9 @@ from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 import mujoco
 from pydantic import BaseModel
 
-from dimos.sim2.sensors.spec import Imu, Mount as Mount, Sensor, mounted_sensors
+from dimos.sim2.sensors.composition import Sensor, mounted_sensors
+from dimos.sim2.sensors.imu.spec import Imu
+from dimos.sim2.sensors.spec import Mount as Mount
 
 
 @dataclass(frozen=True)

@@ -31,10 +31,10 @@ import mujoco
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.sim2.evidence import run_record, write_record
-from dimos.sim2.runtime import SimulationRuntime
-from dimos.sim2.scene_types import SceneDescription, SceneState, SceneUpdate
 from dimos.sim2.spec import WorldConfig
+from dimos.sim2.world.evidence import run_record, write_record
+from dimos.sim2.world.runtime import SimulationRuntime
+from dimos.sim2.world.scene_types import SceneDescription, SceneState, SceneUpdate
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -137,7 +137,7 @@ class SimulationModule(Module):
                 [
                     str(executable),
                     "-m",
-                    "dimos.sim2.viewer",
+                    "dimos.sim2.world.viewer",
                     str(Path(description["model"]).with_suffix(".json")),
                 ]
             )

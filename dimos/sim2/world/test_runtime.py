@@ -22,9 +22,9 @@ import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.sim2.evidence import file_identity
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene_types import SceneUpdate
+from dimos.sim2.world.evidence import file_identity
+from dimos.sim2.world.scene_types import SceneUpdate
 
 
 def _calibrate_motor(model, prefix):
@@ -153,7 +153,7 @@ def test_expired_motor_command_stops_using_feedforward(worlds, clients, mocker):
     binding = world.robots["left"]
     assert world.data.ctrl[binding.actuators[0]] == pytest.approx(3)
     velocity = world.data.qvel[binding.dofs[0]]
-    mocker.patch("dimos.sim2.runtime.time.monotonic", return_value=time.monotonic() + 1)
+    mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=time.monotonic() + 1)
 
     world.step()
 
@@ -212,7 +212,7 @@ def test_disabled_effort_outputs_do_not_reenable_when_command_expires(worlds, cl
     client = clients(world, writable=True)
     client.disable(observed=client.read())
     world.step()
-    mocker.patch("dimos.sim2.runtime.time.monotonic", return_value=time.monotonic() + 1)
+    mocker.patch("dimos.sim2.world.runtime.time.monotonic", return_value=time.monotonic() + 1)
 
     world.step()
 
@@ -286,7 +286,9 @@ def test_resume_preserves_pose_and_motor_enable_but_invalidates_old_work(
     sim_time = float(world.data.time)
     previous = world.snapshots.read_observation()
     world.set_paused(True)
-    mocker.patch("dimos.sim2.runtime.time.time", return_value=previous.values["wall_time"][0] + 10)
+    mocker.patch(
+        "dimos.sim2.world.runtime.time.time", return_value=previous.values["wall_time"][0] + 10
+    )
 
     world.set_paused(False)
 

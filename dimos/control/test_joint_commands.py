@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, JointState as JointReading
-from dimos.control.connection_source import ConnectionSource
+from dimos.control.connection.source import ConnectionSource
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop

@@ -31,16 +31,19 @@ from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene_types import SceneUpdate
 from dimos.sim2.sensors.camera.device import CameraDevice
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
-from dimos.sim2.sensors.imu import ImuDevice, SimImuModule
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.imu.device import ImuDevice
+from dimos.sim2.sensors.imu.module import SimImuModule
 from dimos.sim2.sensors.lidar.device import LidarDevice
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.raycast import Raycaster
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
-from dimos.sim2.sensors.spec import Camera, Lidar, Mount
+from dimos.sim2.sensors.spec import Mount
+from dimos.sim2.world.scene_types import SceneUpdate
 
 
 @pytest.fixture
@@ -299,7 +302,7 @@ def test_capture_timestamps_do_not_follow_host_polling_jitter(reader, mocker):
     device = ImuDevice(observer, sensor, "left")
     try:
         first = device.poll()[0]
-        mocker.patch("dimos.sim2.runtime.time.time", return_value=first.value.ts + 10)
+        mocker.patch("dimos.sim2.world.runtime.time.time", return_value=first.value.ts + 10)
         for _ in range(22):
             world.step()
         second = device.poll()[0]

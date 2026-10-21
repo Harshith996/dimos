@@ -38,10 +38,10 @@ from dimos.sim2.ipc.abi import (
     robot_descriptor,
 )
 from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
-from dimos.sim2.scene import describe_scene, load_scene
-from dimos.sim2.scene_types import EntityState, RegionState, SceneState, SceneUpdate
-from dimos.sim2.sensors.spec import Imu
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.spec import RobotConfig, WorldConfig
+from dimos.sim2.world.scene import describe_scene, load_scene
+from dimos.sim2.world.scene_types import EntityState, RegionState, SceneState, SceneUpdate
 
 STATE = mujoco.mjtState.mjSTATE_INTEGRATION
 
