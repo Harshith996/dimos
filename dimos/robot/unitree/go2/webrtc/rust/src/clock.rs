@@ -102,12 +102,15 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
         .map_or(arrival_ns, |at| at.min(arrival_ns))
 }
 
-/// Capture times for the camera's frames (Go2 Ctrl's `CaptureClock`). The Go2's RTP time steps a fixed ~60 ticks a
-/// frame, not with a clock, so its rate is measured from arrivals: an anchor is a frame whose ticks top every earlier
-/// one, and the rate is ns per tick from the second anchor's first-packet arrival to the latest's (the first is left
-/// out: frames right after it go out a reorder window early). A frame lands at the second anchor's arrival plus its
-/// ticks at that rate: its arrival with the network's jitter taken out. The decoder hands frames out in display order,
-/// which a stream with reordered frames doesn't send them in, so a decoded frame takes the earliest ticks waiting.
+/// Estimates when each camera frame was captured (ported from Go2 Ctrl's `CaptureClock`).
+///
+/// The Go2 doesn't send real capture times. Its RTP timestamp just goes up by about 60 per frame, so it's a frame
+/// counter, not a clock. To turn it into time, we measure how many nanoseconds one tick takes, using when frames
+/// arrive (the very first frame is skipped because its timing is off). Each frame then gets a time of:
+/// `reference arrival + its ticks x ns per tick`. That is close to its arrival time, but without the network jitter.
+///
+/// The decoder may output frames in a different order than they arrived, so each decoded frame takes the
+/// smallest waiting timestamp.
 #[derive(Debug, Default)]
 pub struct CaptureClock {
     max_waiting: usize,
