@@ -51,7 +51,6 @@ color_image = "sensor_msgs.Image"
 camera_info = "sensor_msgs.CameraInfo"
 tf = "tf2_msgs.TFMessage"
 battery = "sensor_msgs.BatteryState"
-command_result = "std_msgs.String"
 
 [profile.release]
 lto = "thin"

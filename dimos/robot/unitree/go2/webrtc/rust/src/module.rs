@@ -14,8 +14,8 @@
 
 //! GO2Connection's real-robot side: the Go2 over its WebRTC link. `cmd_vel` and `command` (one verb per message,
 //! see `parse_verb`) in; `odom` (+ its tf chain), `lidar`, the decoded front camera on `color_image`, `camera_info`,
-//! `battery` and `command_result` (the outcome of each verb sent with an id) out. Verbs run one at a time in order;
-//! `stop`, `damp` and teardown cancel the one running and the ones waiting. Poses are stamped with the Go2's own stamp moved onto the host clock
+//! and `battery` out. Verbs run one at a time in order, fire-and-forget as on GO2DDS (a failure is logged); `stop`,
+//! `damp` and teardown cancel the one running and the ones waiting. Poses are stamped with the Go2's own stamp moved onto the host clock
 //! (clock.rs); frames with their first packet's arrival, de-jittered by their RTP tick spacing (CaptureClock), and
 //! scans with their arrival, since the Go2 sends no usable capture time for either.
 //! One thread decodes video, one the data channel; tokio runs the session and the requests.
@@ -47,6 +47,7 @@ const SPORT: &str = "rt/api/sport/request";
 const MOTION_SWITCHER: &str = "rt/api/motion_switcher/request";
 const VUI: &str = "rt/api/vui/request";
 const OBSTACLES_AVOID: &str = "rt/api/obstacles_avoid/request";
+const LIDAR_SWITCH: &str = "rt/utlidar/switch";
 const WIRELESS_CONTROLLER: &str = "rt/wirelesscontroller";
 const LIDAR_TOPIC: &str = "rt/utlidar/voxel_map_compressed";
 const POSE_TOPIC: &str = "rt/utlidar/robot_pose";
@@ -62,7 +63,10 @@ const RAGE_MODE: i64 = 2059;
 /// The motion switcher's CheckMode / SelectMode.
 const CHECK_MODE: i64 = 1001;
 const SELECT_MODE: i64 = 1002;
+const VUI_SET_VOLUME: i64 = 1003;
 const VUI_SET_BRIGHTNESS: i64 = 1005;
+const VUI_SET_LED: i64 = 1007;
+const VUI_LEVEL_MAX: i64 = 10;
 const OBSTACLES_AVOID_SWITCH_SET: i64 = 1001;
 
 #[native_config]
@@ -392,6 +396,31 @@ impl Shared {
                 )
                 .await
             }
+            Verb::Lidar(on) => done(
+                self.conn()?
+                    .publish(LIDAR_SWITCH, json!(if on { "on" } else { "off" }))
+                    .await,
+            ),
+            Verb::Volume(level) => {
+                self.request(VUI, VUI_SET_VOLUME, Some(json!({ "volume": level })))
+                    .await
+            }
+            Verb::Led(color) => {
+                // brightness rides along so the colour is visible: 0 for off, else max
+                let level = if color == "off" { 0 } else { VUI_LEVEL_MAX };
+                self.request(
+                    VUI,
+                    VUI_SET_BRIGHTNESS,
+                    Some(json!({ "brightness": level })),
+                )
+                .await?;
+                self.request(
+                    VUI,
+                    VUI_SET_LED,
+                    Some(json!({ "color": color, "flash_cycle": 0, "time": 0 })),
+                )
+                .await
+            }
             Verb::MotionMode(name) => done(self.set_motion_mode(&name, generation).await),
             Verb::Request {
                 topic,
@@ -421,6 +450,9 @@ pub enum Verb {
     Rage(bool),
     Joystick(bool),
     Brightness(i64),
+    Volume(i64),
+    Led(String),
+    Lidar(bool),
     ObstacleAvoidance(bool),
     MotionMode(String),
     Request {
@@ -463,10 +495,10 @@ fn sport_id(name: &str) -> Option<i64> {
     })
 }
 
-/// The `command` vocabulary: `<verb>` or `<verb> <args>`, optionally led by `#<id> `, which asks for the outcome
-/// on `command_result`. Sport actions by GO2DDS's names or by number (`stand-up`, `sit`, `1016`), switches
-/// (`joystick on`, `obstacle-avoidance off`), `brightness <0-10>`, `rage on|off` (GO2Connection's
-/// `set_rage_mode`: BalanceStand, the toggle, then SwitchJoystick), `move <x> <y> <yaw> <seconds>`, `stop`,
+/// The `command` vocabulary, GO2DDS's: `<verb>` or `<verb> <arg>`. Sport actions by name or number (`stand-up`,
+/// `sit`, `1016`), switches (`lidar on`, `joystick on`, `obstacle-avoidance off`), `brightness <0-10>`,
+/// `volume <0-10>`, `led <color>` and `rage on|off` (GO2Connection's `set_rage_mode`: BalanceStand, the toggle,
+/// then SwitchJoystick). Beyond GO2DDS's, for GO2Connection's rpcs: `move <x> <y> <yaw> <seconds>`, `stop`,
 /// `motion-mode <name>` and `request <topic> <api_id> [<json parameter>]`.
 pub fn parse_verb(verb: &str) -> Option<Verb> {
     let verb = verb.trim();
@@ -494,7 +526,12 @@ pub fn parse_verb(verb: &str) -> Option<Verb> {
         "rage" => Verb::Rage(on_off(arg)?),
         "joystick" => Verb::Joystick(on_off(arg)?),
         "obstacle-avoidance" => Verb::ObstacleAvoidance(on_off(arg)?),
-        "brightness" => Verb::Brightness(arg.parse::<i64>().ok()?.clamp(0, 10)),
+        "brightness" => Verb::Brightness(arg.parse::<i64>().ok()?.clamp(0, VUI_LEVEL_MAX)),
+        "volume" => Verb::Volume(arg.parse::<i64>().ok()?.clamp(0, VUI_LEVEL_MAX)),
+        "led" if !arg.is_empty() && arg.chars().all(|c| c.is_ascii_alphanumeric()) => {
+            Verb::Led(arg.to_string())
+        }
+        "lidar" => Verb::Lidar(on_off(arg)?),
         "motion-mode" if !arg.is_empty() => Verb::MotionMode(arg.to_string()),
         "request" => {
             let mut parts = arg.splitn(3, ' ');
@@ -547,47 +584,17 @@ pub struct Go2WebRtc {
     #[output(encode = BatteryState::encode)]
     battery: Output<BatteryState>,
 
-    #[output(encode = std_msgs::String::encode)]
-    command_result: Output<std_msgs::String>,
-
     #[config]
     config: Config,
 
     shared: Option<Arc<Shared>>,
-    /// verbs waiting their turn, with their id and the cancel count they were sent under
+    /// verbs waiting their turn, with the cancel count they were sent under
     queue: Option<tokio_mpsc::UnboundedSender<Queued>>,
 }
 
 struct Queued {
-    id: Option<String>,
     verb: Verb,
     generation: u64,
-}
-
-/// Splits `#<id> <verb>` into its id and the verb.
-fn split_id(message: &str) -> (Option<String>, &str) {
-    let message = message.trim();
-    match message
-        .strip_prefix('#')
-        .and_then(|rest| rest.split_once(' '))
-    {
-        Some((id, verb)) => (Some(id.to_string()), verb),
-        None => (None, message),
-    }
-}
-
-/// `#<id> ok <json result>` or `#<id> error <message>` on `command_result`.
-async fn report(
-    output: &Output<std_msgs::String>,
-    id: Option<String>,
-    result: Result<Value, String>,
-) {
-    let Some(id) = id else { return };
-    let data = match result {
-        Ok(value) => format!("#{id} ok {value}"),
-        Err(err) => format!("#{id} error {err}"),
-    };
-    let _ = output.publish(&std_msgs::String { data }).await;
 }
 
 impl Go2WebRtc {
@@ -611,23 +618,13 @@ impl Go2WebRtc {
         self.queue = Some(queue);
         {
             let shared = shared.clone();
-            let results = self.command_result.clone();
             tokio::spawn(async move {
-                while let Some(Queued {
-                    id,
-                    verb,
-                    generation,
-                }) = queued.recv().await
-                {
+                while let Some(Queued { verb, generation }) = queued.recv().await {
                     let shown = format!("{verb:?}");
-                    let result = {
-                        let _turn = shared.turn.lock().await;
-                        shared.run(verb, generation).await
-                    };
-                    if let Err(err) = &result {
+                    let _turn = shared.turn.lock().await;
+                    if let Err(err) = shared.run(verb, generation).await {
                         warn!(verb = shown, "command failed: {err}");
                     }
-                    report(&results, id, result).await;
                 }
             });
         }
@@ -715,33 +712,22 @@ impl Go2WebRtc {
         let (Some(shared), Some(queue)) = (self.shared.clone(), self.queue.clone()) else {
             return;
         };
-        let (id, text) = split_id(&msg.data);
-        let Some(verb) = parse_verb(text) else {
+        let Some(verb) = parse_verb(&msg.data) else {
             warn!(verb = %msg.data, "unknown command verb");
-            report(
-                &self.command_result,
-                id,
-                Err(format!("unknown verb {text:?}")),
-            )
-            .await;
             return;
         };
         info!(?verb, "command");
         if cuts_in(&verb) {
             let generation = shared.cancels.fetch_add(1, Ordering::Relaxed) + 1;
-            let results = self.command_result.clone();
             tokio::spawn(async move {
-                let result = shared.run(verb, generation).await;
-                report(&results, id, result).await;
+                if let Err(err) = shared.run(verb, generation).await {
+                    warn!(verb = %msg.data, "command failed: {err}");
+                }
             });
             return;
         }
         let generation = shared.cancels.load(Ordering::Relaxed);
-        let _ = queue.send(Queued {
-            id,
-            verb,
-            generation,
-        });
+        let _ = queue.send(Queued { verb, generation });
     }
 }
 
@@ -1319,11 +1305,6 @@ mod tests {
         for line in include_str!("../tests/fixtures/verbs.txt").lines() {
             assert!(parse_verb(line).is_some(), "{line}");
         }
-        assert_eq!(
-            split_id("#ab12 stand-up"),
-            (Some("ab12".into()), "stand-up")
-        );
-        assert_eq!(split_id(" sit "), (None, "sit"));
     }
 
     #[test]
@@ -1332,6 +1313,9 @@ mod tests {
         assert_eq!(parse_verb(" 1016 "), Some(Verb::Sport(1016)));
         assert_eq!(parse_verb("sit"), Some(Verb::Sport(1009)));
         assert_eq!(parse_verb("damp"), Some(Verb::Sport(DAMP)));
+        assert_eq!(parse_verb("lidar off"), Some(Verb::Lidar(false)));
+        assert_eq!(parse_verb("volume 42"), Some(Verb::Volume(10)));
+        assert_eq!(parse_verb("led red"), Some(Verb::Led("red".into())));
         assert!(cuts_in(&parse_verb("damp").unwrap()) && cuts_in(&Verb::Stop));
         assert_eq!(parse_verb("rage on"), Some(Verb::Rage(true)));
         assert_eq!(

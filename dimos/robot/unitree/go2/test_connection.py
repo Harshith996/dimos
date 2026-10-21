@@ -260,8 +260,7 @@ def test_every_verb_the_rpcs_send_is_in_the_rust_fixture() -> None:
     conn = GO2Connection(g=GlobalConfig(robot_ip="192.168.123.161"))
     assert conn.connection is None
     sent: list[str] = []
-    conn._send = sent.append  # type: ignore[method-assign]
-    conn._ask = lambda verb, *_, **__: sent.append(verb)  # type: ignore[method-assign]
+    conn._send = lambda verb: sent.append(verb) or True  # type: ignore[method-assign]
     twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, -0.2))
     conn.move(twist)
     conn.move(twist, duration=1.5)

@@ -20,7 +20,6 @@ import sys
 from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
-import uuid
 
 from pydantic import Field, model_validator
 from reactivex import defer, empty, operators as ops
@@ -440,10 +439,9 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
-    # One verb per message to the Rust module, e.g. "stand-up", "rage on", "move 0.5 0 0 2"; only the rpcs publish it.
-    # "#<id> <verb>" asks for "#<id> ok <json>" or "#<id> error <message>" on command_result.
+    # One verb per message to the Rust module, GO2DDS's vocabulary (the Rust `parse_verb`): "stand-up", "rage on",
+    # "move 0.5 0 0 2". Fire-and-forget, as on GO2DDS; only the rpcs publish it.
     command: In[String]
-    command_result: Out[String]
     battery: Out[BatteryState]
 
     # None on the real robot: the Rust module holds the link
@@ -467,8 +465,6 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._results: dict[str, tuple[Event, list[str]]] = {}
-        self._results_lock = Lock()
         self.connection = make_connection(self.config.ip, self.config)
         if self.connection is None:
             return
@@ -497,7 +493,6 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             linked = Event()
             for unsubscribe in (
                 self.battery.transport.subscribe(self._on_battery, self.battery),
-                self.command_result.transport.subscribe(self._on_result, self.command_result),
                 self.odom.transport.subscribe(lambda _: linked.set(), self.odom),
             ):
                 self.register_disposable(Disposable(unsubscribe))
@@ -566,37 +561,10 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
         Module.stop(self)
 
-    def _send(self, verb: str) -> None:
-        """A verb for the Rust module without waiting for it (cmd_vel-like: move, stop)."""
+    def _send(self, verb: str) -> bool:
+        """A verb for the Rust module, as Go2Base.send_command: it runs in order, and a failure is logged there."""
         self.command.transport.publish(String(verb))
-
-    def _ask(self, verb: str, extra_wait: float = 0.0, requests: int = 1) -> Any:
-        """A verb for the Rust module, waiting for its outcome: the robot's answer, or an error. It waits for
-        `requests` robot answers plus one more answer_timeout for the round trip, and the verb's own `extra_wait`."""
-        timeout = (requests + 1) * self.config.timing.answer_timeout + extra_wait
-        request_id = uuid.uuid4().hex
-        done, outcome = Event(), list[str]()
-        with self._results_lock:
-            self._results[request_id] = (done, outcome)
-        try:
-            self.command.transport.publish(String(f"#{request_id} {verb}"))
-            if not done.wait(timeout):
-                raise TimeoutError(f"the Go2 module didn't finish {verb!r} within {timeout} s")
-        finally:
-            with self._results_lock:
-                self._results.pop(request_id, None)
-        status, _, detail = outcome[0].partition(" ")
-        if status != "ok":
-            raise RuntimeError(f"Go2 {verb!r}: {detail}")
-        return json.loads(detail) if detail else None
-
-    def _on_result(self, msg: String) -> None:
-        request_id, _, outcome = msg.data.removeprefix("#").partition(" ")
-        with self._results_lock:
-            waiting = self._results.get(request_id)
-        if waiting:
-            waiting[1].append(outcome)
-            waiting[0].set()
+        return True
 
     def _on_battery(self, msg: BatteryState) -> None:
         self._latest_battery = msg
@@ -644,37 +612,30 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
         if self.connection is None:
-            verb = f"move {twist.linear.x} {twist.linear.y} {twist.angular.z} {duration}"
-            if duration > 0:
-                # a timed move blocks until it's done, as on the other backends
-                self._ask(verb, extra_wait=duration, requests=0)
-            else:
-                self._send(verb)
-            return True
+            return self._send(
+                f"move {twist.linear.x} {twist.linear.y} {twist.angular.z} {duration}"
+            )
         return self.connection.move(twist, duration)
 
     @rpc
     def standup(self) -> bool:
         """Make the robot stand up."""
         if self.connection is None:
-            self._ask("stand-up")
-            return True
+            return self._send("stand-up")
         return self.connection.standup()
 
     @rpc
     def liedown(self) -> bool:
         """Make the robot lie down."""
         if self.connection is None:
-            self._ask("stand-down")
-            return True
+            return self._send("stand-down")
         return self.connection.liedown()
 
     @rpc
     def balance_stand(self) -> bool:
         """Enter BalanceStand: neutral state for switching locomotion modes"""
         if self.connection is None:
-            self._ask("balance")
-            return True
+            return self._send("balance")
         return self.connection.balance_stand()
 
     @rpc
@@ -684,13 +645,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
         precondition before toggling; sim backends are no-ops.
         """
         if self.connection is None:
-            timing = self.config.timing
-            self._ask(
-                f"rage {'on' if enable else 'off'}",
-                extra_wait=timing.rage_balance_settle + timing.rage_switch_settle,
-                requests=3,
-            )
-            result = True
+            result = self._send(f"rage {'on' if enable else 'off'}")
         else:
             result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode", enabled=enable)
@@ -700,32 +655,28 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def sport_command(self, api_id: int) -> bool:
         """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
         if self.connection is None:
-            self._ask(str(api_id))
-            return True
+            return self._send(str(api_id))
         return self.connection.sport_command(api_id)
 
     @rpc
     def set_light(self, level: int) -> bool:
         """Head-LED brightness level 0-10 (0 = off)."""
         if self.connection is None:
-            self._ask(f"brightness {level}")
-            return True
+            return self._send(f"brightness {level}")
         return self.connection.set_light(level)
 
     @rpc
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         """Toggle the onboard obstacle avoidance."""
         if self.connection is None:
-            self._ask(f"obstacle-avoidance {'on' if enabled else 'off'}")
-            return True
+            return self._send(f"obstacle-avoidance {'on' if enabled else 'off'}")
         return self.connection.set_obstacle_avoidance(enabled)
 
     @rpc
     def switch_joystick(self, enable: bool = True) -> bool:
         """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
         if self.connection is None:
-            self._ask(f"joystick {'on' if enable else 'off'}")
-            return True
+            return self._send(f"joystick {'on' if enable else 'off'}")
         return self.connection.switch_joystick(enable)
 
     @rpc
@@ -769,12 +720,13 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             topic: The RTC topic to publish to
             data: The data dictionary to publish
         Returns:
-            The result of the publish request
+            The result of the publish request (on the real robot it's sent without waiting: {})
         """
         if self.connection is None:
             parameter = data.get("parameter")
             verb = f"request {topic} {data['api_id']}"
             if parameter is not None:
                 verb += f" {json.dumps(parameter)}"
-            return self._ask(verb)  # type: ignore[no-any-return]
+            self._send(verb)
+            return {}
         return self.connection.publish_request(topic, data)
