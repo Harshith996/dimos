@@ -32,14 +32,12 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 YamLeaderSide = Literal["left", "right"]
 YAM_LEADER_SIDES: tuple[YamLeaderSide, ...] = ("left", "right")
 
-# The uynitsuj YAM active leader: six arm servos then the gripper trigger, IDs 1-7.
-# The calibration artifact names them joint_1..joint_7 (the OpenArm Mini schema).
+# Six arm servos then the gripper trigger, IDs 1-7, named joint_1..joint_7 in the calibration.
 YAM_LEADER_ARM_MOTORS = ("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6")
 YAM_LEADER_GRIPPER_MOTOR = "joint_7"
 YAM_LEADER_MOTORS = (*YAM_LEADER_ARM_MOTORS, YAM_LEADER_GRIPPER_MOTOR)
 
-# dual_openyam.urdf joint limits, identical for both arms. Sender-side clamp;
-# the coordinator still enforces the hardware limits.
+# dual_openyam.urdf joint limits; sender-side clamp, the coordinator still enforces its own.
 YAM_FOLLOWER_JOINT_LIMITS: tuple[tuple[float, float], ...] = (
     (-2.618, 3.1416),
     (0.0, 3.6652),
@@ -79,11 +77,7 @@ def map_side_readings(
     previous_positions_by_joint: Mapping[str, float] | None = None,
     max_joint_jump_radians: float | None = None,
 ) -> YamLeaderSideCommand:
-    """Calibrated leader radians to follower joint positions and a gripper opening.
-
-    Leader joint N drives follower joint N. The trigger reads 0 rad released;
-    squeezing it through ``gripper_travel_radians`` closes the gripper.
-    """
+    """Calibrated leader radians to follower joints and a gripper opening; trigger 0 rad = released."""
     missing = set(YAM_LEADER_MOTORS) - set(readings)
     if missing:
         raise ValueError(f"YAM leader readings missing motors: {sorted(missing)}")
@@ -174,14 +168,7 @@ def streamed_trajectory(
     positions: Mapping[str, float],
     horizon_s: float,
 ) -> JointTrajectory:
-    """Trajectory from the last streamed target to the new one over horizon_s.
-
-    With two points the trajectory task anchors the first to its own live
-    commanded position while it is executing, so consecutive targets continue
-    from the last command instead of restarting from the measured position.
-    Without a last target (first tick, or after a rejected send) a single point
-    slews from the measured position, like a joint_command stream.
-    """
+    """Two points from the last streamed target, or one point from the measured position."""
     if not (math.isfinite(horizon_s) and horizon_s > 0.0):
         raise ValueError("horizon_s must be positive")
     names = list(positions)

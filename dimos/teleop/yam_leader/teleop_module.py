@@ -98,12 +98,7 @@ class YamLeaderReader(OpenArmMiniLeaderReader):
 
 
 class YamLeaderTeleopModuleConfig(ModuleConfig):
-    """Config for YAM leader teleoperation of the dual OpenYAM.
-
-    Startup is non-interactive: calibration artifacts come from
-    ``dimos hardware feetech-leader calibrate`` run against the YAM leader
-    directories beforehand.
-    """
+    """YAM leader teleop config; calibrate first with ``dimos hardware feetech-leader calibrate``."""
 
     tick_period_s: float = Field(default=0.02, gt=0.0)
     port_left: str = YAM_LEADER_UNCONFIGURED_PORT
@@ -118,10 +113,7 @@ class YamLeaderTeleopModuleConfig(ModuleConfig):
     enabled_sides: Annotated[tuple[YamLeaderSide, ...], Field(min_length=1)] | None = None
     # First-order low-pass on the mapped arm targets; None passes readings through.
     command_filter_cutoff_hz: float | None = 6.0
-    # With a coordinator link, each tick streams a two-point trajectory from the
-    # last target to the new one over this horizon, so the trajectory task keeps
-    # interpolating from its own last command instead of restarting from the
-    # measured position every sample. None streams joint_command instead.
+    # Two-point trajectory from the last target over this horizon; None streams joint_command.
     trajectory_horizon_s: float | None = 0.04
 
     @model_validator(mode="after")
@@ -164,16 +156,7 @@ class YamLeaderTeleopModuleConfig(ModuleConfig):
 
 
 class YamLeaderTeleopModule(Module):
-    """Publish follower joint targets and gripper openings read from YAM leaders.
-
-    Outputs:
-        - joint_command: JointState of the enabled arms' six joints each, used
-          when no coordinator link is wired or trajectory_horizon_s is None
-        - left_gripper_command / right_gripper_command: Float32 opening, 1 = open
-
-    With a coordinator link (any module exposing execute_trajectory, wired by
-    the blueprint) arm targets stream as two-point trajectories instead.
-    """
+    """Follower joint targets and gripper openings (1 = open) read from the YAM leaders."""
 
     config: YamLeaderTeleopModuleConfig  # type: ignore[assignment]
 
@@ -314,8 +297,7 @@ class YamLeaderTeleopModule(Module):
         last_sent = self._last_sent_by_joint or None
         result = control.execute_trajectory(streamed_trajectory(last_sent, positions, horizon))
         if last_sent is not None and not _accepted(result):
-            # The task completed between ticks and our anchor no longer matched
-            # the measured start; slew from the measured position this tick.
+            # The anchor no longer matches the measured start; slew from it this tick.
             result = control.execute_trajectory(streamed_trajectory(None, positions, horizon))
         if _accepted(result):
             self._last_sent_by_joint = positions

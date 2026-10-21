@@ -37,10 +37,7 @@ from dimos.robot.manipulators.dual_openyam.joints import (
 )
 from dimos.teleop.yam_leader.teleop_module import YamLeaderTeleopModule
 
-# Per-joint follower speed caps for streamed leader targets. Leader-follower
-# needs human arm speeds: the OpenArm leader runs 3 rad/s on the arm and 6 on
-# the wrists. The YAM arm joints get 3 (the URDF's 2 felt slow next to the
-# wrists on the rig, 2026-10-20) and the wrists 4.
+# Leader-follower needs human arm speeds; the URDF's 2 rad/s felt slow on the rig.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
 DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
 _WRIST_JOINT_INDICES = (3, 4, 5)  # joints 4 to 6 of each arm
@@ -61,11 +58,7 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
 def with_wrist_gains(
     component: HardwareComponent, kp: float | None, kd: float | None
 ) -> HardwareComponent:
-    """The component with joints 4 to 6 of each arm at the given MIT gains.
-
-    main drives the wrist motors at kp 10, kd 1.5, which follows a leader late;
-    the step tests of 2026-10-16 settled on kp 80, kd 1.5 for both arms.
-    """
+    """The component with joints 4 to 6 of each arm at the given MIT gains."""
     if kp is None and kd is None:
         return component
     assert component.wb_config is not None
@@ -104,7 +97,7 @@ class DualOpenYamLeaderCoordinator(DualOpenYamCoordinator):
         )
 
 
-# The robot's zenoh router for the split deployment. Named, not scouted.
+# Named, not scouted.
 DUAL_OPENYAM_ROUTER = os.environ.get("DIMOS_OPENYAM_ROUTER", "tcp/127.0.0.1:7447")
 
 
@@ -151,17 +144,13 @@ def _follower(visualization: ManipulationVisualizationConfig | dict[str, str]) -
     )
 
 
-# One machine: leaders, coordinator and Viser together. The leader ports given
-# select the sides; the follower is in-memory unless both CAN ports are set.
+# The leader ports given select the sides; the follower is in-memory unless both CAN ports are set.
 teleop_dual_openyam_leader = autoconnect(
     YamLeaderTeleopModule.blueprint(),
     _follower({"backend": "viser"}),
 )
 
-# Split deployment: leaders on an operator machine, follower on the robot. Both
-# halves name the streams the same, so they ride the robot's router once the
-# operator machine joins it (--robot-ip <robot>). The robot owns the bus-wide
-# Coordinator name, so the operator half does not claim it.
+# Leaders on the operator machine (--robot-ip <robot>); the robot owns the Coordinator name.
 teleop_dual_openyam_leader_operator = YamLeaderTeleopModule.blueprint().global_config(
     zenoh_mode="client", serve_coordinator_rpc=False
 )
