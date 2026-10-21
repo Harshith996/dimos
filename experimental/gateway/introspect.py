@@ -42,15 +42,9 @@ RUN_REFUSED = {
 }
 
 
-def internal_fields() -> set[str]:
-    """ModuleConfig's own fields (RPC plumbing, the global config): no module's settings."""
-    from dimos.core.module import ModuleConfig
-
-    return set(ModuleConfig.model_fields)
-
-
 def run_options() -> tuple[set[str], set[str], dict[str, str]]:
-    """`dimos run`'s own options, read from its command: (taking a value, switches, refused with why)."""
+    """`dimos run`'s own options, read from its command: (taking a value, switches, refused with why);
+    a refused one's value is in the first set too, so it's skipped along with it."""
     import typer.main
 
     from dimos.cli.dimos import main
@@ -64,8 +58,7 @@ def run_options() -> tuple[set[str], set[str], dict[str, str]]:
             continue
         if param.name in RUN_REFUSED:
             refused.update(dict.fromkeys(names, RUN_REFUSED[param.name]))
-        else:
-            (switches if param.is_flag else values).update(names)  # type: ignore[attr-defined]
+        (switches if param.is_flag else values).update(names)  # type: ignore[attr-defined]
     return values, switches, refused
 
 
@@ -403,10 +396,7 @@ def field_args(
     from experimental.gateway.overrides import is_secret_name
 
     args = {}
-    internal = internal_fields()
     for name, field in fields.items():
-        if name in internal:
-            continue
         required, kind = field.is_required(), field.annotation
         try:
             default = None if required else field.get_default(call_default_factory=True)
@@ -433,32 +423,55 @@ def field_args(
     return args
 
 
+def parser_schema(bp: Any) -> Any:
+    """dimos run's own view of a blueprint's settings (a private method: dimos has no public one)."""
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+
+    return BlueprintConfigParser(bp)._get_schema()
+
+
+def settable(schema: Any, root: str) -> set[str]:
+    """The fields `dimos run` takes a flag for under `root` (a module's name, or "g")."""
+    return {target.path[0] for target in schema.targets if target.root == root}
+
+
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     from dimos.core.module import ModuleConfig
 
-    fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
-    if fields is None:
-        raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
-    return field_args(fields, set(ModuleConfig.model_fields), values)
+    schema = parser_schema(module.blueprint())
+    (only,) = schema.modules
+    fields = only.config_cls.model_fields
+    keep = settable(schema, only.atom.name)
+    return field_args(
+        {k: f for k, f in fields.items() if k in keep}, set(ModuleConfig.model_fields), values
+    )
 
 
 def config(name: str) -> dict[str, Any]:
-    """A blueprint's config schema: GlobalConfig's fields, and each module's."""
+    """A blueprint's config schema: the GlobalConfig and module fields `dimos run` takes flags for."""
     from dimos.core.global_config import GlobalConfig
+    from dimos.core.module import ModuleConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
+    schema = parser_schema(get_by_name(name))
     modules: dict[str, Any] = {}
-    for atom in get_by_name(name).active_blueprints:
+    for module in schema.modules:
+        atom = module.atom
         entry: dict[str, Any] = {"class": type_name(atom.module)}
         try:
-            entry["args"] = module_args(atom.module, dict(atom.kwargs))
+            keep = settable(schema, atom.name)
+            fields = {k: f for k, f in module.config_cls.model_fields.items() if k in keep}
+            entry["args"] = field_args(fields, set(ModuleConfig.model_fields), dict(atom.kwargs))
         except Exception as error:  # a module's config class is its own code
             entry["args"] = {}
             entry["error"] = f"{type(error).__name__}: {error}"
         modules[atom.name] = entry
+    keep = settable(schema, "g")
     return {
         "name": name,
-        "global": field_args(GlobalConfig.model_fields, set()),
+        "global": field_args(
+            {k: f for k, f in GlobalConfig.model_fields.items() if k in keep}, set()
+        ),
         "modules": modules,
     }
 
@@ -492,22 +505,31 @@ def module_config(name: str) -> dict[str, Any]:
     return {"name": registry, "class": type_name(cls), "args": module_args(cls)}
 
 
-def check_args(name: str, args: list[str]) -> dict[str, Any]:
-    from pydantic import TypeAdapter, ValidationError
+def parse_error(parser: Any, tokens: list[str]) -> str | None:
+    """What `dimos run` would say about these flags alone (its first line), or None if it takes them."""
+    try:
+        parser.parse(tokens, environ={})
+    except Exception as error:
+        text = str(error).strip()
+        return text.splitlines()[0] if text else type(error).__name__
+    return None
 
+
+def check_args(name: str, args: list[str]) -> dict[str, Any]:
+    """Each flag on its own, as `dimos run` would take it: one error per flag, where dimos stops at the first.
+    Grouping a flag with its value needs the parser's private _resolve_target (dimos has no public one)."""
     from dimos.cli.dimos import normalize_argv
-    from dimos.core.coordination.blueprint_config.merging import _resolve_target, merge_cli
+    from dimos.core.coordination.blueprint_config.merging import _resolve_target
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.core.coordination.blueprint_config.schema import normalize_option_name
-    from dimos.core.coordination.blueprint_config.sources import (
-        global_schema_defaults,
-        validate_global_values,
-    )
     from dimos.robot.all_blueprints import all_modules
     from dimos.robot.get_all_blueprints import get_by_name
 
     tokens = normalize_argv(args)
-    schema = BlueprintConfigParser(get_by_name(name))._get_schema()
+    parser = BlueprintConfigParser(get_by_name(name))
+    schema = parser._get_schema()
+    # a blueprint that can't launch as it stands fails every flag the same way: that's not the flag's fault
+    baseline = parse_error(parser, [])
 
     def target_of(token: str) -> tuple[Any, bool]:
         option = normalize_option_name(token[2:].partition("=")[0])
@@ -530,6 +552,9 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
         index += 1
         if option in run_refused:
             entry["error"] = f"{option} isn't for a launch: {run_refused[option]}"
+            if option in run_values and "=" not in token and index < len(tokens):
+                group.append(tokens[index])
+                index += 1
             continue
         if option in run_values:
             entry["target"] = f"run {option}"
@@ -571,24 +596,13 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
                 index += 1
         if entry["error"]:
             continue
-        modules: dict[str, dict[str, Any]] = defaultdict(dict)
-        global_values: dict[str, Any] = {}
-        try:
-            merge_cli(modules, global_values, {}, tuple(group), schema)
-            assert target is not None
+        refused = parse_error(parser, group)
+        if target is not None:
             entry["target"] = target.qualified_name
-            if target.section == "global":
-                validate_global_values({**global_schema_defaults(), **global_values})
-            elif target.section == "module":
-                value: Any = modules[target.root]
-                for part in target.path:
-                    value = value[part]
-                TypeAdapter(target.annotations[0]).validate_python(value)
-        except ValidationError as error:
-            entry["error"] = f"--{target.relative_name}: {error.errors()[0]['msg']}"
-        except Exception as error:
-            text = str(error).strip()
-            entry["error"] = text.splitlines()[0] if text else type(error).__name__
+        if refused is not None and refused != baseline:
+            entry["error"] = refused
+        elif target is None:
+            entry["error"] = refused or f"no option {option}"
     return {"name": name, "args": checked}
 
 
