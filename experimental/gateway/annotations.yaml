@@ -497,7 +497,9 @@ robots:
       coordinator-teleop-xarm6:
         title: xArm6 teleop coordinator
         description: The xArm6 teleop coordinator (a building block).
-        recommended_config: *xarm6_config
+        recommended_config: &teleop_xarm6_config
+        - *robot_or_simulator
+        - {<<: *xarm6_ip, module: teleopcontrolcoordinator}
       coordinator-teleop-xarm7:
         title: xArm7 teleop coordinator
         description: The xArm7 teleop coordinator (a building block).
@@ -515,7 +517,7 @@ robots:
       teleop-webxr-xarm6:
         title: xArm6 VR teleop
         description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-        recommended_config: *xarm6_config
+        recommended_config: *teleop_xarm6_config
       teleop-webxr-hand-xarm7:
         title: xArm7 VR hand teleop
         description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'

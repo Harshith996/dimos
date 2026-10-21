@@ -73,10 +73,15 @@ class Cache:
 
 
 async def run_child(
-    dimos_dir: Path, args: list[str], stdin: Any = None, timeout: float = 180
+    dimos_dir: Path,
+    args: list[str],
+    stdin: Any = None,
+    timeout: float = 180,
+    python: str | None = None,
 ) -> dict[str, Any]:
+    """Introspect in dimos_dir's python, or (python given: another checkout, a run's) with this file in that one."""
     child = await asyncio.create_subprocess_exec(
-        *child_command(dimos_dir),
+        *(child_command(dimos_dir) if python is None else foreign_command(python)),
         *args,
         cwd=dimos_dir,
         stdin=asyncio.subprocess.PIPE,
@@ -106,6 +111,22 @@ def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
     return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+
+
+def foreign_command(python: str) -> list[str]:
+    # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos;
+    # the gateway's checkout goes last on the path, only for the experimental.gateway helpers that one lacks
+    run = (
+        "import runpy, sys\n"
+        "sys.argv.pop(0)\n"
+        "sys.path.append(sys.argv.pop(0))\n"
+        # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
+        "for name in [n for n in sys.modules if n == 'dimos' or n.startswith('dimos.')]:\n"
+        "    del sys.modules[name]\n"
+        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+    )
+    here = Path(__file__).resolve()
+    return [python, "-c", run, str(here.parents[2]), str(here)]
 
 
 def kill_group(pid: int) -> None:
@@ -242,11 +263,12 @@ def spec_topic(spec: Any) -> str | None:
     if isinstance(kwargs, dict) and isinstance(kwargs.get("topic"), str):
         return str(kwargs["topic"])
     args = getattr(spec, "args", None)
-    if isinstance(args, tuple) and args and isinstance(args[0], str):
-        return args[0]
-    topic = getattr(spec, "topic", None)
+    topic = args[0] if isinstance(args, tuple) and args else getattr(spec, "topic", None)
+    # a Topic object (LCM/Zenoh specs) carries the string; Zenoh's has its "dimos/" namespace
     topic = getattr(topic, "topic", topic)
-    return topic if isinstance(topic, str) else None
+    if not isinstance(topic, str):
+        return None
+    return "/" + topic.removeprefix("dimos/").lstrip("/")
 
 
 def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
@@ -258,9 +280,13 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
             if isinstance(effective, str):
                 wired[effective].add(stream.type)
 
-    def topic(atom: Any, stream: Any) -> str | None:
+    def wire(atom: Any, stream: Any) -> str | None:
         effective = remap.get((atom.name, stream.name), stream.name)
-        if not isinstance(effective, str):
+        return effective if isinstance(effective, str) else None
+
+    def topic(atom: Any, stream: Any) -> str | None:
+        effective = wire(atom, stream)
+        if effective is None:
             return None
         spec = pinned.get((effective, stream.type))
         if spec is not None:
@@ -277,6 +303,8 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
                     "name": stream.name,
                     "type": type_name(stream.type),
                     "direction": stream.direction,
+                    # the name it's wired under after .remappings(): streams sharing it are one topic
+                    "wire": wire(atom, stream),
                     "topic": topic(atom, stream),
                 }
                 for stream in atom.streams

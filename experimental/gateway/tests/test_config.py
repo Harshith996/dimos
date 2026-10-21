@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +22,10 @@ import pytest
 import yaml
 
 from dimos.core.global_config import GlobalConfig
+from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
-from experimental.gateway.state import API_VERSION, State
+from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
     "default": None,
@@ -174,6 +176,76 @@ def test_a_blueprints_config_schema_is_global_and_module_fields(
     schema = client.get("/catalog/blueprints/demo/config").json()
     assert schema["global"]["n_workers"]["default"] == 2
     assert schema["modules"]["camera"]["args"]["api_key"]["secret"]
+
+
+def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
+    client: TestClient, state: State, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = home / "dimos_branch"
+    (branch / ".venv" / "bin").mkdir(parents=True)
+    (branch / "pyproject.toml").write_text('[project]\nname = "dimos"\n')
+    state.listed = [{"name": "demo", "kind": "builtin"}]
+    read_from: list[Any] = []
+
+    async def fake(args: list[str], stdin: Any = None, source: Any = None) -> Any:
+        read_from.append(source and source.checkout)
+        if source is not None and "broken" in str(source.run_id):
+            raise ApiError(500, "ImportError: no get_by_name")
+        if args[0] == "config":
+            return {**CONFIG, "name": args[1], "global": {} if source else CONFIG["global"]}
+        stream = "lidar_with_robot" if source else "lidar"
+        streams = [
+            {"name": "lidar", "type": "x.PointCloud2", "direction": "in", "wire": stream}
+            | {"topic": None}
+        ]
+        modules: list[dict[str, Any]] = [
+            {"name": "mapper", "class": "x.Mapper", "doc": "", "summary": "", "streams": streams}
+            | {"rpcs": [], "skills": [], "file": None, "line": None}
+        ]
+        return {"name": args[1], "file": None, "line": None, "modules": modules}
+
+    monkeypatch.setattr(state, "introspected", fake)
+
+    def wire_shown(name: str = "demo") -> tuple[str, Any, Any]:
+        found = client.get(f"/catalog/blueprints/{name}?fields=modules,checkout,checkoutError")
+        body = found.json()
+        return body["modules"][0]["streams"][0]["wire"], body["checkout"], body["checkoutError"]
+
+    def started_from(program: Path, run_id: str, blueprint: str = "demo") -> RunEntry:
+        entry = RunEntry(
+            run_id=run_id,
+            pid=os.getpid(),
+            blueprint=blueprint,
+            started_at="2026-01-01T12:00:00+00:00",
+            log_dir="/tmp/x",
+            original_argv=[str(program), "run", blueprint],
+        )
+        entry.save()
+        return entry
+
+    assert wire_shown() == ("lidar", None, None)
+    # a blueprint only a branch has is unknown until it runs from that branch
+    assert client.get("/catalog/blueprints/branch-only").status_code == 404
+    assert client.get("/config/blueprints/branch-only").status_code == 404
+
+    from_gateway = started_from(state.dimos_dir / ".venv" / "bin" / "dimos", "20260101-120000-demo")
+    assert wire_shown() == ("lidar", None, None)
+    from_gateway.remove()
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120001-demo")
+    assert wire_shown() == ("lidar_with_robot", str(branch), None)
+    assert read_from[-1] == branch
+    assert client.get("/catalog/blueprints/demo/config").json()["global"] == {}
+
+    only = started_from(branch / ".venv" / "bin" / "dimos", "20260101-120003-only", "branch-only")
+    assert wire_shown("branch-only") == ("lidar_with_robot", str(branch), None)
+    assert client.get("/catalog/blueprints/branch-only/config").json()["name"] == "branch-only"
+    assert client.get("/config/blueprints/branch-only").status_code == 200
+    only.remove()
+    assert client.get("/catalog/blueprints/branch-only").status_code == 404
+
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120002-broken")
+    wire, checkout, error = wire_shown()
+    assert (wire, checkout) == ("lidar", None) and "ImportError" in error
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
