@@ -13,8 +13,7 @@
 // limitations under the License.
 
 //! One WebRTC session with a Go2, the one the Unitree app opens: the signaling handshake, a data channel for
-//! validation, heartbeat, subscriptions and requests, and the receive-only H.264 camera track with its RTCP
-//! sender reports. Ported from dim-go2-dash's `robot_rtc.rs`; requests wait for their answer like
+//! validation, heartbeat, subscriptions and requests, and the receive-only H.264 camera track. Ported from dim-go2-dash's `robot_rtc.rs`; requests wait for their answer like
 //! unitree_webrtc_connect's `publish_request_new`.
 
 use std::collections::HashMap;
@@ -37,7 +36,6 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication;
-use webrtc::rtcp::sender_report::SenderReport;
 use webrtc::rtp_transceiver::rtp_codec::RTPCodecType;
 use webrtc::rtp_transceiver::rtp_transceiver_direction::RTCRtpTransceiverDirection;
 use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
@@ -58,14 +56,11 @@ pub enum Event {
         binary: Option<Vec<u8>>,
         arrived_ns: u64,
     },
-    /// a camera RTP packet (H.264) and the track's nominal RTP clock rate
+    /// a camera RTP packet (H.264)
     Rtp {
         packet: webrtc::rtp::packet::Packet,
-        clock_hz: u32,
         arrived_ns: u64,
     },
-    /// the camera's RTCP sender report: an RTP time and the robot's NTP time at that instant
-    SenderReport { ntp: u64, rtp: u32, arrived_ns: u64 },
     /// the peer link died (robot off Wi-Fi, out of range, rebooted, closed it)
     Lost,
 }
@@ -247,7 +242,7 @@ impl Conn {
             }));
         }
 
-        // camera: every RTP packet as it arrives, and the sender reports that put its RTP clock on the robot's
+        // camera: every RTP packet as it arrives
         {
             let on_event = on_event.clone();
             let closed = closed.clone();
@@ -265,18 +260,13 @@ impl Conn {
                     info!(mime = %codec.capability.mime_type, clock_hz, ssrc = track.ssrc(), "camera track from the Go2");
                     video_ssrc.store(track.ssrc() as u64, Ordering::Relaxed);
                     {
-                        let on_event = on_event.clone();
                         let closed = closed.clone();
+                        // read so the interceptors (NACK, receiver reports) run; the sender reports' RTP clock isn't the
+                        // one the Go2 stamps its packets with (they step a fixed 60 per frame), so they don't place frames
                         tokio::spawn(async move {
-                            while let Ok((packets, _)) = receiver.read_rtcp().await {
+                            while receiver.read_rtcp().await.is_ok() {
                                 if closed.load(Ordering::Relaxed) {
                                     break;
-                                }
-                                let arrived_ns = now_ns();
-                                for packet in packets {
-                                    if let Some(report) = packet.as_any().downcast_ref::<SenderReport>() {
-                                        on_event(Event::SenderReport { ntp: report.ntp_time, rtp: report.rtp_time, arrived_ns });
-                                    }
                                 }
                             }
                         });
@@ -286,7 +276,7 @@ impl Conn {
                             if closed.load(Ordering::Relaxed) {
                                 break;
                             }
-                            on_event(Event::Rtp { packet, clock_hz, arrived_ns: now_ns() });
+                            on_event(Event::Rtp { packet, arrived_ns: now_ns() });
                         }
                     });
                 })

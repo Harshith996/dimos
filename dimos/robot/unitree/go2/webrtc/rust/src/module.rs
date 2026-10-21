@@ -14,12 +14,10 @@
 
 //! GO2Connection's real-robot side: the Go2 over its WebRTC link. `cmd_vel` and `go2_request` (GO2Connection's
 //! RPCs as JSON) in; `odom` (+ its tf chain), `lidar`, the decoded front camera on `color_image`, `camera_info` and
-//! the RPC answers on `go2_response` out. Each stream is stamped with the Go2's own time for it (a pose or scan
-//! stamp, a frame's RTP time through the camera's RTCP sender reports) moved onto the host clock (clock.rs).
+//! the RPC answers on `go2_response` out. Poses are stamped with the Go2's own stamp moved onto the host clock
+//! (clock.rs); frames and scans with their arrival, since the Go2 sends no usable capture time for them.
 //! One thread decodes video, one the data channel; tokio runs the session and the requests.
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -37,7 +35,7 @@ use tokio::runtime::Handle;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
-use crate::clock::{now_ns, place, HostClock, RtpTimeline};
+use crate::clock::{now_ns, place, HostClock};
 use crate::conn::{Conn, Event};
 use crate::h264::{Depacketizer, Packet};
 use crate::lidar::decode_voxels;
@@ -76,7 +74,7 @@ const VIDEO_QUEUE: usize = 2048;
 pub struct Config {
     pub ip: String,
     /// Per-device AES-128 key (Go2 firmware >= 1.1.15), "" for older firmware.
-    pub aes_128_key: String,
+    pub aes_128_key: Secret,
     /// "default" or "rage" (Rage Mode switched on at start).
     pub mode: String,
     pub lidar: bool,
@@ -96,6 +94,21 @@ pub struct Config {
     pub auto_reconnect: bool,
     #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
+}
+
+/// A config string kept out of logs: the module prints its config at start.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() {
+            "\"\""
+        } else {
+            "<redacted>"
+        })
+    }
 }
 
 /// python's `CameraInfo` config dict <-> the message; the stamp is set per publish. (As the Go2 DDS module's.)
@@ -185,17 +198,10 @@ fn f(value: &Value) -> f64 {
     value.as_f64().unwrap_or(0.0)
 }
 
-/// The Go2's time for a pose (`header.stamp` sec/nanosec) or a scan (`stamp`, float seconds), ns on its clock.
+/// The Go2's time for a pose (`header.stamp` sec/nanosec), ns on its clock.
 fn pose_robot_ns(data: &Value) -> Option<i64> {
     let stamp = &data["header"]["stamp"];
     Some(stamp["sec"].as_i64()? * 1_000_000_000 + stamp["nanosec"].as_i64().unwrap_or(0))
-}
-
-fn scan_robot_ns(data: &Value) -> Option<i64> {
-    // whole seconds and the fraction apart: seconds x 1e9 as one f64 loses ~100 ns at today's epoch
-    data["stamp"]
-        .as_f64()
-        .map(|s| s.trunc() as i64 * 1_000_000_000 + (s.fract() * 1e9).round() as i64)
 }
 
 /// What the session shares with the request handlers and the threads.
@@ -451,7 +457,7 @@ impl Go2WebRtc {
             let video_tx: SyncSender<Event> = video_tx;
             let data_tx = Mutex::new(data_tx);
             Arc::new(move |event| match event {
-                Event::Rtp { .. } | Event::SenderReport { .. } => {
+                Event::Rtp { .. } => {
                     if let Err(TrySendError::Full(_)) = video_tx.try_send(event) {
                         video_dropped.store(true, Ordering::Relaxed);
                     }
@@ -520,7 +526,7 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
     let mut started = false;
     loop {
         info!(ip = %config.ip, "connecting to the Go2");
-        match Conn::connect(&config.ip, &config.aes_128_key, on_event.clone()).await {
+        match Conn::connect(&config.ip, &config.aes_128_key.0, on_event.clone()).await {
             Ok(conn) => {
                 *shared.conn.lock().unwrap() = Some(conn.clone());
                 if let Err(err) = link_up(&shared, &conn).await {
@@ -645,7 +651,6 @@ impl DataLoop {
             prefixed(prefix, "camera_optical"),
         );
         let mut pose_clock = HostClock::default();
-        let mut scan_clock = HostClock::default();
         let mut stats = Stats::default();
         while let Ok(event) = rx.recv() {
             let Event::Data {
@@ -750,9 +755,8 @@ impl DataLoop {
                             continue;
                         }
                     };
-                    let robot_ns = scan_robot_ns(data);
-                    let ns = place(&mut scan_clock, robot_ns, arrived_ns);
-                    stats.scan(robot_ns, arrived_ns, &scan_clock);
+                    // a scan's `stamp` comes as a float32 (128 s steps at today's epoch): arrival is the better time
+                    let ns = arrived_ns;
                     let _ = self
                         .shared
                         .handle
@@ -824,107 +828,66 @@ impl VideoLoop {
             }
         };
         let mut depacketizer = Depacketizer::default();
-        let mut timeline: Option<RtpTimeline> = None;
-        let mut sr_clock = HostClock::default();
-        // frames given to the decoder and not yet out of it: (robot ns, else the marker's arrival; whether it's the
-        // robot's; the marker's arrival). The decoder hands frames out in display order, so a decoded frame takes
-        // the earliest still waiting
-        let mut waiting: BinaryHeap<Reverse<(i64, bool, u64)>> = BinaryHeap::new();
         let mut rgb = Vec::new();
         let mut last_info_ns = 0u64;
         let mut stats = Stats::default();
         while let Ok(event) = rx.recv() {
-            match event {
-                Event::SenderReport {
-                    ntp,
-                    rtp,
-                    arrived_ns,
-                } => {
-                    if let Some(timeline) = &mut timeline {
-                        timeline.sender_report(ntp, rtp);
-                        // a report leaves the robot as it's stamped: the fastest crossing sets the offset
-                        sr_clock.observe(crate::clock::ntp_to_unix_ns(ntp), arrived_ns);
-                    }
+            let Event::Rtp { packet, arrived_ns } = event else {
+                continue;
+            };
+            if self.dropped.swap(false, Ordering::Relaxed) {
+                // packets were dropped before this one: the frame in progress is broken
+                depacketizer = Depacketizer::default();
+                self.want_keyframe();
+            }
+            let was_synced = depacketizer.synced();
+            let view = Packet {
+                sequence_number: packet.header.sequence_number,
+                timestamp: packet.header.timestamp,
+                marker: packet.header.marker,
+                payload: &packet.payload,
+            };
+            let unit = depacketizer.push(&view);
+            if was_synced && !depacketizer.synced() {
+                self.want_keyframe();
+            }
+            let Some(unit) = unit else { continue };
+            let decoded = match decoder.decode(&unit.data) {
+                Ok(Some(yuv)) => yuv,
+                Ok(None) => continue,
+                Err(err) => {
+                    warn!("H.264 decode failed ({err}); waiting for a keyframe");
+                    depacketizer = Depacketizer::default();
+                    self.want_keyframe();
+                    continue;
                 }
-                Event::Rtp {
-                    packet,
-                    clock_hz,
-                    arrived_ns,
-                } => {
-                    let timeline = timeline.get_or_insert_with(|| RtpTimeline::new(clock_hz));
-                    if self.dropped.swap(false, Ordering::Relaxed) {
-                        // packets were dropped before this one: the frame in progress is broken
-                        depacketizer = Depacketizer::default();
-                        self.want_keyframe();
-                    }
-                    let was_synced = depacketizer.synced();
-                    let view = Packet {
-                        sequence_number: packet.header.sequence_number,
-                        timestamp: packet.header.timestamp,
-                        marker: packet.header.marker,
-                        payload: &packet.payload,
-                    };
-                    let unit = depacketizer.push(&view);
-                    if was_synced && !depacketizer.synced() {
-                        self.want_keyframe();
-                    }
-                    let Some(unit) = unit else { continue };
-                    let robot_ns = timeline.robot_ns(unit.rtp_ts);
-                    waiting.push(Reverse((
-                        robot_ns.unwrap_or(arrived_ns as i64),
-                        robot_ns.is_some(),
-                        arrived_ns,
-                    )));
-                    while waiting.len() > 16 {
-                        waiting.pop();
-                    }
-                    let decoded = match decoder.decode(&unit.data) {
-                        Ok(Some(yuv)) => yuv,
-                        Ok(None) => continue,
-                        Err(err) => {
-                            warn!("H.264 decode failed ({err}); waiting for a keyframe");
-                            depacketizer = Depacketizer::default();
-                            waiting.clear();
-                            self.want_keyframe();
-                            continue;
-                        }
-                    };
-                    let Some(Reverse((frame_ns, on_robot_clock, frame_arrived_ns))) = waiting.pop()
-                    else {
-                        continue;
-                    };
-                    let ns = match on_robot_clock.then(|| sr_clock.host_ns(frame_ns)).flatten() {
-                        Some(ns) => ns.min(frame_arrived_ns),
-                        None => frame_arrived_ns,
-                    };
-                    if on_robot_clock {
-                        stats.frame(frame_ns, frame_arrived_ns, &sr_clock, now_ns());
-                    }
-                    use openh264::formats::YUVSource;
-                    let (width, height) = decoded.dimensions();
-                    rgb.resize(width * height * 3, 0);
-                    decoded.write_rgb8(&mut rgb);
-                    let image = Image {
-                        header: header(ns, &frame_id),
-                        height: height as i32,
-                        width: width as i32,
-                        encoding: "rgb8".into(),
-                        is_bigendian: 0,
-                        step: (width * 3) as i32,
-                        data: rgb.clone(),
-                    };
-                    let _ = self
-                        .shared
-                        .handle
-                        .block_on(self.color_image.publish(&image));
-                    if ns.saturating_sub(last_info_ns) >= 1_000_000_000 {
-                        last_info_ns = ns;
-                        let mut info = self.shared.config.camera_info.clone();
-                        info.header = header(ns, &frame_id);
-                        let _ = self.shared.handle.block_on(self.camera_info.publish(&info));
-                    }
-                }
-                _ => {}
+            };
+            // the Go2's RTP time steps a fixed 60 per frame, not with its clock: the frame's last packet
+            // arriving is the earliest real time for it (the decoder has no delay, so this unit is the picture)
+            let ns = arrived_ns;
+            stats.frame(arrived_ns, now_ns());
+            use openh264::formats::YUVSource;
+            let (width, height) = decoded.dimensions();
+            rgb.resize(width * height * 3, 0);
+            decoded.write_rgb8(&mut rgb);
+            let image = Image {
+                header: header(ns, &frame_id),
+                height: height as i32,
+                width: width as i32,
+                encoding: "rgb8".into(),
+                is_bigendian: 0,
+                step: (width * 3) as i32,
+                data: rgb.clone(),
+            };
+            let _ = self
+                .shared
+                .handle
+                .block_on(self.color_image.publish(&image));
+            if ns.saturating_sub(last_info_ns) >= 1_000_000_000 {
+                last_info_ns = ns;
+                let mut info = self.shared.config.camera_info.clone();
+                info.header = header(ns, &frame_id);
+                let _ = self.shared.handle.block_on(self.camera_info.publish(&info));
             }
         }
     }
@@ -936,8 +899,7 @@ impl VideoLoop {
 struct Stats {
     since_ns: u64,
     pose: Vec<i64>,
-    scan: Vec<i64>,
-    frame: Vec<(i64, i64)>,
+    frame: Vec<i64>,
 }
 
 impl Stats {
@@ -950,17 +912,9 @@ impl Stats {
         self.report(arrived_ns, clock.offset_ns(), "pose");
     }
 
-    fn scan(&mut self, robot_ns: Option<i64>, arrived_ns: u64, clock: &HostClock) {
-        self.scan.extend(Self::gap(robot_ns, arrived_ns, clock));
-        self.report(arrived_ns, clock.offset_ns(), "scan");
-    }
-
-    fn frame(&mut self, robot_ns: i64, arrived_ns: u64, clock: &HostClock, published_ns: u64) {
-        if let Some(gap) = Self::gap(Some(robot_ns), arrived_ns, clock) {
-            self.frame
-                .push((gap, gap + (published_ns - arrived_ns) as i64));
-        }
-        self.report(arrived_ns, clock.offset_ns(), "video");
+    fn frame(&mut self, arrived_ns: u64, published_ns: u64) {
+        self.frame.push((published_ns - arrived_ns) as i64);
+        self.report(arrived_ns, None, "video");
     }
 
     fn report(&mut self, now: u64, offset_ns: Option<i64>, stream: &str) {
@@ -984,18 +938,15 @@ impl Stats {
                 v.len()
             )
         };
-        let (mut arrived, mut published): (Vec<i64>, Vec<i64>) = self.frame.drain(..).unzip();
         info!(
             stream,
             offset_ms = offset_ns.map(|o| o as f64 / 1e6),
             pose_capture_to_arrival = ms(&mut self.pose),
-            scan_capture_to_arrival = ms(&mut self.scan),
-            video_capture_to_arrival = ms(&mut arrived),
-            video_capture_to_published = ms(&mut published),
+            video_arrival_to_published = ms(&mut self.frame),
             "[go2 clock]"
         );
         self.pose.clear();
-        self.scan.clear();
+        self.frame.clear();
         self.since_ns = now;
     }
 }
@@ -1005,14 +956,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_key_stays_out_of_debug_output() {
+        assert_eq!(
+            format!("{:?}", Secret("00112233445566778899aabbccddeeff".into())),
+            "<redacted>"
+        );
+        assert_eq!(format!("{:?}", Secret::default()), "\"\"");
+    }
+
+    #[test]
     fn stamps_come_from_the_robots_fields() {
         let pose = json!({ "header": { "stamp": { "sec": 1746565669, "nanosec": 448350564 } } });
         assert_eq!(pose_robot_ns(&pose), Some(1_746_565_669_448_350_564));
-        assert_eq!(
-            scan_robot_ns(&json!({ "stamp": 1746565669.25 })),
-            Some(1_746_565_669_250_000_000)
-        );
-        assert_eq!(scan_robot_ns(&json!({})), None);
     }
 
     #[test]
