@@ -52,15 +52,15 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.go2.sim2 import go2_definition
-from dimos.robot.unitree.go2.sim_device import Go2SimDevice
+from dimos.robot.unitree.go2.controllers.locomotion.policy import load_policy
+from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
+from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.module import SimulationSpec
-from dimos.sim2.scene import scene_robot
 from dimos.sim2.spec import RobotInstance
+from dimos.sim2.world.scene import scene_robot
 from dimos.simulation.dimsim.config import DimSimConfig
-from dimos.simulation.go2_legged.policy import load_policy
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.data import LfsPath
 from dimos.utils.decorators.decorators import cached_property, simple_mcache

@@ -37,14 +37,14 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
-from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.sim2 import G1
-from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.controllers.sonic.module import G1SonicPolicyModule
+from dimos.robot.unitree.g1.model.simulation import G1
 from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene import scene_path
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.lidar.module import LidarModule
+from dimos.sim2.world.scene import scene_path
 from dimos.spec.utils import spec_annotation_compliance
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 

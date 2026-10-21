@@ -19,8 +19,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.robot.unitree.g1.connection import G1Connection
-from dimos.robot.unitree.g1.control_config import G1_GROOT_KD, G1_GROOT_KP, g1_joints
-from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.controllers.groot.config import G1_GROOT_KD, G1_GROOT_KP
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.model.joints import g1_joints
 
 unitree_g1_coordinator = autoconnect(
     G1Connection.blueprint(controller="groot"),

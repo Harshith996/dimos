@@ -41,11 +41,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection, go2_connection
-from dimos.robot.unitree.go2.sim2 import go2_definition
-from dimos.robot.unitree.go2.sim_device import Go2SimDevice
+from dimos.robot.unitree.go2.controllers.locomotion.policy import OnnxGo2Policy
+from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
+from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene import scene_path
-from dimos.simulation.go2_legged.policy import OnnxGo2Policy
+from dimos.sim2.world.scene import scene_path
 
 
 def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_command(mocker):
@@ -322,8 +322,8 @@ def test_mujoco_selects_internal_device_not_another_world():
 def test_policy_joint_order_is_bound_to_the_physical_device(mocker):
     names = tuple(j.name for j in go2_definition(camera=False, lidar=False).joints)
     policy = mocker.Mock(spec=OnnxGo2Policy, joint_names=names[::-1])
-    mocker.patch("dimos.robot.unitree.go2.sim_device.load_policy", return_value=policy)
-    thread = mocker.patch("dimos.robot.unitree.go2.sim_device.Thread")
+    mocker.patch("dimos.robot.unitree.go2.simulation.device.load_policy", return_value=policy)
+    thread = mocker.patch("dimos.robot.unitree.go2.simulation.device.Thread")
     thread.return_value.is_alive.return_value = False
     device = Go2SimDevice()
     client = mocker.Mock()

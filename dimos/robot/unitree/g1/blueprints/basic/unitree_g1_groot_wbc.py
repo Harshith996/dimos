@@ -17,8 +17,8 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.g1.blueprints.navigation._g1_navigation import g1_navigation
-from dimos.robot.unitree.g1.blueprints.primitive._groot_control import groot_control
-from dimos.robot.unitree.g1.g1_rerun import g1_viewer
+from dimos.robot.unitree.g1.controllers.groot.blueprint import groot_control
+from dimos.robot.unitree.g1.visualization.rerun import g1_viewer
 
 if global_config.simulation and global_config.simulation != "mujoco":
     raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")

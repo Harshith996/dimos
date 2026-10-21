@@ -31,8 +31,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene import describe_scene
 from dimos.sim2.spec import WorldConfig
+from dimos.sim2.world.scene import describe_scene
 from dimos.simulation.go2_sim.world import Go2SimTelemetry, procedural_scene
 from dimos.simulation.scenes.procedural import generate
 
