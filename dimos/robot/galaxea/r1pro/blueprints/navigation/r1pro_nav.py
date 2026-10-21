@@ -127,13 +127,13 @@ r1pro_nav = autoconnect(
         [(DanHolonomicTC, "odom", "chassis_odom")]
     ),
     MovementManager.blueprint(),
-    # Arm planning (viser, or a controller's arm mode) on r1pro_control's whole-body trajectory task. Its tip frames
-    # would give links UrdfManager already publishes a second parent on tf, so they go to a topic of their own.
+    # Arm planning (viser, or a controller's arm mode) on r1pro_control's whole-body trajectory task. No tf: UrdfManager is the one parent of every link.
     ManipulationModule.blueprint(
         model=make_r1pro_model_config(),
         planning_timeout=10.0,
         visualization=ViserVisualizationConfig(host=global_config.listen_host),
-    ).remappings([(ManipulationModule, "tf", "manipulation_tf")]),
+        publish_tf=False,
+    ),
 ).global_config(
     # One per module, so no two share a Python process (and its GIL).
     n_workers=16,
