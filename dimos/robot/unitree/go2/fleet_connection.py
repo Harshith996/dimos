@@ -62,6 +62,10 @@ class Go2FleetConnection(GO2Connection):
 
     config: FleetConnectionConfig
 
+    def _uses_native(self) -> bool:
+        # The fleet's robots share one Python connection type; the Rust module holds a single robot.
+        return False
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._extra_ips = self.config.ips[1:]
