@@ -1017,7 +1017,7 @@ class ManipulationModule(Module):
                 joint_names=group.joint_names,
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
-                has_gripper=self._group_gripper_id(group) is not None,
+                has_gripper=self._group_gripper_task(group) is not None,
             )
             for group in self._world_monitor.planning_groups.list()
         )
@@ -1041,18 +1041,51 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _group_gripper_id(self, group: PlanningGroup) -> str | None:
-        if group.gripper_hardware_id is not None:
-            return group.gripper_hardware_id
-        return self.config.model.gripper_hardware_id
+    def _group_gripper_tasks(self, group: PlanningGroup) -> tuple[str, ...]:
+        """Match registered scalar grippers by exact joint namespace or YAM arm names."""
+        legacy_id = self.config.model.gripper_hardware_id
+        if (
+            legacy_id is not None
+            and self._world_monitor is not None
+            and self._world_monitor.planning_groups.default_group_id() == group.id
+        ):
+            return (f"{legacy_id}_gripper",)
+        arm_joints = set(group.joint_names)
+        if not arm_joints:
+            return ()
+        matches: list[str] = []
+        for task_name in self._control_coordinator.list_tasks():
+            description = self._control_coordinator.describe_task(task_name)
+            if description is None or not {"set_normalized", "get_normalized"} <= set(
+                description["commands"]
+            ):
+                continue
+            joints = description["joint_names"]
+            if len(joints) != 1:
+                continue
+            namespace, separator, leaf = joints[0].rpartition("/")
+            if not separator or not namespace or leaf != "gripper":
+                continue
+            if all(name.rpartition("/")[0] == namespace for name in arm_joints):
+                matches.append(task_name)
+                continue
+            # Dual YAM uses unscoped arm joints and scoped gripper joints.
+            for side in ("left", "right"):
+                if namespace == f"{side}_arm" and arm_joints <= {
+                    f"{side}_joint{index}" for index in range(1, 7)
+                }:
+                    matches.append(task_name)
+        return tuple(matches)
+
+    def _group_gripper_task(self, group: PlanningGroup) -> str | None:
+        tasks = self._group_gripper_tasks(group)
+        return tasks[0] if len(tasks) == 1 else None
 
     def _get_group_gripper_position(self, group: PlanningGroup) -> float | None:
-        hardware_id = self._group_gripper_id(group)
-        if hardware_id is None:
+        task_name = self._group_gripper_task(group)
+        if task_name is None:
             return None
-        values = self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper", "get_normalized", {}
-        )
+        values = self._control_coordinator.task_invoke(task_name, "get_normalized", {})
         return float(values[0]) if values else None
 
     def get_current_joint_state(self) -> JointState | None:
@@ -1374,10 +1407,11 @@ class ManipulationModule(Module):
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
-        hardware_id = self._group_gripper_id(group)
-        assert hardware_id is not None
+        task_name = self._group_gripper_task(group)
+        if task_name is None:
+            return CommandResult(CommandStatus.REJECTED, "No unique gripper task for this group")
         if self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper",
+            task_name,
             "set_normalized",
             {"values": [float(position)]},
         ):
@@ -1392,6 +1426,8 @@ class ManipulationModule(Module):
     def _resolve_gripper_group(
         self, planning_group: PlanningGroupID | None
     ) -> PlanningGroup | CommandResult:
+        if planning_group is None and self._world_monitor is not None:
+            planning_group = self._world_monitor.planning_groups.default_group_id()
         return self._resolve_group_with_capability(planning_group, "gripper")
 
     def _resolve_group_with_capability(
@@ -1406,13 +1442,18 @@ class ManipulationModule(Module):
         def is_capable(group: PlanningGroup) -> bool:
             if capability == "pose":
                 return group.has_pose_target
-            return self._group_gripper_id(group) is not None
+            return self._group_gripper_task(group) is not None
 
         if planning_group is not None:
             try:
                 group = self._world_monitor.planning_groups.get(planning_group)
             except KeyError:
                 return CommandResult(CommandStatus.REJECTED, f"Unknown group: {planning_group}")
+            if capability == "gripper" and len(self._group_gripper_tasks(group)) > 1:
+                return CommandResult(
+                    CommandStatus.REJECTED,
+                    f"Ambiguous gripper tasks for planning group '{group.id}'",
+                )
             if not is_capable(group):
                 return CommandResult(
                     CommandStatus.REJECTED,

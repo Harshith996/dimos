@@ -40,8 +40,6 @@ class PlanningGroupDefinition:
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "configured"
-    # Selects the existing <hardware_id>_gripper task; None uses the model default.
-    gripper_hardware_id: str | None = None
 
     @property
     def has_pose_target(self) -> bool:
@@ -61,7 +59,6 @@ class PlanningGroup:
     base_link: str
     tip_link: str | None = None
     source: PlanningGroupSource = "configured"
-    gripper_hardware_id: str | None = None
 
     @property
     def has_pose_target(self) -> bool:
