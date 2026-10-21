@@ -742,7 +742,8 @@ runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
 files = ["dimos/"]
-mypy_path = "stubs/"
+# Editable installs expose generated messages through an import hook; mypy needs the source path.
+mypy_path = ["stubs/", "build/message-source/python"]
 python_version = "3.12"
 incremental = true
 strict = true
