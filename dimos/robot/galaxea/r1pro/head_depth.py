@@ -16,11 +16,7 @@
 
 from __future__ import annotations
 
-from collections import deque
-from typing import Any
-
 import numpy as np
-from scipy.spatial import cKDTree
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
@@ -36,22 +32,18 @@ BASE_FRAME = R1ProLioConfig.model_fields["base_frame"].default
 
 
 class HeadFloorPriorConfig(ModuleConfig):
+    # Its origin is where the wheels touch the floor, so the floor is its z = 0 however the torso and head move.
     floor_frame: str = BASE_FRAME
-    world_frame: str = "odom"
     tf_tolerance_s: float = 0.1
-    # Lidar returns within this of floor_frame's z = 0 are floor.
-    floor_band_m: float = 0.1
-    # Floor counts as seen within this of a lidar floor return from the last lidar_history_s (or of the camera).
-    floor_reach_m: float = 1.5
-    lidar_history_s: float = 6.0
-    # Rays whose head point lands this far below to this far above the lidar's floor fit the frame's depth correction:
-    # the floor Depth Anything misplaces sits anywhere in that band, an obstacle is a minority of it.
+    # Rays whose head point lands this far below to this far above the floor fit the frame's depth correction: the
+    # floor Depth Anything misplaces sits anywhere in that band, an obstacle is a minority of it.
     fit_min_m: float = -0.3
     fit_max_m: float = 0.9
     fit_min_rays: int = 30
-    # A corrected head point no higher than this above the lidar's floor is floor.
+    # A corrected head point no higher than this above the floor (and no lower than min_height_m) is floor.
     floor_tolerance_m: float = 0.05
-    # Kept from the floor to just above the lidar's plane, what the lidar sees worst.
+    # Kept from just under the floor to just above the chassis lidar's plane, what the lidar sees worst; a drop deeper
+    # than min_height_m stays unseen rather than becoming floor.
     min_height_m: float = -0.15
     max_height_m: float = 0.35
     # The floor under the robot, which it stands on and no sensor sees, as points this far apart; 0 radius adds none.
@@ -60,76 +52,38 @@ class HeadFloorPriorConfig(ModuleConfig):
 
 
 class HeadFloorPrior(Module):
-    """Head depth onto the lidar's floor. Each frame's depth is corrected by how far its near-floor rays miss the floor
-    (fit_depth_to_floor: Depth Anything's error grows with distance, and the whole frame shares it, obstacles included),
-    then a point at or under the floor, where the lidar saw floor within floor_reach_m (or the camera stands over it),
-    slides along its ray onto the floor, and the floor under the robot's own footprint is added. Every pose comes from
-    tf at the cloud's stamp, so the torso and base may move."""
+    """Head depth onto the floor the robot stands on (floor_frame's z = 0; the chassis lidar never sees it). Each frame's
+    depth is corrected by how far its near-floor rays miss the floor (fit_depth_to_floor: Depth Anything's error grows
+    with distance, and the whole frame shares it, obstacles included), then a point just above or under the floor slides
+    along its ray onto it, and the floor under the robot's own footprint is added. Every pose comes from tf at the
+    cloud's stamp, so the torso and base may move."""
 
     config: HeadFloorPriorConfig
 
     depth_cloud: In[PointCloud2]
-    lidar: In[PointCloud2]
     tf: In[TFMessage]
     head_cloud: Out[PointCloud2]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        # (stamp, floor returns' world xy, their median height in floor_frame) per lidar scan.
-        self._floor_scans: deque[tuple[float, np.ndarray, float]] = deque()
-        self._head_frame = ""
 
     @rpc
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
 
-    async def handle_lidar(self, cloud: PointCloud2) -> None:
-        # The head's own clouds share the lidar topic in r1pro-nav.
-        if cloud.ts is None or cloud.frame_id == self._head_frame:
-            return
-        floor_from_lidar = self._lookup(self.config.floor_frame, cloud.frame_id, cloud.ts)
-        world_from_lidar = self._lookup(self.config.world_frame, cloud.frame_id, cloud.ts)
-        if floor_from_lidar is None or world_from_lidar is None:
-            return
-        points = cloud.points_f32().astype(np.float64)
-        in_floor = _apply(floor_from_lidar, points)
-        on_floor = np.abs(in_floor[:, 2]) < self.config.floor_band_m
-        if on_floor.sum() == 0:
-            return
-        world_xy = _apply(world_from_lidar, points[on_floor])[:, :2]
-        self._floor_scans.append((cloud.ts, world_xy, float(np.median(in_floor[on_floor, 2]))))
-        while (
-            self._floor_scans and self._floor_scans[0][0] < cloud.ts - self.config.lidar_history_s
-        ):
-            self._floor_scans.popleft()
-
     async def handle_depth_cloud(self, cloud: PointCloud2) -> None:
-        self._head_frame = cloud.frame_id
         floor_from_camera = self._lookup(self.config.floor_frame, cloud.frame_id, cloud.ts)
-        world_from_camera = self._lookup(self.config.world_frame, cloud.frame_id, cloud.ts)
-        if floor_from_camera is None or world_from_camera is None:
+        if floor_from_camera is None:
             return
-        points = cloud.points_f32().astype(np.float64)
-        scans = [
-            scan for scan in self._floor_scans if scan[0] >= cloud.ts - self.config.lidar_history_s
-        ]
-        if scans:
-            level = float(np.median([scan[2] for scan in scans]))
-            points = fit_depth_to_floor(points, floor_from_camera, level, self.config)
-            seen = np.concatenate([scan[1] for scan in scans])
-            points = onto_floor(
-                points, floor_from_camera, world_from_camera, level, seen, self.config
-            )
+        points = fit_depth_to_floor(
+            cloud.points_f32().astype(np.float64), floor_from_camera, self.config
+        )
+        points = onto_floor(points, floor_from_camera, self.config)
         in_floor = _apply(floor_from_camera, points)
         keep = (in_floor[:, 2] >= self.config.min_height_m) & (
             in_floor[:, 2] <= self.config.max_height_m
         )
         points = points[keep]
-        if scans and self.config.footprint_radius_m > 0:
-            under = footprint_floor(
-                self.config.footprint_radius_m, level, self.config.footprint_spacing_m
-            )
+        if self.config.footprint_radius_m > 0:
+            under = footprint_floor(self.config.footprint_radius_m, self.config.footprint_spacing_m)
             points = np.concatenate([points, _apply(np.linalg.inv(floor_from_camera), under)])
         self.head_cloud.publish(
             PointCloud2.from_numpy(
@@ -150,23 +104,22 @@ class HeadFloorPrior(Module):
 
 
 def fit_depth_to_floor(
-    points: np.ndarray, floor_from_camera: np.ndarray, level: float, config: HeadFloorPriorConfig
+    points: np.ndarray, floor_from_camera: np.ndarray, config: HeadFloorPriorConfig
 ) -> np.ndarray:
     """Camera-frame points rescaled along their rays by log(true / predicted depth) = a + b * log(predicted depth), fit
-    robustly over the downward rays that land near the floor at height `level` in floor_frame; unchanged when too few do."""
+    robustly over the downward rays that land near floor_frame's z = 0; unchanged when too few do."""
     in_floor = _apply(floor_from_camera, points)
     camera_z = floor_from_camera[2, 3]
-    height = in_floor[:, 2] - level
     near = (
         (in_floor[:, 2] < camera_z - 1e-3)
-        & (height > config.fit_min_m)
-        & (height < config.fit_max_m)
+        & (in_floor[:, 2] > config.fit_min_m)
+        & (in_floor[:, 2] < config.fit_max_m)
     )
     if near.sum() < config.fit_min_rays:
         return points
     depth = np.linalg.norm(points, axis=1)
     x = np.log(depth[near])
-    y = np.log((level - camera_z) / (in_floor[near, 2] - camera_z))
+    y = np.log(-camera_z / (in_floor[near, 2] - camera_z))
     inlier = np.ones(len(x), bool)
     for _ in range(3):
         slope, intercept = np.polyfit(x[inlier], y[inlier], 1)
@@ -178,36 +131,27 @@ def fit_depth_to_floor(
 
 
 def onto_floor(
-    points: np.ndarray,
-    floor_from_camera: np.ndarray,
-    world_from_camera: np.ndarray,
-    level: float,
-    seen: np.ndarray,
-    config: HeadFloorPriorConfig,
+    points: np.ndarray, floor_from_camera: np.ndarray, config: HeadFloorPriorConfig
 ) -> np.ndarray:
-    """Camera-frame points at most floor_tolerance_m above the floor at height `level` in floor_frame (or under it) slid
-    along their rays onto it, where that lands within floor_reach_m of `seen` (world xy of lidar floor) or of the camera."""
+    """Camera-frame points from min_height_m to floor_tolerance_m about floor_frame's z = 0 slid along their rays onto it."""
     points = points.copy()
     in_floor = _apply(floor_from_camera, points)
     camera_z = floor_from_camera[2, 3]
     low = np.flatnonzero(
-        (in_floor[:, 2] < camera_z - 1e-3) & (in_floor[:, 2] - level <= config.floor_tolerance_m)
+        (in_floor[:, 2] < camera_z - 1e-3)
+        & (in_floor[:, 2] >= config.min_height_m)
+        & (in_floor[:, 2] <= config.floor_tolerance_m)
     )
-    hits = points[low] * ((level - camera_z) / (in_floor[low, 2] - camera_z))[:, None]
-    distance, _ = cKDTree(np.concatenate([seen, world_from_camera[:2, 3][None]])).query(
-        _apply(world_from_camera, hits)[:, :2], distance_upper_bound=config.floor_reach_m
-    )
-    near = np.isfinite(distance)
-    points[low[near]] = hits[near]
+    points[low] *= (-camera_z / (in_floor[low, 2] - camera_z))[:, None]
     return points
 
 
-def footprint_floor(radius: float, level: float, spacing: float) -> np.ndarray:
-    """Floor points in floor_frame on a `spacing` grid over the disc of `radius` around its origin, at height `level`."""
+def footprint_floor(radius: float, spacing: float) -> np.ndarray:
+    """Floor points in floor_frame on a `spacing` grid over the disc of `radius` around its origin, at z = 0."""
     grid = np.arange(-radius, radius + 1e-9, spacing)
     xx, yy = np.meshgrid(grid, grid)
     inside = np.hypot(xx, yy) <= radius
-    points: np.ndarray = np.c_[xx[inside], yy[inside], np.full(int(inside.sum()), level)]
+    points: np.ndarray = np.c_[xx[inside], yy[inside], np.zeros(int(inside.sum()))]
     return points
 
 
@@ -225,10 +169,11 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "tf_tolerance_s": tf_tolerance_s,
                 # Past this the per-pixel calibration has few lidar anchors to lean on.
                 "max_range_m": 6.0,
-                # The chassis lidar never sees the floor near the robot; floor it swept a few seconds ago anchors it.
+                # Scans from the last few seconds anchor the head, so it is calibrated over more than one sweep.
                 "lidar_history_s": 6.0,
-                # Nothing far above the floor spends the point budget; HeadFloorPrior needs the misplaced floor to fit
-                # each frame's depth correction, and cuts to its own height band after.
+                # Nothing more than fit_max_m above the floor (base_link's z = 0, wherever the torso holds the head) spends
+                # the point budget; HeadFloorPrior needs the misplaced floor to fit each frame's depth correction, and cuts
+                # to its own height band after.
                 "height_frame": BASE_FRAME,
                 "max_height_m": HeadFloorPriorConfig.model_fields["fit_max_m"].default,
                 # One point per 8x8 pixels, at most 3000: replaying r1_live_20260930_1332 on the R1, floor near the robot
