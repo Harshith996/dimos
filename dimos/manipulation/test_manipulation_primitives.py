@@ -16,7 +16,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from pytest_mock import MockerFixture
@@ -24,6 +24,7 @@ from pytest_mock import MockerFixture
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
+    CommandStatus,
     ExecutionResult,
     ExecutionStatus,
     ManipulationSpec,
@@ -180,6 +181,78 @@ def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factor
 
     assert module.get_state().groups["manipulator"].gripper_position == pytest.approx(0.4)
     coordinator.task_invoke.assert_called_once_with("openyam_gripper", "get_normalized", {})
+
+
+def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) -> None:
+    module = module_factory()
+    _set_groups(
+        module,
+        _model(
+            groups=(
+                PlanningGroupDefinition(
+                    "left", ("j0",), "base", "left_tcp", gripper_hardware_id="left_arm"
+                ),
+                PlanningGroupDefinition(
+                    "right", ("j1",), "base", "right_tcp", gripper_hardware_id="right_arm"
+                ),
+                PlanningGroupDefinition("both", ("j0", "j1"), "base"),
+            ),
+        ),
+    )
+    invoke = module._control_coordinator.task_invoke
+    invoke.return_value = True
+
+    assert {info.id: info.has_gripper for info in module.list_planning_groups()} == {
+        "left": True,
+        "right": True,
+        "both": False,
+    }
+    assert module.set_gripper_position(0.2, "left").succeeded
+    assert module.set_gripper_position(0.8, "right").succeeded
+    assert module.set_gripper_position(0.5).status is CommandStatus.REJECTED
+    assert module.set_gripper_position(0.5, "both").status is CommandStatus.REJECTED
+    assert invoke.call_args_list == [
+        call("left_arm_gripper", "set_normalized", {"values": [0.2]}),
+        call("right_arm_gripper", "set_normalized", {"values": [0.8]}),
+    ]
+    invoke.reset_mock()
+    invoke.side_effect = [[0.2], [0.8]]
+    module._world_monitor.current_group_joint_state.return_value = None
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    snapshot = module.get_state()
+
+    assert {name: state.gripper_position for name, state in snapshot.groups.items()} == {
+        "left": 0.2,
+        "right": 0.8,
+        "both": None,
+    }
+    assert invoke.call_args_list == [
+        call("left_arm_gripper", "get_normalized", {}),
+        call("right_arm_gripper", "get_normalized", {}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("group_gripper", "expected_task"), [(None, "arm_gripper"), ("tool", "tool_gripper")]
+)
+def test_group_gripper_overrides_model_default(
+    module_factory, group_gripper, expected_task
+) -> None:
+    module = module_factory()
+    group = PlanningGroupDefinition(
+        "tool", ("j0",), "base", "tcp", gripper_hardware_id=group_gripper
+    )
+    _set_groups(
+        module,
+        _model(groups=(group,), gripper=True),
+    )
+    invoke = module._control_coordinator.task_invoke
+    invoke.return_value = True
+
+    assert module.list_planning_groups()[0].has_gripper
+    assert module.set_gripper_position(0.4).succeeded
+    invoke.assert_called_once_with(expected_task, "set_normalized", {"values": [0.4]})
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:

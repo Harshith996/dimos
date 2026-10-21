@@ -174,7 +174,10 @@ def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
 def test_drake_config_group_helpers_resolve_groups_without_drake_runtime(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
-    config = _config(urdf, [_arm_group("joint2", "joint1", name="wrist")])
+    config = _config(
+        urdf,
+        [replace(_arm_group("joint2", "joint1", name="wrist"), gripper_hardware_id="arm")],
+    )
 
     group = DrakeWorld._planning_group_from_config(config, "wrist")
 
@@ -182,6 +185,7 @@ def test_drake_config_group_helpers_resolve_groups_without_drake_runtime(tmp_pat
     assert group.id == "wrist"
     assert group.joint_names == ("joint2", "joint1")
     assert group.tip_link == "tool0"
+    assert group.gripper_hardware_id == "arm"
 
 
 def test_drake_config_group_helpers_validate_duplicate_and_ambiguous_groups(
