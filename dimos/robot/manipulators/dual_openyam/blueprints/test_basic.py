@@ -33,9 +33,10 @@ from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 def test_planner_groups_route_to_their_own_registered_gripper_tasks():
     parsed = BlueprintConfigParser(dual_openyam_planner_coordinator).parse(environ={})
-    model = ManipulationModuleConfig.model_validate(
+    manipulation = ManipulationModuleConfig.model_validate(
         parsed.module_kwargs(ManipulationModule.name)
-    ).model
+    )
+    model = manipulation.model
     coordinator = DualOpenYamCoordinatorConfig.model_validate(
         parsed.module_kwargs(DualOpenYamCoordinator.name)
     )
@@ -44,6 +45,12 @@ def test_planner_groups_route_to_their_own_registered_gripper_tasks():
     assert {name: task.joint_names for name, task in tasks.items()} == {
         "left_arm_gripper": ["left_arm/gripper"],
         "right_arm_gripper": ["right_arm/gripper"],
+    }
+    assert {
+        group: tasks[task].joint_names for group, task in manipulation.gripper_tasks.items()
+    } == {
+        "left_manipulator": ["left_arm/gripper"],
+        "right_manipulator": ["right_arm/gripper"],
     }
     assert [group.name for group in model.planning_groups] == [
         "left_manipulator",

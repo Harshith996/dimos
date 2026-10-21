@@ -105,6 +105,12 @@ coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
 )
 
 dual_openyam_planner_coordinator = autoconnect(
-    planner(model=dual_openyam_model_config()),
+    planner(
+        model=dual_openyam_model_config(),
+        gripper_tasks={
+            "left_manipulator": "left_arm_gripper",
+            "right_manipulator": "right_arm_gripper",
+        },
+    ),
     coordinator_dual_openyam,
 )

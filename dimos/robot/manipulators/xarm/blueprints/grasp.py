@@ -194,6 +194,7 @@ def _scene_registration() -> Blueprint:
 # PickAndPlaceModule resolves its generator by spec, so two would be ambiguous.
 _XARM_GRASP_MODULES = (
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_model,
         static_transforms=[] if SIMULATED else [XARM_WRIST_CAMERA_TRANSFORM],
         planning_timeout=10.0,

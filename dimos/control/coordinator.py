@@ -1013,12 +1013,11 @@ class ControlCoordinator(Module):
 
     @rpc
     def describe_task(self, task_name: TaskName) -> dict[str, Any] | None:
-        """Describe a task's claimed joints, declared commands and stream routes.
+        """Describe a task's declared commands and stream routes.
 
-        ``hardware_joint_names`` lists joints on hardware owning the task's claim.
         Each declared command reports its live signature (rendered string
         plus parameter names) — the method signature is the argument
-        contract. Returns ``{"task", "joint_names", "commands": {name: {"signature",
+        contract. Returns ``{"task", "commands": {name: {"signature",
         "params"}}, "streams": [(stream, routing), ...]}`` or ``None`` for
         an unknown task.
         """
@@ -1039,24 +1038,7 @@ class ControlCoordinator(Module):
                 for entry_task, _handler, routing in entries
                 if entry_task is task
             )
-            joint_names = sorted(task.claim().joints)
-        # Read hardware after releasing the task lock; removal locks hardware first.
-        with self._hardware_lock:
-            hardware_joint_names = sorted(
-                {
-                    name
-                    for hardware in self._hardware.values()
-                    if set(joint_names) & set(hardware.joint_names)
-                    for name in hardware.joint_names
-                }
-            )
-        return {
-            "task": task_name,
-            "joint_names": joint_names,
-            "hardware_joint_names": hardware_joint_names,
-            "commands": commands,
-            "streams": streams,
-        }
+            return {"task": task_name, "commands": commands, "streams": streams}
 
     @rpc
     def start(self) -> None:
