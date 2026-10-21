@@ -26,7 +26,7 @@ from typing import Any
 import mujoco
 import numpy as np
 
-from dimos.sim2.runtime import STATE, SimulationRuntime
+from dimos.sim2.world.runtime import STATE, SimulationRuntime
 
 
 def file_identity(path: Path) -> dict[str, Any]:

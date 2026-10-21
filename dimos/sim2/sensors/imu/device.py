@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ideal mounted IMU acquisition and its optional DimOS stream publisher."""
+"""Ideal mounted IMU acquisition."""
 
-from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
 from dimos.sim2.sensors.device import SensorDevice
-from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
-from dimos.sim2.sensors.spec import Imu
+from dimos.sim2.sensors.imu.spec import Imu
 
 
 class ImuDevice(SensorDevice[Imu]):
@@ -42,15 +40,3 @@ class ImuDevice(SensorDevice[Imu]):
                 ts=self.reader.timestamp,
             ),
         )
-
-
-class ImuModuleConfig(SensorModuleConfig):
-    sensor: Imu
-
-
-class SimImuModule(SensorModule):
-    config: ImuModuleConfig
-    imu: Out[ImuMessage]
-
-    def open(self) -> None:
-        self.device = ImuDevice(self.reader, self.config.sensor, self.config.robot_id)

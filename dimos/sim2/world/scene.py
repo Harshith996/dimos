@@ -24,9 +24,12 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.sim2.scene_types import SceneDescription
-from dimos.sim2.sensors.spec import Camera, Imu, Mount, Sensor, mounted_sensors
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.composition import Sensor, mounted_sensors
+from dimos.sim2.sensors.imu.spec import Imu
+from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import RobotConfig, RobotInstance, WorldConfig
+from dimos.sim2.world.scene_types import SceneDescription
 from dimos.utils.data import LfsPath
 
 

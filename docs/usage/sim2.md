@@ -10,6 +10,34 @@ switched by this core change.
 
 ## Ownership
 
+### Source layout
+
+```text
+dimos/sim2/
+  spec.py                RobotConfig, RobotInstance, WorldConfig
+  blueprint.py           World/device blueprint composition
+  discovery.py           Collect robot descriptions before deployment
+  module.py              SimulationModule and scene RPCs
+  client.py              Robot-side command/feedback client
+  world/                 MuJoCo assembly, stepping, scene state, viewer, run evidence
+  ipc/                   Private shared-memory layout and channel implementation
+  sensors/
+    spec.py              Shared mounts and acquisition requirements
+    composition.py       Supported sensor families and integrated attachments
+    device.py            Acquisition clock and delivery envelope
+    reader.py            Read-only world snapshots/history
+    module.py            Shared worker lifecycle and publication
+    camera/              spec.py, device.py, module.py, renderers/
+    lidar/               spec.py, device.py, module.py, raycast.py, models/
+    imu/                 spec.py, device.py, module.py
+```
+
+Put a sensor's configuration beside its measurement implementation and publisher.
+Ray patterns belong to `lidar/models/`; image renderers belong to
+`camera/renderers/`. Neither belongs in a robot package. A robot package owns
+the choice of devices, their mounts and its actuator bindings. Tests live with
+their owner; cross-sensor acquisition tests stay in `sensors/test_sensors.py`.
+
 | Component | Owns |
 | --- | --- |
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |
@@ -63,7 +91,8 @@ body in the scene; `world` is a fixed frame. A named MJCF camera keeps its
 authored intrinsics. No robot is required for a sensor-only world.
 
 ```python skip
-from dimos.sim2.sensors.spec import Camera, Mount
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import WorldConfig
 
 world = WorldConfig(

@@ -19,9 +19,11 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.module import SimCameraModule, SimRGBDCameraModule
-from dimos.sim2.sensors.imu import SimImuModule
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.imu.module import SimImuModule
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.module import LidarModule
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.spec import WorldConfig
 
 

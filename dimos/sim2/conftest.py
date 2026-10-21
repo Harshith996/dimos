@@ -20,11 +20,13 @@ from uuid import uuid4
 import pytest
 
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.runtime import SimulationRuntime
-from dimos.sim2.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
+from dimos.sim2.world.runtime import SimulationRuntime
+from dimos.sim2.world.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
 
 
 @pytest.fixture

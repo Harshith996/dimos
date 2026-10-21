@@ -354,7 +354,7 @@ all_modules = {
     "sensor-module": "dimos.sim2.sensors.module.SensorModule",
     "sim-camera-module": "dimos.sim2.sensors.camera.module.SimCameraModule",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
-    "sim-imu-module": "dimos.sim2.sensors.imu.SimImuModule",
+    "sim-imu-module": "dimos.sim2.sensors.imu.module.SimImuModule",
     "sim-rgbd-camera-module": "dimos.sim2.sensors.camera.module.SimRGBDCameraModule",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "simulation-module": "dimos.sim2.module.SimulationModule",

@@ -24,8 +24,8 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.module import SimulationModule, SimulationModuleConfig
-from dimos.sim2.scene import scene_path
 from dimos.sim2.spec import RobotInstance, SimRobotSpec, WorldConfig
+from dimos.sim2.world.scene import scene_path
 
 
 def collect_simulation(
