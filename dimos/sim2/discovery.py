@@ -96,37 +96,18 @@ def collect_simulation(
         raise ValueError(f"world timestep {timestep} exceeds robot limit {limit}")
     world = replace(settings.world, robots=robots, timestep=min(timestep, limit))
     generated = simulation(
-        scene=world.scene,
-        robots=world.robots,
-        sensors=world.sensors,
+        world=world,
         sim_id=settings.sim_id,
         viewer=settings.viewer,
-        timestep=world.timestep,
-    )
-    generated_world, *sensors = generated.blueprints
-    generated = generated.remappings(
-        [
-            (
-                sensor.name,
-                port.name,
-                f"{sensor.kwargs['robot_id'] or 'world'}/{sensor.kwargs['sensor'].name}/{port.name}",
-            )
-            for sensor in sensors
-            for port in sensor.streams
-            if port.direction == "out" and port.name != "tf"
-        ]
-    )
-    generated_world = replace(
-        generated_world,
         instance_name=world_name,
-        kwargs={**generated_world.kwargs, "world": world},
+        evidence_dir=settings.evidence_dir,
     )
+    _, *sensors = generated.blueprints
     existing = {a.name: a for a in blueprint.blueprints}
     for sensor in sensors:
         original = existing.get(sensor.name)
         if original is not None and original.module is not sensor.module:
             raise ValueError(f"generated sim2 sensor conflicts with module {sensor.name!r}")
-    generated = replace(generated, blueprints=(generated_world, *sensors))
     # Explicit caller wiring and device settings take precedence. Only the world
     # robot map is replaced with the complete, validated set of definitions.
     expanded = autoconnect(generated, blueprint)
