@@ -260,17 +260,6 @@ def write_secrets(launch: LaunchConfig) -> None:
         )
 
 
-def coordinator_on_bus() -> bool:
-    """dimos run's own check for another Coordinator on the bus."""
-    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-
-    try:
-        CoordinatorRPC._ensure_no_existing_service(CoordinatorRPC.NAME)
-    except RuntimeError:
-        return True
-    return False
-
-
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     with _lock:
         previous = current_launch()
@@ -282,8 +271,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             raise StillRunningError(
                 f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
             )
-        if coordinator_on_bus():
-            raise StillRunningError("another dimos run is running on this machine; stop it first")
         program = store.dimos_bin(dimos_dir)
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
