@@ -22,7 +22,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 import pytest
 
-from experimental.gateway import discovery, introspect
+from experimental.gateway import catalog, discovery, introspect
 from experimental.gateway.state import State
 
 FAKE_SCAN = """
@@ -32,7 +32,7 @@ def emit(value):
     print("\\n{marker}" + json.dumps(value), flush=True)
 names = request.get("blueprints")
 if names is None:
-    names = ["good", "crashes", "missing"]
+    names = json.loads(os.environ.get("FAKE_SCAN_NAMES", '["good", "crashes", "missing"]'))
     emit({{"kind": "names", "blueprints": names, "modules": ["cam"]}})
 for name in names:
     emit({{"kind": "start", "name": name}})
@@ -43,13 +43,15 @@ for name in names:
           "importable": ok, "optional_dependency": False, "import_error": None if ok else "ModuleNotFoundError: x",
           "missing_module": None if ok else "unitree_sdk2py", "doc": "",
           "modules": [{{"name": "cam", "class": "x.Cam", "module": "cam", "streams": []}}] if ok else []}})
+    if name == "dies_after":
+        os._exit(3)
     if ok and request.get("modules") == []:
         emit({{"kind": "module", "name": "cam", "class": "x.Cam", "doc": "A rescanned camera.", "inputs": [],
-              "outputs": [], "skills": [{{"name": "snap", "doc": "", "params": []}}]}})
+              "outputs": [], "rpcs": [{{"name": "snap", "doc": "", "params": [], "return_type": None, "skill": True}}]}})
 for name in request.get("modules", ["cam"]):
     emit({{"kind": "start", "name": "module:" + name}})
     emit({{"kind": "module", "name": name, "class": "x.Cam", "doc": "A camera.", "inputs": [], "outputs": [],
-          "skills": [{{"name": "snap", "doc": "", "params": []}}]}})
+          "rpcs": [{{"name": "snap", "doc": "", "params": [], "return_type": None, "skill": True}}]}})
 emit({{"kind": "end"}})
 """
 
@@ -82,11 +84,22 @@ def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
 
     later = discovery.Scanner(checkout, scanned.jobs, ["false"])
-    assert later.catalog()["modules"][0]["name"] == "cam"
+    assert catalog.modules(later.cache())[0]["name"] == "cam"
     assert later.snapshot()["scanned"] and not later.snapshot()["stale"]
     (checkout / "blueprint.py").write_text("x = 2\n")
     after = discovery.Scanner(checkout, scanned.jobs, ["false"])
-    assert after.snapshot()["stale"] and after.catalog()["modules"][0]["name"] == "cam"
+    assert after.snapshot()["stale"] and catalog.modules(after.cache())[0]["name"] == "cam"
+
+
+def test_a_child_dying_right_after_a_record_still_scans_the_rest(
+    client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_SCAN_NAMES", '["dies_after", "good", "missing"]')
+    scanned.listed = [{"name": n, "kind": "builtin"} for n in ("dies_after", "good", "missing")]
+    job = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert client.get(f"/jobs/{job}").json()["ok"]
+    assert set(scanned.scanner.cache()["results"]) == {"dies_after", "good", "missing"}
 
 
 def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
@@ -130,15 +143,17 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     catalog = client.get("/catalog").json()
     assert [b["name"] for b in catalog["blueprints"]] == ["good", "crashes", "missing", "other"]
     assert catalog["modules"][0]["blueprints"] == ["good"] and "go2" in catalog["robots"]
-    assert catalog["modules"][0]["skills"] == ["snap"] and catalog["modules"][0]["robots"] == [
-        "go2"
-    ]
-    assert catalog["skills"][0]["module"] == "cam" and catalog["scan"]["scanned"]
+    assert catalog["modules"][0]["rpcs"] == ["snap"] and catalog["modules"][0]["robots"] == ["go2"]
+    assert (
+        catalog["rpcs"][0]["module"] == "cam"
+        and catalog["rpcs"][0]["skill"]
+        and catalog["scan"]["scanned"]
+    )
     assert any(e.startswith("blueprint missing: ") for e in catalog["errors"])
     one = client.get("/catalog?module=x.Cam").json()
-    assert [m["name"] for m in one["modules"]] == ["cam"] and [
-        s["name"] for s in one["skills"]
-    ] == ["snap"]
+    assert [m["name"] for m in one["modules"]] == ["cam"] and [r["name"] for r in one["rpcs"]] == [
+        "snap"
+    ]
     assert client.get("/catalog?module=nope").json()["modules"] == []
     bp = client.get("/catalog?blueprint=good").json()
     assert [b["name"] for b in bp["blueprints"]] == ["good"] and [
@@ -156,11 +171,10 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     assert unknown.status_code == 400 and "blueprints.nmae" in unknown.json()["error"]
     assert client.get("/catalog/modules").json()["modules"][0]["name"] == "cam"
     assert (
-        client.get("/catalog/skills?namespace=robot0").json()["skills"][0]["rpc"]
-        == "robot0/cam/snap"
+        client.get("/catalog/rpcs?namespace=robot0").json()["rpcs"][0]["rpc"] == "robot0/cam/snap"
     )
-    assert client.get("/catalog/skills/cam/snap").json()["module"] == "cam"
-    assert client.get("/catalog/skills/cam/nope").status_code == 404
+    assert client.get("/catalog/rpcs/cam/snap").json()["module"] == "cam"
+    assert client.get("/catalog/rpcs/cam/nope").status_code == 404
     assert client.get("/catalog/modules/nope").status_code == 404
     assert client.get("/catalog/msgs/sensor_msgs.Image").json() == {
         "name": "sensor_msgs.Image",
@@ -291,7 +305,7 @@ def test_a_module_answers_with_its_methods_and_config(
         assert args[1] == "x.Cam"
         if args[0] == "module_config":
             return {"name": "cam", "class": "x.Cam", "args": {}}
-        return {"rpcs": [], "skill_methods": [], "file": "x.py", "line": 1}
+        return {"rpcs": [], "file": "x.py", "line": 1}
 
     monkeypatch.setattr(scanned, "introspected", fake)
     cam = client.get("/catalog/modules/x.Cam").json()

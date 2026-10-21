@@ -15,13 +15,23 @@
 import asyncio
 from pathlib import Path
 import sys
+from typing import Literal
 
 import pytest
 
+from dimos.agents.annotation import skill
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
-from experimental.gateway.introspect import Cache, IntrospectError, run_child, spec_topic
+from experimental.gateway.introspect import (
+    Cache,
+    IntrospectError,
+    rpcs,
+    run_child,
+    spec_topic,
+)
 
 
 def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
@@ -30,6 +40,34 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
         spec_topic(ZenohTransport.spec(ZenohTopic("dimos/head_left_color", Twist)))
         == "/head_left_color"
     )
+
+
+class Dog(Module):
+    @rpc
+    def bark(self, times: int = 2) -> str:
+        return "woof" * times
+
+    @skill
+    def trick(self, name: Literal["sit", "jump"]) -> str:
+        """Do a trick."""
+        return name
+
+
+def test_a_modules_own_rpcs_are_listed_with_a_skill_flag() -> None:
+    found = {r["name"]: r for r in rpcs(Dog)}
+    assert set(found) == {"bark", "trick"}  # not every Module's start, stop, ...
+    assert (
+        not found["bark"]["skill"]
+        and found["trick"]["skill"]
+        and found["trick"]["doc"] == "Do a trick."
+    )
+    assert found["bark"]["params"] == [
+        {"name": "times", "type": "int", "default": "2", "required": False, "choices": None}
+    ]
+    assert found["trick"]["params"][0]["required"] and found["trick"]["params"][0]["choices"] == [
+        "sit",
+        "jump",
+    ]
 
 
 def test_the_cache_shares_a_computation_and_drops_expired_ones() -> None:

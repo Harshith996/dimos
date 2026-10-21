@@ -57,6 +57,8 @@ REMOVED = [
     ("get", "/global-config"),
     ("get", "/skills"),
     ("post", "/skills/call"),
+    ("get", "/runs/skills"),
+    ("get", "/catalog/skills"),
     ("get", "/runs/latest/log"),
 ]
 
@@ -72,10 +74,7 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
             return CONFIG
         if args[0] == "blueprint":
             return {"name": args[1], "file": "x.py", "line": 3, "modules": []}
-        bad = [a for a in stdin or [] if "fps=fast" in a]
-        return {
-            "args": [{"tokens": [a], "target": "camera.fps", "error": "not an int"} for a in bad]
-        }
+        raise AssertionError(f"unexpected introspection {args}")
 
     monkeypatch.setattr(state, "introspected", fake)
     return calls
@@ -102,7 +101,7 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
-    assert {"/runs", "/runs/skills", "/catalog", "/config/global"} <= set(routes)
+    assert {"/runs", "/runs/rpcs", "/catalog/rpcs", "/catalog", "/config/global"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
     assert slow == {
         "/catalog/blueprints/{name}",
@@ -156,7 +155,7 @@ def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]
     assert store.blueprint_config("demo")["modules"] == {"camera": {"api_key": "k"}}
 
 
-def test_blueprint_config_lists_every_refused_key(
+def test_blueprint_config_refuses_a_bad_global_value(
     client: TestClient, introspected: list[Any]
 ) -> None:
     refused = client.put(
@@ -164,8 +163,7 @@ def test_blueprint_config_lists_every_refused_key(
         json={"global": {"n_workers": "many"}, "modules": {"camera": {"fps": "fast"}}},
     )
     assert refused.status_code == 400
-    keys = {p["key"] for p in refused.json()["problems"]}
-    assert keys == {"global", "modules.camera.fps"}
+    assert {p["key"] for p in refused.json()["problems"]} == {"global"}
     assert store.blueprint_config("demo") == {"global": {}, "modules": {}}
     assert client.get("/config/blueprints/nope").status_code == 404
 
@@ -200,7 +198,7 @@ def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
         ]
         modules: list[dict[str, Any]] = [
             {"name": "mapper", "class": "x.Mapper", "doc": "", "summary": "", "streams": streams}
-            | {"rpcs": [], "skills": [], "file": None, "line": None}
+            | {"rpcs": [], "file": None, "line": None}
         ]
         return {"name": args[1], "file": None, "line": None, "modules": modules}
 

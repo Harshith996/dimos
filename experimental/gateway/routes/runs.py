@@ -22,25 +22,24 @@ from pydantic import BaseModel, JsonValue
 
 from experimental.gateway import launches, logs, overrides as ov, responses, store
 from experimental.gateway.launches import LaunchConfig
-from experimental.gateway.skills import SkillError
+from experimental.gateway.rpcs import RpcError
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter()
 
 
-class SkillCall(BaseModel):
-    module: str | None = None
+class RpcCall(BaseModel):
+    module: str
     name: str
     args: dict[str, JsonValue] = {}
-    namespace: str | None = None
 
 
 class LaunchRequest(BaseModel):
-    """Exactly one of: a blueprint or a module to launch (with one-off `config`), or a skill to call."""
+    """Exactly one of: a blueprint or a module to launch (with one-off `config`), or an RPC to call."""
 
     blueprint: str | None = None
     module: str | None = None
-    skill: SkillCall | None = None
+    rpc: RpcCall | None = None
     config: JsonValue = None
 
 
@@ -73,11 +72,6 @@ def with_saved(name: str, one_off: ov.LaunchOverrides, args: list[str]) -> Launc
     return LaunchConfig(effective, modules, one_off, list(args))
 
 
-async def refused(state: State, name: str, flags: list[str]) -> list[str]:
-    checked = await state.introspected(["args", name], flags)
-    return [f"{' '.join(a['tokens'])}: {a['error']}" for a in checked["args"] if a["error"]]
-
-
 async def launch_config(state: State, name: str, config: JsonValue) -> LaunchConfig:
     try:
         one_off = ov.parse(config)
@@ -86,10 +80,6 @@ async def launch_config(state: State, name: str, config: JsonValue) -> LaunchCon
         ov.check_global(one_off.global_)
     except ValueError as error:
         raise ApiError(400, str(error))
-    flags = ov.module_flags(one_off.modules)
-    problems = await refused(state, name, flags) if flags else []
-    if problems:
-        raise ApiError(400, "dimos wouldn't take this config: " + "; ".join(problems))
     return with_saved(name, one_off, [])
 
 
@@ -112,20 +102,17 @@ async def run_list() -> dict[str, Any]:
     }
 
 
-@router.post("/runs", response_model=responses.Launch | responses.SkillResult)
+@router.post("/runs", response_model=responses.Launch | responses.RpcResult)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    """Launch a blueprint or a module with the saved config plus this launch's `config`, or call a skill of the running blueprint."""
-    given = [k for k in ("blueprint", "module", "skill") if getattr(request, k) is not None]
+    """Launch a blueprint or a module with the saved config plus this launch's `config`, or call an RPC of the running blueprint."""
+    given = [k for k in ("blueprint", "module", "rpc") if getattr(request, k) is not None]
     if len(given) != 1:
-        raise ApiError(400, "give exactly one of blueprint, module or skill")
-    if request.skill is not None:
-        call = request.skill
-        module = (
-            f"{call.namespace}/{call.module}" if call.namespace and call.module else call.module
-        )
+        raise ApiError(400, "give exactly one of blueprint, module or rpc")
+    if request.rpc is not None:
+        call = request.rpc
         try:
-            return await asyncio.to_thread(state.skills.call, call.name, call.args, module)
-        except SkillError as error:
+            return await asyncio.to_thread(state.rpcs.call, call.module, call.name, call.args)
+        except RpcError as error:
             raise ApiError(error.status, str(error))
     name = str(request.blueprint or request.module)
     if not name or name.startswith("-"):
@@ -139,13 +126,16 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
     if not request.args or request.args[0].startswith("-"):
         raise ApiError(400, "args must start with a blueprint or module name")
     name, *rest = request.args
-    return await started(state, name, LaunchConfig(args=rest))
+    return await started(state, name, LaunchConfig(args=rest, exact=True))
 
 
-@router.get("/runs/skills", response_model=responses.Skills)
-async def skill_list(state: GatewayState) -> dict[str, Any]:
-    """The running blueprint's skills, live, with each one's JSON schema; call one with POST /runs {skill}."""
-    return await asyncio.to_thread(state.skills.listed)
+@router.get("/runs/rpcs", response_model=responses.Rpcs)
+async def rpc_list(state: GatewayState) -> dict[str, Any]:
+    """The running blueprint's RPCs, live (doc, params and skill flag from the last scan); call one with POST /runs {rpc}.
+
+    This API is for buttons: RPCs are called directly, not through MCP, so skills' capability holds (movement...) don't
+    apply. Agents use the python API."""
+    return await asyncio.to_thread(state.rpcs.listed, state.scanner.cache())
 
 
 @router.post("/runs/stop", response_model=responses.Stopped)
@@ -195,10 +185,10 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     if last is None:
         raise ApiError(400, "the dimos gateway hasn't launched anything yet")
     blueprint, previous = last
-    # a /runs/exec launch (the only kind with args) restarts exactly as typed
+    # a /runs/exec launch restarts exactly as typed
     config = (
-        LaunchConfig(args=previous.args)
-        if previous.args
+        LaunchConfig(args=previous.args, exact=True)
+        if previous.exact
         else with_saved(blueprint, previous.one_off, [])
     )
     try:

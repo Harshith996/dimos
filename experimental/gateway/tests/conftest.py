@@ -44,7 +44,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "state" / "runs")
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr(launches, "coordinator_on_bus", lambda: False)
     monkeypatch.delenv("DIMOS_ZENOH_NAMESPACE", raising=False)
     return tmp_path
 

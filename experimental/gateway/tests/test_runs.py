@@ -107,6 +107,15 @@ def test_a_module_launches_like_a_blueprint_and_exec_runs_args_as_typed(
     until(output_has(client, "args"))
     again = client.get("/runs").json()["launch"]["output"].splitlines()[0]
     assert again.endswith("demo --n-workers=7") and "--n-workers=3" not in again
+    client.post("/runs/stop", json={"runId": restarted.json()["runId"]})
+    until(lambda: client.get("/runs").json()["launch"]["phase"] == "stopped")
+    bare = client.post("/runs/exec", json={"args": ["demo"]})
+    until(output_has(client, "args"))
+    restarted = client.post("/runs/restart", json={"runId": bare.json()["runId"]})
+    assert restarted.status_code == 200, restarted.text
+    until(output_has(client, "args"))
+    again = client.get("/runs").json()["launch"]["output"].splitlines()[0]
+    assert again.endswith(f"run --run-id {restarted.json()['runId']} demo")
 
 
 def test_a_failed_launch_reports_its_last_output_line(client: TestClient) -> None:
@@ -225,3 +234,18 @@ def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setenv(launches.DTOP_ENV, "1")
     assert GlobalConfig().dtop is True
+
+
+def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
+    import os
+
+    launches._save(
+        {
+            "blueprint": "demo",
+            "started_at": "x",
+            "pid": os.getpid(),
+            "pid_started": 0.0,
+            "run_id": "r",
+        }
+    )
+    assert launches.current_launch()["phase"] == "failed"

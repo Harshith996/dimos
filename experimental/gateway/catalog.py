@@ -80,28 +80,28 @@ def modules(cache: dict[str, Any] | None) -> list[dict[str, Any]]:
                 robots_of.setdefault(module["class"], set()).add(record["robot"])
     return [
         {
-            **{k: v for k, v in record.items() if k not in ("kind", "skills")},
+            **{k: v for k, v in record.items() if k not in ("kind", "rpcs")},
             "robots": sorted(robots_of.get(record["class"], ())),
-            "skills": [s["name"] for s in record["skills"]],
+            "rpcs": [r["name"] for r in record["rpcs"]],
             "blueprints": sorted(blueprints_of.get(record["class"], ())),
         }
         for record in sorted(cache.get("modules", {}).values(), key=lambda m: m["name"])
     ]
 
 
-def skills(cache: dict[str, Any] | None, namespace: str | None = None) -> list[dict[str, Any]]:
+def rpcs(cache: dict[str, Any] | None, namespace: str | None = None) -> list[dict[str, Any]]:
     by_class = {m["class"]: m for m in modules(cache)}
     found = []
     for record in sorted((cache or {}).get("modules", {}).values(), key=lambda m: m["name"]):
         module = f"{namespace}/{record['name']}" if namespace else record["name"]
         found += [
             {
-                **s,
+                **r,
                 "module": module,
                 "robots": by_class[record["class"]]["robots"],
-                "rpc": f"{module}/{s['name']}",
+                "rpc": f"{module}/{r['name']}",
             }
-            for s in record["skills"]
+            for r in record["rpcs"]
         ]
     return found
 

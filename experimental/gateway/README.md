@@ -1,8 +1,8 @@
 # dimos gateway (experimental)
 
 `python -m experimental.gateway --socket <path> --dimos-dir <checkout>` serves the HTTP API that dimOS Desktop,
-apps and agents use: the catalog (blueprints, modules, skills, robots), saved config, runs (their logs and live
-skills), Dimensional cloud uploads, and the extras installs and blueprint scan (as jobs). `--port 8123` also serves it on `127.0.0.1:8123`; `--detach` starts it in the
+apps and agents use: the catalog (blueprints, modules, RPCs, robots), saved config, runs (their logs and live
+RPCs), Dimensional cloud uploads, and the extras installs and blueprint scan (as jobs). `--port 8123` also serves it on `127.0.0.1:8123`; `--detach` starts it in the
 background. Routes have no prefix: Desktop puts them under `/dimos-gateway`, so `/runs` here is `/dimos-gateway/runs`
 through Desktop.
 
