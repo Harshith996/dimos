@@ -25,7 +25,6 @@ from experimental.gateway.state import ApiError, GatewayState, State
 router = APIRouter(prefix="/catalog")
 # imports dimos in a child process: seconds
 SLOW = {"x-slow": True}
-MAX_ERRORS = 200
 
 
 def check_name(name: str) -> None:
@@ -128,7 +127,7 @@ async def everything(
         "rpcs": [r for r in catalog.rpcs(cache) if r["module"] in kept],
         "robots": catalog.robot_list(notes),
         "types": notes.get("types", {}),
-        "errors": catalog.errors(cache, MAX_ERRORS),
+        "errors": catalog.errors(cache),
         "scan": await scan(state),
     }
     return picked(answer, fields)
