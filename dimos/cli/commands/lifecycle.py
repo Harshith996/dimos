@@ -30,6 +30,7 @@ import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import (
+    DAEMON_STATUS_FD_ENV,
     fork_daemon,
     install_signal_handlers,
     read_daemon_status,
@@ -222,7 +223,12 @@ def run(
         logger.info(f"Cleaned {stale} stale run entries")
 
     blueprint_name = "-".join(blueprint_names)
-    run_id = generate_run_id(blueprint_name)
+    # A macOS daemon re-execs this command. Preserve the launcher's run/log
+    # identity rather than generating a second one in the fresh interpreter.
+    inherited_run_id = (
+        os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
+    )
+    run_id = inherited_run_id or generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run
@@ -312,7 +318,7 @@ def run(
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
         try:
-            with cache_usage_guard(), recording(coordinator.transports):
+            with cache_usage_guard(), recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()
@@ -337,7 +343,7 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            with recording(coordinator.transports):
+            with recording(coordinator):
                 coordinator.loop()
         except Exception:
             coordinator.stop()
