@@ -68,3 +68,14 @@ def test_dotted_module_fields_become_one_object_flag() -> None:
         {"controlcoordinator": {"addresses.xarm_arm": "192.0.2.1", "addresses.piper_arm": "can0"}}
     )
     assert flags == ['--controlcoordinator.addresses={"piper_arm":"can0","xarm_arm":"192.0.2.1"}']
+
+
+def test_launch_env_defaults_are_settings_dimos_reads() -> None:
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    parsed = BlueprintConfigParser(RerunBridgeModule.blueprint()).parse(
+        environ=ov.launch_env_defaults()
+    )
+    kwargs = parsed.module_kwargs(RerunBridgeModule.name)
+    assert (kwargs["rerun_open"], kwargs["rerun_web"]) == ("none", True)

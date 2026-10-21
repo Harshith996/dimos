@@ -23,14 +23,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from experimental.gateway import events
+from experimental.gateway import events, process_stats
 from experimental.gateway.routes import catalog, config, jobs, runs, server
 from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
 
 
 async def drop_idle_stats(state: State) -> None:
     while True:
-        await asyncio.sleep(10)
+        await asyncio.sleep(process_stats.IDLE_S / 3)  # unsubscribes at most a third late
         await asyncio.to_thread(state.process_stats.stop_if_idle)
 
 

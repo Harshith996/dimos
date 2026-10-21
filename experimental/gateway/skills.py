@@ -23,10 +23,11 @@ import time
 from typing import Any, Protocol
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
 
 PING_TIMEOUT_S = 1.0
 LIST_TIMEOUT_S = 3.0
-CALL_TIMEOUT_S = 300.0
+CALL_TIMEOUT_S = DEFAULT_RPC_TIMEOUT  # what a module's own RPC call waits
 CACHE_S = 30.0
 
 
@@ -65,26 +66,14 @@ class Run:
     mcp_url: str | None
 
 
-def mcp_url(entry: Any) -> str:
-    from dimos.core.global_config import global_config
-
-    port = (entry.config_overrides or {}).get("mcp_port")
-    argv = list(entry.original_argv or [])
-    for at, arg in enumerate(argv):
-        if arg in ("--mcp-port", "--mcp_port") and at + 1 < len(argv):
-            port = argv[at + 1]
-        elif arg.startswith(("--mcp-port=", "--mcp_port=")):
-            port = arg.split("=", 1)[1]
-    return f"http://localhost:{int(port or global_config.mcp_port)}/mcp"
-
-
 def live_run() -> Run:
     from dimos.core.run_registry import list_runs
 
     entries = sorted(list_runs(alive_only=True), key=lambda e: str(e.run_id), reverse=True)
     if not entries:
         return Run(None, None, None)
-    return Run(str(entries[0].run_id), str(entries[0].blueprint), mcp_url(entries[0]))
+    # dimos run records its McpServer's URL (None without one)
+    return Run(str(entries[0].run_id), str(entries[0].blueprint), entries[0].mcp_url)
 
 
 def _skill(module: str, info: Any, run: Run) -> dict[str, Any]:

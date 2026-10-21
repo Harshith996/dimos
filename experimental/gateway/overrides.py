@@ -26,11 +26,14 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 SECRET_WORDS = ("secret", "token", "password", "passwd")
 STRUCTURED = ("global", "modules", "secrets")
-# Env, not flags: a flag for a module the blueprint doesn't have is refused, and flags still win.
-LAUNCH_ENV_DEFAULTS = {
-    "RERUNBRIDGEMODULE__RERUN_OPEN": "none",
-    "RERUNBRIDGEMODULE__RERUN_WEB": "true",
-}
+
+
+def launch_env_defaults() -> dict[str, str]:
+    """No rerun window pops up from a launch, the web viewer instead: env, not flags (a flag for a module
+    the blueprint lacks is refused), so a saved setting still wins."""
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    return module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
 
 
 @dataclass
@@ -101,13 +104,20 @@ def as_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
 
 
+def module_env(modules: ModuleValues) -> dict[str, str]:
+    """dimos's env names for module settings: MODULE__FIELD."""
+    return {
+        f"{module.replace('/', '_')}__{name}".upper(): as_text(value)
+        for module, fields in modules.items()
+        for name, value in fields.items()
+        if value is not None
+    }
+
+
 def secret_env(global_: dict[str, Any], modules: ModuleValues, paths: list[str]) -> dict[str, str]:
     env = {key.upper(): as_text(v) for key, v in global_.items() if key in paths and v is not None}
-    for module, fields in modules.items():
-        for name, value in fields.items():
-            if f"{module}.{name}" in paths and value is not None:
-                env[f"{module.replace('/', '_')}__{name}".upper()] = as_text(value)
-    return env
+    secret = {m: {n: v for n, v in f.items() if f"{m}.{n}" in paths} for m, f in modules.items()}
+    return {**env, **module_env(secret)}
 
 
 def without_secrets(

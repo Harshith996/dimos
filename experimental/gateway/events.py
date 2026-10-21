@@ -27,6 +27,7 @@ from experimental.gateway import launches
 
 logger = setup_logger()
 
+# Desktop sets it for the gateway (its server_env); only the gateway's own event bus uses it
 NAMESPACE_ENV = "DIMOS_ZENOH_NAMESPACE"
 
 

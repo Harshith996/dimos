@@ -34,14 +34,39 @@ import typing
 from typing import Any
 
 MARKER = "@@DIMOS_GATEWAY@@"
-INTERNAL_FIELDS = {"g", "rpc_transport", "rpc_timeouts", "default_rpc_timeout", "instance_name"}
-RUN_VALUE_OPTIONS = {"--disable", "--config", "-c", "--relay-url", "--relay-ca"}
-RUN_SWITCHES = {"--local-relay", "--no-local-relay"}
+# `dimos run`'s own options the gateway won't pass, by parameter name
 RUN_REFUSED = {
-    "--daemon": "the gateway runs dimos in the foreground",
-    "-d": "the gateway runs dimos in the foreground",
-    "--help": "try `dimos run <blueprint> --help` in a terminal",
+    "daemon": "the gateway runs dimos in the foreground",
+    "run_id": "the gateway picks the run id",
+    "show_help": "try `dimos run <blueprint> --help` in a terminal",
 }
+
+
+def internal_fields() -> set[str]:
+    """ModuleConfig's own fields (RPC plumbing, the global config): no module's settings."""
+    from dimos.core.module import ModuleConfig
+
+    return set(ModuleConfig.model_fields)
+
+
+def run_options() -> tuple[set[str], set[str], dict[str, str]]:
+    """`dimos run`'s own options, read from its command: (taking a value, switches, refused with why)."""
+    import typer.main
+
+    from dimos.cli.dimos import main
+
+    values: set[str] = set()
+    switches: set[str] = set()
+    refused: dict[str, str] = {}
+    for param in typer.main.get_command(main).commands["run"].params:  # type: ignore[attr-defined]
+        names = [*getattr(param, "opts", []), *getattr(param, "secondary_opts", [])]
+        if param.param_type_name != "option":
+            continue
+        if param.name in RUN_REFUSED:
+            refused.update(dict.fromkeys(names, RUN_REFUSED[param.name]))
+        else:
+            (switches if param.is_flag else values).update(names)  # type: ignore[attr-defined]
+    return values, switches, refused
 
 
 class IntrospectError(Exception):
@@ -378,8 +403,9 @@ def field_args(
     from experimental.gateway.overrides import is_secret_name
 
     args = {}
+    internal = internal_fields()
     for name, field in fields.items():
-        if name in INTERNAL_FIELDS:
+        if name in internal:
             continue
         required, kind = field.is_required(), field.annotation
         try:
@@ -492,6 +518,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
                 return positive, True
         return target, False
 
+    run_values, run_switches, run_refused = run_options()
     checked: list[dict[str, Any]] = []
     index = 0
     while index < len(tokens):
@@ -501,10 +528,10 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
         entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
         checked.append(entry)
         index += 1
-        if option in RUN_REFUSED:
-            entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
+        if option in run_refused:
+            entry["error"] = f"{option} isn't for a launch: {run_refused[option]}"
             continue
-        if option in RUN_VALUE_OPTIONS:
+        if option in run_values:
             entry["target"] = f"run {option}"
             if "=" not in token:
                 if index >= len(tokens) or tokens[index].startswith("-"):
@@ -521,7 +548,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
             elif option in ("--config", "-c") and not Path(given).expanduser().is_file():
                 entry["error"] = f"{option}: no file {given}"
             continue
-        if option in RUN_SWITCHES:
+        if option in run_switches:
             entry["target"] = f"run {option}"
             continue
         if not token.startswith("--") or option in ("-o", "--option"):

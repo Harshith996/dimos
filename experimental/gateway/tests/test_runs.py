@@ -218,3 +218,10 @@ def test_run_logs_now_and_past(client: TestClient, home: Path) -> None:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
     tail = client.get(f"/runs/logs?after={page['offset']}").json()
     assert [r["event"] for r in tail["records"]] == ["later"]
+
+
+def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.core.global_config import GlobalConfig
+
+    monkeypatch.setenv(launches.DTOP_ENV, "1")
+    assert GlobalConfig().dtop is True
