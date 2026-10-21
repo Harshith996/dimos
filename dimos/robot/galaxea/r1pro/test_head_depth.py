@@ -20,6 +20,7 @@ from dimos.robot.galaxea.r1pro.head_depth import (
     HeadFloorPriorConfig,
     footprint_floor,
     onto_floor,
+    view_floor,
 )
 
 # A box on the floor ahead of the robot, in floor_frame: x, y extents and its height above the floor.
@@ -85,3 +86,24 @@ def test_the_footprint_is_a_disc_of_floor() -> None:
     assert np.hypot(under[:, 0], under[:, 1]).max() <= 0.325
     assert (under[:, 2] == 0.0).all()
     assert len(under) == pytest.approx(np.pi * 0.325**2 / 0.05**2, rel=0.15)
+
+
+def test_unseen_floor_is_filled_only_where_the_nearest_thing_seen_is_floor() -> None:
+    """Floor seen 0.8 m out on bearings 0-30 deg and beyond a box at 0.6 m on 40-50 deg; nothing seen behind."""
+    angles = np.radians(np.arange(0.0, 31.0, 1.0))
+    floor = np.c_[0.8 * np.cos(angles), 0.8 * np.sin(angles), np.zeros(len(angles))]
+    box_angles = np.radians(np.arange(40.0, 51.0, 1.0))
+    box = np.c_[0.6 * np.cos(box_angles), 0.6 * np.sin(box_angles), np.full(len(box_angles), 0.3)]
+    behind_box = np.c_[
+        0.8 * np.cos(box_angles), 0.8 * np.sin(box_angles), np.zeros(len(box_angles))
+    ]
+
+    filled = view_floor(np.concatenate([floor, box, behind_box]), 0.325, 1.5, 5.0, 0.05)
+
+    radius = np.hypot(filled[:, 0], filled[:, 1])
+    bearing = np.degrees(np.arctan2(filled[:, 1], filled[:, 0]))
+    assert (filled[:, 2] == 0.0).all()
+    assert ((radius > 0.325) & (radius < 0.8)).all()
+    assert ((bearing > 10) & (bearing < 15) & (radius > 0.7)).any()
+    assert not ((bearing > 40) & (bearing < 50)).any()
+    assert ((bearing >= -0.01) & (bearing < 35)).all()
