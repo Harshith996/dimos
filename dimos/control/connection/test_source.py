@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from dimos.control._control_test_helpers import connection_contract, turning_joints
-from dimos.control.connection_source import ConnectionSource
+from dimos.control.connection.source import ConnectionSource
 from dimos.control.contract.convert import MOTOR_INTERFACES
 from dimos.control.contract.description import ControlDescription, Limits, Resource, ResourceKind
 from dimos.control.contract.keys import Interface, Key, Unit
@@ -420,7 +420,7 @@ def test_read_only_joints_never_get_held_or_gain_command_ports():
 
 
 def test_fresh_imu_does_not_hide_stale_joint_feedback(mocker):
-    clock = mocker.patch("dimos.control.connection_source.time.monotonic", return_value=10.0)
+    clock = mocker.patch("dimos.control.connection.source.time.monotonic", return_value=10.0)
     source = ConnectionSource(connection_contract(arm(others=[imu_resource()])))
     source.on_message("joint_state", reading(0.3, -0.2))
     source.on_message("imu", Imu())
