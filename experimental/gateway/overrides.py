@@ -44,21 +44,6 @@ class LaunchOverrides:
     modules: ModuleValues = field(default_factory=dict)
     secrets: list[str] = field(default_factory=list)
 
-    def to_json(self) -> dict[str, Any]:
-        value: dict[str, Any] = {"global": self.global_, "modules": self.modules}
-        if self.secrets:
-            value["secrets"] = self.secrets
-        return value
-
-    @staticmethod
-    def from_json(value: Any) -> LaunchOverrides:
-        value = value if isinstance(value, dict) else {}
-        return LaunchOverrides(
-            dict(value.get("global") or {}),
-            {m: dict(f) for m, f in (value.get("modules") or {}).items()},
-            [p for p in value.get("secrets") or [] if isinstance(p, str)],
-        )
-
 
 class OverrideError(StatusError, ValueError):
     status = 400
@@ -145,40 +130,6 @@ def redact(
         for m, f in modules.items()
     }
     return flat, nested
-
-
-def keep_hidden(sent: dict[str, Any], saved: dict[str, Any]) -> dict[str, Any]:
-    hidden = {key for key, value in sent.items() if value == HIDDEN and is_secret_name(key)}
-    return {
-        key: saved[key] if key in hidden else value
-        for key, value in sent.items()
-        if key not in hidden or saved.get(key) is not None
-    }
-
-
-def without_hidden(values: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in values.items() if v != HIDDEN}
-
-
-def merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in over.items():
-        if value is None:
-            merged.pop(key, None)
-        else:
-            merged[key] = value
-    return dict(sorted(merged.items()))
-
-
-def merge_modules(base: ModuleValues, over: ModuleValues) -> ModuleValues:
-    merged = {module: dict(fields) for module, fields in base.items()}
-    for module, fields in over.items():
-        entry = merge(merged.get(module, {}), fields)
-        if entry:
-            merged[module] = entry
-        else:
-            merged.pop(module, None)
-    return dict(sorted(merged.items()))
 
 
 def flag_fields() -> set[str]:

@@ -39,7 +39,7 @@ export function LogsModal(
       }
       try {
         const page = await getJson<{ offset: number; records: LogRecord[] }>(
-          `runs/log_hist/${encodeURIComponent(runId)}?${params}`,
+          `history/${encodeURIComponent(runId)}/logs?${params}`,
         );
         if (!live) {
           return;

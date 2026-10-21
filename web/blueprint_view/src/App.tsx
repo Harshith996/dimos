@@ -25,6 +25,8 @@ import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import {
+  type Active,
+  activeRuns,
   type Launch,
   launchedWithOther,
   liveRunOf,
@@ -50,9 +52,11 @@ interface RatesAnswer {
 async function loadSaved(): Promise<Saved | null> {
   try {
     const [global, mine] = await Promise.all([
-      getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>("config/global"),
+      getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>(
+        "../api/dimos/config/global",
+      ),
       getJson<{ global?: Saved["global"]; modules?: Saved["modules"] }>(
-        `config/blueprints/${encodeURIComponent(NAME)}`,
+        `../api/dimos/config/blueprints/${encodeURIComponent(NAME)}`,
       ),
     ]);
     return {
@@ -146,10 +150,10 @@ export function App() {
 
   const pollRuns = useCallback(async () => {
     try {
-      const answer = await getJson<{ launch: Launch | null; runs?: RegistryRun[] }>("runs");
+      const answer = await getJson<Active>("active");
       const mine = answer.launch?.blueprint === NAME ? answer.launch : null;
       setLaunch(mine);
-      setLiveRun(liveRunOf(answer.runs ?? [], NAME, RUN));
+      setLiveRun(liveRunOf(activeRuns(answer), NAME, RUN));
       setRelaunching((was) =>
         was === "starting" && mine?.pid !== relaunchedPidRef.current && mine?.phase !== "starting"
           ? false
@@ -214,7 +218,7 @@ export function App() {
     }
     const poll = async () => {
       try {
-        const answer = await getJson<StatsAnswer>("runs/stats");
+        const answer = await getJson<StatsAnswer>("active/stats");
         setStats(answer);
         setStatsError(
           answer.up ? null : "no stats yet: a run started outside Desktop needs --dtop",
@@ -291,13 +295,16 @@ export function App() {
     setRelaunching(running ? "stopping" : "starting");
     setRelaunchedPid(launch?.pid ?? null);
     act(() =>
-      send("POST", "runs/restart", { runId: launch?.runId }).then(
-        () => setRelaunching("starting"),
-        (caught) => {
-          setRelaunching(false);
-          throw caught;
-        },
-      )
+      // through Desktop, which keeps the saved config: it merges it in, so edits take effect
+      (running
+        ? send("POST", "../api/dimos/relaunch")
+        : send("POST", "../api/dimos/launch", { blueprint: NAME })).then(
+          () => setRelaunching("starting"),
+          (caught) => {
+            setRelaunching(false);
+            throw caught;
+          },
+        )
     );
   };
 
@@ -364,7 +371,7 @@ export function App() {
               <Button
                 size="sm"
                 data-bp-stop
-                onClick={() => act(() => send("POST", "runs/stop", { runId: launch?.runId }))}
+                onClick={() => act(() => send("POST", "active/stop"))}
               >
                 Stop
               </Button>

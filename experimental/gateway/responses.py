@@ -142,20 +142,12 @@ with_config(CONFIG)(BlueprintSchema)
 ModuleSchema = TypedDict("ModuleSchema", {"name": str, "class": str, "args": dict[str, Arg]})
 with_config(CONFIG)(ModuleSchema)
 
-BlueprintConfigValues = TypedDict(
-    "BlueprintConfigValues",
-    {"name": str, "global": dict[str, Any], "modules": dict[str, dict[str, Any]]},
-)
-"""What's saved for one blueprint: `global` (over /config/global) and each module's fields."""
-with_config(CONFIG)(BlueprintConfigValues)
-
 
 class GlobalConfig(Body):
-    """dimos's GlobalConfig: its JSON schema, defaults, the saved overrides and which keys are secret."""
+    """dimos's GlobalConfig: its JSON schema, defaults and which keys are secret."""
 
     schema: dict[str, Any]
     defaults: dict[str, Any]
-    overrides: dict[str, Any]
     secrets: list[str]
 
 
@@ -360,53 +352,128 @@ class JobLog(JobStatus):
     code: str | None
 
 
-class RunEntry(Body):
-    run_id: str
-    pid: int
-    blueprint: str
-    started_at: str
-    log_dir: str
-
-
-OneOff = TypedDict(
-    "OneOff",
-    {
-        "global": dict[str, Any],
-        "modules": dict[str, dict[str, Any]],
-        "secrets": NotRequired[list[str]],
-    },
+LaunchConfigShown = TypedDict(
+    "LaunchConfigShown", {"global": dict[str, Any], "modules": dict[str, dict[str, Any]]}
 )
-with_config(CONFIG)(OneOff)
+"""A launch's config, with secret values shown as •••."""
+with_config(CONFIG)(LaunchConfigShown)
 
 
 class Launch(Body):
-    """The blueprint this gateway launched: its phase, output so far and the config it ran with."""
+    """The blueprint this gateway launched last: its phase, output so far and the config it ran with. `runId` is
+    the run registry's, null until the run registers."""
 
     blueprint: str
     phase: Literal["starting", "running", "stopping", "stopped", "failed"]
     startedAt: str
     pid: int
     output: str
-    runId: str
+    runId: str | None
     logDir: str | None
     error: str | None
-    overrides: dict[str, Any]
-    modules: dict[str, dict[str, Any]]
-    oneOff: OneOff
+    config: LaunchConfigShown
     args: NotRequired[list[str]]
 
 
-class Runs(Body):
-    """The running blueprints, and the launch this gateway started."""
+class Active(Body):
+    """The running blueprint (however it was started), and the gateway's last launch."""
 
-    runs: list[RunEntry]
+    running: bool
+    runId: str | None
+    pid: int | None
+    blueprint: str | None
+    startedAt: str | None
+    logDir: str | None
     launch: Launch | None
 
 
+class ActiveId(Body):
+    runId: str
+
+
 class Stopped(Body):
-    """Which run was stopped."""
+    """What `dimos stop` said."""
 
     output: str
+
+
+class LiveRpc(Body):
+    """A running instance's RPC; params, return_type and skill come from the last scan (null if it hasn't seen it)."""
+
+    name: str
+    module: str
+    doc: str
+    params: list[Param] | None
+    return_type: str | None
+    skill: bool | None
+
+
+class LiveStream(Body):
+    name: str
+    type: str
+    direction: str | None
+    channel: str | None
+    module: str
+
+
+Instance = TypedDict(
+    "Instance",
+    {
+        "id": str,
+        "class": str,
+        "catalogId": str,
+        "namespace": str | None,
+        "doc": str,
+        "rpcs": list[LiveRpc],
+        "streams": list[LiveStream],
+    },
+)
+"""A running module instance: `id` is `namespace:module` (or `module`), `catalogId` its class path for /catalog/modules/{name}."""
+with_config(CONFIG)(Instance)
+
+
+class Instances(Body):
+    modules: list[Instance]
+
+
+class LiveRpcs(Body):
+    rpcs: list[LiveRpc]
+
+
+class Skills(Body):
+    skills: list[LiveRpc]
+
+
+class LiveStreams(Body):
+    streams: list[LiveStream]
+
+
+class CallResult(Body):
+    """What the RPC returned (as JSON, or its text if it isn't JSON-able), or the error it raised."""
+
+    ok: bool
+    result: Any
+    error: str | None
+
+
+class ModuleAction(Body):
+    ok: bool
+    error: str | None
+
+
+class Peeked(Body):
+    name: str
+    type: str
+    value: Any
+    ts: float | None
+
+
+class ActiveBlueprint(Body):
+    """What was launched and the config it got (secrets shown as •••), and its running instances."""
+
+    name: str
+    config: LaunchConfigShown
+    modules: list[str]
 
 
 class LogRecord(Body):
@@ -419,16 +486,29 @@ class LogRecord(Body):
 
 
 class PastRun(Body):
+    """A run with a log: `endedAt` is its log's last record's time (null while it runs)."""
+
     runId: str
     blueprint: str | None
     startedAt: str | None
+    endedAt: str | None
     running: bool
 
 
-class LogHistory(Body):
+class History(Body):
     """Every run with a log, newest first."""
 
     runs: list[PastRun]
+
+
+class PastRunDetail(PastRun):
+    logDir: str
+
+
+class Recordings(Body):
+    """Where dimos writes recordings (mcap and db files)."""
+
+    path: str
 
 
 class RunLog(Body):
@@ -520,41 +600,6 @@ class Uploads(Body):
     uploads: list[Upload]
     waitingForLogin: bool
     byPath: dict[str, Uploaded]
-
-
-class RpcRun(Body):
-    runId: str | None
-    blueprint: str | None
-
-
-class Rpc(Body):
-    """A running module's RPC; doc, params, return_type and skill come from the last scan (None if it hasn't seen it)."""
-
-    name: str
-    module: str
-    rpc: str
-    doc: str
-    params: list[Param] | None
-    return_type: str | None
-    skill: bool | None
-
-
-class Rpcs(Body):
-    """The running blueprint's RPCs."""
-
-    rpcs: list[Rpc]
-    run: RpcRun | None
-
-
-class RpcResult(Body):
-    """What the RPC returned (as JSON, or its text if it isn't JSON-able), or the error it raised."""
-
-    rpc: str
-    runId: str | None
-    blueprint: str | None
-    ok: bool
-    result: Any
-    error: str | None
 
 
 class SourceFile(Body):

@@ -1,4 +1,4 @@
-// The run this blueprint is in (GET /runs' launch), and whether the saved config moved on since it started.
+// The run this blueprint is in (GET /active's launch), and whether the saved config moved on since it started.
 import { sameValue } from "dimos-react";
 import type { Saved } from "./config.tsx";
 
@@ -7,20 +7,41 @@ export interface Launch {
   phase: "starting" | "running" | "stopping" | "stopped" | "failed";
   pid: number;
   output?: string;
-  runId: string;
-  overrides?: Record<string, unknown>;
-  modules?: Record<string, Record<string, unknown>>;
-  oneOff?: { global?: Record<string, unknown>; modules?: Record<string, Record<string, unknown>> };
+  runId: string | null;
+  config?: { global?: Record<string, unknown>; modules?: Record<string, Record<string, unknown>> };
   steps?: { code: string; state: string; data?: { deployed?: number } }[];
 }
 
-/** A live run in dimos's run registry (GET /runs' runs): Desktop's, or one started in a terminal. */
+/** GET /active: the running blueprint (Desktop's, or one started in a terminal) and the gateway's last launch. */
+export interface Active {
+  running: boolean;
+  runId: string | null;
+  pid: number | null;
+  blueprint: string | null;
+  startedAt: string | null;
+  logDir: string | null;
+  launch: Launch | null;
+}
+
+/** The live run in dimos's run registry, as GET /active tells it. */
 export interface RegistryRun {
   run_id: string;
   pid: number;
   blueprint: string;
   started_at: string;
   log_dir: string;
+}
+
+export function activeRuns(active: Active): RegistryRun[] {
+  return active.running && active.runId && active.blueprint && active.pid !== null
+    ? [{
+      run_id: active.runId,
+      pid: active.pid,
+      blueprint: active.blueprint,
+      started_at: active.startedAt ?? "",
+      log_dir: active.logDir ?? "",
+    }]
+    : [];
 }
 
 /** This blueprint's live run, however it was started: the one asked for (&run=), else the newest. */
@@ -43,43 +64,27 @@ const STEP_LABELS: Record<string, string> = {
   downloading_data: "Downloading the recording",
 };
 
-/** Whether the run started with other config than what's saved now (plus its one-off values). */
+/** Whether the run started with other config than what's saved now (secrets, shown masked on both sides, aside). */
 export function launchedWithOther(launch: Launch | null, saved: Saved | null): boolean {
-  if (!launch?.overrides || !saved) {
+  if (!launch?.config || !saved) {
     return false;
   }
-  const merge = (base: Record<string, unknown>, over: Record<string, unknown> = {}) => {
-    const merged = { ...base };
-    for (const [key, value] of Object.entries(over)) {
-      if (value === null) {
-        delete merged[key];
-      } else {
-        merged[key] = value;
-      }
-    }
-    return merged;
-  };
+  const masked = (value: unknown) => typeof value === "string" && /^•+$/.test(value);
   const differs = (
     a: Record<string, unknown>,
     b: Record<string, unknown>,
     base: Record<string, unknown> = {},
   ) =>
     [...new Set([...Object.keys(a), ...Object.keys(b)])].some((key) =>
+      !masked(a[key]) && !masked(b[key]) &&
       !sameValue(key in a ? a[key] : base[key], key in b ? b[key] : base[key])
     );
-  const oneOff = launch.oneOff ?? {};
-  if (differs(merge(saved.global, oneOff.global), launch.overrides, saved.defaults)) {
+  if (differs(saved.global, launch.config.global ?? {}, saved.defaults)) {
     return true;
   }
-  const ran = launch.modules ?? {};
-  const names = new Set([
-    ...Object.keys(saved.modules),
-    ...Object.keys(oneOff.modules ?? {}),
-    ...Object.keys(ran),
-  ]);
-  return [...names].some((name) =>
-    differs(merge(saved.modules[name] ?? {}, oneOff.modules?.[name]), ran[name] ?? {})
-  );
+  const ran = launch.config.modules ?? {};
+  const names = new Set([...Object.keys(saved.modules), ...Object.keys(ran)]);
+  return [...names].some((name) => differs(saved.modules[name] ?? {}, ran[name] ?? {}));
 }
 
 function startingStep(
