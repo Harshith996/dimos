@@ -73,6 +73,7 @@ pub struct Conn {
     closed: Arc<AtomicBool>,
     /// requests waiting for the robot's answer, by request id
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>,
+    next_id: AtomicU64,
 }
 
 async fn send(
@@ -134,8 +135,12 @@ impl Conn {
                 .await
                 .map_err(|e| e.to_string())?,
         );
-        let result = Self::negotiate(pc.clone(), ip, aes_key, timing, on_event).await;
+        let closed = Arc::new(AtomicBool::new(false));
+        let result =
+            Self::negotiate(pc.clone(), ip, aes_key, timing, on_event, closed.clone()).await;
         if result.is_err() {
+            // closing a link that never came up isn't a lost link
+            closed.store(true, Ordering::Relaxed);
             let _ = pc.close().await;
         }
         result
@@ -147,6 +152,7 @@ impl Conn {
         aes_key: &str,
         timing: &Timing,
         on_event: OnEvent,
+        closed: Arc<AtomicBool>,
     ) -> Result<Arc<Conn>, String> {
         pc.add_transceiver_from_kind(
             RTPCodecType::Video,
@@ -161,7 +167,6 @@ impl Conn {
             .create_data_channel("data", None)
             .await
             .map_err(|e| e.to_string())?;
-        let closed = Arc::new(AtomicBool::new(false));
         let video_ssrc = Arc::new(AtomicU64::new(u64::MAX));
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>> = Default::default();
 
@@ -343,6 +348,8 @@ impl Conn {
             video_ssrc,
             closed,
             pending,
+            // ids are the robot's i32: start anywhere, then count
+            next_id: AtomicU64::new(rand::thread_rng().gen_range(0..1 << 30)),
         });
         conn.start_heartbeat(secs(timing.heartbeat_period));
         Ok(conn)
@@ -391,7 +398,7 @@ impl Conn {
         parameter: Option<&Value>,
         timeout: Duration,
     ) -> Result<Value, String> {
-        let id = now_ns() / 1_000_000 % 2_147_483_648 + rand::thread_rng().gen_range(0..1000);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) % (1 << 31);
         let parameter = match parameter {
             None => json!(""),
             Some(Value::String(text)) => json!(text),

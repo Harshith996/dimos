@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
@@ -83,8 +84,13 @@ class Go2FleetConnection(GO2Connection):
             conn.start()
             self._extra_connections.append(conn)
 
-        # Parent starts primary robot, subscribes sensors, calls standup() on all
+        # Parent starts the primary robot. On replay and the sims it calls standup(), which stands every robot; the
+        # Rust module stands only its own, so the extras stand up here.
         super().start()
+        if self.connection is None:
+            for conn in self._extra_connections:
+                conn.standup()
+            time.sleep(self.config.timing.stand_up_settle)
         for conn in self._extra_connections:
             conn.balance_stand()
             conn.set_obstacle_avoidance(self.config.obstacle_avoidance)

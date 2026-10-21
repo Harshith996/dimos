@@ -32,6 +32,8 @@ from reactivex import Subject
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
@@ -237,3 +239,40 @@ def test_odom_to_tf_prefixed() -> None:
         "robot0/camera_link",
         "robot0/camera_optical",
     )
+
+
+_CONTRACT = Path(go2_conn.__file__).parent / "webrtc" / "rust" / "tests" / "fixtures"
+
+
+def test_the_rust_module_gets_the_config_its_fixture_holds() -> None:
+    """The Rust `Config` rejects unknown fields and has no defaults; its tests parse this same file."""
+    config = ConnectionConfig(g=GlobalConfig(), ip="192.168.123.161").to_config_dict()
+    assert config == json.loads((_CONTRACT / "config.json").read_text())
+
+
+def test_every_verb_the_rpcs_send_is_in_the_rust_fixture() -> None:
+    """The Rust `parse_verb` test parses each line of verbs.txt; these are all the verbs the rpcs send."""
+    conn = GO2Connection(g=GlobalConfig(robot_ip="192.168.123.161"))
+    assert conn.connection is None
+    sent: list[str] = []
+    conn._send = sent.append  # type: ignore[method-assign]
+    conn._ask = lambda verb, *_, **__: sent.append(verb)  # type: ignore[method-assign]
+    twist = Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, -0.2))
+    conn.move(twist)
+    conn.move(twist, duration=1.5)
+    conn.standup()
+    conn.liedown()
+    conn.balance_stand()
+    conn.set_rage_mode(True)
+    conn.set_rage_mode(False)
+    conn.sport_command(1016)
+    conn.set_light(3)
+    conn.set_obstacle_avoidance(True)
+    conn.set_obstacle_avoidance(False)
+    conn.switch_joystick(True)
+    conn.switch_joystick(False)
+    conn.stop_movement()
+    conn.publish_request("rt/api/vui/request", {"api_id": 1005, "parameter": {"brightness": 3}})
+    conn.publish_request("rt/api/sport/request", {"api_id": 1009})
+    conn.stop()
+    assert sent == (_CONTRACT / "verbs.txt").read_text().splitlines()

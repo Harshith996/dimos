@@ -30,6 +30,8 @@ use serde_json::{json, Value};
 use tracing::debug;
 
 pub const SIGNALING_PORT: u16 = 9991;
+/// Firmware before 1.1.11 takes a plaintext offer here instead.
+pub const LEGACY_SIGNALING_PORT: u16 = 8081;
 /// The dog's address on its own hotspot.
 const AP_MODE_IP: &str = "192.168.12.1";
 /// data2=2 firmware wraps con_notify in AES-128-GCM under this fixed key; data2=3 (>= 1.1.15) uses a per-device key.
@@ -134,8 +136,8 @@ pub fn validation_reply(key: &str) -> String {
 }
 
 async fn post(
-    ip: &str,
-    path: &str,
+    url: &str,
+    content_type: &str,
     body: Option<String>,
     timeout: Duration,
 ) -> Result<String, String> {
@@ -143,21 +145,19 @@ async fn post(
         .timeout(timeout)
         .build()
         .map_err(|e| e.to_string())?;
-    let mut request = client
-        .post(format!("http://{ip}:{SIGNALING_PORT}{path}"))
-        .header("content-type", "application/json");
+    let mut request = client.post(url).header("content-type", content_type);
     if let Some(body) = body {
         request = request.body(body);
     }
     let response = request
         .send()
         .await
-        .map_err(|e| format!("robot {ip} unreachable: {e}"))?;
+        .map_err(|e| format!("{url} unreachable: {e}"))?;
     let status = response.status();
     let text = response.text().await.map_err(|e| e.to_string())?;
-    debug!(path, %status, bytes = text.len(), "signaling reply");
+    debug!(url, %status, bytes = text.len(), "signaling reply");
     if !status.is_success() {
-        return Err(format!("signaling {path} failed ({status})"));
+        return Err(format!("signaling {url} failed ({status})"));
     }
     Ok(text)
 }
@@ -169,7 +169,15 @@ pub async fn exchange_sdp(
     offer_json: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let notify_b64 = post(ip, "/con_notify", None, timeout).await?;
+    let notify_url = format!("http://{ip}:{SIGNALING_PORT}/con_notify");
+    let notify_b64 = match post(&notify_url, "application/json", None, timeout).await {
+        Ok(notify) => notify,
+        Err(err) => {
+            return legacy_offer(ip, offer_json, timeout)
+                .await
+                .map_err(|legacy| format!("{err}; {legacy}"))
+        }
+    };
     let notify_raw = B64
         .decode(notify_b64.trim())
         .map_err(|e| format!("con_notify isn't base64: {e}"))?;
@@ -182,7 +190,9 @@ pub async fn exchange_sdp(
     if data1.len() < 20 {
         return Err("con_notify data1 is too short".into());
     }
-    let public_key = &data1[10..data1.len() - 10];
+    let public_key = data1
+        .get(10..data1.len() - 10)
+        .ok_or("con_notify data1 isn't text")?;
     let session_key: String = (0..16)
         .map(|_| format!("{:02x}", rand::thread_rng().gen::<u8>()))
         .collect();
@@ -191,14 +201,34 @@ pub async fn exchange_sdp(
         "data2": rsa_encrypt(&session_key, public_key)?,
     });
     let answer = post(
-        ip,
-        &format!("/con_ing_{}", path_ending(&data1)),
+        &format!(
+            "http://{ip}:{SIGNALING_PORT}/con_ing_{}",
+            path_ending(&data1)
+        ),
+        "application/x-www-form-urlencoded",
         Some(body.to_string()),
         timeout,
     )
     .await?;
-    let answer: Value = serde_json::from_str(&aes_ecb_decrypt(&answer, &session_key)?)
-        .map_err(|e| format!("answer isn't JSON: {e}"))?;
+    answer_sdp(&aes_ecb_decrypt(&answer, &session_key)?)
+}
+
+/// Firmware before 1.1.11: the offer goes in plaintext and the answer comes back the same way.
+async fn legacy_offer(ip: &str, offer_json: &str, timeout: Duration) -> Result<String, String> {
+    let url = format!("http://{ip}:{LEGACY_SIGNALING_PORT}/offer");
+    let answer = post(
+        &url,
+        "application/json",
+        Some(offer_json.to_string()),
+        timeout,
+    )
+    .await?;
+    answer_sdp(&answer)
+}
+
+fn answer_sdp(answer: &str) -> Result<String, String> {
+    let answer: Value =
+        serde_json::from_str(answer).map_err(|e| format!("answer isn't JSON: {e}"))?;
     let sdp = answer["sdp"].as_str().unwrap_or("").to_string();
     if sdp == "reject" {
         return Err("the Go2 is busy: another WebRTC client (the Unitree app, Go2 Ctrl, another run) holds it".into());

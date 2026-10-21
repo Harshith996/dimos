@@ -59,6 +59,14 @@ pub struct Timing {
     pub video_queue_packets: usize,
     /// frames in the decoder the capture clock remembers
     pub capture_max_waiting: usize,
+    /// RTP packets that may wait for an earlier one that came late before it counts as lost
+    pub reorder_packets: usize,
+    /// a frame bigger than this is a broken stream, not video
+    pub max_frame_bytes: usize,
+    /// camera_info goes out at most this often
+    pub camera_info_period: f64,
+    /// the clock stats log this often
+    pub stats_period: f64,
 }
 
 pub fn secs(seconds: f64) -> Duration {
@@ -67,29 +75,10 @@ pub fn secs(seconds: f64) -> Duration {
 
 #[cfg(test)]
 impl Timing {
-    /// Any valid timing, for tests that need one (the real values come from GO2Connection's config).
+    /// GO2Connection's defaults, from the config fixture its tests check (tests/fixtures/config.json).
     pub fn for_tests() -> Self {
-        Self {
-            answer_timeout: 5.0,
-            cmd_vel_timeout: 0.2,
-            move_period: 0.01,
-            stand_up_settle: 3.0,
-            rage_balance_settle: 0.3,
-            rage_switch_settle: 2.0,
-            motion_mode_settle: 5.0,
-            reconnect_pause: 2.0,
-            signaling_timeout: 4.0,
-            ice_gather_timeout: 4.0,
-            validation_timeout: 8.0,
-            heartbeat_period: 2.0,
-            ice_keepalive_period: 2.0,
-            link_quiet_timeout: 5.0,
-            link_lost_timeout: 30.0,
-            keyframe_retry_period: 1.0,
-            clock_window: 30.0,
-            clock_reset: 1.0,
-            video_queue_packets: 2048,
-            capture_max_waiting: 16,
-        }
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/config.json")).unwrap();
+        serde_json::from_value(config["timing"].clone()).unwrap()
     }
 }

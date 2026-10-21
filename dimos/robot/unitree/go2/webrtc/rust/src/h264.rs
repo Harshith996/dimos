@@ -23,8 +23,6 @@ pub struct Packet<'a> {
 }
 
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
-/// A frame in progress past this is a markerless stream, not video: dropped, resync.
-const MAX_AU_BYTES: usize = 4 << 20;
 
 /// One reassembled frame, Annex-B encoded.
 pub struct AccessUnit {
@@ -38,6 +36,8 @@ pub struct AccessUnit {
 /// Packets in, whole frames out; a sequence gap drops the frame and waits for a keyframe.
 #[derive(Default)]
 pub struct Depacketizer {
+    /// a frame in progress past this is a markerless stream, not video: dropped, resync
+    max_frame_bytes: usize,
     au: Vec<u8>,
     au_rtp_ts: u32,
     keyframe: bool,
@@ -50,6 +50,13 @@ pub struct Depacketizer {
 }
 
 impl Depacketizer {
+    pub fn new(max_frame_bytes: usize) -> Self {
+        Self {
+            max_frame_bytes,
+            ..Self::default()
+        }
+    }
+
     /// Whether frames are flowing: false from the start or a gap until the next keyframe.
     pub fn synced(&self) -> bool {
         self.synced
@@ -60,7 +67,7 @@ impl Depacketizer {
         let gap = self
             .last_seq
             .is_some_and(|last| pkt.sequence_number != last.wrapping_add(1));
-        if gap || self.au.len() + self.fu.len() > MAX_AU_BYTES {
+        if gap || self.au.len() + self.fu.len() > self.max_frame_bytes {
             self.au.clear();
             self.fu.clear();
             self.keyframe = false;
@@ -168,9 +175,68 @@ impl Depacketizer {
     }
 }
 
+/// Puts RTP packets back in sequence order: one that comes early waits for the ones before it, up to `window`
+/// packets; past that the missing ones count as lost.
+pub struct Reorder<T> {
+    window: usize,
+    next: Option<i64>,
+    held: std::collections::BTreeMap<i64, T>,
+}
+
+impl<T> Reorder<T> {
+    pub fn new(window: usize) -> Self {
+        Self {
+            window,
+            next: None,
+            held: Default::default(),
+        }
+    }
+
+    /// The packets now ready, in order; a duplicate or one that comes after its turn is dropped.
+    pub fn push(&mut self, seq: u16, item: T) -> Vec<T> {
+        let next = *self.next.get_or_insert(seq as i64);
+        let key = next + seq.wrapping_sub(next as u16) as i16 as i64;
+        if key < next {
+            return Vec::new();
+        }
+        self.held.insert(key, item);
+        let mut ready = Vec::new();
+        let mut next = next;
+        loop {
+            if let Some(item) = self.held.remove(&next) {
+                ready.push(item);
+                next += 1;
+            } else if self.held.len() > self.window {
+                next = *self.held.keys().next().expect("held isn't empty");
+            } else {
+                break;
+            }
+        }
+        self.next = Some(next);
+        ready
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MAX_AU_BYTES: usize = 4 << 20;
+
+    #[test]
+    fn reorder_puts_packets_back_in_sequence() {
+        let mut reorder = Reorder::new(4);
+        assert_eq!(reorder.push(65534, 'a'), vec!['a']);
+        assert_eq!(reorder.push(0, 'c'), Vec::<char>::new());
+        assert_eq!(reorder.push(65535, 'b'), vec!['b', 'c']);
+        // a duplicate of one already handed out
+        assert_eq!(reorder.push(65535, 'b'), Vec::<char>::new());
+        // 1 never comes: once more than 4 wait, it counts as lost
+        for (seq, item) in [(2, 'e'), (3, 'f'), (4, 'g'), (5, 'h')] {
+            assert_eq!(reorder.push(seq, item), Vec::<char>::new());
+        }
+        assert_eq!(reorder.push(6, 'i'), vec!['e', 'f', 'g', 'h', 'i']);
+    }
 
     fn pkt(seq: u16, ts: u32, marker: bool, payload: &[u8]) -> Packet<'_> {
         Packet {
@@ -206,13 +272,13 @@ mod tests {
 
     #[test]
     fn no_output_before_first_keyframe() {
-        let mut d = Depacketizer::default();
+        let mut d = Depacketizer::new(MAX_AU_BYTES);
         assert!(d.push(&pkt(1, 100, true, P_SLICE)).is_none());
     }
 
     #[test]
     fn stap_a_keyframe_emits_annex_b() {
-        let mut d = Depacketizer::default();
+        let mut d = Depacketizer::new(MAX_AU_BYTES);
         let au = d
             .push(&pkt(1, 100, true, &stap_a(&[SPS, PPS, IDR])))
             .expect("keyframe AU");
@@ -223,7 +289,7 @@ mod tests {
 
     #[test]
     fn fu_a_reassembles_and_replays_params() {
-        let mut d = Depacketizer::default();
+        let mut d = Depacketizer::new(MAX_AU_BYTES);
         assert!(d.push(&pkt(1, 100, false, &stap_a(&[SPS, PPS]))).is_none());
         let ind = (IDR[0] & 0xE0) | 28;
         let fu_start = [ind, 0x80 | (IDR[0] & 0x1F), IDR[1], IDR[2]];
@@ -238,7 +304,7 @@ mod tests {
 
     #[test]
     fn sequence_gap_resyncs_on_keyframe() {
-        let mut d = Depacketizer::default();
+        let mut d = Depacketizer::new(MAX_AU_BYTES);
         assert!(d
             .push(&pkt(1, 100, true, &stap_a(&[SPS, PPS, IDR])))
             .is_some());
@@ -249,7 +315,7 @@ mod tests {
 
     #[test]
     fn markerless_stream_stays_bounded() {
-        let mut d = Depacketizer::default();
+        let mut d = Depacketizer::new(MAX_AU_BYTES);
         let slice = [0x41; 1200];
         for seq in 0..8192u16 {
             assert!(d.push(&pkt(seq, seq as u32, false, &slice)).is_none());

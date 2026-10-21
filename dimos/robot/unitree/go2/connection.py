@@ -17,11 +17,12 @@ from enum import Enum
 from importlib import resources
 import json
 import sys
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 import time
 from typing import Any, Protocol
+import uuid
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
@@ -95,6 +96,16 @@ class WebRtcTiming(BaseConfig):
     clock_reset: float = 1.0
     video_queue_packets: int = 2048
     capture_max_waiting: int = 16
+    # RTP packets that may wait for a late earlier one before it counts as lost
+    reorder_packets: int = 32
+    max_frame_bytes: int = 4 << 20
+    camera_info_period: float = 1.0
+    stats_period: float = 10.0
+
+    def connect_deadline(self) -> float:
+        """The longest a connect can take: ICE gathering, signaling (con_notify, con_ing, or the legacy offer)
+        and the data channel's validation."""
+        return self.ice_gather_timeout + 3 * self.signaling_timeout + self.validation_timeout
 
 
 class ConnectionConfig(NativeModuleConfig):
@@ -127,6 +138,13 @@ class ConnectionConfig(NativeModuleConfig):
     auto_reconnect: bool = False
     timing: WebRtcTiming = Field(default_factory=WebRtcTiming)
 
+    @model_validator(mode="after")
+    def _shutdown_outlasts_the_lie_down(self) -> "ConnectionConfig":
+        # teardown waits up to answer_timeout for the lie-down before it lets go of the robot
+        if "shutdown_timeout" not in self.model_fields_set:
+            self.shutdown_timeout = self.timing.answer_timeout + DEFAULT_THREAD_JOIN_TIMEOUT
+        return self
+
     def to_config_dict(self) -> dict[str, Any]:
         """Exactly the Rust module's Config: it rejects unknown fields and has no defaults."""
         camera_info = _camera_info_static()
@@ -145,6 +163,7 @@ class ConnectionConfig(NativeModuleConfig):
             "frame_id_prefix": self.frame_id_prefix or "",
             "auto_reconnect": self.auto_reconnect,
             "camera_info": camera_info.to_dict(),
+            "camera_offset": [CAMERA_MOUNT.x, CAMERA_MOUNT.y, CAMERA_MOUNT.z],
             "timing": self.timing.model_dump(),
         }
 
@@ -190,8 +209,9 @@ def _prefixed(prefix: str | None, name: str) -> str:
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
 # TODO we need a standardized way to specify this for all cameras in dimos
+CAMERA_MOUNT = Vector3(0.3, 0.0, 0.0)
 BASE_TO_OPTICAL: Transform = Transform(
-    translation=Vector3(0.3, 0.0, 0.0),
+    translation=CAMERA_MOUNT,
     rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
     frame_id="base_link",
     child_frame_id="camera_link",
@@ -416,8 +436,10 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
-    # One verb per message to the Rust module, e.g. "stand-up", "rage on", "move 0.5 0 0 2"; only the rpcs publish it
+    # One verb per message to the Rust module, e.g. "stand-up", "rage on", "move 0.5 0 0 2"; only the rpcs publish it.
+    # "#<id> <verb>" asks for "#<id> ok <json>" or "#<id> error <message>" on command_result.
     command: In[String]
+    command_result: Out[String]
     battery: Out[BatteryState]
 
     # None on the real robot: the Rust module holds the link
@@ -441,6 +463,8 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._results: dict[str, tuple[Event, list[str]]] = {}
+        self._results_lock = Lock()
         self.connection = make_connection(self.config.ip, self.config)
         if self.connection is None:
             return
@@ -466,7 +490,16 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def start(self) -> None:
         if self.connection is None:
             self.register_disposable(Disposable(self.battery.subscribe(self._on_battery)))
+            self.register_disposable(Disposable(self.command_result.subscribe(self._on_result)))
+            linked = Event()
+            self.register_disposable(Disposable(self.odom.subscribe(lambda _: linked.set())))
             super().start()
+            # a bad key or a busy robot fails the run here, as it does on the other backends
+            deadline = self.config.timing.connect_deadline()
+            if not linked.wait(deadline) and not self.config.auto_reconnect:
+                raise RuntimeError(
+                    f"the Go2 at {self.config.ip} didn't connect within {deadline} s (see the go2_webrtc log)"
+                )
             return
         Module.start(self)
         self.connection.start()
@@ -525,10 +558,37 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
         Module.stop(self)
 
-    def _send(self, verb: str) -> bool:
-        """A verb for the Rust module; it acts on it asynchronously and logs a failure."""
+    def _send(self, verb: str) -> None:
+        """A verb for the Rust module without waiting for it (cmd_vel-like: move, stop)."""
         self.command.transport.publish(String(verb))
-        return True
+
+    def _ask(self, verb: str, extra_wait: float = 0.0, requests: int = 1) -> Any:
+        """A verb for the Rust module, waiting for its outcome: the robot's answer, or an error. It waits for
+        `requests` robot answers plus one more answer_timeout for the round trip, and the verb's own `extra_wait`."""
+        timeout = (requests + 1) * self.config.timing.answer_timeout + extra_wait
+        request_id = uuid.uuid4().hex
+        done, outcome = Event(), list[str]()
+        with self._results_lock:
+            self._results[request_id] = (done, outcome)
+        try:
+            self.command.transport.publish(String(f"#{request_id} {verb}"))
+            if not done.wait(timeout):
+                raise TimeoutError(f"the Go2 module didn't finish {verb!r} within {timeout} s")
+        finally:
+            with self._results_lock:
+                self._results.pop(request_id, None)
+        status, _, detail = outcome[0].partition(" ")
+        if status != "ok":
+            raise RuntimeError(f"Go2 {verb!r}: {detail}")
+        return json.loads(detail) if detail else None
+
+    def _on_result(self, msg: String) -> None:
+        request_id, _, outcome = msg.data.removeprefix("#").partition(" ")
+        with self._results_lock:
+            waiting = self._results.get(request_id)
+        if waiting:
+            waiting[1].append(outcome)
+            waiting[0].set()
 
     def _on_battery(self, msg: BatteryState) -> None:
         self._latest_battery = msg
@@ -538,7 +598,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
         # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
         # robots still hang off one shared tree root.
         camera_link = Transform(
-            translation=Vector3(0.3, 0.0, 0.0),
+            translation=CAMERA_MOUNT,
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id=_prefixed(prefix, "base_link"),
             child_frame_id=_prefixed(prefix, "camera_link"),
@@ -570,36 +630,43 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def publish_camera_info(self) -> None:
         while True:
             self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
-            time.sleep(1.0)
+            time.sleep(self.config.timing.camera_info_period)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
         if self.connection is None:
-            return self._send(
-                f"move {twist.linear.x} {twist.linear.y} {twist.angular.z} {duration}"
-            )
+            verb = f"move {twist.linear.x} {twist.linear.y} {twist.angular.z} {duration}"
+            if duration > 0:
+                # a timed move blocks until it's done, as on the other backends
+                self._ask(verb, extra_wait=duration, requests=0)
+            else:
+                self._send(verb)
+            return True
         return self.connection.move(twist, duration)
 
     @rpc
     def standup(self) -> bool:
         """Make the robot stand up."""
         if self.connection is None:
-            return self._send("stand-up")
+            self._ask("stand-up")
+            return True
         return self.connection.standup()
 
     @rpc
     def liedown(self) -> bool:
         """Make the robot lie down."""
         if self.connection is None:
-            return self._send("stand-down")
+            self._ask("stand-down")
+            return True
         return self.connection.liedown()
 
     @rpc
     def balance_stand(self) -> bool:
         """Enter BalanceStand: neutral state for switching locomotion modes"""
         if self.connection is None:
-            return self._send("balance")
+            self._ask("balance")
+            return True
         return self.connection.balance_stand()
 
     @rpc
@@ -609,7 +676,13 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
         precondition before toggling; sim backends are no-ops.
         """
         if self.connection is None:
-            result = self._send(f"rage {'on' if enable else 'off'}")
+            timing = self.config.timing
+            self._ask(
+                f"rage {'on' if enable else 'off'}",
+                extra_wait=timing.rage_balance_settle + timing.rage_switch_settle,
+                requests=3,
+            )
+            result = True
         else:
             result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode", enabled=enable)
@@ -619,28 +692,32 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def sport_command(self, api_id: int) -> bool:
         """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
         if self.connection is None:
-            return self._send(str(api_id))
+            self._ask(str(api_id))
+            return True
         return self.connection.sport_command(api_id)
 
     @rpc
     def set_light(self, level: int) -> bool:
         """Head-LED brightness level 0-10 (0 = off)."""
         if self.connection is None:
-            return self._send(f"brightness {level}")
+            self._ask(f"brightness {level}")
+            return True
         return self.connection.set_light(level)
 
     @rpc
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         """Toggle the onboard obstacle avoidance."""
         if self.connection is None:
-            return self._send(f"obstacle-avoidance {'on' if enabled else 'off'}")
+            self._ask(f"obstacle-avoidance {'on' if enabled else 'off'}")
+            return True
         return self.connection.set_obstacle_avoidance(enabled)
 
     @rpc
     def switch_joystick(self, enable: bool = True) -> bool:
         """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
         if self.connection is None:
-            return self._send(f"joystick {'on' if enable else 'off'}")
+            self._ask(f"joystick {'on' if enable else 'off'}")
+            return True
         return self.connection.switch_joystick(enable)
 
     @rpc
@@ -684,13 +761,12 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             topic: The RTC topic to publish to
             data: The data dictionary to publish
         Returns:
-            The result of the publish request (on the real robot, sent without waiting: {})
+            The result of the publish request
         """
         if self.connection is None:
             parameter = data.get("parameter")
-            self._send(
-                f"request {topic} {data['api_id']}"
-                + ("" if parameter is None else f" {json.dumps(parameter)}")
-            )
-            return {}
+            verb = f"request {topic} {data['api_id']}"
+            if parameter is not None:
+                verb += f" {json.dumps(parameter)}"
+            return self._ask(verb)  # type: ignore[no-any-return]
         return self.connection.publish_request(topic, data)
