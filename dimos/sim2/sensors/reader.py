@@ -45,12 +45,13 @@ class WorldReader:
             frame = self.channel.read_observation()
         except BlockingIOError:
             return False
-        if frame is None or frame.metadata.sequence == self.sequence:
+        if frame is None:
             return False
+        changed = frame.metadata.sequence != self.sequence
         self.restore(frame)
         self.sequence = frame.metadata.sequence
         self.episode = frame.metadata.episode_id
-        return True
+        return changed
 
     def restore(self, frame: ChannelFrame) -> None:
         """Restore an exact observation, including MuJoCo's mounted IMU readings."""
@@ -73,7 +74,7 @@ class WorldReader:
         times = times[first:last]
         period = self.channel.descriptor.physics_dt * self.channel.descriptor.control_decimation
         if (
-            len(times) < 2
+            len(times) == 0
             or times[0] > start + 1e-9
             or times[-1] < end - 1e-9
             or np.any(np.diff(times) > period * 1.5)

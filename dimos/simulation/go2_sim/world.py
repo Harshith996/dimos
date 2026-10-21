@@ -18,14 +18,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import threading
+import time
+from typing import Any
 
 from filelock import FileLock
 import mujoco
 import numpy as np
+from pydantic import Field
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
 from dimos.constants import CACHE_DIR
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -36,8 +42,12 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
+from dimos.sim2.module import SimulationSpec
+from dimos.sim2.sensors.reader import WorldReader
 from dimos.simulation.scenes.procedural import Family, generate
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 SENSOR_FRAME_ID = "mid360_link"
 ODOM_FRAME_ID = "odom"
@@ -128,14 +138,21 @@ def procedural_scene(family: Family = "office", seed: int = 1) -> Path:
     return path
 
 
-class Go2SimTelemetry(SensorModule):
+class Go2SimTelemetryConfig(ModuleConfig):
+    robot_id: str
+    rate_hz: float = Field(default=50, gt=0, allow_inf_nan=False)
+
+
+class Go2SimTelemetry(Module):
     """Preserve the procedural nav stack's Point-LIO-shaped truth diagnostics.
 
     This worker reads snapshots; it never steps physics, runs a policy or casts rays.
     The lidar worker supplies a deskewed sensor-frame cloud.
     """
 
-    config: SensorModuleConfig
+    config: Go2SimTelemetryConfig
+    _simulation: SimulationSpec
+    dedicated_worker = True
 
     scan: In[PointCloud2]
     lidar: Out[PointCloud2]
@@ -145,9 +162,57 @@ class Go2SimTelemetry(SensorModule):
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.reader: WorldReader | None = None
+        self._error: str | None = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.reader = WorldReader(self._simulation.describe())
+        try:
+            self.open()
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        except Exception:
+            self.reader.close()
+            raise
+
+    def _run(self) -> None:
+        assert self.reader is not None
+        try:
+            while not self._stop.is_set():
+                before = time.monotonic()
+                if self.reader.update() and self.reader.channel.lifecycle == "ready":
+                    self.capture()
+                self._stop.wait(max(0, 1 / self.config.rate_hz - (time.monotonic() - before)))
+        except Exception as error:
+            self._error = str(error)
+            logger.exception("Go2 truth diagnostics stopped")
+
+    @rpc
+    def sensor_status(self) -> dict[str, Any]:
+        return {"error": self._error}
+
+    @rpc
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                raise RuntimeError("Go2 truth diagnostics did not stop")
+        if self.reader is not None:
+            self.reader.close()
+        super().stop()
+
     def open(self) -> None:
+        assert self.reader is not None
         m = self.reader.model
-        prefix = self.config.model_prefix
+        prefix = f"{self.config.robot_id}/"
         self._base = m.body(prefix + "base").id
         self._site = m.site(prefix + "sensor/lidar").id
         self._feet = {m.geom(prefix + leg).id for leg in ("FL", "FR", "RL", "RR")}
@@ -168,6 +233,7 @@ class Go2SimTelemetry(SensorModule):
         self.lidar.publish(cloud)
 
     def capture(self) -> None:
+        assert self.reader is not None
         m, d = self.reader.model, self.reader.data
         stamp = self.reader.timestamp
         rotation = d.site_xmat[self._site].reshape(3, 3)
@@ -218,6 +284,7 @@ class Go2SimTelemetry(SensorModule):
             self._next_scene = stamp + 2
 
     def _contacts(self) -> list[Contact]:
+        assert self.reader is not None
         m, d = self.reader.model, self.reader.data
         found: set[Contact] = set()
         for c in d.contact:

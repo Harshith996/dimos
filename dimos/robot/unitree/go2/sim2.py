@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Go2 device definition using the existing locomotion policy and calibrated physics."""
+"""Go2's physical device definition and the existing compiled-model dynamics fit."""
 
-from pathlib import Path
 from typing import Literal
 
 import mujoco
@@ -23,8 +22,8 @@ import numpy as np
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.lidar.models.mid360 import Mid360
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount, Sensor
-from dimos.sim2.spec import ControlInterface, Joint, RobotConfig
-from dimos.simulation.go2_legged.policy import LEGS, load_policy
+from dimos.sim2.spec import Joint, RobotConfig
+from dimos.simulation.go2_legged.policy import LEGS
 from dimos.simulation.go2_legged.robot import FITTED_ACTUATOR_TAU, FITTED_PHYSICS
 from dimos.utils.data import LfsPath
 
@@ -54,13 +53,11 @@ def configure_physics(model: mujoco.MjModel, prefix: str) -> None:
 
 
 def go2_definition(
-    policy_path: Path | None = None,
     *,
     camera: bool = True,
     lidar: bool = True,
     lidar_model: Literal["ideal", "mid360"] = "ideal",
 ) -> RobotConfig:
-    policy = load_policy(policy_path)
     sensors: list[Sensor] = [Imu("imu", Mount("base"))]
     if camera:
         sensors.append(
@@ -103,8 +100,6 @@ def go2_definition(
         root_body="base",
         floating=True,
         spawn_height=0.335,
-        control=ControlInterface.WHOLE_BODY,
-        wait_for_first_command=True,
         max_timestep=0.002,
         configure_physics=configure_physics,
         joints=tuple(
@@ -112,14 +107,9 @@ def go2_definition(
                 name=name,
                 model_name=name,
                 actuator=name.removesuffix("_joint"),
-                home=float(q),
-                kp=float(kp),
-                kd=float(kd),
                 actuator_time_constant=FITTED_ACTUATOR_TAU,
             )
-            for name, q, kp, kd in zip(
-                policy.joint_names, policy.default_pose, policy.kp, policy.kd, strict=True
-            )
+            for name in (f"{leg}_{part}_joint" for leg in LEGS for part in ("hip", "thigh", "calf"))
         ),
         sensors=tuple(sensors),
     )

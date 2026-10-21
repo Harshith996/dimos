@@ -41,9 +41,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection, go2_connection
+from dimos.robot.unitree.go2.sim2 import go2_definition
 from dimos.robot.unitree.go2.sim_device import Go2SimDevice
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.scene import scene_path
+from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 
 
 def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_command(mocker):
@@ -56,14 +58,18 @@ def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_comman
     policy = mocker.Mock()
     policy.kp = np.ones(12)
     policy.kd = np.ones(12)
+    policy.joint_names = tuple(f"joint_{i}" for i in range(12))
+    mocker.patch("dimos.robot.unitree.go2.sim_device.load_policy", return_value=policy)
+    thread = mocker.patch("dimos.robot.unitree.go2.sim_device.Thread").return_value
+    thread.is_alive.return_value = False
 
     def act(state, command):
         commands.append(command.copy())
         return np.zeros(12)
 
     policy.act.side_effect = act
-    device._policy = policy
     device._client = mocker.Mock()
+    device._client.descriptor.joint_names = policy.joint_names
     device._client.read.return_value = SimpleNamespace(
         metadata=SimpleNamespace(episode_id=0),
         values={
@@ -84,6 +90,7 @@ def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_comman
 
     device._client.write_motors.side_effect = tick
     try:
+        device.start()
         assert device.move(Twist(linear=Vector3(0.12, 0, 0)), duration=0.25)
         with pytest.raises(ValueError, match="finite"):
             device.move(Twist(linear=Vector3(float("nan"), 0, 0)))
@@ -310,6 +317,26 @@ def test_mujoco_selects_internal_device_not_another_world():
     assert isinstance(device, Go2SimDevice)
     with pytest.raises(RuntimeError, match="collected sim2 world"):
         device.start()
+
+
+def test_policy_joint_order_is_bound_to_the_physical_device(mocker):
+    names = tuple(j.name for j in go2_definition(camera=False, lidar=False).joints)
+    policy = mocker.Mock(spec=OnnxGo2Policy, joint_names=names[::-1])
+    mocker.patch("dimos.robot.unitree.go2.sim_device.load_policy", return_value=policy)
+    thread = mocker.patch("dimos.robot.unitree.go2.sim_device.Thread")
+    thread.return_value.is_alive.return_value = False
+    device = Go2SimDevice()
+    client = mocker.Mock()
+    client.descriptor.joint_names = names
+    mocker.patch.object(device, "_client", client)
+    try:
+        device.start()
+        state = np.arange(12)
+        policy_state = state[device._policy_order]
+        assert policy_state.tolist() == list(reversed(range(12)))
+        assert policy_state[device._motor_order].tolist() == state.tolist()
+    finally:
+        device.stop()
 
 
 @pytest.mark.parametrize("duration,velocity", [(-1, 0), (1, float("nan")), (float("inf"), 1)])

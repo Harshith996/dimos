@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+from dataclasses import replace
 from enum import Enum
 from importlib import resources
 from pathlib import Path
@@ -59,7 +60,9 @@ from dimos.sim2.module import SimulationSpec
 from dimos.sim2.scene import scene_robot
 from dimos.sim2.spec import RobotInstance
 from dimos.simulation.dimsim.config import DimSimConfig
+from dimos.simulation.go2_legged.policy import load_policy
 from dimos.spec.perception import Camera, Pointcloud
+from dimos.utils.data import LfsPath
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
 
@@ -457,16 +460,32 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     @staticmethod
     def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance:
         config = cast("ConnectionConfig", config)
-        return scene_robot(
+        policy = load_policy(config.policy)
+        instance = scene_robot(
             scene,
             go2_definition(
-                config.policy,
                 camera=config.camera,
                 lidar=config.lidar,
                 lidar_model=config.lidar_model,
             ),
             config.spawn,
             default=(0, 0, 0),
+        )
+        return replace(
+            instance,
+            initial_positions=dict(
+                zip(policy.joint_names, map(float, policy.default_pose), strict=True)
+            ),
+            hold_gains={
+                name: (float(p), float(d))
+                for name, p, d in zip(policy.joint_names, policy.kp, policy.kd, strict=True)
+            },
+            control_imu="imu",
+            wait_for_first_command=True,
+            controller={
+                "implementation": type(policy),
+                "weights": config.policy or LfsPath("go2_sim/go2_policy/policy.onnx"),
+            },
         )
 
     def control_readings(self) -> dict[type, str]:

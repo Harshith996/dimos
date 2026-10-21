@@ -19,64 +19,50 @@ from pathlib import Path
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.module import SimCameraModule, SimRGBDCameraModule
+from dimos.sim2.sensors.imu import SimImuModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar
-from dimos.sim2.spec import RobotInstance, WorldConfig
+from dimos.sim2.spec import WorldConfig
 
 
 def simulation(
     *,
-    scene: Path,
-    robots: dict[str, RobotInstance],
-    sensors: tuple[Camera | Lidar, ...] = (),
+    world: WorldConfig,
     sim_id: str = "sim",
     viewer: bool = False,
-    timestep: float = 0.005,
+    instance_name: str | None = None,
+    evidence_dir: Path | None = None,
 ) -> Blueprint:
     """Build physics and declared sensing, without choosing a controller or robot driver."""
     modules = [
         SimulationModule.blueprint(
-            world=WorldConfig(scene=scene, robots=robots, timestep=timestep, sensors=sensors),
+            world=world,
             sim_id=sim_id,
             viewer=viewer,
+            instance_name=instance_name,
+            evidence_dir=evidence_dir,
         )
     ]
-    ports: tuple[str, ...]
-    sensor_groups = [(None, None, sensors)] + [
-        (robot_id, instance.config.root_body, instance.config.sensors)
-        for robot_id, instance in robots.items()
-    ]
-    for robot_id, root_body, devices in sensor_groups:
-        for sensor in devices:
-            owner = robot_id or "world"
-            kwargs = dict(
-                instance_name=f"{owner}_{sensor.name}",
-                robot_id=robot_id,
-                sensor=sensor,
-                rate_hz=sensor.rate_hz,
-            )
-            if isinstance(sensor, Camera):
-                module = SimRGBDCameraModule if sensor.depth else SimCameraModule
-                blueprint = module.blueprint(**kwargs)
-                ports = ("color_image", "camera_info")
-                if sensor.depth:
-                    ports += ("depth_image", "depth_camera_info", "pointcloud")
-            elif isinstance(sensor, Lidar):
-                if sensor.imu is not None:
-                    kwargs["rate_hz"] = max(sensor.rate_hz, sensor.imu.rate_hz)
-                blueprint = LidarModule.blueprint(**kwargs, root_body=root_body)
-                ports = ("pointcloud", "raw_pointcloud", "imu_raw")
-            elif isinstance(sensor, Imu):
-                # The robot client reads this IMU in the same frame as its joint feedback.
-                continue
-            else:
-                raise TypeError(f"unsupported sensor configuration: {type(sensor).__name__}")
-            if sensors or len(robots) > 1 or sum(type(s) is type(sensor) for s in devices) > 1:
-                blueprint = blueprint.remappings(
-                    [
-                        (f"{owner}_{sensor.name}", port, f"{owner}/{sensor.name}/{port}")
-                        for port in ports
-                    ]
-                )
-            modules.append(blueprint)
+    for robot_id, sensor in world.devices:
+        owner = robot_id or "world"
+        kwargs = dict(instance_name=f"{owner}_{sensor.name}", robot_id=robot_id, sensor=sensor)
+        if isinstance(sensor, Camera):
+            module = SimRGBDCameraModule if sensor.depth else SimCameraModule
+            blueprint = module.blueprint(**kwargs)
+        elif isinstance(sensor, Lidar):
+            root_body = world.robots[robot_id].config.root_body if robot_id is not None else None
+            blueprint = LidarModule.blueprint(**kwargs, root_body=root_body)
+        elif isinstance(sensor, Imu):
+            blueprint = SimImuModule.blueprint(**kwargs)
+        else:
+            raise TypeError(f"unsupported sensor configuration: {type(sensor).__name__}")
+        atom = blueprint.blueprints[0]
+        blueprint = blueprint.remappings(
+            [
+                (atom.name, port.name, f"{owner}/{sensor.name}/{port.name}")
+                for port in atom.streams
+                if port.direction == "out" and port.name != "tf"
+            ]
+        )
+        modules.append(blueprint)
     return autoconnect(*modules)

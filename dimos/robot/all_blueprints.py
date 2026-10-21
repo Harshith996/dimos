@@ -351,6 +351,7 @@ all_modules = {
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sensor-module": "dimos.sim2.sensors.module.SensorModule",
     "sim-camera-module": "dimos.sim2.sensors.camera.module.SimCameraModule",
+    "sim-imu-module": "dimos.sim2.sensors.imu.SimImuModule",
     "sim-rgbd-camera-module": "dimos.sim2.sensors.camera.module.SimRGBDCameraModule",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "simulation-module": "dimos.sim2.module.SimulationModule",
