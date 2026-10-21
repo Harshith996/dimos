@@ -61,16 +61,9 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_GRIPPER_JOINTS
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Table top in the workcell frame, from the rig calibration of 2026-10-15
-# (dual_openyam_workcell_v2 SOURCE.md). The model carries the slab 1 cm lower so
-# objects resting on the table do not count as in collision with it; no separate
-# planner floor, it would overlap the slab.
+# Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
-# {side}_grasp_frame sits 10 cm below the gripper link on its axis; the finger
-# pads of the URDF meet 3.7 cm further out. The printed fingers measure the same
-# as stock, fingertip 0.146 m below the gripper link (Mustafa, calipers,
-# 2026-10-15), so the tool point is 9 mm past the pad centre on both arms. The
-# 2026-10-09 ruler check that gave 45 and 60 mm was wrong.
+# Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
 # Pink's defaults do not converge on this model; the WebXR teleop uses these.
@@ -83,25 +76,17 @@ DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-# Fixed camera on the centre post, in the workcell frame of dual_openyam_workcell_v2
-# (the rig frame of Mustafa's 2026-10-15 calibration: midway between the arm bases,
-# x forward, y toward the left arm, z up). The calibration solved the colour
-# optical frame in that rig frame; this is the same pose expressed as camera_link
-# (optical = link * color_frame * (-0.5, 0.5, -0.5, 0.5)). The 2026-10-13 AprilTag
-# solve agreed with it within 5 mm and 2 deg.
+# Overhead colour optical pose from the 2026-10-15 calibration, expressed as camera_link.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=-0.01684, y=0.01262, z=0.41508),
-    rotation=Quaternion(-0.02168, 0.47733, -0.00152, 0.87845),  # xyzw, pitched 57.0 deg down
+    rotation=Quaternion(-0.02168, 0.47733, -0.00152, 0.87845),
     frame_id="world",
     child_frame_id="camera_link",
 )
-# RealSense D405 serials on the workcell; override with --realsensecamera.serial-number,
-# --left-wrist-camera.serial-number and --right-wrist-camera.serial-number.
+# Override with --realsensecamera.serial-number and --{side}-wrist-camera.serial-number.
 DUAL_OPENYAM_OVERHEAD_CAMERA_SERIAL = "230322272156"
 DUAL_OPENYAM_WRIST_CAMERA_SERIALS = {"left": "260322272983", "right": "260322276650"}
-# The gripper in GraspGenX's convention: origin on the gripper link, approach
-# along +Z, jaws closing along X. The fingers slide 4.7 cm each, so the open and
-# half-open sweep volumes share their centre.
+# GraspGenX convention: origin on the gripper link, approach +Z, jaws close along X.
 DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME = {
     "extents_open": (0.094, 0.028, 0.020),
     "offset_open": (0.0, 0.0, 0.137),
@@ -109,17 +94,13 @@ DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME = {
     "offset_half_open": (0.0, 0.0, 0.137),
     "fingertip_depth": 0.1468,
 }
-# GraspGenX frame -> {side}_tcp. The tcp below is the grasp frame turned a half
-# turn about Y, so GraspGenX's approach axis already runs along the tcp's +Z:
-# swap X and Y, then move 13.7 cm back along the approach to the pad centre.
+# GraspGenX frame -> {side}_tcp: swap X and Y, then 13.7 cm back along the approach.
 DUAL_OPENYAM_GRASP_FRAME_TO_TCP = (
     (0.0, -1.0, 0.0, 0.0),
     (1.0, 0.0, 0.0, 0.0),
     (0.0, 0.0, 1.0, -0.137),
     (0.0, 0.0, 0.0, 1.0),
 )
-# Streams a benchmark run keeps: joint states, every camera's colour, depth and
-# intrinsics, and TF. Main publishes no commanded joint targets to record.
 DUAL_OPENYAM_RECORD_TOPICS = ",".join(
     [
         "coordinator_joint_state",
@@ -134,6 +115,9 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         ),
     ]
 )
+DUAL_OPENYAM_GRIPPER_TASKS = {
+    f"{side}_manipulator": f"{side}_arm_gripper" for side in DUAL_OPENYAM_SIDES
+}
 
 
 def _check_side(side: str) -> None:
@@ -142,29 +126,21 @@ def _check_side(side: str) -> None:
 
 
 def dual_openyam_gripper_task(side: str, *, priority: int = 20) -> TaskConfig:
-    """Gripper task named as the manipulation module expects: ``{side}_arm_gripper``."""
     _check_side(side)
     return TaskConfig(
-        name=f"{side}_arm_gripper",
+        name=DUAL_OPENYAM_GRIPPER_TASKS[f"{side}_manipulator"],
         type="gripper",
         joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[DUAL_OPENYAM_SIDES.index(side)]],
         priority=priority,
     )
 
 
-def dual_openyam_grasp_model_config(side: str) -> RobotModelConfig:
-    """The workcell model in the world frame with a fingertip tcp per arm and
-    ``side``'s gripper bound to the model.
-
-    The grasp frame's +Z points out of the back of the palm. The heuristic grasp
-    and the pick-and-place module expect a tool whose +Z points at the object and
-    back off along -Z, so the tcp is the grasp frame moved to the pad centre and
-    turned a half turn about Y.
-    """
-    _check_side(side)
+def dual_openyam_grasp_model_config() -> RobotModelConfig:
+    """The workcell model in the world frame with a fingertip tcp per arm."""
     config = dual_openyam_model_config()
     model = config.model
     for arm in DUAL_OPENYAM_SIDES:
+        # The grasp frame's +Z leaves the palm; the tcp turns it to point at the object.
         model = model.with_fixed_frame(
             f"{arm}_tcp",
             f"{arm}_grasp_frame",
@@ -177,10 +153,7 @@ def dual_openyam_grasp_model_config(side: str) -> RobotModelConfig:
         replace(group, tip_link=f"{group.name.split('_')[0]}_tcp")
         for group in config.planning_groups
     ]
-    config.gripper_hardware_id = f"{side}_arm"
-    # The pads meet at the URDF's closed zero position, so the two fingertip
-    # hulls always touch, and the wrist assembly nests inside the gripper body
-    # so their hulls overlap at every pose. Adjacent links are filtered already.
+    # The pads meet at zero and the wrist nests in the gripper body, so these hulls always touch.
     config.collision_exclusion_pairs = [
         *config.collision_exclusion_pairs,
         *((f"{arm}_tip_left", f"{arm}_tip_right") for arm in DUAL_OPENYAM_SIDES),
@@ -208,7 +181,6 @@ def dual_openyam_grasp_view() -> Any:
         ("world/left_wrist_color_image", "Left wrist"),
         ("world/right_wrist_color_image", "Right wrist"),
     ]
-    # The overhead tile also shows the scan boxes, projected through its pinhole.
     overhead, *wrists = cameras
     tiles = [
         rrb.Spatial2DView(
@@ -226,7 +198,6 @@ def dual_openyam_grasp_view() -> Any:
                 name="Scene",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.0)),
-                # The images have their own tiles; in 3D they only clutter.
                 overrides={path: rrb.EntityBehavior(visible=False) for path, _ in cameras},
             ),
             column_shares=[1, 2],
@@ -236,22 +207,18 @@ def dual_openyam_grasp_view() -> Any:
     )
 
 
-# Streams the Rerun bridge forwards; everything else stays off the viewer link.
 DUAL_OPENYAM_VIEW_TOPICS = [
     "color_image",
-    # Intrinsics give the overhead tile a pinhole, so 3D boxes project into it.
     "camera_info",
     "left_wrist_color_image",
     "right_wrist_color_image",
     "pointcloud",
     "tf",
-    # Scan results, drawn as boxes in the Scene and the overhead tile.
     "detections_3d",
 ]
 
 
 def dual_openyam_grasp_rerun() -> Blueprint:
-    """The bridge for a headless rig: no window on the box, watch it from the laptop."""
     return RerunBridgeModule.blueprint(
         blueprint=dual_openyam_grasp_view,
         topics=DUAL_OPENYAM_VIEW_TOPICS,
@@ -261,12 +228,7 @@ def dual_openyam_grasp_rerun() -> Blueprint:
 
 
 def dual_openyam_wrist_camera(side: str) -> Blueprint:
-    """A wrist D405 whose streams and frames carry a ``{side}_wrist_`` prefix.
-
-    A prefix with an underscore, not a namespace: the recorder uses stream names
-    as SQL identifiers and rejects a slash. Colour only: the three D405s share
-    USB 2 hubs and drop frames with depth on.
-    """
+    """A wrist D405 with ``{side}_wrist_`` stream names; colour only, the D405s share USB 2 hubs."""
     _check_side(side)
     name = f"{side}_wrist_camera"
     camera = RealSenseCamera.blueprint(
@@ -284,11 +246,11 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
 
 
-def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint, ...]:
-    _check_side(side)
+def dual_openyam_grasp_modules(*, graspgen: bool) -> tuple[Blueprint, ...]:
     return (
         planner(
-            model=dual_openyam_grasp_model_config(side),
+            model=dual_openyam_grasp_model_config(),
+            gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
             kinematics=DUAL_OPENYAM_GRASP_PINK,
             default_speed_scale=0.25,
             static_transforms=[DUAL_OPENYAM_CAMERA_TRANSFORM],
@@ -296,12 +258,10 @@ def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint,
             world_frame="world",
         ),
         ManipulationSkills.blueprint(),
-        # Pre-grasp and pre-place share one offset on main. 0.10 puts the pre-place
-        # above the fingers-down reach ceiling of this arm (about 0.12 to 0.16 at
-        # x 0.22 to 0.30, measured 2026-10-13); 0.05 keeps a low place reachable.
+        # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(planning_frame="world", pregrasp_offset=0.05),
         dual_openyam_grasp_provider(graspgen=graspgen),
-        # The D405 offers no 848x480 at 15 fps; 640x480 at 30 fps is its native mode.
+        # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(
             width=640,
             height=480,
@@ -317,7 +277,6 @@ def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint,
             segmentation_backend="edgetam",
             detect_on_request=True,
             distance_threshold=0.08,
-            # One explicit scan is the observation.
             min_detections_for_permanent=1,
             max_distance=1.5,
             use_aabb=True,
@@ -335,22 +294,16 @@ def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint,
     )
 
 
-def dual_openyam_grasp_blueprint(side: str, *, graspgen: bool) -> Blueprint:
-    return autoconnect(*dual_openyam_grasp_modules(side, graspgen=graspgen)).global_config(
+def dual_openyam_grasp_blueprint(*, graspgen: bool) -> Blueprint:
+    return autoconnect(*dual_openyam_grasp_modules(graspgen=graspgen)).global_config(
         record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS
     )
 
 
 # Assigned through autoconnect so the registry generator sees them.
-dual_openyam_grasp_right = autoconnect(
-    *dual_openyam_grasp_modules("right", graspgen=False)
-).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
-dual_openyam_grasp_left = autoconnect(
-    *dual_openyam_grasp_modules("left", graspgen=False)
-).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
-dual_openyam_grasp_right_graspgenx = autoconnect(
-    *dual_openyam_grasp_modules("right", graspgen=True)
-).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
-dual_openyam_grasp_left_graspgenx = autoconnect(
-    *dual_openyam_grasp_modules("left", graspgen=True)
+dual_openyam_grasp = autoconnect(*dual_openyam_grasp_modules(graspgen=False)).global_config(
+    record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS
+)
+dual_openyam_grasp_graspgenx = autoconnect(
+    *dual_openyam_grasp_modules(graspgen=True)
 ).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)

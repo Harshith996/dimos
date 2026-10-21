@@ -83,18 +83,19 @@ component.
 
 ## Pick-and-place benchmark
 
-The xArm grasp stack on the workcell, one arm per blueprint:
+The xArm grasp stack on the workcell, both grippers bound to their planning groups:
 
 ```bash
-dimos run dual-openyam-grasp-right --left-can-port follower_l --right-can-port follower_r
-dimos run dual-openyam-grasp-right-agent --left-can-port follower_l --right-can-port follower_r
+dimos run dual-openyam-grasp --left-can-port follower_l --right-can-port follower_r
+dimos run dual-openyam-grasp-agent --left-can-port follower_l --right-can-port follower_r
 dimos humancli      # second terminal: "scan for a soup can", "pick up the soup can", "put it in the tray"
 ```
 
-`dual-openyam-grasp-left` and the `-graspgenx` variants select the other arm
-and the learned grasp provider. The planning model carries both arms, but the
-manipulation module binds one gripper per model, so each blueprint benchmarks
-the arm whose gripper it names while the other arm rests on its support.
+`dual-openyam-grasp-left-agent` and `-right-agent` pin the agent to one arm;
+`dual-openyam-grasp-graspgenx` swaps in the learned grasp provider. Every
+skill takes a planning group, `left_manipulator` or `right_manipulator`, and
+the manipulation module routes gripper commands and readback to that group's
+gripper task.
 Every run records joint states, the three cameras and TF to sqlite.
 
 What the stack does not have on the workcell, and therefore what the benchmark

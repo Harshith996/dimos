@@ -47,12 +47,10 @@ pytestmark = [
 
 REST = JointState(name=list(DUAL_OPENYAM_ARM_JOINTS), position=[0.0] * 12)
 HOME = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0] * 2
-# Fingertip 7 cm above the bin floor, 4 cm inside its near wall, on the
-# calibrated workcell_v2 model with the 9 mm tool point.
 RIGHT_TCP_IN_BIN = [0.0] * 6 + [0.5, 1.85, 0.95, 0.4, 0.0, 0.0]
 RIGHT_TCP_BELOW_TABLE = [0.0] * 6 + [-0.6, 0.0, 0.0, -1.4, 0.0, 0.0]
 RIGHT_TCP_FREE = [0.0] * 6 + [-0.6, 0.0, 0.0, 0.0, 0.0, 0.0]
-# The yellow bin at the far edge of the table, centred: 28.4 x 21.1 x 11 cm plus margin.
+# Yellow bin at the far table edge, 28.4 x 21.1 x 11 cm plus margin.
 BIN = Pose(Vector3(0.547, 0.0, DUAL_OPENYAM_TABLE_TOP_Z + 0.06), Quaternion(0.0, 0.0, 0.0, 1.0))
 BIN_SIZE = [0.304, 0.231, 0.12]
 
@@ -65,7 +63,7 @@ def module(request: pytest.FixtureRequest) -> Iterator[ManipulationModule]:
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
     planner = {"drake": RRTConnectPlannerConfig()}
     mod = ManipulationModule(
-        model=dual_openyam_grasp_model_config("right"),
+        model=dual_openyam_grasp_model_config(),
         planning_timeout=15.0,
         world_backend=request.param,
         kinematics=DUAL_OPENYAM_GRASP_PINK,
