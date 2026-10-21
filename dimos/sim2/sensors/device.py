@@ -51,7 +51,6 @@ class SensorDevice(ABC, Generic[SensorT]):
         self.frame_prefix = f"{robot_id or 'world'}/"
         self.root_body = root_body
         self._episode = -1
-        self._sequence = -1
         self._indices: dict[str, int] = {}
         self._pending: list[Measurement] = []
         self._error_lock = threading.RLock()
@@ -71,9 +70,8 @@ class SensorDevice(ABC, Generic[SensorT]):
     def poll(self) -> list[Measurement]:
         with self._error_lock:
             self.reader.update()
-            if self.reader.sequence == self._sequence:
+            if self.reader.sequence < 0 or self.reader.channel.lifecycle != "ready":
                 return []
-            self._sequence = self.reader.sequence
             now = float(self.reader.data.time)
             if self._episode != self.reader.episode:
                 self._episode = self.reader.episode

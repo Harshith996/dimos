@@ -293,6 +293,23 @@ def test_pause_and_reset_discard_old_deliveries(reader):
         device.close()
 
 
+def test_capture_timestamps_do_not_follow_host_polling_jitter(reader, mocker):
+    world, observer = reader
+    sensor = replace(world.config.robots["left"].config.sensors[0], rate_hz=10)
+    device = ImuDevice(observer, sensor, "left")
+    try:
+        first = device.poll()[0]
+        mocker.patch("dimos.sim2.runtime.time.time", return_value=first.value.ts + 10)
+        for _ in range(22):
+            world.step()
+        second = device.poll()[0]
+        assert second.value.ts - first.value.ts == pytest.approx(0.1, abs=1e-6)
+        device.published(second)
+        assert device.status()["lateness_seconds"] > 9
+    finally:
+        device.close()
+
+
 @pytest.mark.parametrize("external_camera", [False, True])
 @pytest.mark.self_hosted
 def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, external_camera):

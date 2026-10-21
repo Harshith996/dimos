@@ -375,7 +375,7 @@ class SimulationRuntime:
             self._require_live()
             if self.paused:
                 return
-            if self.tick == 0:
+            if self.tick == 0 and self.waiting_for_control:
                 self._clock_origin = time.time() - float(self.data.time)
             for binding in self.robots.values():
                 self._apply(binding)
