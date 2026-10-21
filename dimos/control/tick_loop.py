@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
-    from dimos.control.connection_source import ConnectionSource
+    from dimos.control.connection.source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.whole_body.spec import IMUState
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

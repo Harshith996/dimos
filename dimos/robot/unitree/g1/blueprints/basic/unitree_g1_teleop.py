@@ -61,9 +61,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.blueprints.primitive._groot_control import groot_control
-from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
+from dimos.robot.unitree.g1.controllers.groot.blueprint import groot_control
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.manipulation.config import g1_manipulation_model_config
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 

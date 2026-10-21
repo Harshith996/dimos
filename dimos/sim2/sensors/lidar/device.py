@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.lidar.raycast import Raycaster
-from dimos.sim2.sensors.spec import Lidar, RangeResponse, RayPattern, TimedRayPattern
+from dimos.sim2.sensors.lidar.spec import Lidar, RangeResponse, RayPattern, TimedRayPattern
 
 
 class LidarDevice(SensorDevice[Lidar]):
