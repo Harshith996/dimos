@@ -33,10 +33,7 @@ def check_name(name: str) -> None:
 
 
 def picked(answer: dict[str, Any], fields: str | None) -> dict[str, Any]:
-    try:
-        return catalog.pick(answer, fields)
-    except catalog.FieldError as error:
-        raise ApiError(400, str(error))
+    return catalog.pick(answer, fields)
 
 
 async def listed(state: State) -> list[dict[str, Any]]:

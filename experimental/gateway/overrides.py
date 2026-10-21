@@ -21,6 +21,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from experimental.gateway.errors import StatusError
+
 ModuleValues = dict[str, dict[str, Any]]
 
 HIDDEN = "•••"
@@ -58,27 +60,31 @@ class LaunchOverrides:
         )
 
 
+class OverrideError(StatusError, ValueError):
+    status = 400
+
+
 def parse(raw: Any) -> LaunchOverrides:
     if raw is None:
         return LaunchOverrides()
     if not isinstance(raw, dict):
-        raise ValueError("overrides must be an object")
+        raise OverrideError("overrides must be an object")
     if not any(key in raw for key in STRUCTURED):
         return LaunchOverrides(dict(raw))
     other = next((key for key in raw if key not in STRUCTURED), None)
     if other is not None:
-        raise ValueError(f"overrides has `{other}` next to `global`/`modules`")
+        raise OverrideError(f"overrides has `{other}` next to `global`/`modules`")
     global_, modules, secrets = (
         raw.get("global") or {},
         raw.get("modules") or {},
         raw.get("secrets") or [],
     )
     if not isinstance(global_, dict):
-        raise ValueError("overrides.global must be an object")
+        raise OverrideError("overrides.global must be an object")
     if not isinstance(modules, dict) or not all(isinstance(f, dict) for f in modules.values()):
-        raise ValueError("overrides.modules must be an object of objects")
+        raise OverrideError("overrides.modules must be an object of objects")
     if not isinstance(secrets, list) or not all(isinstance(p, str) for p in secrets):
-        raise ValueError("overrides.secrets must be a list of paths")
+        raise OverrideError("overrides.secrets must be a list of paths")
     return LaunchOverrides(dict(global_), {m: dict(f) for m, f in modules.items()}, secrets)
 
 
@@ -187,12 +193,12 @@ def check_global(values: dict[str, Any]) -> None:
 
     unknown = sorted(set(values) - flag_fields())
     if unknown:
-        raise ValueError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
+        raise OverrideError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
     try:
         GlobalConfig.model_validate({k: v for k, v in values.items() if v is not None})
     except ValidationError as error:
         problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
-        raise ValueError(f"bad GlobalConfig value: {problems}") from error
+        raise OverrideError(f"bad GlobalConfig value: {problems}") from error
 
 
 def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[str]:

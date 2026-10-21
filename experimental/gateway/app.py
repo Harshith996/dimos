@@ -24,8 +24,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from experimental.gateway import events, process_stats
+from experimental.gateway.errors import StatusError
 from experimental.gateway.routes import catalog, cloud, config, jobs, runs, server
-from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
+from experimental.gateway.state import API_VERSION, State, site_dirs
 
 
 async def drop_idle_stats(state: State) -> None:
@@ -62,10 +63,6 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     )
     app.state.gateway = state
 
-    @app.exception_handler(ApiError)
-    async def api_error(_: Request, error: ApiError) -> JSONResponse:
-        return JSONResponse({"error": str(error)}, status_code=error.status)
-
     @app.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
         missing = error.status_code == 404
@@ -76,6 +73,10 @@ def create_app(state: State, background: bool = True) -> FastAPI:
     async def bad_request(_: Request, error: RequestValidationError) -> JSONResponse:
         problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
         return JSONResponse({"error": f"bad request: {problems}"}, status_code=400)
+
+    @app.exception_handler(StatusError)
+    async def api_error(_: Request, error: StatusError) -> JSONResponse:
+        return JSONResponse({"error": str(error)}, status_code=error.status)
 
     @app.exception_handler(Exception)
     async def failed(_: Request, error: Exception) -> JSONResponse:

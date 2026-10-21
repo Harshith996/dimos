@@ -33,6 +33,7 @@ from dimos.cli import cloud
 from dimos.cloud.config import CloudConfig
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import store
+from experimental.gateway.errors import ApiError
 from experimental.gateway.events import Bus
 
 logger = setup_logger()
@@ -82,11 +83,11 @@ def check_path(text: str) -> tuple[Path, int]:
 
     path = Path(text.strip()).expanduser()
     if not path.is_absolute():
-        raise ValueError(f"path must be absolute: {path}")
+        raise ApiError(400, f"path must be absolute: {path}")
     if not path.is_file():
-        raise ValueError(f"no such file: {path}")
+        raise ApiError(400, f"no such file: {path}")
     if kind_of(path) != "recording":
-        raise ValueError(f"not a dimos recording (.mcap, or a .db dimos recorded): {path.name}")
+        raise ApiError(400, f"not a dimos recording (.mcap, or a .db dimos recorded): {path.name}")
     return path, path.stat().st_size
 
 
@@ -291,7 +292,7 @@ class Uploads:
     def cancel(self, id: str) -> None:
         upload = self.get(id)
         if upload is None:
-            raise KeyError(f"no upload {id}")
+            raise ApiError(404, f"no upload {id}")
         if upload["state"] == "uploading":
             if self.running and self.running[0] == id:
                 self.running[1].set()
@@ -307,9 +308,9 @@ class Uploads:
     def retry(self, id: str) -> dict[str, Any]:
         upload = self.get(id)
         if upload is None:
-            raise KeyError(f"no upload {id}")
+            raise ApiError(404, f"no upload {id}")
         if upload["state"] not in FINISHED:
-            raise ValueError(f'{upload["name"]} is already "{upload["state"]}"')
+            raise ApiError(409, f'{upload["name"]} is already "{upload["state"]}"')
         self.items.remove(upload)
         upload.update(
             new_upload(id, Path(upload["path"]), upload["size"], upload["robotId"], upload["kind"]),

@@ -21,15 +21,10 @@ from typing import Any, Protocol
 from fastapi.encoders import jsonable_encoder
 
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT
+from experimental.gateway.errors import ApiError
 
 PING_TIMEOUT_S = 1.0
 CALL_TIMEOUT_S = DEFAULT_RPC_TIMEOUT  # what a module's own RPC call waits
-
-
-class RpcError(Exception):
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 class Bus(Protocol):
@@ -112,17 +107,17 @@ class Rpcs:
     ) -> dict[str, Any]:
         descriptors, run = self.modules(), live_run()
         if descriptors is None:
-            raise RpcError(409, "no blueprint is running, so there are no RPCs to call")
+            raise ApiError(409, "no blueprint is running, so there are no RPCs to call")
         if run_id is not None and run_id != run.run_id:
-            raise RpcError(404, f"run {run_id} isn't the running one ({run.run_id})")
+            raise ApiError(404, f"run {run_id} isn't the running one ({run.run_id})")
         target = next((d for d in descriptors if module in (d.rpc_name, d.class_name)), None)
         if target is None:
             running = ", ".join(sorted(d.rpc_name or d.class_name for d in descriptors)) or "none"
-            raise RpcError(
+            raise ApiError(
                 404, f"the running blueprint has no module {module} (its modules: {running})"
             )
         if name not in target.rpc_names:
-            raise RpcError(
+            raise ApiError(
                 404, f"{module} has no RPC {name} (its RPCs: {', '.join(sorted(target.rpc_names))})"
             )
         rpc = f"{target.rpc_name or target.class_name}/{name}"
@@ -130,7 +125,7 @@ class Rpcs:
         try:
             result = self.bus.call(rpc, [], args, CALL_TIMEOUT_S)
         except TimeoutError:
-            raise RpcError(500, f"{rpc} didn't answer within {int(CALL_TIMEOUT_S)} s")
+            raise ApiError(500, f"{rpc} didn't answer within {int(CALL_TIMEOUT_S)} s")
         except Exception as error:
             return {
                 **answer,
