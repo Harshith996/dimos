@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
 from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.sim2 import G1_GROOT
+from dimos.robot.unitree.g1.sim2 import G1
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.scene import scene_path
@@ -47,10 +47,10 @@ def robot(mocker):
 def test_custom_controller_owns_motors_not_a_second_twist_controller(robot):
     contract = robot.describe_control()
     assert list(contract.command_ports) == ["motor_command"]
-    assert list(contract.description.joint_names()) == [j.name for j in G1_GROOT.joints]
+    assert list(contract.description.joint_names()) == [j.name for j in G1.joints]
     assert "odom" not in contract.reading_ports.values()
     assert {r.name for r in contract.description.resources} == {
-        *(j.name.split("/", 1)[1] for j in G1_GROOT.joints),
+        *(j.name.split("/", 1)[1] for j in G1.joints),
         "imu",
     }
 
@@ -109,6 +109,17 @@ def test_spawn_support_is_not_applied_twice(tmp_path):
     config = G1Config(controller="groot", g=GlobalConfig(simulation="mujoco"))
     instance = G1Connection.describe_simulated_robot(config, scene)
     assert instance.xyz == (0.0, 0.0, 0.793)
+
+
+def test_policy_selection_does_not_change_physical_robot(tmp_path):
+    scene = tmp_path / "floor.xml"
+    scene.write_text("<mujoco/>")
+    groot = G1Connection.describe_simulated_robot(G1Config(controller="groot"), scene)
+    sonic = G1Connection.describe_simulated_robot(G1Config(controller="sonic"), scene)
+    assert groot.config == sonic.config
+    assert groot.hold_gains != sonic.hold_gains
+    assert groot.control_imu == sonic.control_imu == "imu"
+    assert all(j.kp == j.kd == 0 for j in groot.config.joints)
 
 
 @pytest.fixture

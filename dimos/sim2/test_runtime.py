@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from dataclasses import replace
+import json
+from pathlib import Path
 import time
 
 import numpy as np
@@ -20,12 +22,65 @@ import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.sim2.evidence import file_identity
+from dimos.sim2.module import SimulationModule
 from dimos.sim2.scene_types import SceneUpdate
 
 
 def _calibrate_motor(model, prefix):
     joint = model.joint(prefix + "hinge").id
     model.dof_damping[model.jnt_dofadr[joint]] = 2.75
+
+
+def test_run_evidence_survives_shutdown_without_copying_assets(world_config, tmp_path):
+    instance = world_config.robots["left"]
+    world = replace(
+        world_config,
+        robots={
+            "left": replace(
+                instance, controller={"implementation": "test-controller", "revision": "abc123"}
+            )
+        },
+        calibration_evidence={"left.shoulder.damping": "capture-sha256/example-fit-v1"},
+        sampled_variation={
+            "left.xyz": {"distribution": "fixed", "seed": 123, "value": instance.xyz}
+        },
+    )
+    module = SimulationModule(world=world, evidence_dir=tmp_path / "evidence")
+    try:
+        module.build()
+        description = module.describe()
+        record_path = Path(description["run_record"])
+        record = json.loads(record_path.read_text())
+        assert (
+            record["compiled_model"]["sha256"]
+            == file_identity(Path(description["model"]))["sha256"]
+        )
+        assert record["resolved_world"]["robots"]["left"]["controller"]["revision"] == "abc123"
+        assert record["resolved_world"]["calibration_evidence"] == world.calibration_evidence
+        assert record["resolved_world"]["sampled_variation"]["left.xyz"]["seed"] == 123
+        assert record["initial_state"]["values"]
+        assert module.describe_run() == record
+    finally:
+        module.stop()
+    assert record_path.is_file()
+    assert list(record_path.parent.iterdir()) == [record_path]
+    assert not Path(description["model"]).exists()
+
+
+def test_cli_run_uses_existing_log_directory_and_makes_no_calibration_claim(
+    world_config, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    module = SimulationModule(world=world_config)
+    try:
+        module.build()
+        path = Path(module.describe()["run_record"])
+        assert path.parent == tmp_path / "sim2"
+        assert module.describe_run()["resolved_world"]["calibration_evidence"] == {}
+        assert module.describe_run()["resolved_world"]["sampled_variation"] == {}
+    finally:
+        module.stop()
 
 
 def test_compiled_calibration_is_scoped_to_its_robot(worlds, world_config):
@@ -67,7 +122,7 @@ def test_calibrated_actuator_lag_and_immediate_disable(worlds, clients, world_co
 
 def test_startup_wait_keeps_feedback_live_then_releases_once(worlds, clients, world_config):
     instance = world_config.robots["left"]
-    instance = replace(instance, config=replace(instance.config, wait_for_first_command=True))
+    instance = replace(instance, wait_for_first_command=True)
     world = worlds(config=replace(world_config, robots={"left": instance}))
     client = clients(world, writable=True)
     before = client.read()

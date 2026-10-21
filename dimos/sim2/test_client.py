@@ -34,7 +34,8 @@ from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.module import SimulationModule, SimulationSpec
-from dimos.sim2.spec import ControlInterface, RobotConfig, RobotInstance
+from dimos.sim2.sensors.spec import Imu, Mount
+from dimos.sim2.spec import RobotConfig, RobotInstance
 
 
 class _RobotConfig(ModuleConfig):
@@ -196,7 +197,7 @@ def test_two_robots_use_independent_channels(world_config, worlds, clients):
         world_config,
         robots={
             "left": robot,
-            "right": RobotInstance(robot.config, xyz=(0, 2, 0.3)),
+            "right": replace(robot, xyz=(0, 2, 0.3)),
         },
     )
     world = worlds(config=config)
@@ -210,13 +211,90 @@ def test_two_robots_use_independent_channels(world_config, worlds, clients):
 
 
 def test_position_device_moves_and_preserves_gripper_units(worlds, clients):
-    world = worlds(control=ControlInterface.MANIPULATOR)
+    world = worlds()
     client = clients(world, writable=True)
     for _ in range(300):
         client.write_positions([0.25, 0], observed=client.read())
         world.step()
 
     assert client.read().values["position"] == pytest.approx([0.25, 0], abs=0.03)
+
+
+def test_control_imu_selection_does_not_redefine_physical_robot(world_config, worlds, clients):
+    instance = world_config.robots["left"]
+    robot = replace(
+        instance.config,
+        sensors=(
+            Imu("torso", Mount("base")),
+            Imu("wrist", Mount("base", rpy=(0, 0, 1.5707963267948966))),
+        ),
+    )
+    left = replace(instance, config=robot, control_imu="torso")
+    right = replace(instance, config=robot, control_imu="wrist", xyz=(0, 2, 0.3))
+    world = worlds(config=replace(world_config, robots={"left": left, "right": right}))
+
+    torso = clients(world, "left").read()
+    wrist = clients(world, "right").read()
+
+    assert left.config is right.config
+    assert torso.values["imu_quaternion"] == pytest.approx([1, 0, 0, 0])
+    assert wrist.values["imu_quaternion"] == pytest.approx([2**-0.5, 0, 0, 2**-0.5])
+    assert torso.metadata.physics_tick == wrist.metadata.physics_tick
+    assert world.robots["right"].channel.descriptor.control_imu == "wrist"
+
+
+def test_pd_motor_commands_do_not_require_an_imu(world_config, worlds, clients):
+    instance = replace(world_config.robots["left"], control_imu=None)
+    world = worlds(config=replace(world_config, robots={"left": instance}))
+    client = clients(world, writable=True)
+    observed = client.read()
+    client.write_motors(command(), observed=observed)
+    world.step()
+
+    assert "imu_quaternion" not in observed.values
+    assert world.data.ctrl[world.robots["left"].actuators] == pytest.approx([1.4, 0.02])
+
+
+def test_native_servo_rejects_unsupported_pd_fields(worlds, clients):
+    world = worlds()
+    client = clients(world, writable=True)
+    invalid = command()
+    invalid.kp[1] = 1
+    with pytest.raises(ValueError, match="native position servos"):
+        client.write_motors(invalid, observed=client.read())
+    world.step()
+    assert client.read().metadata.applied_action_sequence == 0
+
+
+def test_initial_state_and_watchdog_gains_are_instance_settings(world_config, worlds, clients):
+    instance = world_config.robots["left"]
+    changed = replace(
+        instance,
+        initial_positions={"shoulder": 0.6, "gripper": 425},
+        hold_gains={"shoulder": (7, 2)},
+    )
+    world = worlds(config=replace(world_config, robots={"left": instance, "right": changed}))
+    reader = clients(world, "right")
+    assert reader.read().values["position"] == pytest.approx([0.6, 425])
+    assert instance.config is changed.config
+    assert world.robots["right"].hold_kp == pytest.approx([7, 0])
+    assert world.robots["right"].hold_kd == pytest.approx([2, 0])
+    world.reset()
+    assert reader.read().values["position"] == pytest.approx([0.6, 425])
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"control_imu": "missing"},
+        {"initial_positions": {"missing": 0}},
+        {"initial_positions": {"gripper": 851}},
+        {"hold_gains": {"shoulder": (-1, 1)}},
+    ],
+)
+def test_invalid_controller_binding_is_rejected_before_world_load(world_config, settings):
+    with pytest.raises(ValueError):
+        replace(world_config.robots["left"], **settings)
 
 
 def test_read_only_clients_and_single_command_owner(worlds, clients):

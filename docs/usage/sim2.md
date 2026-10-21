@@ -15,10 +15,11 @@ switched by this core change.
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |
 | `SimulationRuntime` | One mutable MuJoCo model/data, robot bindings, command application |
 | `SimRobotClient` | One robot's internal command/observation channel; not a Module |
-| Camera/lidar modules | Worker-local model/data, rendering/raycasting, typed output streams |
+| `CameraDevice`, `LidarDevice`, `ImuDevice` | Measurement acquisition, simulation-time scheduling, delayed delivery |
+| Sensor modules | Worker lifecycle, a local `WorldReader`, publication of device measurements |
 | Robot connection or policy host | Controller selection, command refresh, public robot interface |
 
-`simulation(scene=..., robots=...)` returns a normal `Blueprint` containing one
+`simulation(world=WorldConfig(...))` returns a normal `Blueprint` containing one
 world and the declared sensors. It does not return `HardwareComponent` entries,
 register coordinator adapters, or add a second public connection for a robot.
 Multiple robots are composed into that world before MuJoCo compilation.
@@ -51,9 +52,11 @@ a running world requires rebuilding the complete blueprint; cross-host shared
 memory clients are rejected.
 
 `RobotConfig` binds an MJCF model, joints/actuators and named sensor attachments.
-`RobotInstance` adds placement. Internal `ControlInterface` values select the
-motor-frame layout (complete PD commands or native position targets), not a
-public walking/arm interface or a robot brand.
+`RobotInstance` adds placement, initial joint positions, the explicitly selected
+control IMU, startup/watchdog settings and controller provenance. A robot has no
+whole-body/manipulator packet category. Every joint states whether it is an
+effort motor or a native position servo; one robot can contain both. Fixed servo
+gains belong to the device; policy PD gains arrive with each motor command.
 
 Scene-mounted devices use the same definitions and workers. A mount names a
 body in the scene; `world` is a fixed frame. A named MJCF camera keeps its
@@ -61,17 +64,20 @@ authored intrinsics. No robot is required for a sensor-only world.
 
 ```python skip
 from dimos.sim2.sensors.spec import Camera, Mount
+from dimos.sim2.spec import WorldConfig
 
-world = simulation(
+world = WorldConfig(
     scene=scene_path,
     robots=robot_instances,
     sensors=(Camera("overhead", Mount("world", xyz=(1.5, 0, 3))),),
 )
+blueprint = simulation(world=world)
 ```
 
 The external camera publishes on `world/overhead/color_image` with frame
-`world/overhead_optical`. When scene sensors or multiple robots are present,
-robot sensor topics are likewise qualified by robot and device name.
+`world/overhead_optical`. Robot sensor topics are always qualified by robot and
+device name, even with one sensor. Application blueprints explicitly select the
+device they consume; adding a device cannot rename existing streams.
 
 ## Internal device interface
 
@@ -85,8 +91,9 @@ from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.module import SimulationModule
+from dimos.sim2.spec import WorldConfig
 
-app = ModuleCoordinator.build(simulation(scene=scene_path, robots=robot_instances))
+app = ModuleCoordinator.build(simulation(world=WorldConfig(scene_path, robot_instances)))
 try:
     world = app.get_instance(SimulationModule)
     descriptor = ChannelDescriptor.from_dict(world.describe()["robots"]["arm"])
@@ -114,7 +121,7 @@ sentinels must be normalized by the vendor integration before writing commands.
 
 Feedback and command timeouts default to 250 ms and are explicit client settings.
 The runtime rejects expired commands independently of the writer. On expiry it
-holds the measured joint position using the robot's configured idle gains; it
+holds the measured joint position using the instance's holding gains; it
 does not replay the old target. Disabled effort outputs remain disabled until a
 new enabling command or reset. None of these operations guarantees balance for
 a floating robot, replaces a physical estop, or implements vendor firmware.
@@ -134,6 +141,41 @@ command publication. Application-level reset must also stop/reset controllers,
 maps and policy history; physics reset alone does not do that.
 
 ## Transport and tests
+
+`device.poll()` returns typed `Measurement` values without requiring a Module,
+transport or dedicated process. Each value records acquisition start/end,
+modeled availability, and epoch. `device.published(value)` separately records
+actual host publication and lateness. Device rates follow simulation time, not
+worker polling. Instantaneous devices acquire the newest due sample and count
+missed samples; rolling lidar requires complete history and reports dropped
+scans/IMU samples. Pending output is discarded on an epoch change. Pause stops
+acquisition; resume reanchors the clock and invalidates old work.
+
+Each sensor definition supplies its required sample rate/history duration.
+Physics sizes the snapshot history from these requirements without recognizing
+particular lidar models. The selected coherent control IMU travels with joint
+feedback; additional IMUs can be independent streams. Delayed coherent control
+IMU feedback is not implemented and is rejected explicitly.
+
+The shipped modules still use dedicated workers. That is a deployment default,
+not a requirement of the measurement implementations; this change makes no new
+claim that processes outperform threads.
+
+### Run evidence
+
+CLI runs retain a small JSON record under the existing run log's `sim2/`
+directory. Direct Python users can set `SimulationModule.evidence_dir` or call
+`describe_run()`. It includes resolved device parameters, controller provenance,
+initial MuJoCo integration state, model/source hashes and MuJoCo version.
+`WorldConfig.calibration_evidence` records parameter-to-evidence references;
+`sampled_variation` records caller-sampled values, distributions and seeds. These
+are separate: randomizing a parameter does not calibrate it. Unlisted parameters
+are unvalidated, not implicitly measured. Sensor-model RNG seeds are also
+preserved in their resolved model arguments.
+
+No assets or compiled models are duplicated. This record identifies the initial
+conditions; it is not a portable bundle or deterministic replay of asynchronous
+commands. Record those command streams through the existing DimOS recorder.
 
 Motor IO and world snapshots retain private shared memory. Ordinary image,
 point-cloud and scene-truth streams use the configured DimOS transport. Only the
