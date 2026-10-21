@@ -14,6 +14,7 @@
 
 """One Piper connection for CAN hardware and sim2."""
 
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -25,7 +26,7 @@ from dimos.control.contract.ports import JointPort
 from dimos.control.contract.presets import GripperSpec
 from dimos.robot.manipulators.common.connection import ArmConnection, ArmConnectionConfig
 from dimos.robot.manipulators.piper.config import make_piper_model_config
-from dimos.robot.manipulators.piper.sim2 import piper_definition
+from dimos.robot.manipulators.piper.sim2 import PIPER_HOME, piper_definition
 from dimos.sim2.scene import scene_robot
 from dimos.sim2.spec import RobotInstance
 
@@ -57,17 +58,26 @@ class PiperConnection(ArmConnection):
         definition = piper_definition(
             source=config.source,
             gripper=config.gripper,
-            home=config.initial_positions,
         )
+        home = config.initial_positions if config.initial_positions is not None else PIPER_HOME
+        if len(home) != 6:
+            raise ValueError("Piper initial_positions must contain one value per arm joint")
+        initial = {f"{config.source}/joint{i}": q for i, q in enumerate(home, 1)}
+        if config.gripper:
+            initial[f"{config.source}/gripper"] = 0.07
         if config.base_pose is not None:
-            return RobotInstance(
+            instance = RobotInstance(
                 definition,
                 xyz=config.base_pose.position.to_tuple(),
                 rpy=config.base_pose.orientation.to_euler().to_tuple(),
             )
-        return scene_robot(
-            scene,
-            definition,
-            config.spawn,
-            default=(0.0, 0.0, 0.12),
+        else:
+            instance = scene_robot(scene, definition, config.spawn, default=(0.0, 0.0, 0.12))
+        return replace(
+            instance,
+            initial_positions=initial,
+            controller={
+                "interface": "position",
+                "startup_configuration": PiperConnection.describe_simulated_robot,
+            },
         )

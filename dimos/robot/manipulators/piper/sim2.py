@@ -15,7 +15,7 @@
 """Piper position servos and a gripper measured as metres between fingers."""
 
 from dimos.sim2.sensors.spec import Camera
-from dimos.sim2.spec import ControlInterface, Joint, RobotConfig
+from dimos.sim2.spec import Joint, RobotConfig
 from dimos.utils.data import LfsPath
 
 PIPER_HOME = (
@@ -32,16 +32,14 @@ def piper_definition(
     *,
     source: str = "arm",
     gripper: bool = True,
-    home: list[float] | None = None,
 ) -> RobotConfig:
     return RobotConfig(
         model=LfsPath("piper/piper.xml"),
         root_body="base_link",
-        control=ControlInterface.MANIPULATOR,
         joints=(
             *(
-                Joint(f"{source}/joint{i}", f"joint{i}", f"joint{i}", home=q, mode="position")
-                for i, q in enumerate(PIPER_HOME if home is None else home, 1)
+                Joint(f"{source}/joint{i}", f"joint{i}", f"joint{i}", mode="position")
+                for i in range(1, 7)
             ),
             *(
                 (
@@ -49,7 +47,6 @@ def piper_definition(
                         f"{source}/gripper",
                         "joint7",
                         "gripper",
-                        home=0.07,
                         mode="position",
                         scale=0.5,
                         ctrl_scale=0.5,

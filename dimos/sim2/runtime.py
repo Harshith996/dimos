@@ -40,8 +40,8 @@ from dimos.sim2.ipc.abi import (
 from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
 from dimos.sim2.scene import describe_scene, load_scene
 from dimos.sim2.scene_types import EntityState, RegionState, SceneState, SceneUpdate
-from dimos.sim2.sensors.spec import Imu, Lidar, TimedRayPattern
-from dimos.sim2.spec import ControlInterface, RobotConfig, WorldConfig
+from dimos.sim2.sensors.spec import Imu
+from dimos.sim2.spec import RobotConfig, WorldConfig
 
 STATE = mujoco.mjtState.mjSTATE_INTEGRATION
 
@@ -58,6 +58,8 @@ class RobotBinding:
     offset: NDArray[np.float64]
     imu: tuple[int, int, int] | None
     idle_position: NDArray[np.float64]
+    hold_kp: NDArray[np.float64]
+    hold_kd: NDArray[np.float64]
     enabled: bool = True
     action: ChannelFrame | None = None
     command_active: bool = False
@@ -74,10 +76,11 @@ class SimulationRuntime:
         self.lock = threading.RLock()
         self.episode = 0
         self.tick = 0
+        self._clock_origin = time.time()
         self._closed = False
         self.paused = False
         self.waiting_for_control = {
-            name for name, robot in config.robots.items() if robot.config.wait_for_first_command
+            name for name, robot in config.robots.items() if robot.wait_for_first_command
         }
         self._bodies = {
             key: self.model.body(e.body).id for key, e in self.description.entities.items()
@@ -109,39 +112,14 @@ class SimulationRuntime:
         self.state = np.empty(nstate)
         snapshot_hz = config.snapshot_hz
         history_seconds = 0.0
-        imu_strides: list[int] = []
-        for sensors in (config.sensors, *(r.config.sensors for r in config.robots.values())):
-            for sensor in sensors:
-                if isinstance(sensor, Lidar):
-                    pattern = sensor.model(**sensor.model_kwargs)
-                    if isinstance(pattern, TimedRayPattern):
-                        if (
-                            not sensor.rate_hz
-                            <= pattern.motion_sample_rate_hz
-                            <= 1 / config.timestep
-                        ):
-                            raise ValueError(
-                                "timed lidar motion rate must lie between scan and physics rates"
-                            )
-                        snapshot_hz = max(snapshot_hz, pattern.motion_sample_rate_hz)
-                        if sensor.imu is not None:
-                            if (
-                                not math.isclose(
-                                    1 / sensor.imu.rate_hz / config.timestep,
-                                    round(1 / sensor.imu.rate_hz / config.timestep),
-                                )
-                                or sensor.imu.rate_hz > 1 / config.timestep
-                            ):
-                                raise ValueError("lidar IMU rate must divide the physics rate")
-                            snapshot_hz = max(snapshot_hz, sensor.imu.rate_hz)
-                            imu_strides.append(round(1 / sensor.imu.rate_hz / config.timestep))
-                        history_seconds = max(history_seconds, 2 / sensor.rate_hz)
+        for _, sensor in config.devices:
+            acquisition = sensor.acquisition
+            if acquisition.sample_hz > 1 / config.timestep:
+                raise ValueError("sensor acquisition rate cannot exceed the physics rate")
+            snapshot_hz = max(snapshot_hz, acquisition.sample_hz)
+            history_seconds = max(history_seconds, acquisition.history_seconds)
         ticks_per_snapshot = 1 / snapshot_hz / config.timestep
-        self._snapshot_stride = max(
-            1, math.floor(ticks_per_snapshot) if history_seconds else round(ticks_per_snapshot)
-        )
-        if imu_strides:
-            self._snapshot_stride = math.gcd(self._snapshot_stride, *imu_strides)
+        self._snapshot_stride = max(1, math.floor(ticks_per_snapshot))
         snapshot_slots = max(
             2, math.ceil(history_seconds / (self._snapshot_stride * config.timestep)) + 2
         )
@@ -151,7 +129,6 @@ class SimulationRuntime:
             robot_id="world",
             generation=self.world_id,
             shm_name=channel_name(sim_id, "world", self.world_id),
-            control_interface=ControlInterface.WHOLE_BODY,
             dof=0,
             capabilities=(),
             physics_dt=config.timestep,
@@ -176,7 +153,11 @@ class SimulationRuntime:
                 actuators = np.array(
                     [self.model.actuator(robot_id + "/" + j.actuator).id for j in definition.joints]
                 )
-                imus = [s for s in definition.sensors if isinstance(s, Imu)]
+                imus = [
+                    s
+                    for s in definition.mounted_sensors
+                    if isinstance(s, Imu) and s.name == instance.control_imu
+                ]
                 imu = None
                 if imus:
                     g, a, q = (
@@ -184,12 +165,19 @@ class SimulationRuntime:
                         for s in ("gyro", "accel", "quat")
                     )
                     imu = (g, a, q)
+                positions = self.data.qpos[self.model.jnt_qposadr[joints]].copy()
+                for i, joint in enumerate(definition.joints):
+                    if joint.name in instance.initial_positions:
+                        positions[i] = (
+                            instance.initial_positions[joint.name] * joint.scale + joint.offset
+                        )
+                hold_gains = [
+                    instance.hold_gains.get(j.name, (j.kp, j.kd)) for j in definition.joints
+                ]
                 self.robots[robot_id] = RobotBinding(
                     definition,
                     RobotChannel.create(
-                        robot_descriptor(
-                            sim_id, robot_id, self.world_id, definition, config.timestep
-                        )
+                        robot_descriptor(sim_id, robot_id, self.world_id, instance, config.timestep)
                     ),
                     self.model.jnt_qposadr[joints],
                     self.model.jnt_dofadr[joints],
@@ -198,17 +186,19 @@ class SimulationRuntime:
                     np.array([j.scale for j in definition.joints]),
                     np.array([j.offset for j in definition.joints]),
                     imu,
-                    np.array([j.home for j in definition.joints]),
+                    positions,
+                    np.array([g[0] for g in hold_gains]),
+                    np.array([g[1] for g in hold_gains]),
                 )
             mujoco.mj_resetData(self.model, self.data)
             for binding in self.robots.values():
-                self.data.qpos[binding.qpos] = (
-                    np.array([j.home for j in binding.config.joints]) * binding.scale
-                    + binding.offset
-                )
-                for joint, aid in zip(binding.config.joints, binding.actuators, strict=True):
+                self.data.qpos[binding.qpos] = binding.idle_position
+                public_positions = (binding.idle_position - binding.offset) / binding.scale
+                for joint, aid, position in zip(
+                    binding.config.joints, binding.actuators, public_positions, strict=True
+                ):
                     self.data.ctrl[aid] = (
-                        joint.home * joint.ctrl_scale + joint.ctrl_offset
+                        position * joint.ctrl_scale + joint.ctrl_offset
                         if joint.mode == "position"
                         else 0.0
                     )
@@ -231,6 +221,7 @@ class SimulationRuntime:
 
     def _finish_change(self, *, enable: bool = True) -> SceneState:
         self.episode += 1
+        self._clock_origin = time.time() - float(self.data.time)
         self.snapshots.set_episode(self.episode)
         mujoco.mj_forward(self.model, self.data)
         for binding in self.robots.values():
@@ -384,6 +375,8 @@ class SimulationRuntime:
             self._require_live()
             if self.paused:
                 return
+            if self.tick == 0:
+                self._clock_origin = time.time() - float(self.data.time)
             for binding in self.robots.values():
                 self._apply(binding)
             self.waiting_for_control.difference_update(
@@ -418,13 +411,7 @@ class SimulationRuntime:
             enabled = bool(values["enabled"][0])
             target = values["position"] * b.scale + b.offset
             velocity = values["velocity"] * b.scale
-            if b.config.control == ControlInterface.WHOLE_BODY:
-                kp, kd = values["kp"], values["kd"]
-                ff = values["effort"]
-            else:
-                kp = np.array([j.kp for j in b.config.joints])
-                kd = np.array([j.kd for j in b.config.joints])
-                ff = values["effort"]
+            kp, kd, ff = values["kp"], values["kd"], values["effort"]
         else:
             if b.command_active:
                 b.idle_position = q.copy()
@@ -433,8 +420,7 @@ class SimulationRuntime:
             enabled = b.enabled
             target = b.idle_position
             velocity = np.zeros_like(dq)
-            kp = np.array([j.kp for j in b.config.joints])
-            kd = np.array([j.kd for j in b.config.joints])
+            kp, kd = b.hold_kp, b.hold_kd
             ff = np.zeros_like(dq)
         torque = kp * (target - q) + kd * (velocity - dq) + ff
         b.enabled = enabled
@@ -459,7 +445,7 @@ class SimulationRuntime:
 
     def _publish(self, *, force_snapshot: bool = False) -> None:
         meta = FrameMetadata(0, self.episode, self.tick, 0, float(self.data.time))
-        timestamp = time.time()
+        timestamp = self._clock_origin + float(self.data.time)
         for b in self.robots.values():
             values: dict[str, Any] = {
                 "position": (self.data.qpos[b.qpos] - b.offset) / b.scale,
@@ -468,9 +454,12 @@ class SimulationRuntime:
                 "enabled": [int(b.enabled)],
                 "wall_time": [timestamp],
                 "monotonic_time": [time.monotonic()],
+                "root_position": self.data.xpos[b.root],
+                "root_quaternion": self.data.xquat[b.root],
+                "root_linear_velocity": self.data.cvel[b.root, 3:],
+                "root_angular_velocity": self.data.cvel[b.root, :3],
             }
-            if b.config.control == ControlInterface.WHOLE_BODY:
-                assert b.imu is not None, "whole-body configuration requires an IMU"
+            if b.imu is not None:
                 g, a, r = b.imu
                 gyro, accel, quat = (
                     self.data.sensordata[g : g + 3],
@@ -482,10 +471,6 @@ class SimulationRuntime:
                     imu_gyroscope=gyro,
                     imu_accelerometer=accel,
                     imu_rpy=Rotation.from_quat(quat, scalar_first=True).as_euler("xyz"),
-                    root_position=self.data.xpos[b.root],
-                    root_quaternion=self.data.xquat[b.root],
-                    root_linear_velocity=self.data.cvel[b.root, 3:],
-                    root_angular_velocity=self.data.cvel[b.root, :3],
                 )
             b.channel.publish_observation(
                 values,

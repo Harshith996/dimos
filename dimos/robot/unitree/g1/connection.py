@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import threading
 import time
@@ -43,7 +44,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.g1.control_config import g1_joints
+from dimos.robot.unitree.g1.control_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP, g1_joints
 from dimos.robot.unitree.g1.motor_device import G1MotorConfig, G1MotorDevice
 from dimos.robot.unitree.g1.sim2 import g1_definition
 from dimos.sim2.client import SimRobotClient
@@ -139,11 +140,35 @@ class G1Connection(ConnectionModule):
     @staticmethod
     def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance:
         config = cast("G1Config", config)
-        return scene_robot(
+        if config.controller == "stock":
+            raise ValueError(
+                "MuJoCo requires groot or sonic; stock Unitree firmware is not emulated"
+            )
+        home, kp, kd = G1_GROOT_HOME, G1_GROOT_KP, G1_GROOT_KD
+        if config.controller == "sonic":
+            # SONIC remains optional; loading physical G1 assets needs no inference package.
+            from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS, SONIC_KD, SONIC_KP
+
+            home, kp, kd = list(DEFAULT_ANGLES_DDS), list(SONIC_KP), list(SONIC_KD)
+        instance = scene_robot(
             scene,
-            g1_definition(config.controller, config.source),
+            g1_definition(config.source),
             config.spawn,
             default=(0.0, 0.0, 0.0),
+        )
+        names = [joint.name for joint in instance.config.joints]
+        return replace(
+            instance,
+            initial_positions=dict(zip(names, map(float, home), strict=True)),
+            hold_gains={
+                name: (float(p), float(d)) for name, p, d in zip(names, kp, kd, strict=True)
+            },
+            control_imu="imu",
+            wait_for_first_command=True,
+            controller={
+                "name": config.controller,
+                "startup_configuration": G1Connection.describe_simulated_robot,
+            },
         )
 
     def control_readings(self) -> dict[type, str]:
