@@ -104,13 +104,13 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
 
 /// Estimates when each camera frame was captured (ported from Go2 Ctrl's `CaptureClock`).
 ///
-/// The Go2 doesn't send real capture times. Its RTP timestamp just goes up by about 60 per frame, so it's a frame
-/// counter, not a clock. To turn it into time, we measure how many nanoseconds one tick takes, using when frames
-/// arrive (the very first frame is skipped because its timing is off). Each frame then gets a time of:
-/// `reference arrival + its ticks x ns per tick`. That is close to its arrival time, but without the network jitter.
+/// Example: frames 0, 1, 2, 3, 4 arrive at 0, 75, 130, 210, 280 ms. The camera shoots evenly (about every 70 ms);
+/// the bumps are Wi-Fi delay, not when the picture was taken. So frame N gets `first arrival + N x average spacing`,
+/// a straight line through the bumpy arrival times.
 ///
-/// The decoder may output frames in a different order than they arrived, so each decoded frame takes the
-/// smallest waiting timestamp.
+/// The Go2 sends no real capture time; its RTP timestamp goes up about 60 per frame, which is how we know N. The
+/// average spacing is measured from arrivals (the very first frame is skipped, its timing is off). The decoder can
+/// output frames out of order, so each decoded frame takes the smallest waiting N.
 #[derive(Debug, Default)]
 pub struct CaptureClock {
     max_waiting: usize,
