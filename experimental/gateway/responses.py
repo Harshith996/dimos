@@ -83,6 +83,7 @@ class Stream(Body):
     name: str
     type: str
     direction: str
+    wire: str | None
     topic: str | None
 
 
@@ -200,6 +201,9 @@ class BlueprintDetail(BlueprintFields, total=False):
     file: str | None
     line: int | None
     modules: list[BlueprintModule]
+    # set while it runs from another checkout: the one it was read from, or why that failed
+    checkout: str | None
+    checkoutError: str | None
 
 
 class BlueprintList(Body, total=False):
@@ -427,6 +431,17 @@ class RunLog(Body):
     records: list[LogRecord]
     offset: int
     loggers: list[str]
+
+
+class ProcessStats(Body):
+    """dtop's numbers for the running blueprint (its /resource_stats, sent when it runs with `dtop`): `up` false until heard."""
+
+    up: bool
+    age: float | None
+    stale: bool
+    coordinator: dict[str, Any] | None
+    workers: list[dict[str, Any]]
+    cpuHistory: dict[str, list[float]]
 
 
 class Login(Body):

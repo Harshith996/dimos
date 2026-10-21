@@ -34,14 +34,39 @@ import typing
 from typing import Any
 
 MARKER = "@@DIMOS_GATEWAY@@"
-INTERNAL_FIELDS = {"g", "rpc_transport", "rpc_timeouts", "default_rpc_timeout", "instance_name"}
-RUN_VALUE_OPTIONS = {"--disable", "--config", "-c", "--relay-url", "--relay-ca"}
-RUN_SWITCHES = {"--local-relay", "--no-local-relay"}
+# `dimos run`'s own options the gateway won't pass, by parameter name
 RUN_REFUSED = {
-    "--daemon": "the gateway runs dimos in the foreground",
-    "-d": "the gateway runs dimos in the foreground",
-    "--help": "try `dimos run <blueprint> --help` in a terminal",
+    "daemon": "the gateway runs dimos in the foreground",
+    "run_id": "the gateway picks the run id",
+    "show_help": "try `dimos run <blueprint> --help` in a terminal",
 }
+
+
+def internal_fields() -> set[str]:
+    """ModuleConfig's own fields (RPC plumbing, the global config): no module's settings."""
+    from dimos.core.module import ModuleConfig
+
+    return set(ModuleConfig.model_fields)
+
+
+def run_options() -> tuple[set[str], set[str], dict[str, str]]:
+    """`dimos run`'s own options, read from its command: (taking a value, switches, refused with why)."""
+    import typer.main
+
+    from dimos.cli.dimos import main
+
+    values: set[str] = set()
+    switches: set[str] = set()
+    refused: dict[str, str] = {}
+    for param in typer.main.get_command(main).commands["run"].params:  # type: ignore[attr-defined]
+        names = [*getattr(param, "opts", []), *getattr(param, "secondary_opts", [])]
+        if param.param_type_name != "option":
+            continue
+        if param.name in RUN_REFUSED:
+            refused.update(dict.fromkeys(names, RUN_REFUSED[param.name]))
+        else:
+            (switches if param.is_flag else values).update(names)  # type: ignore[attr-defined]
+    return values, switches, refused
 
 
 class IntrospectError(Exception):
@@ -73,10 +98,15 @@ class Cache:
 
 
 async def run_child(
-    dimos_dir: Path, args: list[str], stdin: Any = None, timeout: float = 180
+    dimos_dir: Path,
+    args: list[str],
+    stdin: Any = None,
+    timeout: float = 180,
+    python: str | None = None,
 ) -> dict[str, Any]:
+    """Introspect in dimos_dir's python, or (python given: another checkout, a run's) with this file in that one."""
     child = await asyncio.create_subprocess_exec(
-        *child_command(dimos_dir),
+        *(child_command(dimos_dir) if python is None else foreign_command(python)),
         *args,
         cwd=dimos_dir,
         stdin=asyncio.subprocess.PIPE,
@@ -106,6 +136,22 @@ def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
     return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+
+
+def foreign_command(python: str) -> list[str]:
+    # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos;
+    # the gateway's checkout goes last on the path, only for the experimental.gateway helpers that one lacks
+    run = (
+        "import runpy, sys\n"
+        "sys.argv.pop(0)\n"
+        "sys.path.append(sys.argv.pop(0))\n"
+        # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
+        "for name in [n for n in sys.modules if n == 'dimos' or n.startswith('dimos.')]:\n"
+        "    del sys.modules[name]\n"
+        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+    )
+    here = Path(__file__).resolve()
+    return [python, "-c", run, str(here.parents[2]), str(here)]
 
 
 def kill_group(pid: int) -> None:
@@ -242,11 +288,12 @@ def spec_topic(spec: Any) -> str | None:
     if isinstance(kwargs, dict) and isinstance(kwargs.get("topic"), str):
         return str(kwargs["topic"])
     args = getattr(spec, "args", None)
-    if isinstance(args, tuple) and args and isinstance(args[0], str):
-        return args[0]
-    topic = getattr(spec, "topic", None)
+    topic = args[0] if isinstance(args, tuple) and args else getattr(spec, "topic", None)
+    # a Topic object (LCM/Zenoh specs) carries the string; Zenoh's has its "dimos/" namespace
     topic = getattr(topic, "topic", topic)
-    return topic if isinstance(topic, str) else None
+    if not isinstance(topic, str):
+        return None
+    return "/" + topic.removeprefix("dimos/").lstrip("/")
 
 
 def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
@@ -258,9 +305,13 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
             if isinstance(effective, str):
                 wired[effective].add(stream.type)
 
-    def topic(atom: Any, stream: Any) -> str | None:
+    def wire(atom: Any, stream: Any) -> str | None:
         effective = remap.get((atom.name, stream.name), stream.name)
-        if not isinstance(effective, str):
+        return effective if isinstance(effective, str) else None
+
+    def topic(atom: Any, stream: Any) -> str | None:
+        effective = wire(atom, stream)
+        if effective is None:
             return None
         spec = pinned.get((effective, stream.type))
         if spec is not None:
@@ -277,6 +328,8 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
                     "name": stream.name,
                     "type": type_name(stream.type),
                     "direction": stream.direction,
+                    # the name it's wired under after .remappings(): streams sharing it are one topic
+                    "wire": wire(atom, stream),
                     "topic": topic(atom, stream),
                 }
                 for stream in atom.streams
@@ -350,8 +403,9 @@ def field_args(
     from experimental.gateway.overrides import is_secret_name
 
     args = {}
+    internal = internal_fields()
     for name, field in fields.items():
-        if name in INTERNAL_FIELDS:
+        if name in internal:
             continue
         required, kind = field.is_required(), field.annotation
         try:
@@ -464,6 +518,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
                 return positive, True
         return target, False
 
+    run_values, run_switches, run_refused = run_options()
     checked: list[dict[str, Any]] = []
     index = 0
     while index < len(tokens):
@@ -473,10 +528,10 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
         entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
         checked.append(entry)
         index += 1
-        if option in RUN_REFUSED:
-            entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
+        if option in run_refused:
+            entry["error"] = f"{option} isn't for a launch: {run_refused[option]}"
             continue
-        if option in RUN_VALUE_OPTIONS:
+        if option in run_values:
             entry["target"] = f"run {option}"
             if "=" not in token:
                 if index >= len(tokens) or tokens[index].startswith("-"):
@@ -493,7 +548,7 @@ def check_args(name: str, args: list[str]) -> dict[str, Any]:
             elif option in ("--config", "-c") and not Path(given).expanduser().is_file():
                 entry["error"] = f"{option}: no file {given}"
             continue
-        if option in RUN_SWITCHES:
+        if option in run_switches:
             entry["target"] = f"run {option}"
             continue
         if not token.startswith("--") or option in ("-o", "--option"):

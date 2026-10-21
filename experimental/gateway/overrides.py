@@ -26,7 +26,14 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 SECRET_WORDS = ("secret", "token", "password", "passwd")
 STRUCTURED = ("global", "modules", "secrets")
-LAUNCH_GLOBAL_DEFAULTS: dict[str, Any] = {"rerun_open": "none", "rerun_web": True}
+
+
+def launch_env_defaults() -> dict[str, str]:
+    """No rerun window pops up from a launch, the web viewer instead: env, not flags (a flag for a module
+    the blueprint lacks is refused), so a saved setting still wins."""
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    return module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
 
 
 @dataclass
@@ -97,13 +104,20 @@ def as_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
 
 
+def module_env(modules: ModuleValues) -> dict[str, str]:
+    """dimos's env names for module settings: MODULE__FIELD."""
+    return {
+        f"{module.replace('/', '_')}__{name}".upper(): as_text(value)
+        for module, fields in modules.items()
+        for name, value in fields.items()
+        if value is not None
+    }
+
+
 def secret_env(global_: dict[str, Any], modules: ModuleValues, paths: list[str]) -> dict[str, str]:
     env = {key.upper(): as_text(v) for key, v in global_.items() if key in paths and v is not None}
-    for module, fields in modules.items():
-        for name, value in fields.items():
-            if f"{module}.{name}" in paths and value is not None:
-                env[f"{module.replace('/', '_')}__{name}".upper()] = as_text(value)
-    return env
+    secret = {m: {n: v for n, v in f.items() if f"{m}.{n}" in paths} for m, f in modules.items()}
+    return {**env, **module_env(secret)}
 
 
 def without_secrets(
@@ -194,13 +208,26 @@ def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[s
     return flags
 
 
+def nested(fields: dict[str, Any]) -> dict[str, Any]:
+    """`addresses.arm` and `addresses.base` become one `addresses` object."""
+    out: dict[str, Any] = {}
+    for name, value in sorted(fields.items()):
+        if value is None:
+            continue
+        head, dot, rest = name.partition(".")
+        if dot:
+            out.setdefault(head, {})[rest] = value
+        else:
+            out[name] = value
+    return out
+
+
 def module_flags(modules: ModuleValues) -> list[str]:
     flags = []
     for module, fields in sorted(modules.items()):
         root = module.replace("/", "_").replace("_", "-")
-        for name, value in sorted(fields.items()):
-            if value is not None:
-                flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
+        for name, value in nested(fields).items():
+            flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
     return flags
 
 

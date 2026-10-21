@@ -60,10 +60,11 @@ async def is_own_launch(run_id: str) -> bool:
 
 
 def with_saved(name: str, one_off: ov.LaunchOverrides, args: list[str]) -> LaunchConfig:
-    """Defaults, then /config/global, then what's saved for `name`, then this launch's own config."""
+    """/config/global, then what's saved for `name`, then this launch's own config."""
     saved = store.blueprint_config(name)
-    effective = ov.merge(ov.LAUNCH_GLOBAL_DEFAULTS, store.global_config_overrides())
-    effective = ov.merge(ov.merge(effective, saved["global"]), one_off.global_)
+    effective = ov.merge(
+        ov.merge(store.global_config_overrides(), saved["global"]), one_off.global_
+    )
     try:
         ov.check_global(effective)
     except ValueError as error:
@@ -265,3 +266,9 @@ async def past_log(
     limit: int | None = None,
 ) -> dict[str, Any]:
     return await read_log(state, run_id, after, level, q, limit)
+
+
+@router.get("/runs/stats", response_model=responses.ProcessStats)
+async def process_stats(state: GatewayState) -> dict[str, Any]:
+    """dtop for the running blueprint: cpu, memory, threads, fds and io per process, with a minute of cpu history."""
+    return await asyncio.to_thread(state.process_stats.snapshot)
