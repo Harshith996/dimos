@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
@@ -48,6 +49,15 @@ PLANNER_VIZ_HZ = 0.0
 # mount tf comes at 5 Hz, Point-LIO's at 10 with jitter, and the Livox cloud arrives ~0.11 s behind its stamp (0.1 s
 # dropped clouds and head-depth frames).
 TF_TOLERANCE_S = 0.5
+# The mapper spares a voxel from a grazing ray only while something still sees it: 2 s of frames, Point-LIO's scans plus
+# head depth (Depth2DepthCloud logs ~5 fps on the Orin). A surface in the head camera's view is re-hit ~10 times in that
+# window and keeps its spare; the knee-high layer a crouching person leaves, which head depth's rays to the floor (all
+# steeper than graze_cos allows) never cleared, starts clearing 2 s after they leave. On the office box recording 1 s also
+# ate floor out of the head's view (zone floor coverage 0.81 -> 0.68) and 3 s left that layer up (floor error 0.17 cm).
+HEAD_DEPTH_HZ = 5.0
+GRAZE_RECENT_FRAMES = round(
+    2.0 * (PointLioConfig.model_fields["scan_rate"].default + HEAD_DEPTH_HZ)
+)
 
 
 r1pro_nav = autoconnect(
@@ -82,6 +92,7 @@ r1pro_nav = autoconnect(
         emit_every=1,
         global_emit_every=50,
         support_min=4,
+        graze_recent_frames=GRAZE_RECENT_FRAMES,
         worker_threads=3,
         tf_match_tolerance_s=TF_TOLERANCE_S,
     ),
