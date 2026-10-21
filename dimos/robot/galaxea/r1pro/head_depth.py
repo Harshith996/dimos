@@ -44,9 +44,7 @@ class HeadFloorPriorConfig(ModuleConfig):
     # The floor under the robot, which it stands on and no sensor sees, as points this far apart; 0 radius adds none.
     footprint_radius_m: float = 0.0
     footprint_spacing_m: float = 0.05
-    # Floor between the footprint and the camera's lowest ray, which nothing sees: per view_fill_bin_deg bearing, filled
-    # out to the nearest head point within view_fill_reach_m where that point is floor (an obstacle there leaves the
-    # bearing unfilled, as does a bearing the camera doesn't see); 0 reach fills none.
+    # Unseen floor past the footprint, per bearing out to its nearest head point within view_fill_reach_m if that is floor.
     view_fill_reach_m: float = 0.0
     view_fill_bin_deg: float = 5.0
 
@@ -176,16 +174,15 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "max_range_m": 6.0,
                 # Scans from the last few seconds anchor the head, so it is calibrated over more than one sweep.
                 "lidar_history_s": 6.0,
-                # The floor is base_link's z = 0 wherever the torso holds the head. The chassis lidar never sees it, so
-                # pixels the calibration puts on or under it are anchored there (in rounds, until no more join): without
-                # that the near field extrapolates from far walls, reads 2-5x short and flattens a box onto the floor.
+                # The lidar never sees the floor (base_link z = 0): unanchored, the near field read 2-5x short.
                 "height_frame": BASE_FRAME,
-                "floor_anchor_step": 8,
                 "floor_tolerance_m": HeadFloorPriorConfig.model_fields["floor_tolerance_m"].default,
                 # One point per 8x8 pixels, at most 3000: replaying r1_live_20260930_1332 on the R1, floor near the robot
                 # rose from ~45% of the map at 11x11 / 1500 to 51%.
                 "decimation": 8,
                 "max_points": 3000,
+                # One floor probe per cloud pixel.
+                "floor_anchor_step": 8,
                 # JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
                 "decode_scale": 4,
                 # One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
@@ -204,8 +201,7 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
         HeadFloorPrior.blueprint(
             tf_tolerance_s=tf_tolerance_s,
             footprint_radius_m=R1PRO_CHASSIS_WIDTH_M / 2,
-            # From a cold start the head's lowest ray meets the floor ~0.74 m out; without this the floor under and
-            # around the robot is an island MLS can't leave.
+            # The head's lowest ray meets the floor ~0.74 m out (farther with the head raised); unfilled, the start is an island.
             view_fill_reach_m=1.5,
         ).remappings([(HeadFloorPrior, "depth_cloud", "head_depth_raw")]),
     )
