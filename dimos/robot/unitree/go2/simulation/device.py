@@ -32,11 +32,16 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
+from dimos.robot.unitree.go2.controllers.locomotion.policy import (
+    COMMAND_SLEW,
+    CONTROL_DT,
+    Proprioception,
+    load_policy,
+    projected_gravity,
+)
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.ipc.abi import ChannelDescriptor
-from dimos.simulation.go2_legged.policy import Proprioception, load_policy
-from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

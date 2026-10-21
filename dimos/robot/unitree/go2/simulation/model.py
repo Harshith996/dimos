@@ -17,11 +17,15 @@
 import mujoco
 import numpy as np
 
+from dimos.robot.unitree.go2.controllers.locomotion.policy import LEGS
+from dimos.robot.unitree.go2.simulation.calibration import FITTED_ACTUATOR_TAU, FITTED_PHYSICS
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.composition import Sensor
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount, Sensor
+from dimos.sim2.sensors.lidar.spec import Lidar
+from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import Joint, RobotConfig
-from dimos.simulation.go2_legged.policy import LEGS
-from dimos.simulation.go2_legged.robot import FITTED_ACTUATOR_TAU, FITTED_PHYSICS
 from dimos.utils.data import LfsPath
 
 
