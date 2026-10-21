@@ -283,6 +283,15 @@ def test_unload_single_named_instance_by_class_name():
         assert source.list_module_names() == []
 
 
+def test_unload_one_of_several_instances_by_name():
+    with _remote_source_with_instances(
+        "robot0/namedremotemodule", "robot1/namedremotemodule"
+    ) as source:
+        source.unload_module_by_name("robot0/namedremotemodule")
+
+        assert source.list_module_names() == ["robot1/namedremotemodule"]
+
+
 def test_cached_class_lookup_becomes_ambiguous_after_live_module_addition():
     with _remote_source_with_instances("robot0/namedremotemodule") as source:
         assert source.get_module("NamedRemoteModule").ping_name() == "robot0/namedremotemodule"

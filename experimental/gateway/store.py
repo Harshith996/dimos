@@ -20,7 +20,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import threading
 from typing import Any
 
 from dimos.constants import RECORDINGS_DIR, STATE_DIR
@@ -29,8 +28,6 @@ if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
-
-_settings_lock = threading.Lock()
 
 
 def gateway_dir() -> Path:
@@ -64,55 +61,6 @@ def read_json(path: Path) -> Any:
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
-
-
-def _section(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _settings() -> dict[str, Any]:
-    return _section(read_json(gateway_dir() / "settings.json"))
-
-
-def _save_settings(settings: dict[str, Any]) -> None:
-    write_atomic(gateway_dir() / "settings.json", json.dumps(settings, indent=2))
-
-
-def global_config_overrides() -> dict[str, Any]:
-    with _settings_lock:
-        return dict(_section(_settings().get("global_config")))
-
-
-def set_global_config_overrides(values: dict[str, Any]) -> None:
-    with _settings_lock:
-        settings = _settings()
-        settings["global_config"] = {k: v for k, v in values.items() if v is not None}
-        _save_settings(settings)
-
-
-def blueprint_config(blueprint: str) -> dict[str, Any]:
-    """What's saved for one blueprint: `global` (over the saved global config) and `modules`."""
-    with _settings_lock:
-        saved = _section(_section(_settings().get("blueprint_config")).get(blueprint))
-    modules = _section(saved.get("modules"))
-    return {
-        "global": dict(_section(saved.get("global"))),
-        "modules": {m: dict(f) for m, f in modules.items() if isinstance(f, dict)},
-    }
-
-
-def set_blueprint_config(
-    blueprint: str, global_: dict[str, Any], modules: dict[str, dict[str, Any]]
-) -> None:
-    with _settings_lock:
-        settings = _settings()
-        saved = _section(settings.get("blueprint_config"))
-        if global_ or modules:
-            saved[blueprint] = {"global": global_, "modules": modules}
-        else:
-            saved.pop(blueprint, None)
-        settings["blueprint_config"] = saved
-        _save_settings(settings)
 
 
 def venv_dir(dimos_dir: Path) -> Path:
