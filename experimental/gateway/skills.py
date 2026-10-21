@@ -194,6 +194,13 @@ class Skills:
         through = (
             self._through_mcp(run.mcp_url, skill, args) if target["uses"] and run.mcp_url else None
         )
+        if target["uses"] and through is None:
+            # the MCP server is what refuses a skill whose capability (movement…) another skill holds
+            raise SkillError(
+                409,
+                f"{skill} uses {', '.join(target['uses'])}, so it only runs through the blueprint's MCP server,"
+                " which isn't answering for it",
+            )
         if through is not None:
             (content, ok), via = through, "mcp"
         else:
