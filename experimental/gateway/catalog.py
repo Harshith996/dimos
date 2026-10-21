@@ -114,15 +114,14 @@ def robot_list(notes: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def errors(cache: dict[str, Any] | None, limit: int) -> list[str]:
+def errors(cache: dict[str, Any] | None) -> list[str]:
     cache = cache or {}
     found = [
         f"blueprint {r['name']}: {r['import_error']}"
         for r in cache.get("results", {}).values()
         if not r["importable"]
     ]
-    found += [e for e in cache.get("errors", []) if e.startswith("module ")]
-    return found if len(found) <= limit else [*found[:limit], f"... and {len(found) - limit} more"]
+    return found + [e for e in cache.get("errors", []) if e.startswith("module ")]
 
 
 class FieldError(ValueError):
