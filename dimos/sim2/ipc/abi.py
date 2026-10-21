@@ -19,13 +19,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
-from dimos.sim2.spec import ControlInterface, RobotConfig
+from dimos.sim2.spec import RobotInstance
 
-ABI_VERSION = 4
+ABI_VERSION = 5
 CHANNEL_MAGIC = b"DMSIM2\0\0"
 CHANNEL_HEADER_SIZE = 64
 FRAME_METADATA_SIZE = 48
@@ -85,7 +85,6 @@ class ChannelDescriptor:
     robot_id: str
     generation: str
     shm_name: str
-    control_interface: ControlInterface
     dof: int
     capabilities: tuple[str, ...]
     physics_dt: float
@@ -94,12 +93,17 @@ class ChannelDescriptor:
     observation_layout: FrameLayout
     observation_slots: int = 2
     joint_names: tuple[str, ...] = ()
+    actuator_modes: tuple[Literal["effort", "position"], ...] = ()
+    position_gains: tuple[tuple[float, float], ...] = ()
+    control_imu: str | None = None
 
     def __post_init__(self) -> None:
         if self.observation_slots < 2:
             raise ValueError("observation channels require at least two slots")
         if len(self.joint_names) != self.dof or len(set(self.joint_names)) != self.dof:
             raise ValueError("channel requires one unique name per joint")
+        if len(self.actuator_modes) != self.dof or len(self.position_gains) != self.dof:
+            raise ValueError("channel requires actuator modes and position gains per joint")
 
     @property
     def fingerprint(self) -> int:
@@ -125,7 +129,6 @@ class ChannelDescriptor:
             "robot_id": self.robot_id,
             "generation": self.generation,
             "shm_name": self.shm_name,
-            "control_interface": self.control_interface.value,
             "dof": self.dof,
             "capabilities": list(self.capabilities),
             "physics_dt": self.physics_dt,
@@ -134,6 +137,9 @@ class ChannelDescriptor:
             "observation_layout": self.observation_layout.to_dict(),
             "observation_slots": self.observation_slots,
             "joint_names": list(self.joint_names),
+            "actuator_modes": list(self.actuator_modes),
+            "position_gains": [list(gains) for gains in self.position_gains],
+            "control_imu": self.control_imu,
         }
 
     @classmethod
@@ -144,7 +150,6 @@ class ChannelDescriptor:
             robot_id=value["robot_id"],
             generation=value["generation"],
             shm_name=value["shm_name"],
-            control_interface=ControlInterface(value["control_interface"]),
             dof=value["dof"],
             capabilities=tuple(value.get("capabilities", ())),
             physics_dt=value["physics_dt"],
@@ -153,6 +158,9 @@ class ChannelDescriptor:
             observation_layout=FrameLayout.from_dict(value["observation_layout"]),
             observation_slots=value["observation_slots"],
             joint_names=tuple(value["joint_names"]),
+            actuator_modes=tuple(value["actuator_modes"]),
+            position_gains=tuple((g[0], g[1]) for g in value["position_gains"]),
+            control_imu=value["control_imu"],
         )
 
 
@@ -162,21 +170,22 @@ def make_channel_descriptor(
     robot_id: str,
     generation: str,
     shm_name: str,
-    control_interface: ControlInterface,
     dof: int,
     capabilities: tuple[str, ...] = (),
     physics_dt: float,
     control_decimation: int,
     joint_names: tuple[str, ...],
+    actuator_modes: tuple[Literal["effort", "position"], ...],
+    position_gains: tuple[tuple[float, float], ...],
+    control_imu: str | None = None,
 ) -> ChannelDescriptor:
-    action_fields, observation_fields = _interface_fields(control_interface, dof)
+    action_fields, observation_fields = _interface_fields(dof, control_imu is not None)
     return ChannelDescriptor(
         abi_version=ABI_VERSION,
         sim_id=sim_id,
         robot_id=robot_id,
         generation=generation,
         shm_name=shm_name,
-        control_interface=control_interface,
         dof=dof,
         capabilities=capabilities,
         physics_dt=physics_dt,
@@ -184,6 +193,9 @@ def make_channel_descriptor(
         action_layout=_build_layout(action_fields),
         observation_layout=_build_layout(observation_fields),
         joint_names=joint_names,
+        actuator_modes=actuator_modes,
+        position_gains=position_gains,
+        control_imu=control_imu,
     )
 
 
@@ -193,18 +205,21 @@ def channel_name(sim_id: str, robot_id: str, generation: str) -> str:
 
 
 def robot_descriptor(
-    sim_id: str, robot_id: str, generation: str, config: RobotConfig, timestep: float
+    sim_id: str, robot_id: str, generation: str, instance: RobotInstance, timestep: float
 ) -> ChannelDescriptor:
+    config = instance.config
     return make_channel_descriptor(
         sim_id=sim_id,
         robot_id=robot_id,
         generation=generation,
         shm_name=channel_name(sim_id, robot_id, generation),
-        control_interface=config.control,
         dof=len(config.joints),
         physics_dt=timestep,
         control_decimation=1,
         joint_names=tuple(j.name for j in config.joints),
+        actuator_modes=tuple(j.mode for j in config.joints),
+        position_gains=tuple((j.kp, j.kd) for j in config.joints),
+        control_imu=instance.control_imu,
     )
 
 
@@ -221,31 +236,13 @@ def _build_layout(fields: tuple[tuple[str, str, tuple[int, ...]], ...]) -> Frame
 
 
 def _interface_fields(
-    interface: ControlInterface,
     dof: int,
+    has_control_imu: bool,
 ) -> tuple[
     tuple[tuple[str, str, tuple[int, ...]], ...],
     tuple[tuple[str, str, tuple[int, ...]], ...],
 ]:
     vector = (dof,)
-    if interface == ControlInterface.MANIPULATOR:
-        return (
-            (
-                ("enabled", "<u1", (1,)),
-                ("expires_at", "<f8", (1,)),
-                ("position", "<f8", vector),
-                ("velocity", "<f8", vector),
-                ("effort", "<f8", vector),
-            ),
-            (
-                ("position", "<f8", vector),
-                ("velocity", "<f8", vector),
-                ("effort", "<f8", vector),
-                ("enabled", "<u1", (1,)),
-                ("monotonic_time", "<f8", (1,)),
-                ("wall_time", "<f8", (1,)),
-            ),
-        )
     return (
         (
             ("enabled", "<u1", (1,)),
@@ -260,10 +257,6 @@ def _interface_fields(
             ("position", "<f8", vector),
             ("velocity", "<f8", vector),
             ("effort", "<f8", vector),
-            ("imu_quaternion", "<f8", (4,)),
-            ("imu_gyroscope", "<f8", (3,)),
-            ("imu_accelerometer", "<f8", (3,)),
-            ("imu_rpy", "<f8", (3,)),
             ("root_position", "<f8", (3,)),
             ("root_quaternion", "<f8", (4,)),
             ("root_linear_velocity", "<f8", (3,)),
@@ -271,5 +264,15 @@ def _interface_fields(
             ("enabled", "<u1", (1,)),
             ("monotonic_time", "<f8", (1,)),
             ("wall_time", "<f8", (1,)),
+        )
+        + (
+            (
+                ("imu_quaternion", "<f8", (4,)),
+                ("imu_gyroscope", "<f8", (3,)),
+                ("imu_accelerometer", "<f8", (3,)),
+                ("imu_rpy", "<f8", (3,)),
+            )
+            if has_control_imu
+            else ()
         ),
     )

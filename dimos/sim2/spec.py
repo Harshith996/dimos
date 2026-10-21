@@ -17,21 +17,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from enum import Enum
+from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
-from typing import ClassVar, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 import mujoco
 from pydantic import BaseModel
 
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar, Mount as Mount, Sensor, mounted_sensors
-
-
-class ControlInterface(str, Enum):
-    WHOLE_BODY = "whole_body"
-    MANIPULATOR = "manipulator"
+from dimos.sim2.sensors.spec import Imu, Mount as Mount, Sensor, mounted_sensors
 
 
 @dataclass(frozen=True)
@@ -39,7 +33,8 @@ class Joint:
     name: str
     model_name: str
     actuator: str
-    home: float = 0.0
+    # Fixed servo gains for position requests to effort actuators. PD motor
+    # commands supply their own gains; controller gains do not belong here.
     kp: float = 0.0
     kd: float = 0.0
     # Native position servos retain their own gains. Motor actuators use PD once.
@@ -62,7 +57,6 @@ class Joint:
                 self.offset,
                 self.ctrl_scale,
                 self.ctrl_offset,
-                self.home,
                 self.kp,
                 self.kd,
                 self.lower,
@@ -86,15 +80,12 @@ class Joint:
 class RobotConfig:
     model: Path
     root_body: str
-    control: ControlInterface
     joints: tuple[Joint, ...]
     sensors: tuple[Sensor, ...] = ()
     meshdir: Path | None = None
     floating: bool = False
     # Root height above a scene's support pose; explicit instances stay absolute.
     spawn_height: float = 0.0
-    # Policy-controlled free bases must not fall while their controller loads.
-    wait_for_first_command: bool = False
     # Preserve calibrated dynamics when a fit was applied to a compiled model.
     configure_physics: Callable[[mujoco.MjModel, str], None] | None = None
     max_timestep: float = 0.005
@@ -113,11 +104,6 @@ class RobotConfig:
         ):
             if len(set(names)) != len(names) or any(not name for name in names):
                 raise ValueError(f"robot {label} names must be nonempty and unique")
-        imus = [s for s in self.sensors if isinstance(s, Imu)]
-        if self.control == ControlInterface.WHOLE_BODY and len(imus) != 1:
-            raise ValueError("whole-body control requires exactly one coherent control IMU")
-        if self.control == ControlInterface.MANIPULATOR and imus:
-            raise ValueError("standalone IMU streaming is not implemented in this migration")
         if any(not math.isfinite(s.rate_hz) or s.rate_hz <= 0 for s in self.mounted_sensors):
             raise ValueError("sensor rates must be finite and positive")
 
@@ -136,6 +122,33 @@ class RobotInstance:
     config: RobotConfig
     xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    initial_positions: dict[str, float] = field(default_factory=dict)
+    # Explicit controller feedback and startup/watchdog settings, not anatomy.
+    control_imu: str | None = None
+    wait_for_first_command: bool = False
+    hold_gains: dict[str, tuple[float, float]] = field(default_factory=dict)
+    # Identity/configuration of the external controller; never executed by physics.
+    controller: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        joints = {joint.name: joint for joint in self.config.joints}
+        unknown = (self.initial_positions.keys() | self.hold_gains.keys()) - joints.keys()
+        if unknown:
+            raise ValueError(f"unknown initial/holding joints: {sorted(unknown)}")
+        for name, position in self.initial_positions.items():
+            joint = joints[name]
+            if not math.isfinite(position) or not joint.lower <= position <= joint.upper:
+                raise ValueError(f"initial position for {name!r} is outside joint limits")
+        if any(
+            len(gains) != 2 or any(not math.isfinite(v) or v < 0 for v in gains)
+            for gains in self.hold_gains.values()
+        ):
+            raise ValueError("holding gains require finite nonnegative kp/kd pairs")
+        imus = {sensor.name for sensor in self.config.mounted_sensors if isinstance(sensor, Imu)}
+        if self.control_imu is not None and self.control_imu not in imus:
+            raise ValueError(f"unknown control IMU {self.control_imu!r}")
+        if any(s.name == self.control_imu and s.latency for s in self.config.mounted_sensors):
+            raise ValueError("coherent control IMU feedback does not support a delayed measurement")
 
 
 @runtime_checkable
@@ -154,7 +167,25 @@ class WorldConfig:
     robots: dict[str, RobotInstance]
     timestep: float = 0.005
     snapshot_hz: float = 60.0
-    sensors: tuple[Camera | Lidar, ...] = ()
+    sensors: tuple[Sensor, ...] = ()
+    # Parameter path -> evidence URI/revision. Empty means no calibration claim.
+    calibration_evidence: dict[str, str] = field(default_factory=dict)
+    # Caller-sampled variation, including its distribution, seed and sampled value.
+    # This records sampling; it does not change parameters or seed external RNGs.
+    sampled_variation: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def devices(self) -> tuple[tuple[str | None, Sensor], ...]:
+        """Independently acquired devices; the selected control IMU travels with motor feedback."""
+        return (
+            *((None, sensor) for sensor in self.sensors),
+            *(
+                (robot_id, sensor)
+                for robot_id, instance in self.robots.items()
+                for sensor in instance.config.sensors
+                if not (isinstance(sensor, Imu) and sensor.name == instance.control_imu)
+            ),
+        )
 
     def __post_init__(self) -> None:
         if any(

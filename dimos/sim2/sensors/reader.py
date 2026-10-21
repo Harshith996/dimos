@@ -73,7 +73,7 @@ class WorldReader:
         times = times[first:last]
         period = self.channel.descriptor.physics_dt * self.channel.descriptor.control_decimation
         if (
-            len(times) < 2
+            len(times) == 0
             or times[0] > start + 1e-9
             or times[-1] < end - 1e-9
             or np.any(np.diff(times) > period * 1.5)

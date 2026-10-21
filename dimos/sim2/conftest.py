@@ -15,7 +15,6 @@
 """Small MJCFs exercise the emulator without LFS, robot SDKs or network services."""
 
 from contextlib import ExitStack
-from dataclasses import replace
 from uuid import uuid4
 
 import pytest
@@ -25,7 +24,7 @@ from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar
-from dimos.sim2.spec import ControlInterface, Joint, RobotConfig, RobotInstance, WorldConfig
+from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
 
 
 @pytest.fixture
@@ -84,14 +83,12 @@ def world_config(tmp_path):
     robot = RobotConfig(
         model=model,
         root_body="base",
-        control=ControlInterface.WHOLE_BODY,
         joints=(
-            Joint("shoulder", "hinge", "motor", home=0.1, kp=10, kd=1),
+            Joint("shoulder", "hinge", "motor", kp=10, kd=1),
             Joint(
                 "gripper",
                 "finger_joint",
                 "finger",
-                home=850,
                 mode="position",
                 scale=-0.04 / 850,
                 offset=0.04,
@@ -108,23 +105,25 @@ def world_config(tmp_path):
             Lidar("lidar", "scan", Fibonacci, model_kwargs={"ray_count": 512}),
         ),
     )
-    return WorldConfig(scene, {"left": RobotInstance(robot, xyz=(0, 0, 0.3))})
+    return WorldConfig(
+        scene,
+        {
+            "left": RobotInstance(
+                robot,
+                xyz=(0, 0, 0.3),
+                initial_positions={"shoulder": 0.1, "gripper": 850},
+                control_imu="imu",
+            )
+        },
+    )
 
 
 @pytest.fixture
 def worlds(world_config):
     with ExitStack() as stack:
 
-        def create(*, config=None, control=None, sim_id=None):
+        def create(*, config=None, sim_id=None):
             config = world_config if config is None else config
-            if control == ControlInterface.MANIPULATOR:
-                robot = config.robots["left"].config
-                robot = replace(
-                    robot,
-                    control=control,
-                    sensors=tuple(s for s in robot.sensors if not isinstance(s, Imu)),
-                )
-                config = replace(config, robots={"left": RobotInstance(robot, xyz=(0, 0, 0.3))})
             return stack.enter_context(SimulationRuntime(config, sim_id or uuid4().hex))
 
         yield create

@@ -30,7 +30,6 @@ import numpy as np
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
-from dimos.sim2.spec import ControlInterface
 
 
 class SimRobotClient:
@@ -121,13 +120,16 @@ class SimRobotClient:
 
     def write_motors(self, command: MotorCommandArray, *, observed: ChannelFrame) -> int:
         """Write complete PD/feedforward targets in descriptor joint order."""
-        if self.descriptor.control_interface != ControlInterface.WHOLE_BODY:
-            raise ValueError("this robot accepts position targets, not per-command PD gains")
         values = np.asarray([command.q, command.dq, command.kp, command.kd, command.tau])
         if values.shape != (5, self.descriptor.dof) or not np.isfinite(values).all():
             raise ValueError(f"expected {self.descriptor.dof} finite q/dq/kp/kd/tau values")
         if np.any(values[2:4] < 0):
             raise ValueError("motor gains must be nonnegative")
+        position_servos = np.array([mode == "position" for mode in self.descriptor.actuator_modes])
+        if np.any(values[1:, position_servos] != 0):
+            raise ValueError(
+                "native position servos accept positions, not velocity/gain/effort overrides"
+            )
         q, dq, kp, kd, effort = values
         return self._write(
             dict(position=q, velocity=dq, kp=kp, kd=kd, effort=effort),
@@ -137,13 +139,19 @@ class SimRobotClient:
 
     def write_positions(self, positions: Sequence[float], *, observed: ChannelFrame) -> int:
         """Write native joint targets, including grippers in their declared units."""
-        if self.descriptor.control_interface != ControlInterface.MANIPULATOR:
-            raise ValueError("this robot requires complete motor commands")
         q = np.asarray(positions, dtype=np.float64)
         if q.shape != (self.descriptor.dof,) or not np.isfinite(q).all():
             raise ValueError(f"expected {self.descriptor.dof} finite joint positions")
+        if any(
+            mode == "effort" and gains[0] == 0
+            for mode, gains in zip(
+                self.descriptor.actuator_modes, self.descriptor.position_gains, strict=True
+            )
+        ):
+            raise ValueError("position requests require a configured servo; send PD motor commands")
+        kp, kd = np.asarray(self.descriptor.position_gains).T
         return self._write(
-            dict(position=q, velocity=np.zeros_like(q), effort=np.zeros_like(q)),
+            dict(position=q, velocity=np.zeros_like(q), kp=kp, kd=kd, effort=np.zeros_like(q)),
             observed,
             enabled=True,
         )
@@ -158,8 +166,7 @@ class SimRobotClient:
             velocity=np.zeros(self.descriptor.dof),
             effort=np.zeros(self.descriptor.dof),
         )
-        if self.descriptor.control_interface == ControlInterface.WHOLE_BODY:
-            values.update(kp=np.zeros(self.descriptor.dof), kd=np.zeros(self.descriptor.dof))
+        values.update(kp=np.zeros(self.descriptor.dof), kd=np.zeros(self.descriptor.dof))
         return self._write(values, observed, enabled=False)
 
     def _write(self, values: dict[str, Any], observed: ChannelFrame, *, enabled: bool) -> int:
