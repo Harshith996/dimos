@@ -18,7 +18,6 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
@@ -32,15 +31,13 @@ def g1_navigation(*, simulated: bool) -> Blueprint:
         mapping = VoxelGridMapper.blueprint(emit_every=1).remappings(
             [(VoxelGridMapper, "lidar", "pointcloud")]
         )
-        resolution = 0.05
     else:
         # The Orin raytracer cannot sustain the simulation's 5 cm resolution.
-        resolution = 0.08
         mapping = autoconnect(
             mid360_for_pointlio(),
             PointLio.blueprint(),
             RayTracingVoxelMap.blueprint(
-                voxel_size=resolution,
+                voxel_size=0.08,
                 emit_every=0,
                 global_emit_every=4,
                 max_health=10,
@@ -50,12 +47,8 @@ def g1_navigation(*, simulated: bool) -> Blueprint:
     return autoconnect(
         mapping,
         CostMapper.blueprint(
-            config=HeightCostConfig(
-                resolution=resolution,
-                can_pass_under=G1.height_clearance + 0.2,
-                can_climb=0.10,
-            ),
-            initial_safe_radius_meters=G1.width_clearance + 0.6,
+            # Use the supported default config, as on Go2. Sim lidar sees the ground.
+            initial_safe_radius_meters=0.0 if simulated else G1.width_clearance + 0.6,
         ),
         ReplanningAStarPlanner.blueprint(
             robot_width=G1.width_clearance,
