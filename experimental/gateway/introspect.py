@@ -18,7 +18,6 @@ import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 import contextlib
-import difflib
 import enum
 import functools
 import importlib
@@ -34,32 +33,6 @@ import typing
 from typing import Any
 
 MARKER = "@@DIMOS_GATEWAY@@"
-# `dimos run`'s own options the gateway won't pass, by parameter name
-RUN_REFUSED = {
-    "daemon": "the gateway runs dimos in the foreground",
-    "run_id": "the gateway picks the run id",
-    "show_help": "try `dimos run <blueprint> --help` in a terminal",
-}
-
-
-def run_options() -> tuple[set[str], set[str], dict[str, str]]:
-    """`dimos run`'s own options, read from its command: (taking a value, switches, refused with why);
-    a refused one's value is in the first set too, so it's skipped along with it."""
-    import typer.main
-
-    from dimos.cli.dimos import main
-
-    values: set[str] = set()
-    switches: set[str] = set()
-    refused: dict[str, str] = {}
-    for param in typer.main.get_command(main).commands["run"].params:  # type: ignore[attr-defined]
-        names = [*getattr(param, "opts", []), *getattr(param, "secondary_opts", [])]
-        if param.param_type_name != "option":
-            continue
-        if param.name in RUN_REFUSED:
-            refused.update(dict.fromkeys(names, RUN_REFUSED[param.name]))
-        (switches if param.is_flag else values).update(names)  # type: ignore[attr-defined]
-    return values, switches, refused
 
 
 class IntrospectError(Exception):
@@ -505,107 +478,6 @@ def module_config(name: str) -> dict[str, Any]:
     return {"name": registry, "class": type_name(cls), "args": module_args(cls)}
 
 
-def parse_error(parser: Any, tokens: list[str]) -> str | None:
-    """What `dimos run` would say about these flags alone (its first line), or None if it takes them."""
-    try:
-        parser.parse(tokens, environ={})
-    except Exception as error:
-        text = str(error).strip()
-        return text.splitlines()[0] if text else type(error).__name__
-    return None
-
-
-def check_args(name: str, args: list[str]) -> dict[str, Any]:
-    """Each flag on its own, as `dimos run` would take it: one error per flag, where dimos stops at the first.
-    Grouping a flag with its value needs the parser's private _resolve_target (dimos has no public one)."""
-    from dimos.cli.dimos import normalize_argv
-    from dimos.core.coordination.blueprint_config.merging import _resolve_target
-    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-    from dimos.core.coordination.blueprint_config.schema import normalize_option_name
-    from dimos.robot.all_blueprints import all_modules
-    from dimos.robot.get_all_blueprints import get_by_name
-
-    tokens = normalize_argv(args)
-    parser = BlueprintConfigParser(get_by_name(name))
-    schema = parser._get_schema()
-    # a blueprint that can't launch as it stands fails every flag the same way: that's not the flag's fault
-    baseline = parse_error(parser, [])
-
-    def target_of(token: str) -> tuple[Any, bool]:
-        option = normalize_option_name(token[2:].partition("=")[0])
-        target = _resolve_target(option, schema)
-        if target is None and option.startswith("no_"):
-            positive = _resolve_target(option.removeprefix("no_"), schema)
-            if positive is not None and positive.section == "global" and positive.is_bool:
-                return positive, True
-        return target, False
-
-    run_values, run_switches, run_refused = run_options()
-    checked: list[dict[str, Any]] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        option = token.partition("=")[0]
-        group = [token]
-        entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
-        checked.append(entry)
-        index += 1
-        if option in run_refused:
-            entry["error"] = f"{option} isn't for a launch: {run_refused[option]}"
-            if option in run_values and "=" not in token and index < len(tokens):
-                group.append(tokens[index])
-                index += 1
-            continue
-        if option in run_values:
-            entry["target"] = f"run {option}"
-            if "=" not in token:
-                if index >= len(tokens) or tokens[index].startswith("-"):
-                    entry["error"] = f"{option} needs a value"
-                    continue
-                group.append(tokens[index])
-                index += 1
-            given = token.partition("=")[2] if "=" in token else group[-1]
-            if option == "--disable" and given not in all_modules:
-                close = difflib.get_close_matches(given, list(all_modules), n=3)
-                entry["error"] = f"--disable: no module {given!r}" + (
-                    f" (did you mean {', '.join(close)}?)" if close else ""
-                )
-            elif option in ("--config", "-c") and not Path(given).expanduser().is_file():
-                entry["error"] = f"{option}: no file {given}"
-            continue
-        if option in run_switches:
-            entry["target"] = f"run {option}"
-            continue
-        if not token.startswith("--") or option in ("-o", "--option"):
-            entry["error"] = (
-                f"{token!r}: one blueprint per launch, and options start with '--'"
-                if not token.startswith("-")
-                else f"unexpected {token!r}"
-            )
-            continue
-        try:
-            target, negated = target_of(token)
-        except Exception as error:
-            target, negated = None, False
-            entry["error"] = str(error)
-        if "=" not in token and not negated and index < len(tokens):
-            if not tokens[index].startswith("--") and (
-                target is not None or not tokens[index].startswith("-")
-            ):
-                group.append(tokens[index])
-                index += 1
-        if entry["error"]:
-            continue
-        refused = parse_error(parser, group)
-        if target is not None:
-            entry["target"] = target.qualified_name
-        if refused is not None and refused != baseline:
-            entry["error"] = refused
-        elif target is None:
-            entry["error"] = refused or f"no option {option}"
-    return {"name": name, "args": checked}
-
-
 def blueprint_list() -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_blueprints
     from dimos.robot.external_blueprints import list_external_blueprint_names
@@ -757,7 +629,6 @@ COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
     "config": config,
     "module": module,
     "module_config": module_config,
-    "args": check_args,
     "list": blueprint_list,
     "packages": packages,
     "scan": scan,
@@ -768,7 +639,7 @@ def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     try:
         command = COMMANDS[argv[0]]
-        result = command(*argv[1:], request) if argv[0] in ("args", "scan") else command(*argv[1:])
+        result = command(*argv[1:], request) if argv[0] == "scan" else command(*argv[1:])
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}
     emit(result)

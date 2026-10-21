@@ -73,11 +73,6 @@ def with_saved(name: str, one_off: ov.LaunchOverrides, args: list[str]) -> Launc
     return LaunchConfig(effective, modules, one_off, list(args))
 
 
-async def refused(state: State, name: str, flags: list[str]) -> list[str]:
-    checked = await state.introspected(["args", name], flags)
-    return [f"{' '.join(a['tokens'])}: {a['error']}" for a in checked["args"] if a["error"]]
-
-
 async def launch_config(state: State, name: str, config: JsonValue) -> LaunchConfig:
     try:
         one_off = ov.parse(config)
@@ -86,10 +81,6 @@ async def launch_config(state: State, name: str, config: JsonValue) -> LaunchCon
         ov.check_global(one_off.global_)
     except ValueError as error:
         raise ApiError(400, str(error))
-    flags = ov.module_flags(one_off.modules)
-    problems = await refused(state, name, flags) if flags else []
-    if problems:
-        raise ApiError(400, "dimos wouldn't take this config: " + "; ".join(problems))
     return with_saved(name, one_off, [])
 
 

@@ -24,7 +24,6 @@ from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
-    check_args,
     run_child,
     spec_topic,
 )
@@ -67,15 +66,3 @@ def test_another_checkout_is_introspected_with_this_file_and_its_own_dimos(tmp_p
     )
     with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"], python=sys.executable))
-
-
-def test_each_flag_is_checked_by_dimos_run_own_parser() -> None:
-    checked = check_args(
-        "coordinator-mock", ["--n-workers=3", "--n-workers=abc", "--bogus=1", "--run-id", "x"]
-    )["args"]
-    assert [(a["tokens"], a["target"], bool(a["error"])) for a in checked] == [
-        (["--n-workers=3"], "g.n-workers", False),
-        (["--n-workers=abc"], "g.n-workers", True),
-        (["--bogus=1"], None, True),
-        (["--run-id", "x"], None, True),
-    ]
