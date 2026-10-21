@@ -47,8 +47,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.unitree.config import connection_type
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -67,6 +68,28 @@ logger = setup_logger()
 class Go2Mode(str, Enum):
     DEFAULT = "default"
     RAGE = "rage"
+
+
+class WebRtcTiming(BaseConfig):
+    """Every wait, timeout and buffer size of the Rust WebRTC module (seconds unless named otherwise)."""
+
+    answer_timeout: float = 5.0
+    cmd_vel_timeout: float = CMD_VEL_TIMEOUT
+    move_period: float = 0.01
+    # the physical robot takes about 3 s to stand before it accepts BalanceStand
+    stand_up_settle: float = 3.0
+    rage_balance_settle: float = 0.3
+    rage_switch_settle: float = 2.0
+    motion_mode_settle: float = 5.0
+    reconnect_pause: float = 2.0
+    signaling_timeout: float = 4.0
+    ice_gather_timeout: float = 4.0
+    validation_timeout: float = 8.0
+    heartbeat_period: float = 2.0
+    clock_window: float = 30.0
+    clock_reset: float = 1.0
+    video_queue_packets: int = 2048
+    capture_max_waiting: int = 16
 
 
 class ConnectionConfig(NativeModuleConfig):
@@ -97,6 +120,7 @@ class ConnectionConfig(NativeModuleConfig):
     publish_tf: bool = True
     # Reconnect when the Go2 drops the WebRTC link; off, the module exits and the run sees the robot is gone.
     auto_reconnect: bool = False
+    timing: WebRtcTiming = Field(default_factory=WebRtcTiming)
 
     def to_config_dict(self) -> dict[str, Any]:
         """Exactly the Rust module's Config: it rejects unknown fields and has no defaults."""
@@ -116,6 +140,7 @@ class ConnectionConfig(NativeModuleConfig):
             "frame_id_prefix": self.frame_id_prefix or "",
             "auto_reconnect": self.auto_reconnect,
             "camera_info": camera_info.to_dict(),
+            "timing": self.timing.model_dump(),
         }
 
 
@@ -176,9 +201,8 @@ BASE_TO_OPTICAL: Transform = Transform(
 def make_connection(
     ip: str | None,
     cfg: ConnectionConfig,
-    aes_128_key: str | None = None,
-    velocity_api: bool = False,
-) -> Go2ConnectionProtocol:
+) -> Go2ConnectionProtocol | None:
+    """Replay's or a simulator's connection; None for the real robot, which GO2Connection's Rust module drives."""
     mode = connection_type(replay=cfg.g.replay, simulation=cfg.g.simulation).lower()
 
     if ip in ("fake", "mock", "replay") or mode == "replay":
@@ -192,12 +216,7 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
-        assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(
-            ip,
-            aes_128_key=aes_128_key,
-            velocity_api=velocity_api,
-        )
+        return None
     else:
         raise ValueError(f"Unknown simulator {cfg.g.simulation!r}. Choose from: mujoco, dimsim")
 
@@ -395,7 +414,8 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     go2_request: Out[String]
     go2_response: In[String]
 
-    connection: Go2ConnectionProtocol
+    # None on the real robot: the Rust module holds the link
+    connection: Go2ConnectionProtocol | None
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
     _latest_lowstate: LowStateMsg | None = None
@@ -414,17 +434,11 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._native = self._uses_native()
         self._answers: dict[str, tuple[Event, dict[str, Any]]] = {}
         self._answers_lock = Lock()
-        if self._native:
+        self.connection = make_connection(self.config.ip, self.config)
+        if self.connection is None:
             return
-        self.connection = make_connection(
-            self.config.ip,
-            self.config,
-            aes_128_key=self.config.aes_128_key,
-            velocity_api=self.config.velocity_api,
-        )
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
@@ -436,32 +450,20 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
                 self.config.frame_id_prefix, self.camera_info_static.frame_id
             )
 
-    def _uses_native(self) -> bool:
-        """The real robot runs the Rust module; replay and the simulators stay in Python."""
-        mode = connection_type(replay=self.config.g.replay, simulation=self.config.g.simulation)
-        return mode.lower() == "webrtc" and self.config.ip not in (
-            "fake",
-            "mock",
-            "replay",
-            "mujoco",
-        )
-
     @rpc
     def build(self) -> None:
-        if self._native:
+        if self.connection is None:
             super().build()
         else:
             Module.build(self)
 
     @rpc
     def start(self) -> None:
-        if self._native:
+        if self.connection is None:
             self.register_disposable(Disposable(self.go2_response.subscribe(self._on_answer)))
             super().start()
             return
         Module.start(self)
-        if not hasattr(self, "connection"):
-            return
         self.connection.start()
 
         def onimage(image: Image) -> None:
@@ -487,13 +489,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             # replay may now shut the run down (--go2connection.replay-exit).
             self.connection.seal_subscriptions()
 
-        if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
-            self.connection.set_motion_mode(self.config.motion_mode)
-
         self.standup()
-        if isinstance(self.connection, UnitreeWebRTCConnection):
-            # The physical robot takes about 3 s to stand before it accepts BalanceStand.
-            time.sleep(3)
         self.connection.balance_stand()
 
         if self.config.mode == Go2Mode.RAGE:
@@ -505,30 +501,28 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def stop(self) -> None:
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         try:
-            if self._native:
-                self._call("liedown", timeout=3.0)
-            else:
-                self.liedown()
+            self.liedown()
         except Exception:
             logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
-        if self._native:
+        if self.connection is None:
             super().stop()
             return
 
-        if self.connection:
-            try:
-                self.connection.stop()
-            except Exception:
-                logger.warning("connection stop failed", exc_info=True)
+        try:
+            self.connection.stop()
+        except Exception:
+            logger.warning("connection stop failed", exc_info=True)
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         Module.stop(self)
 
-    def _call(self, verb: str, timeout: float = 10.0, **args: Any) -> Any:
-        """One RPC on the Rust module: the request on go2_request, its answer back on go2_response."""
+    def _call(self, verb: str, extra_wait: float = 0.0, requests: int = 1, **args: Any) -> Any:
+        """One RPC on the Rust module: the request on go2_request, its answer back on go2_response. It waits for
+        `requests` Go2 answers plus one more answer_timeout for the round trip, and the verb's own `extra_wait`."""
+        timeout = (requests + 1) * self.config.timing.answer_timeout + extra_wait
         request_id = uuid.uuid4().hex
         done = Event()
         answer: dict[str, Any] = {}
@@ -597,29 +591,37 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
-        if self._native:
-            args = {"x": twist.linear.x, "y": twist.linear.y, "yaw": twist.angular.z}
-            return bool(self._call("move", timeout=duration + 5.0, duration=duration, **args))
+        if self.connection is None:
+            return bool(
+                self._call(
+                    "move",
+                    extra_wait=duration,
+                    x=twist.linear.x,
+                    y=twist.linear.y,
+                    yaw=twist.angular.z,
+                    duration=duration,
+                )
+            )
         return self.connection.move(twist, duration)
 
     @rpc
     def standup(self) -> bool:
         """Make the robot stand up."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("standup"))
         return self.connection.standup()
 
     @rpc
     def liedown(self) -> bool:
         """Make the robot lie down."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("liedown"))
         return self.connection.liedown()
 
     @rpc
     def balance_stand(self) -> bool:
         """Enter BalanceStand: neutral state for switching locomotion modes"""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("balance_stand"))
         return self.connection.balance_stand()
 
@@ -629,8 +631,16 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
         On the WebRTC backend this re-establishes the BalanceStand
         precondition before toggling; sim backends are no-ops.
         """
-        if self._native:
-            result = bool(self._call("set_rage_mode", timeout=20.0, enable=enable))
+        if self.connection is None:
+            timing = self.config.timing
+            result = bool(
+                self._call(
+                    "set_rage_mode",
+                    extra_wait=timing.rage_balance_settle + timing.rage_switch_settle,
+                    requests=3,
+                    enable=enable,
+                )
+            )
         else:
             result = self.connection.set_rage_mode(enable)
         logger.info("Rage Mode", enabled=enable)
@@ -639,35 +649,35 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     @rpc
     def sport_command(self, api_id: int) -> bool:
         """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("sport_command", api_id=api_id))
         return self.connection.sport_command(api_id)
 
     @rpc
     def set_light(self, level: int) -> bool:
         """Head-LED brightness level 0-10 (0 = off)."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("set_light", level=level))
         return self.connection.set_light(level)
 
     @rpc
     def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
         """Toggle the onboard obstacle avoidance."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("set_obstacle_avoidance", enabled=enabled))
         return self.connection.set_obstacle_avoidance(enabled)
 
     @rpc
     def switch_joystick(self, enable: bool = True) -> bool:
         """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
-        if self._native:
+        if self.connection is None:
             return bool(self._call("switch_joystick", enable=enable))
         return self.connection.switch_joystick(enable)
 
     @rpc
     def stop_movement(self) -> None:
         """Zero the base immediately (webrtc deadman stop)."""
-        if self._native:
+        if self.connection is None:
             self._call("stop_movement")
             return
         self.connection.stop_movement()
@@ -689,7 +699,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def battery_soc(self) -> int | None:
         """Battery SOC 0-100 (or None until lowstate arrives). Plain RPC — no
         skill-log spam, for the hosted telemetry poll."""
-        lowstate = self._call("lowstate") if self._native else self._latest_lowstate
+        lowstate = self._call("lowstate") if self.connection is None else self._latest_lowstate
         try:
             return int(lowstate["data"]["bms_state"]["soc"])  # type: ignore[index]
         except (KeyError, TypeError, ValueError):
@@ -704,6 +714,6 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
         Returns:
             The result of the publish request
         """
-        if self._native:
+        if self.connection is None:
             return self._call("publish_request", topic=topic, data=data)  # type: ignore[no-any-return]
         return self.connection.publish_request(topic, data)

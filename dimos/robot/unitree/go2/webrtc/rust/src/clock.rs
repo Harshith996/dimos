@@ -21,9 +21,6 @@ use std::collections::{BinaryHeap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
-const WINDOW_SECS: i64 = 30;
-/// An offset this far from the estimate is a clock reset (robot reboot, host step), not jitter.
-const RESET_NS: i64 = NANOS_PER_SEC;
 
 pub fn now_ns() -> u64 {
     SystemTime::now()
@@ -32,21 +29,33 @@ pub fn now_ns() -> u64 {
         .unwrap_or(0)
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HostClock {
+    window_secs: i64,
+    /// an offset this far from the estimate is a clock reset (robot reboot, host step), not jitter
+    reset_ns: i64,
     /// (host second, smallest arrival - device stamp in it)
     minima: VecDeque<(i64, i64)>,
     offset_ns: Option<i64>,
 }
 
 impl HostClock {
+    pub fn new(window_secs: f64, reset_secs: f64) -> Self {
+        Self {
+            window_secs: window_secs.ceil() as i64,
+            reset_ns: (reset_secs * NANOS_PER_SEC as f64) as i64,
+            minima: VecDeque::new(),
+            offset_ns: None,
+        }
+    }
+
     /// Fold in one message's device stamp and host arrival time.
     pub fn observe(&mut self, device_ns: i64, arrival_ns: u64) {
         let arrival_ns = arrival_ns as i64;
         let offset = arrival_ns - device_ns;
         if self
             .offset_ns
-            .is_some_and(|estimate| (offset - estimate).abs() >= RESET_NS)
+            .is_some_and(|estimate| (offset - estimate).abs() >= self.reset_ns)
         {
             tracing::warn!(
                 estimate_ns = self.offset_ns,
@@ -63,7 +72,7 @@ impl HostClock {
                 while self
                     .minima
                     .front()
-                    .is_some_and(|f| f.0 < second - WINDOW_SECS)
+                    .is_some_and(|f| f.0 < second - self.window_secs)
                 {
                     self.minima.pop_front();
                 }
@@ -101,6 +110,7 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
 /// which a stream with reordered frames doesn't send them in, so a decoded frame takes the earliest ticks waiting.
 #[derive(Debug, Default)]
 pub struct CaptureClock {
+    max_waiting: usize,
     /// frames given to the decoder and not yet out of it: unwrapped ticks and their first packet's arrival
     waiting: BinaryHeap<Reverse<(i64, u64)>>,
     last_rtp: Option<u32>,
@@ -111,6 +121,13 @@ pub struct CaptureClock {
 }
 
 impl CaptureClock {
+    pub fn new(max_waiting: usize) -> Self {
+        Self {
+            max_waiting,
+            ..Self::default()
+        }
+    }
+
     fn unwrap(&mut self, rtp: u32) -> i64 {
         if let Some(last) = self.last_rtp {
             self.unwrapped += rtp.wrapping_sub(last) as i32 as i64;
@@ -133,7 +150,7 @@ impl CaptureClock {
         }
         self.waiting.push(Reverse((ticks, first_arrival_ns)));
         // a frame the decoder never hands out mustn't shift every later frame's time
-        while self.waiting.len() > 16 {
+        while self.waiting.len() > self.max_waiting {
             self.waiting.pop();
         }
     }
@@ -161,7 +178,7 @@ mod tests {
 
     #[test]
     fn the_fastest_arrival_sets_the_offset() {
-        let mut clock = HostClock::default();
+        let mut clock = HostClock::new(30.0, 1.0);
         assert_eq!(clock.host_ns(5), None);
         // robot 1000 s, host 1.7e9 s; the first arrives undelayed, later ones late
         let device = 1_000_000 * MS;
@@ -174,7 +191,7 @@ mod tests {
 
     #[test]
     fn a_robot_reboot_restarts_the_estimate() {
-        let mut clock = HostClock::default();
+        let mut clock = HostClock::new(30.0, 1.0);
         let host = 1_700_000_000_000 * MS;
         clock.observe(1_000_000 * MS, host as u64);
         clock.observe(2_000 * MS, (host + 100_000 * MS) as u64);
@@ -186,7 +203,7 @@ mod tests {
 
     #[test]
     fn place_falls_back_to_arrival_and_never_lands_after_it() {
-        let mut clock = HostClock::default();
+        let mut clock = HostClock::new(30.0, 1.0);
         assert_eq!(place(&mut clock, None, 42), 42);
         assert_eq!(place(&mut clock, Some(0), 43), 43);
         assert_eq!(
@@ -203,7 +220,7 @@ mod tests {
     #[test]
     fn frames_land_on_their_tick_spacing_at_the_measured_rate() {
         // 60 ticks a frame, a frame every 70 ms, arrivals jittered by 0..9 ms
-        let mut clock = CaptureClock::default();
+        let mut clock = CaptureClock::new(16);
         let base = 1_700_000_000_000 * MS as u64;
         let mut stamps = Vec::new();
         for i in 0..100u64 {
@@ -221,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_reordered_frame_takes_the_earliest_ticks_waiting() {
-        let mut clock = CaptureClock::default();
+        let mut clock = CaptureClock::new(16);
         // decode order I P B: the decoder hands out I, then B (ticks 60) before P (ticks 120)
         clock.submitted(0, 1_000);
         assert_eq!(clock.decoded(), Some(1_000));

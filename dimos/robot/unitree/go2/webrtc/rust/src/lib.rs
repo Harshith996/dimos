@@ -21,3 +21,4 @@ pub mod h264;
 pub mod lidar;
 pub mod module;
 pub mod signaling;
+pub mod timing;

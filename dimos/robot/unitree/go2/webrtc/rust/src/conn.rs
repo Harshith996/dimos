@@ -43,9 +43,7 @@ use webrtc::rtp_transceiver::RTCRtpTransceiverInit;
 use crate::clock::now_ns;
 use crate::lidar::parse_binary;
 use crate::signaling::{exchange_sdp, offer_id, validation_reply};
-
-const VALIDATION_TIMEOUT: Duration = Duration::from_secs(8);
-const HEARTBEAT: Duration = Duration::from_secs(2);
+use crate::timing::{secs, Timing};
 
 /// What a live session reports, each with its host arrival time (ns).
 pub enum Event {
@@ -115,14 +113,19 @@ fn answer_id(message: &Value) -> Option<u64> {
 
 impl Conn {
     /// Opens the session; returns once the robot has validated the data channel and the camera is asked for.
-    pub async fn connect(ip: &str, aes_key: &str, on_event: OnEvent) -> Result<Arc<Conn>, String> {
+    pub async fn connect(
+        ip: &str,
+        aes_key: &str,
+        timing: &Timing,
+        on_event: OnEvent,
+    ) -> Result<Arc<Conn>, String> {
         let pc = Arc::new(
             robot_api()?
                 .new_peer_connection(RTCConfiguration::default())
                 .await
                 .map_err(|e| e.to_string())?,
         );
-        let result = Self::negotiate(pc.clone(), ip, aes_key, on_event).await;
+        let result = Self::negotiate(pc.clone(), ip, aes_key, timing, on_event).await;
         if result.is_err() {
             let _ = pc.close().await;
         }
@@ -133,6 +136,7 @@ impl Conn {
         pc: Arc<RTCPeerConnection>,
         ip: &str,
         aes_key: &str,
+        timing: &Timing,
         on_event: OnEvent,
     ) -> Result<Arc<Conn>, String> {
         pc.add_transceiver_from_kind(
@@ -305,22 +309,23 @@ impl Conn {
         pc.set_local_description(offer)
             .await
             .map_err(|e| e.to_string())?;
-        let _ = tokio::time::timeout(Duration::from_secs(4), gathered.recv()).await;
+        let _ = tokio::time::timeout(secs(timing.ice_gather_timeout), gathered.recv()).await;
         let local = pc.local_description().await.ok_or("no local description")?;
         let offer_json =
             json!({ "id": offer_id(ip), "sdp": local.sdp, "type": "offer", "token": "" })
                 .to_string();
-        let sdp = exchange_sdp(ip, aes_key, &offer_json).await?;
+        let sdp = exchange_sdp(ip, aes_key, &offer_json, secs(timing.signaling_timeout)).await?;
         let answer = RTCSessionDescription::answer(sdp).map_err(|e| e.to_string())?;
         pc.set_remote_description(answer)
             .await
             .map_err(|e| e.to_string())?;
 
-        match tokio::time::timeout(VALIDATION_TIMEOUT, validated_rx).await {
+        let validation_timeout = secs(timing.validation_timeout);
+        match tokio::time::timeout(validation_timeout, validated_rx).await {
             Ok(Ok(())) => info!("Go2 validated the data channel"),
             _ => {
                 return Err(format!(
-                    "the Go2 never validated the data channel within {VALIDATION_TIMEOUT:?}"
+                    "the Go2 never validated the data channel within {validation_timeout:?}"
                 ))
             }
         }
@@ -331,15 +336,15 @@ impl Conn {
             closed,
             pending,
         });
-        conn.start_heartbeat();
+        conn.start_heartbeat(secs(timing.heartbeat_period));
         Ok(conn)
     }
 
-    fn start_heartbeat(self: &Arc<Self>) {
+    fn start_heartbeat(self: &Arc<Self>, period: Duration) {
         let conn = Arc::downgrade(self);
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(HEARTBEAT).await;
+                tokio::time::sleep(period).await;
                 let Some(conn) = conn.upgrade() else { break };
                 if conn.closed.load(Ordering::Relaxed) {
                     break;

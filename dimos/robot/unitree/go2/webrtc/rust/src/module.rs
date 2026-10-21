@@ -23,7 +23,6 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use dimos_module::{native_config, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{
@@ -41,6 +40,7 @@ use crate::clock::{now_ns, place, CaptureClock, HostClock};
 use crate::conn::{Conn, Event};
 use crate::h264::{Depacketizer, Packet};
 use crate::lidar::decode_voxels;
+use crate::timing::{secs, Timing};
 
 const SPORT: &str = "rt/api/sport/request";
 const MOTION_SWITCHER: &str = "rt/api/motion_switcher/request";
@@ -62,14 +62,6 @@ const CHECK_MODE: i64 = 1001;
 const SELECT_MODE: i64 = 1002;
 const VUI_SET_BRIGHTNESS: i64 = 1005;
 const OBSTACLES_AVOID_SWITCH_SET: i64 = 1001;
-
-/// How long a request waits for the Go2's answer (unitree_webrtc_connect waits forever).
-const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
-/// Silence on `cmd_vel` this long stops the base (go2/constants.py CMD_VEL_TIMEOUT).
-const CMD_VEL_TIMEOUT_NS: u64 = 200_000_000;
-const RECONNECT_PAUSE: Duration = Duration::from_secs(2);
-/// RTP packets the decoder thread may fall behind by before it drops them and resyncs on a keyframe.
-const VIDEO_QUEUE: usize = 2048;
 
 #[native_config]
 #[derive(Clone)]
@@ -96,6 +88,7 @@ pub struct Config {
     pub auto_reconnect: bool,
     #[serde(with = "camera_info_dict")]
     pub camera_info: CameraInfo,
+    pub timing: Timing,
 }
 
 /// A config string kept out of logs: the module prints its config at start.
@@ -236,7 +229,12 @@ impl Shared {
         parameter: Option<Value>,
     ) -> Result<Value, String> {
         self.conn()?
-            .request(topic, api_id, parameter.as_ref(), ANSWER_TIMEOUT)
+            .request(
+                topic,
+                api_id,
+                parameter.as_ref(),
+                secs(self.config.timing.answer_timeout),
+            )
             .await
     }
 
@@ -272,10 +270,10 @@ impl Shared {
         if let Err(err) = self.sport(BALANCE_STAND, None).await {
             warn!("balance stand before the rage toggle failed: {err}");
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(secs(self.config.timing.rage_balance_settle)).await;
         self.sport(RAGE_MODE, Some(json!({ "data": enable })))
             .await?;
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(secs(self.config.timing.rage_switch_settle)).await;
         self.sport(SWITCH_JOYSTICK, Some(json!({ "data": true })))
             .await
     }
@@ -292,7 +290,7 @@ impl Shared {
         }
         self.request(MOTION_SWITCHER, SELECT_MODE, Some(json!({ "name": name })))
             .await?;
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(secs(self.config.timing.motion_mode_settle)).await;
         Ok(())
     }
 
@@ -308,7 +306,7 @@ impl Shared {
                     let until = now_ns() + (duration * 1e9) as u64;
                     while now_ns() < until {
                         self.drive(x, y, yaw).await?;
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        tokio::time::sleep(secs(self.config.timing.move_period)).await;
                     }
                     self.stop_movement().await?;
                 } else {
@@ -428,7 +426,7 @@ impl Go2WebRtc {
         });
         self.shared = Some(shared.clone());
 
-        let (video_tx, video_rx) = mpsc::sync_channel(VIDEO_QUEUE);
+        let (video_tx, video_rx) = mpsc::sync_channel(self.config.timing.video_queue_packets);
         let video_dropped = Arc::new(AtomicBool::new(false));
         let (data_tx, data_rx) = mpsc::channel();
         if self.config.camera {
@@ -528,7 +526,14 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
     let mut started = false;
     loop {
         info!(ip = %config.ip, "connecting to the Go2");
-        match Conn::connect(&config.ip, &config.aes_128_key.0, on_event.clone()).await {
+        match Conn::connect(
+            &config.ip,
+            &config.aes_128_key.0,
+            &config.timing,
+            on_event.clone(),
+        )
+        .await
+        {
             Ok(conn) => {
                 *shared.conn.lock().unwrap() = Some(conn.clone());
                 if let Err(err) = link_up(&shared, &conn).await {
@@ -554,7 +559,7 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
             error!("auto_reconnect is off: exiting");
             std::process::exit(1);
         }
-        tokio::time::sleep(RECONNECT_PAUSE).await;
+        tokio::time::sleep(secs(config.timing.reconnect_pause)).await;
     }
 }
 
@@ -571,7 +576,7 @@ async fn link_up(shared: &Shared, conn: &Conn) -> Result<(), String> {
             MOTION_SWITCHER,
             SELECT_MODE,
             Some(&json!({ "name": "ai" })),
-            ANSWER_TIMEOUT,
+            secs(shared.config.timing.answer_timeout),
         )
         .await
     {
@@ -600,8 +605,7 @@ async fn start_sequence(shared: &Shared) {
     if let Err(err) = shared.sport(STAND_UP, None).await {
         warn!("stand up: {err}");
     }
-    // the physical robot takes about 3 s to stand before it accepts BalanceStand
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(secs(config.timing.stand_up_settle)).await;
     if let Err(err) = shared.sport(BALANCE_STAND, None).await {
         warn!("balance stand: {err}");
     }
@@ -623,12 +627,13 @@ async fn start_sequence(shared: &Shared) {
     }
 }
 
-/// Stops the base once `cmd_vel` has been silent for CMD_VEL_TIMEOUT.
+/// Stops the base once `cmd_vel` has been silent for cmd_vel_timeout (checked ten times per timeout).
 async fn deadman(shared: Arc<Shared>) {
+    let timeout_ns = secs(shared.config.timing.cmd_vel_timeout).as_nanos() as u64;
     loop {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(secs(shared.config.timing.cmd_vel_timeout / 10.0)).await;
         let since = shared.driving_since.load(Ordering::Relaxed);
-        if since != 0 && now_ns().saturating_sub(since) > CMD_VEL_TIMEOUT_NS {
+        if since != 0 && now_ns().saturating_sub(since) > timeout_ns {
             if let Err(err) = shared.stop_movement().await {
                 warn!("deadman stop: {err}");
             }
@@ -652,7 +657,7 @@ impl DataLoop {
             prefixed(prefix, "camera_link"),
             prefixed(prefix, "camera_optical"),
         );
-        let mut pose_clock = HostClock::default();
+        let mut pose_clock = HostClock::new(config.timing.clock_window, config.timing.clock_reset);
         let mut stats = Stats::default();
         while let Ok(event) = rx.recv() {
             let Event::Data {
@@ -830,7 +835,7 @@ impl VideoLoop {
             }
         };
         let mut depacketizer = Depacketizer::default();
-        let mut capture = CaptureClock::default();
+        let mut capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
         // when each RTP time's first packet arrived (a frame's packets share one)
         let mut first_arrival: VecDeque<(u32, u64)> = VecDeque::new();
         let mut rgb = Vec::new();
@@ -843,7 +848,7 @@ impl VideoLoop {
             if self.dropped.swap(false, Ordering::Relaxed) {
                 // packets were dropped before this one: the frame in progress is broken
                 depacketizer = Depacketizer::default();
-                capture = CaptureClock::default();
+                capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
                 self.want_keyframe();
             }
             if first_arrival
@@ -878,7 +883,7 @@ impl VideoLoop {
                 Err(err) => {
                     warn!("H.264 decode failed ({err}); waiting for a keyframe");
                     depacketizer = Depacketizer::default();
-                    capture = CaptureClock::default();
+                    capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
                     self.want_keyframe();
                     continue;
                 }

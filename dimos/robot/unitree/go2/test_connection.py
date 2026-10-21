@@ -38,24 +38,9 @@ from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection
 from dimos.simulation.mujoco.config import MujocoConfig
 
 
-@pytest.fixture
-def stub_webrtc(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    """Replace UnitreeWebRTCConnection in go2.connection so the webrtc branch
-    runs without dialing out."""
-    stub = MagicMock(name="UnitreeWebRTCConnection")
-    monkeypatch.setattr(go2_conn, "UnitreeWebRTCConnection", stub)
-    return stub
-
-
-def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> None:
-    """Webrtc branch forwards aes_128_key as a kwarg to UnitreeWebRTCConnection."""
-    cfg = ConnectionConfig(g=GlobalConfig())
-    go2_conn.make_connection("192.168.123.161", cfg, aes_128_key="cafe" * 8)
-    stub_webrtc.assert_called_once_with(
-        "192.168.123.161",
-        aes_128_key="cafe" * 8,
-        velocity_api=False,
-    )
+def test_make_connection_leaves_the_real_robot_to_the_rust_module() -> None:
+    """Webrtc gets no Python connection: GO2Connection's Rust module drives the real robot."""
+    assert go2_conn.make_connection("192.168.123.161", ConnectionConfig(g=GlobalConfig())) is None
 
 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
@@ -174,13 +159,13 @@ def test_odom_to_tf_unprefixed_by_default() -> None:
 
 
 @pytest.fixture
-def connection(stub_webrtc: MagicMock) -> Iterator[Callable[[bool], GO2Connection]]:
-    """Build GO2Connections with the tf and odom ports stubbed, and stop them after."""
+def connection() -> Iterator[Callable[[bool], GO2Connection]]:
+    """Build replay GO2Connections (no robot, no DB opened) with the tf and odom ports stubbed, and stop them after."""
     built: list[GO2Connection] = []
 
     def build(publish_tf: bool) -> GO2Connection:
         conn = GO2Connection(
-            g=GlobalConfig(robot_ip="127.0.0.1"),
+            g=GlobalConfig(replay=True),
             publish_tf=publish_tf,
             odom_frame_id="go2_odom",
         )

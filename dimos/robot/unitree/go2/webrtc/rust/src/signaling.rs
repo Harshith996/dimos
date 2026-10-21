@@ -33,7 +33,6 @@ use tracing::debug;
 pub const SIGNALING_PORT: u16 = 9991;
 /// The dog's address on its own hotspot.
 const AP_MODE_IP: &str = "192.168.12.1";
-const SIGNALING_TIMEOUT: Duration = Duration::from_secs(4);
 /// data2=2 firmware wraps con_notify in AES-128-GCM under this fixed key; data2=3 (>= 1.1.15) uses a per-device key.
 const LEGACY_GCM_KEY: [u8; 16] = [
     232, 86, 130, 189, 22, 84, 155, 0, 142, 4, 166, 104, 43, 179, 235, 227,
@@ -135,9 +134,14 @@ pub fn validation_reply(key: &str) -> String {
     B64.encode(md5::compute(format!("UnitreeGo2_{key}")).0)
 }
 
-async fn post(ip: &str, path: &str, body: Option<String>) -> Result<String, String> {
+async fn post(
+    ip: &str,
+    path: &str,
+    body: Option<String>,
+    timeout: Duration,
+) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .timeout(SIGNALING_TIMEOUT)
+        .timeout(timeout)
         .build()
         .map_err(|e| e.to_string())?;
     let mut request = client
@@ -160,8 +164,13 @@ async fn post(ip: &str, path: &str, body: Option<String>) -> Result<String, Stri
 }
 
 /// Hands the robot our SDP offer (JSON `{id, sdp, type, token}`) and returns its answer's SDP.
-pub async fn exchange_sdp(ip: &str, aes_key: &str, offer_json: &str) -> Result<String, String> {
-    let notify_b64 = post(ip, "/con_notify", None).await?;
+pub async fn exchange_sdp(
+    ip: &str,
+    aes_key: &str,
+    offer_json: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let notify_b64 = post(ip, "/con_notify", None, timeout).await?;
     let notify_raw = B64
         .decode(notify_b64.trim())
         .map_err(|e| format!("con_notify isn't base64: {e}"))?;
@@ -186,6 +195,7 @@ pub async fn exchange_sdp(ip: &str, aes_key: &str, offer_json: &str) -> Result<S
         ip,
         &format!("/con_ing_{}", path_ending(&data1)),
         Some(body.to_string()),
+        timeout,
     )
     .await?;
     let answer: Value = serde_json::from_str(&aes_ecb_decrypt(&answer, &session_key)?)
