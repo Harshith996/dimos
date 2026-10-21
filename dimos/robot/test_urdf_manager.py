@@ -18,6 +18,8 @@ import asyncio
 from collections.abc import Callable, Iterator
 import hashlib
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, cast
 
 import numpy as np
@@ -36,11 +38,13 @@ from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
     XARM_ROS2_REPO,
     make_xarm7_model_config,
 )
+from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import UrdfManager
 
 # A 20cm cube on `arm`, with no external assets.
@@ -339,7 +343,7 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_robot_description_names_meshes_by_package_and_hash_and_mesh_request_serves_only_stale_ones(
+def test_robot_description_names_files_by_package_and_hash_and_file_request_serves_only_stale_ones(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
@@ -347,39 +351,49 @@ def test_robot_description_names_meshes_by_package_and_hash_and_mesh_request_ser
     trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
     cube = (package / "meshes" / "cube.stl").read_bytes()
     urdf = tmp_path / "mesh_robot.urdf"
+    (package / "textures").mkdir()
+    (package / "textures" / "skin.png").write_bytes(b"png bytes")
     urdf.write_text(
         _URDF.replace(
             '<box size="0.2 0.2 0.2"/>', '<mesh filename="package://box/meshes/cube.stl"/>'
+        ).replace(
+            "</link>",
+            '<visual><geometry><box size="0.1 0.1 0.1"/></geometry><material name="skin">'
+            '<texture filename="package://box/textures/skin.png"/></material></visual></link>',
         )
     )
     module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
     sent: list[MeshFile] = []
-    monkeypatch.setattr(module.mesh_info, "publish", sent.append)
+    monkeypatch.setattr(module.file_info, "publish", sent.append)
     name = f"package://box/meshes/cube.stl?hash={hashlib.sha256(cube).hexdigest()}"
+    texture = f"package://box/textures/skin.png?hash={hashlib.sha256(b'png bytes').hexdigest()}"
 
     assert f'filename="{name}"' in module._urdf_xml
+    assert f'filename="{texture}"' in module._urdf_xml
     assert str(tmp_path) not in module._urdf_xml
     # the name as robot_description gives it, with or without its hash, or with a stale have= gets the file; have= of the
     # current file (a fresh cached copy) and a filesystem path get nothing
     plain = "package://box/meshes/cube.stl"
     for request in (name, plain, f"{name}&have=0", f"{name}&have={name.split('=')[1]}", str(urdf)):
-        asyncio.run(module.handle_mesh_request(String(request)))
+        asyncio.run(module.handle_file_request(String(request)))
 
-    assert [mesh.uri for mesh in sent] == [name, name, name]
-    decoded = MeshFile.lcm_decode(sent[0].lcm_encode())
-    assert decoded.data == cube
+    asyncio.run(module.handle_file_request(String(texture)))
+
+    assert [file.uri for file in sent] == [name, name, name, texture]
+    assert MeshFile.lcm_decode(sent[0].lcm_encode()).data == cube
+    assert sent[3].data == b"png bytes"
 
 
-def test_an_empty_mesh_request_sends_robot_description_right_away(make_filter, monkeypatch):
+def test_an_empty_file_request_sends_robot_description_right_away(make_filter, monkeypatch):
     module = make_filter()
     sent: list[String] = []
     monkeypatch.setattr(module.robot_description, "publish", sent.append)
     monkeypatch.setattr(
-        module.mesh_info, "publish", lambda mesh: pytest.fail("no mesh for an empty request")
+        module.file_info, "publish", lambda mesh: pytest.fail("no file for an empty request")
     )
 
-    asyncio.run(module.handle_mesh_request(String("")))
-    asyncio.run(module.handle_mesh_request(String("")))  # within 0.2 s: dropped
+    asyncio.run(module.handle_file_request(String("")))
+    asyncio.run(module.handle_file_request(String("")))  # within 0.2 s: dropped
 
     assert [message.data for message in sent] == [module._urdf_xml]
 
@@ -445,3 +459,64 @@ def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monke
     )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
 
     assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
+    pytest.importorskip("roboplan.core")
+    description = R1PRO_MODEL.load()
+    roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
+    module = UrdfManager(model=R1PRO_MODEL, self_filter=False)
+    rng = np.random.default_rng(seed)
+    positions = {
+        joint.name: rng.uniform(
+            -np.pi if joint.lower is None else joint.lower,
+            np.pi if joint.upper is None else joint.upper,
+        )
+        for joint in description.joints
+        if joint.type in ("revolute", "continuous", "prismatic")
+    }
+    q = roboplan.configuration(positions, {})
+    assert q is not None
+    try:
+        transforms = module.joint_transforms(
+            JointState(ts=1.0, name=list(positions), position=list(positions.values()))
+        )
+    finally:
+        module.dispose()
+
+    assert len(transforms) == len(description.joints)
+    for transform in transforms:
+        np.testing.assert_allclose(
+            transform.to_matrix(),
+            roboplan._context.forwardKinematics(q, transform.child_frame_id, transform.frame_id),
+            atol=1e-9,
+        )
+
+
+def test_with_self_filter_off_roboplan_is_never_imported(tmp_path):
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_joint_robot("prismatic"))
+    # A fresh interpreter where importing roboplan fails; self_filter=True is the control that proves it does.
+    script = f"""
+import sys
+sys.modules["roboplan"] = None
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
+from dimos.robot.urdf_manager import UrdfManager
+model = RobotModel.from_file({str(urdf)!r})
+module = UrdfManager(model=model, self_filter=False)
+[edge] = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
+module.dispose()
+assert abs(edge.translation.x - 0.3) < 1e-9, edge
+try:
+    UrdfManager(model=model, self_filter=True)
+except ImportError:
+    pass
+else:
+    raise AssertionError("roboplan was importable")
+"""
+
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
