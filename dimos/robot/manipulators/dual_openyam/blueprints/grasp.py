@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The xArm grasp stack on the dual OpenYAM workcell, one arm per blueprint.
+"""The xArm grasp stack on the dual OpenYAM workcell, both arms in one blueprint.
 
-``dimos run dual-openyam-grasp-right --left-can-port follower_l --right-can-port follower_r``
-``dimos run dual-openyam-grasp-left ...``             the other arm
-``dimos run dual-openyam-grasp-right-graspgenx ...``  learned grasps
+``dimos run dual-openyam-grasp --config workcell.json --left-can-port follower_l --right-can-port follower_r``
 
-The planning model is the dual workcell model with both arms and both planning
-groups. The manipulation module binds one gripper per model, so each blueprint
-benchmarks one arm and names that arm's gripper; the other arm rests on its
-support under gravity compensation. Everything else is the stack as it exists:
-pick_object and place_at from the pick-and-place module, one top-down heuristic
-grasp or GraspGenX, scene registration from the overhead D405, the planner with
-the table, post and overhead camera as collision geometry in the workcell
-model. No self filter or voxel map: the planner's obstacles are the detected
-objects and the bin added per scene.
+The planning model is the calibrated workcell model with both arms, a fingertip
+tcp per arm and a gripper task bound to each planning group. Everything else is
+the stack as it exists: pick_object and place_at from the pick-and-place module,
+one top-down heuristic grasp, scene registration from the overhead D405, the
+planner with the workcell as its collision world, and a Rerun layout for a
+headless rig. The camera serials come from the run config.
 """
 
 from __future__ import annotations
@@ -35,13 +30,11 @@ from dataclasses import replace
 import math
 from typing import Any
 
-from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -50,14 +43,16 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
+    DUAL_OPENYAM_GRIPPER_TASKS,
     DualOpenYamCoordinator,
+    dual_openyam_gripper_task,
     dual_openyam_trajectory_task,
 )
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import DUAL_OPENYAM_PINK
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_model_config,
 )
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_GRIPPER_JOINTS
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
@@ -65,16 +60,6 @@ DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
-# Pink's defaults do not converge on this model; the WebXR teleop uses these.
-DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
-    dt=0.01,
-    position_cost=8.0,
-    orientation_cost=2.0,
-    posture_cost=0.01,
-    joint_limit_posture_margin=0.3,
-    lm_damping=0.01,
-    gain=1.0,
-)
 # Overhead colour optical pose from the 2026-10-15 calibration, expressed as camera_link.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=-0.01684, y=0.01262, z=0.41508),
@@ -96,24 +81,11 @@ DUAL_OPENYAM_RECORD_TOPICS = ",".join(
         ),
     ]
 )
-DUAL_OPENYAM_GRIPPER_TASKS = {
-    f"{side}_manipulator": f"{side}_arm_gripper" for side in DUAL_OPENYAM_SIDES
-}
 
 
 def _check_side(side: str) -> None:
     if side not in DUAL_OPENYAM_SIDES:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-
-
-def dual_openyam_gripper_task(side: str, *, priority: int = 20) -> TaskConfig:
-    _check_side(side)
-    return TaskConfig(
-        name=DUAL_OPENYAM_GRIPPER_TASKS[f"{side}_manipulator"],
-        type="gripper",
-        joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[DUAL_OPENYAM_SIDES.index(side)]],
-        priority=priority,
-    )
 
 
 def dual_openyam_grasp_model_config() -> RobotModelConfig:
@@ -145,6 +117,7 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
 
 def dual_openyam_grasp_view() -> Any:
     """Rerun layout: the three cameras as tiles on the left, the scene on the right."""
+    # Heavy optional dependency, loaded only when the bridge builds its layout.
     import rerun as rr
     import rerun.blueprint as rrb
 
@@ -207,7 +180,6 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
         instance_name=name,
         frame_id_prefix=f"{side}_wrist",
         width=640,
-        height=480,
         fps=30,
         enable_depth=False,
         align_depth_to_color=False,
@@ -222,7 +194,7 @@ def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
         planner(
             model=dual_openyam_grasp_model_config(),
             gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
-            kinematics=DUAL_OPENYAM_GRASP_PINK,
+            kinematics=DUAL_OPENYAM_PINK,
             default_speed_scale=0.25,
             static_transforms=[DUAL_OPENYAM_CAMERA_TRANSFORM],
             visualization={"backend": "viser"},
@@ -235,7 +207,6 @@ def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
         # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(
             width=640,
-            height=480,
             fps=30,
             enable_pointcloud=True,
         ),

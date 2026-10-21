@@ -83,16 +83,16 @@ component.
 
 ## Pick-and-place benchmark
 
-The xArm grasp stack on the workcell, both grippers bound to their planning groups:
+The xArm grasp stack on the workcell, both grippers bound to their planning groups.
 
 The three D405 serials are rig configuration, not source. Put them in a
 config file outside the checkout and pass it with `--config`:
 
 ```json
 {
-  "realsensecamera": {"serial_number": "230322272156"},
-  "left_wrist_camera": {"serial_number": "260322272983"},
-  "right_wrist_camera": {"serial_number": "260322276650"}
+  "realsensecamera": {"serial_number": "<overhead D405 serial>"},
+  "left_wrist_camera": {"serial_number": "<left wrist D405 serial>"},
+  "right_wrist_camera": {"serial_number": "<right wrist D405 serial>"}
 }
 ```
 
@@ -124,22 +124,15 @@ z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
 
 ## Model assets
 
-Two dual-arm model packages ship as LFS data:
-
-- `dual_openyam_workcell_v1` is the default, `DUAL_OPENYAM_MODEL`. It describes
-  the physical workcell: arm bases 0.43 m apart (tape, 2026-10-08), the table top 42 mm below the motor bases (tape, 2026-10-13) and joint 1
-  limits of -225 to +90 deg, inside the stops measured when the motors were
-  zeroed with Anvil's `damiao-set-zero-limit` on 2026-10-12. Its zero
-  configuration is the folded rest pose on the supports. Every link carries a
-  convex hull collision mesh, each gripper carries boxes for its wrist D405 and
-  bracket, and a fixed `workcell` link carries the table slab, the camera post
-  and the overhead camera, so planners see the rig without extra configuration.
-- `dual_openyam_abc_box_v2`, exported as `DUAL_OPENYAM_ABC_MODEL`, keeps the
-  0.62 m spacing of the ABC simulation bench for scenes that reproduce it.
-
-Both packages carry the same i2rt arm geometry and meshes; only the base
-spacing and the joint 1 limits differ. Each package's `SOURCE.md` records the
-measurement or upstream commit every number comes from.
+`dual_openyam_workcell_v2`, exported as `DUAL_OPENYAM_MODEL`, is the physical
+workcell: the i2rt YAM arm geometry and meshes, the two arm bases and the
+joint 3 zero offsets from the rig calibration of 2026-10-15, joint 1 limits
+inside the measured stops, a convex hull collision mesh on every link, boxes
+for each wrist D405 and bracket, and a fixed `workcell` link with the table
+slab, the camera post and the overhead camera. Its zero configuration is the
+folded rest pose on the supports. The package's `SOURCE.md` records where every
+number comes from. A revised model ships under a new package name, because LFS
+extraction caches by directory name.
 
 ## Safety
 

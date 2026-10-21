@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -57,13 +58,22 @@ def test_model_keeps_both_arms_with_a_tcp_each() -> None:
     assert len(config.joint_names) == 12
 
 
+@pytest.mark.self_hosted
 def test_tcp_is_the_grasp_frame_turned_to_point_down_the_fingers() -> None:
-    config = dual_openyam_grasp_model_config()
-    frames = {frame.name: frame for frame in config.model._fixed_frames}
-    assert frames["right_tcp"].parent == "right_grasp_frame"
-    assert frames["right_tcp"].rpy == (0.0, math.pi, 0.0)
-    assert frames["right_tcp"].xyz[2] == pytest.approx(-0.046)
-    assert frames["left_tcp"].xyz[2] == pytest.approx(-0.046)
+    root = ET.fromstring(dual_openyam_grasp_model_config().model.load().xml)
+    for side in ("left", "right"):
+        joint = next(
+            joint
+            for joint in root.findall("joint")
+            if joint.find("child").attrib["link"] == f"{side}_tcp"  # type: ignore[union-attr]
+        )
+        assert joint.find("parent").attrib["link"] == f"{side}_grasp_frame"  # type: ignore[union-attr]
+        origin = joint.find("origin")
+        assert origin is not None
+        xyz = [float(v) for v in origin.attrib["xyz"].split()]
+        rpy = [float(v) for v in origin.attrib["rpy"].split()]
+        assert xyz[2] == pytest.approx(-0.046)
+        assert rpy == pytest.approx([0.0, math.pi, 0.0])
 
 
 def test_each_planning_group_is_bound_to_its_own_gripper_task() -> None:
@@ -106,7 +116,10 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
     bridge = _atom(dual_openyam_grasp, RerunBridgeModule).kwargs
     assert bridge["topics"] == DUAL_OPENYAM_VIEW_TOPICS
     assert bridge["rerun_open"] == "none"
-    assert bridge["blueprint"]() is not None
+    # Heavy optional dependency, imported only for this check.
+    import rerun.blueprint as rrb
+
+    assert isinstance(bridge["blueprint"](), rrb.Blueprint)
 
 
 def test_recorded_stream_names_are_valid_identifiers() -> None:

@@ -40,7 +40,7 @@ from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
 
-_dual_openyam_webxr_pink = PinkKinematicsConfig(
+DUAL_OPENYAM_PINK = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -69,7 +69,7 @@ _dual_openyam_webxr_task = teleop_ik_task(
         },
     ],
     params={
-        "pink": _dual_openyam_webxr_pink,
+        "pink": DUAL_OPENYAM_PINK,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
@@ -111,7 +111,7 @@ def build_dual_openyam_webxr(
                 "right_manipulator": "right_arm_gripper",
             },
             model=_dual_openyam_webxr_model,
-            kinematics=_dual_openyam_webxr_pink,
+            kinematics=DUAL_OPENYAM_PINK,
             visualization=visualization,
         ),
     ).remappings(

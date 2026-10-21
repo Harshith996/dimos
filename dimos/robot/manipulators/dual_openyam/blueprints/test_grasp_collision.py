@@ -34,10 +34,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
-    DUAL_OPENYAM_GRASP_PINK,
     DUAL_OPENYAM_TABLE_TOP_Z,
     dual_openyam_grasp_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import DUAL_OPENYAM_PINK
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 pytestmark = [
@@ -66,7 +66,7 @@ def module(request: pytest.FixtureRequest) -> Iterator[ManipulationModule]:
         model=dual_openyam_grasp_model_config(),
         planning_timeout=15.0,
         world_backend=request.param,
-        kinematics=DUAL_OPENYAM_GRASP_PINK,
+        kinematics=DUAL_OPENYAM_PINK,
         visualization={"backend": "none"},
         world_frame="world",
         **({"planner": planner[request.param]} if request.param in planner else {}),

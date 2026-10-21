@@ -15,7 +15,7 @@
 """The dual OpenYAM grasp stack with an MCP agent, driven from ``dimos humancli``.
 
 ```bash
-dimos run dual-openyam-grasp-right-agent --left-can-port follower_l --right-can-port follower_r
+dimos run dual-openyam-grasp-agent --config workcell.json --left-can-port follower_l --right-can-port follower_r
 dimos humancli                                   # second terminal, same machine
 ```
 
@@ -28,7 +28,10 @@ from __future__ import annotations
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.dual_openyam.blueprints.grasp import dual_openyam_grasp
+from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
+    DUAL_OPENYAM_TABLE_TOP_Z,
+    dual_openyam_grasp,
+)
 
 _PROMPT = """\
 You are a robotic manipulation assistant controlling a two-arm OpenYAM table rig
@@ -51,7 +54,7 @@ Skills:
 
 World frame (meters): origin midway between the arm bases at the height of
 their mounting blocks, X forward (away from the arms), Y toward the left arm,
-Z up. The table top is at Z=-0.035. The yellow bin spans X 0.40 to 0.69 and
+Z up. The table top is at Z={table_z}. The yellow bin spans X 0.40 to 0.69 and
 Y -0.11 to +0.11, rim at Z=0.068; it is an obstacle, not a place target: this
 stack places top-down only and cannot clear the rim. The drop zone is the
 marked tray square on each arm's side; "put it in the tray", "put it down" and
@@ -80,7 +83,7 @@ def dual_openyam_agent_prompt() -> str:
         f"{side}_drop": " ".join(str(v) for v in pose) + f" {side}_manipulator"
         for side, pose in DUAL_OPENYAM_DROP_POSES.items()
     }
-    return _PROMPT.format(**drops)
+    return _PROMPT.format(table_z=f"{DUAL_OPENYAM_TABLE_TOP_Z:.3f}", **drops)
 
 
 # Assigned through autoconnect so the registry generator sees it.
