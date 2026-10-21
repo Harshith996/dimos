@@ -35,12 +35,7 @@ class HeadFloorPriorConfig(ModuleConfig):
     # Its origin is where the wheels touch the floor, so the floor is its z = 0 however the torso and head move.
     floor_frame: str = BASE_FRAME
     tf_tolerance_s: float = 0.1
-    # Rays whose head point lands this far below to this far above the floor fit the frame's depth correction: the
-    # floor Depth Anything misplaces sits anywhere in that band, an obstacle is a minority of it.
-    fit_min_m: float = -0.3
-    fit_max_m: float = 0.9
-    fit_min_rays: int = 30
-    # A corrected head point no higher than this above the floor (and no lower than min_height_m) is floor.
+    # A head point no higher than this above the floor (and no lower than min_height_m) is floor.
     floor_tolerance_m: float = 0.05
     # Kept from just under the floor to just above the chassis lidar's plane, what the lidar sees worst; a drop deeper
     # than min_height_m stays unseen rather than becoming floor.
@@ -52,11 +47,9 @@ class HeadFloorPriorConfig(ModuleConfig):
 
 
 class HeadFloorPrior(Module):
-    """Head depth onto the floor the robot stands on (floor_frame's z = 0; the chassis lidar never sees it). Each frame's
-    depth is corrected by how far its near-floor rays miss the floor (fit_depth_to_floor: Depth Anything's error grows
-    with distance, and the whole frame shares it, obstacles included), then a point just above or under the floor slides
-    along its ray onto it, and the floor under the robot's own footprint is added. Every pose comes from tf at the
-    cloud's stamp, so the torso and base may move."""
+    """Head depth onto the floor the robot stands on (floor_frame's z = 0; the chassis lidar never sees it): a point just
+    above or under the floor slides along its ray onto it, and the floor under the robot's own footprint is added. Every
+    pose comes from tf at the cloud's stamp, so the torso and base may move."""
 
     config: HeadFloorPriorConfig
 
@@ -73,10 +66,7 @@ class HeadFloorPrior(Module):
         floor_from_camera = self._lookup(self.config.floor_frame, cloud.frame_id, cloud.ts)
         if floor_from_camera is None:
             return
-        points = fit_depth_to_floor(
-            cloud.points_f32().astype(np.float64), floor_from_camera, self.config
-        )
-        points = onto_floor(points, floor_from_camera, self.config)
+        points = onto_floor(cloud.points_f32().astype(np.float64), floor_from_camera, self.config)
         in_floor = _apply(floor_from_camera, points)
         keep = (in_floor[:, 2] >= self.config.min_height_m) & (
             in_floor[:, 2] <= self.config.max_height_m
@@ -101,33 +91,6 @@ class HeadFloorPrior(Module):
             warn=False,
         )
         return None if transform is None else transform.to_matrix()
-
-
-def fit_depth_to_floor(
-    points: np.ndarray, floor_from_camera: np.ndarray, config: HeadFloorPriorConfig
-) -> np.ndarray:
-    """Camera-frame points rescaled along their rays by log(true / predicted depth) = a + b * log(predicted depth), fit
-    robustly over the downward rays that land near floor_frame's z = 0; unchanged when too few do."""
-    in_floor = _apply(floor_from_camera, points)
-    camera_z = floor_from_camera[2, 3]
-    near = (
-        (in_floor[:, 2] < camera_z - 1e-3)
-        & (in_floor[:, 2] > config.fit_min_m)
-        & (in_floor[:, 2] < config.fit_max_m)
-    )
-    if near.sum() < config.fit_min_rays:
-        return points
-    depth = np.linalg.norm(points, axis=1)
-    x = np.log(depth[near])
-    y = np.log(-camera_z / (in_floor[near, 2] - camera_z))
-    inlier = np.ones(len(x), bool)
-    for _ in range(3):
-        slope, intercept = np.polyfit(x[inlier], y[inlier], 1)
-        residual = np.abs(y - (intercept + slope * x))
-        # Rays off the line by more than 2.5 typical residuals (and at least 5%) are obstacles, not the floor.
-        inlier = residual < max(0.05, 2.5 * float(np.median(residual[inlier])))
-    corrected: np.ndarray = points * np.exp(intercept + slope * np.log(depth))[:, None]
-    return corrected
 
 
 def onto_floor(
@@ -171,11 +134,12 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "max_range_m": 6.0,
                 # Scans from the last few seconds anchor the head, so it is calibrated over more than one sweep.
                 "lidar_history_s": 6.0,
-                # Nothing more than fit_max_m above the floor (base_link's z = 0, wherever the torso holds the head) spends
-                # the point budget; HeadFloorPrior needs the misplaced floor to fit each frame's depth correction, and cuts
-                # to its own height band after.
+                # The floor is base_link's z = 0 wherever the torso holds the head. The chassis lidar never sees it, so
+                # pixels the calibration puts on or under it are anchored there (in rounds, until no more join): without
+                # that the near field extrapolates from far walls, reads 2-5x short and flattens a box onto the floor.
                 "height_frame": BASE_FRAME,
-                "max_height_m": HeadFloorPriorConfig.model_fields["fit_max_m"].default,
+                "floor_anchor_step": 8,
+                "floor_tolerance_m": HeadFloorPriorConfig.model_fields["floor_tolerance_m"].default,
                 # One point per 8x8 pixels, at most 3000: replaying r1_live_20260930_1332 on the R1, floor near the robot
                 # rose from ~45% of the map at 11x11 / 1500 to 51%.
                 "decimation": 8,

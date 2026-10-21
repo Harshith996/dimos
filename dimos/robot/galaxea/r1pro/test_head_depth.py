@@ -18,7 +18,6 @@ from scipy.spatial.transform import Rotation
 
 from dimos.robot.galaxea.r1pro.head_depth import (
     HeadFloorPriorConfig,
-    fit_depth_to_floor,
     footprint_floor,
     onto_floor,
 )
@@ -57,48 +56,6 @@ def _scene(floor_from_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     t = np.where(box, t_near, t_floor)
     keep = t < 6.0
     return rays[keep] * t[keep, None], box[keep]
-
-
-def _misread(points: np.ndarray) -> np.ndarray:
-    """Depth Anything's kind of error, log-linear in depth: read 25% too far at 1 m and less so farther out."""
-    depth = np.linalg.norm(points, axis=1)
-    misread: np.ndarray = points * (1.25 * depth**-0.15)[:, None]
-    return misread
-
-
-@pytest.mark.parametrize(
-    ("camera_height_m", "pitch_deg"),
-    [(1.3, 20.0), (0.9, 45.0), (1.1, 30.0)],
-    ids=["up", "bent", "level"],
-)
-def test_the_frame_fit_puts_the_floor_on_the_floor_and_keeps_the_box(
-    camera_height_m: float, pitch_deg: float
-) -> None:
-    """The head rides an articulated torso: whatever its height and pitch, the corrected floor lands on base_link's z = 0
-    and the box keeps its height, since the whole frame shares one correction."""
-    floor_from_camera = _pose(
-        Rotation.from_euler("y", pitch_deg, degrees=True).as_matrix() @ OPTICAL,
-        [0.1, 0.0, camera_height_m],
-    )
-    truth, box = _scene(floor_from_camera)
-    assert box.sum() > 10
-
-    corrected = fit_depth_to_floor(_misread(truth), floor_from_camera, HeadFloorPriorConfig())
-
-    np.testing.assert_allclose(corrected, truth, rtol=1e-3)
-    assert _in_floor(floor_from_camera, corrected[box])[:, 2].max() == pytest.approx(
-        BOX_HEIGHT, abs=1e-3
-    )
-
-
-def test_too_few_floor_rays_leave_the_frame_alone() -> None:
-    floor_from_camera = _pose(
-        Rotation.from_euler("y", 30, degrees=True).as_matrix() @ OPTICAL, [0.1, 0.0, 1.1]
-    )
-    points = _misread(_scene(floor_from_camera)[0])[:5]
-    np.testing.assert_array_equal(
-        fit_depth_to_floor(points, floor_from_camera, HeadFloorPriorConfig()), points
-    )
 
 
 @pytest.mark.parametrize(
