@@ -41,7 +41,7 @@ python = "dimos.robot.unitree.go2.connection:GO2Connection"
 
 [package.metadata.dimos.module.go2_webrtc.inputs]
 cmd_vel = "geometry_msgs.Twist"
-go2_request = "std_msgs.String"
+command = "std_msgs.String"
 
 [package.metadata.dimos.module.go2_webrtc.outputs]
 odom = "geometry_msgs.PoseStamped"
@@ -50,7 +50,7 @@ pointcloud = "sensor_msgs.PointCloud2"
 color_image = "sensor_msgs.Image"
 camera_info = "sensor_msgs.CameraInfo"
 tf = "tf2_msgs.TFMessage"
-go2_response = "std_msgs.String"
+battery = "sensor_msgs.BatteryState"
 
 [profile.release]
 lto = "thin"

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! GO2Connection's real-robot side: the Go2 over its WebRTC link. `cmd_vel` and `go2_request` (GO2Connection's
-//! RPCs as JSON) in; `odom` (+ its tf chain), `lidar`, the decoded front camera on `color_image`, `camera_info` and
-//! the RPC answers on `go2_response` out. Poses are stamped with the Go2's own stamp moved onto the host clock
+//! GO2Connection's real-robot side: the Go2 over its WebRTC link. `cmd_vel` and `command` (one verb per message,
+//! see `parse_verb`) in; `odom` (+ its tf chain), `lidar`, the decoded front camera on `color_image`, `camera_info`
+//! and `battery` out. Poses are stamped with the Go2's own stamp moved onto the host clock
 //! (clock.rs); frames with their first packet's arrival, de-jittered by their RTP tick spacing (CaptureClock), and
 //! scans with their arrival, since the Go2 sends no usable capture time for either.
 //! One thread decodes video, one the data channel; tokio runs the session and the requests.
@@ -28,7 +28,7 @@ use dimos_module::{native_config, Input, Module, Output};
 use lcm_msgs::geometry_msgs::{
     Point, Pose, PoseStamped, Quaternion, Transform, TransformStamped, Twist, Vector3,
 };
-use lcm_msgs::sensor_msgs::{CameraInfo, Image, PointCloud2, PointField};
+use lcm_msgs::sensor_msgs::{BatteryState, CameraInfo, Image, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{self, Header, Time};
 use lcm_msgs::tf2_msgs::TFMessage;
 use serde_json::{json, Value};
@@ -204,7 +204,6 @@ struct Shared {
     config: Config,
     handle: Handle,
     conn: Mutex<Option<Arc<Conn>>>,
-    lowstate: Mutex<Option<Value>>,
     /// the last cmd_vel's arrival (ns) while the base is being driven, 0 once stopped
     driving_since: AtomicU64,
     move_ids: AtomicU64,
@@ -294,84 +293,142 @@ impl Shared {
         Ok(())
     }
 
-    /// A GO2Connection RPC: `verb` with its `args`, answered with its result.
-    async fn rpc(&self, verb: &str, args: &Value) -> Result<Value, String> {
-        let flag = |name: &str| args[name].as_bool().unwrap_or(true);
-        let answered = |r: Result<Value, String>| r.map(|_| json!(true));
+    async fn run(&self, verb: Verb) -> Result<(), String> {
+        let done = |r: Result<Value, String>| r.map(|_| ());
         match verb {
-            "move" => {
-                let (x, y, yaw) = (f(&args["x"]), f(&args["y"]), f(&args["yaw"]));
-                let duration = f(&args["duration"]);
+            Verb::Move {
+                x,
+                y,
+                yaw,
+                duration,
+            } => {
                 if duration > 0.0 {
                     let until = now_ns() + (duration * 1e9) as u64;
                     while now_ns() < until {
                         self.drive(x, y, yaw).await?;
                         tokio::time::sleep(secs(self.config.timing.move_period)).await;
                     }
-                    self.stop_movement().await?;
+                    self.stop_movement().await
                 } else {
                     self.driving_since.store(now_ns(), Ordering::Relaxed);
-                    self.drive(x, y, yaw).await?;
+                    self.drive(x, y, yaw).await
                 }
-                Ok(json!(true))
             }
-            "stop_movement" => self.stop_movement().await.map(|_| Value::Null),
-            "standup" => answered(self.sport(STAND_UP, None).await),
-            "liedown" => answered(self.sport(STAND_DOWN, None).await),
-            "balance_stand" => answered(self.sport(BALANCE_STAND, None).await),
-            "sport_command" => answered(
-                self.sport(
-                    args["api_id"]
-                        .as_i64()
-                        .ok_or("sport_command needs api_id")?,
-                    None,
+            Verb::Stop => self.stop_movement().await,
+            Verb::Sport(api_id) => done(self.sport(api_id, None).await),
+            Verb::Rage(enable) => done(self.set_rage_mode(enable).await),
+            Verb::Joystick(enable) => done(
+                self.sport(SWITCH_JOYSTICK, Some(json!({ "data": enable })))
+                    .await,
+            ),
+            Verb::Brightness(level) => done(
+                self.request(
+                    VUI,
+                    VUI_SET_BRIGHTNESS,
+                    Some(json!({ "brightness": level })),
                 )
                 .await,
             ),
-            "set_rage_mode" => answered(self.set_rage_mode(flag("enable")).await),
-            "switch_joystick" => answered(
-                self.sport(SWITCH_JOYSTICK, Some(json!({ "data": flag("enable") })))
-                    .await,
+            Verb::ObstacleAvoidance(enable) => done(
+                self.request(
+                    OBSTACLES_AVOID,
+                    OBSTACLES_AVOID_SWITCH_SET,
+                    Some(json!({ "enable": enable as i64 })),
+                )
+                .await,
             ),
-            "set_light" => {
-                let level = args["level"].as_i64().unwrap_or(0).clamp(0, 10);
-                answered(
-                    self.request(
-                        VUI,
-                        VUI_SET_BRIGHTNESS,
-                        Some(json!({ "brightness": level })),
-                    )
-                    .await,
-                )
-            }
-            "set_obstacle_avoidance" => {
-                let enable = flag("enabled") as i64;
-                answered(
-                    self.request(
-                        OBSTACLES_AVOID,
-                        OBSTACLES_AVOID_SWITCH_SET,
-                        Some(json!({ "enable": enable })),
-                    )
-                    .await,
-                )
-            }
-            "set_motion_mode" => self
-                .set_motion_mode(args["name"].as_str().unwrap_or(""))
-                .await
-                .map(|_| Value::Null),
-            "publish_request" => {
-                let data = &args["data"];
-                let api_id = data["api_id"]
-                    .as_i64()
-                    .ok_or("publish_request needs data.api_id")?;
-                let parameter = data.get("parameter").cloned();
-                self.request(args["topic"].as_str().unwrap_or(""), api_id, parameter)
-                    .await
-            }
-            "lowstate" => Ok(self.lowstate.lock().unwrap().clone().unwrap_or(Value::Null)),
-            _ => Err(format!("unknown GO2Connection request {verb:?}")),
+            Verb::MotionMode(name) => self.set_motion_mode(&name).await,
+            Verb::Request {
+                topic,
+                api_id,
+                parameter,
+            } => done(self.request(&topic, api_id, parameter).await),
         }
     }
+}
+
+/// What a `command` message asks for.
+#[derive(Debug, PartialEq)]
+pub enum Verb {
+    Move {
+        x: f64,
+        y: f64,
+        yaw: f64,
+        duration: f64,
+    },
+    Stop,
+    Sport(i64),
+    Rage(bool),
+    Joystick(bool),
+    Brightness(i64),
+    ObstacleAvoidance(bool),
+    MotionMode(String),
+    Request {
+        topic: String,
+        api_id: i64,
+        parameter: Option<Value>,
+    },
+}
+
+fn on_off(arg: &str) -> Option<bool> {
+    match arg {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// The `command` vocabulary: `<verb>` or `<verb> <args>`. Sport verbs and switches match GO2DDS's
+/// (`stand-up`, `1016`, `rage on`, `brightness 5`, ...); `move <x> <y> <yaw> <seconds>`,
+/// `motion-mode <name>` and `request <topic> <api_id> [<json parameter>]` are this module's.
+pub fn parse_verb(verb: &str) -> Option<Verb> {
+    let verb = verb.trim();
+    let (name, arg) = verb
+        .split_once(' ')
+        .map_or((verb, ""), |(n, a)| (n, a.trim()));
+    Some(match name.to_ascii_lowercase().as_str() {
+        "move" => {
+            let numbers: Vec<f64> = arg
+                .split_whitespace()
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .ok()?;
+            let [x, y, yaw, duration] = numbers[..] else {
+                return None;
+            };
+            Verb::Move {
+                x,
+                y,
+                yaw,
+                duration,
+            }
+        }
+        "stop" => Verb::Stop,
+        "stand-up" if arg.is_empty() => Verb::Sport(STAND_UP),
+        "stand-down" if arg.is_empty() => Verb::Sport(STAND_DOWN),
+        "balance" if arg.is_empty() => Verb::Sport(BALANCE_STAND),
+        "rage" => Verb::Rage(on_off(arg)?),
+        "joystick" => Verb::Joystick(on_off(arg)?),
+        "obstacle-avoidance" => Verb::ObstacleAvoidance(on_off(arg)?),
+        "brightness" => Verb::Brightness(arg.parse::<i64>().ok()?.clamp(0, 10)),
+        "motion-mode" if !arg.is_empty() => Verb::MotionMode(arg.to_string()),
+        "request" => {
+            let mut parts = arg.splitn(3, ' ');
+            let topic = parts.next()?.to_string();
+            let api_id = parts.next()?.parse().ok()?;
+            let parameter = match parts.next() {
+                Some(json) => Some(serde_json::from_str(json).ok()?),
+                None => None,
+            };
+            Verb::Request {
+                topic,
+                api_id,
+                parameter,
+            }
+        }
+        id if arg.is_empty() => Verb::Sport(id.parse().ok()?),
+        _ => return None,
+    })
 }
 
 #[derive(Module)]
@@ -380,8 +437,8 @@ pub struct Go2WebRtc {
     #[input(decode = Twist::decode, handler = on_cmd_vel)]
     cmd_vel: Input<Twist>,
 
-    #[input(decode = std_msgs::String::decode, handler = on_go2_request)]
-    go2_request: Input<std_msgs::String>,
+    #[input(decode = std_msgs::String::decode, handler = on_command)]
+    command: Input<std_msgs::String>,
 
     #[output(encode = PoseStamped::encode)]
     odom: Output<PoseStamped>,
@@ -403,8 +460,8 @@ pub struct Go2WebRtc {
     #[output(encode = TFMessage::encode)]
     tf: Output<TFMessage>,
 
-    #[output(encode = std_msgs::String::encode)]
-    go2_response: Output<std_msgs::String>,
+    #[output(encode = BatteryState::encode)]
+    battery: Output<BatteryState>,
 
     #[config]
     config: Config,
@@ -418,7 +475,6 @@ impl Go2WebRtc {
             config: self.config.clone(),
             handle: Handle::current(),
             conn: Mutex::new(None),
-            lowstate: Mutex::new(None),
             driving_since: AtomicU64::new(0),
             move_ids: AtomicU64::new(0),
             stopping: AtomicBool::new(false),
@@ -446,6 +502,7 @@ impl Go2WebRtc {
             odom: self.odom.clone(),
             lidar: self.lidar.clone(),
             tf: self.tf.clone(),
+            battery: self.battery.clone(),
         };
         std::thread::Builder::new()
             .name("go2-data".into())
@@ -476,6 +533,10 @@ impl Go2WebRtc {
         if let Some(shared) = &self.shared {
             shared.stopping.store(true, Ordering::Relaxed);
             let _ = shared.stop_movement().await;
+            // lie down before the link closes, as GO2Connection.stop does on every backend
+            if let Err(err) = shared.sport(STAND_DOWN, None).await {
+                warn!("lie down on stop: {err}");
+            }
             let conn = shared.conn.lock().unwrap().take();
             if let Some(conn) = conn {
                 conn.close().await;
@@ -494,27 +555,19 @@ impl Go2WebRtc {
         }
     }
 
-    async fn on_go2_request(&mut self, msg: std_msgs::String) {
+    async fn on_command(&mut self, msg: std_msgs::String) {
         let Some(shared) = self.shared.clone() else {
             return;
         };
-        let response = self.go2_response.clone();
+        let Some(verb) = parse_verb(&msg.data) else {
+            warn!(verb = %msg.data, "unknown command verb");
+            return;
+        };
+        info!(?verb, "command");
         tokio::spawn(async move {
-            let request: Value = serde_json::from_str(&msg.data).unwrap_or(Value::Null);
-            let id = request["id"].clone();
-            let verb = request["verb"].as_str().unwrap_or("").to_string();
-            let answer = match shared.rpc(&verb, &request["args"]).await {
-                Ok(result) => json!({ "id": id, "ok": true, "result": result }),
-                Err(err) => {
-                    warn!(verb, "GO2Connection request failed: {err}");
-                    json!({ "id": id, "ok": false, "error": err })
-                }
-            };
-            let _ = response
-                .publish(&std_msgs::String {
-                    data: answer.to_string(),
-                })
-                .await;
+            if let Err(err) = shared.run(verb).await {
+                warn!(verb = %msg.data, "command failed: {err}");
+            }
         });
     }
 }
@@ -646,6 +699,7 @@ struct DataLoop {
     odom: Output<PoseStamped>,
     lidar: Output<PointCloud2>,
     tf: Output<TFMessage>,
+    battery: Output<BatteryState>,
 }
 
 impl DataLoop {
@@ -769,10 +823,51 @@ impl DataLoop {
                         .handle
                         .block_on(self.lidar.publish(&cloud(ns, points)));
                 }
-                LOWSTATE_TOPIC => *self.shared.lowstate.lock().unwrap() = Some(json),
+                LOWSTATE_TOPIC => {
+                    let state = battery(data, arrived_ns, &base_link);
+                    let _ = self.shared.handle.block_on(self.battery.publish(&state));
+                }
                 _ => {}
             }
         }
+    }
+}
+
+/// The lowstate's battery in SI units; what the pack doesn't report is NaN.
+fn battery(data: &Value, ns: u64, frame_id: &str) -> BatteryState {
+    let bms = &data["bms_state"];
+    let current = f(&bms["current"]);
+    let status = if current > 0.0 {
+        BatteryState::POWER_SUPPLY_STATUS_CHARGING
+    } else if current < 0.0 {
+        BatteryState::POWER_SUPPLY_STATUS_DISCHARGING
+    } else {
+        BatteryState::POWER_SUPPLY_STATUS_NOT_CHARGING
+    };
+    BatteryState {
+        header: header(ns, frame_id),
+        voltage: f(&data["power_v"]) as f32,
+        temperature: f(&bms["bq_ntc"][0]) as f32,
+        current: current as f32 / 1000.0,
+        charge: f32::NAN,
+        capacity: f32::NAN,
+        design_capacity: f32::NAN,
+        percentage: f(&bms["soc"]) as f32 / 100.0,
+        power_supply_status: status as u8,
+        power_supply_health: BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN as u8,
+        power_supply_technology: BatteryState::POWER_SUPPLY_TECHNOLOGY_LION as u8,
+        present: true,
+        cell_voltage: bms["cell_vol"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(f)
+            .filter(|&v| v > 0.0)
+            .map(|v| v as f32 / 1000.0)
+            .collect(),
+        cell_temperature: Vec::new(),
+        location: String::new(),
+        serial_number: String::new(),
     }
 }
 
@@ -835,7 +930,8 @@ impl VideoLoop {
             }
         };
         let mut depacketizer = Depacketizer::default();
-        let mut capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
+        let timing = &self.shared.config.timing;
+        let mut capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
         // when each RTP time's first packet arrived (a frame's packets share one)
         let mut first_arrival: VecDeque<(u32, u64)> = VecDeque::new();
         let mut rgb = Vec::new();
@@ -858,7 +954,7 @@ impl VideoLoop {
             if self.dropped.swap(false, Ordering::Relaxed) {
                 // packets were dropped before this one: the frame in progress is broken
                 depacketizer = Depacketizer::default();
-                capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
+                capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
                 self.want_keyframe();
             }
             if first_arrival
@@ -893,7 +989,7 @@ impl VideoLoop {
                 Err(err) => {
                     warn!("H.264 decode failed ({err}); waiting for a keyframe");
                     depacketizer = Depacketizer::default();
-                    capture = CaptureClock::new(self.shared.config.timing.capture_max_waiting);
+                    capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
                     self.want_keyframe();
                     continue;
                 }
@@ -989,6 +1085,45 @@ impl Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verbs_resolve() {
+        assert_eq!(parse_verb("stand-up"), Some(Verb::Sport(STAND_UP)));
+        assert_eq!(parse_verb(" 1016 "), Some(Verb::Sport(1016)));
+        assert_eq!(parse_verb("rage on"), Some(Verb::Rage(true)));
+        assert_eq!(
+            parse_verb("obstacle-avoidance off"),
+            Some(Verb::ObstacleAvoidance(false))
+        );
+        assert_eq!(parse_verb("brightness 42"), Some(Verb::Brightness(10)));
+        assert_eq!(
+            parse_verb("move 0.5 0 -0.2 1.5"),
+            Some(Verb::Move {
+                x: 0.5,
+                y: 0.0,
+                yaw: -0.2,
+                duration: 1.5
+            })
+        );
+        assert_eq!(
+            parse_verb(r#"request rt/api/vui/request 1005 {"brightness": 3}"#),
+            Some(Verb::Request {
+                topic: VUI.into(),
+                api_id: 1005,
+                parameter: Some(json!({ "brightness": 3 })),
+            })
+        );
+        for bad in [
+            "",
+            "rage maybe",
+            "move 1 2",
+            "brightness high",
+            "jump around",
+            "request t",
+        ] {
+            assert_eq!(parse_verb(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn the_key_stays_out_of_debug_output() {

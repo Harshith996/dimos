@@ -105,28 +105,31 @@ pub fn place(clock: &mut HostClock, device_ns: Option<i64>, arrival_ns: u64) -> 
 /// Estimates when each camera frame was captured.
 ///
 /// Example: frames 0, 1, 2, 3, 4 arrive at 0, 75, 130, 210, 280 ms. The camera shoots evenly (about every 70 ms);
-/// the bumps are Wi-Fi delay, not when the picture was taken. So frame N gets `first arrival + N x average spacing`,
-/// a straight line through the bumpy arrival times.
+/// the bumps are Wi-Fi delay, not when the picture was taken. So frame N gets `start + N x spacing`: a straight
+/// line under the bumpy arrival times, resting on the fastest arrivals of the last `window`. That is the same
+/// fastest-message rule HostClock uses for the pose stamps, so camera and odom stamps mean the same thing.
 ///
 /// The Go2 sends no real capture time; its RTP timestamp goes up about 60 per frame, which is how we know N. The
-/// average spacing is measured from arrivals (the very first frame is skipped, its timing is off). The decoder can
-/// output frames out of order, so each decoded frame takes the smallest waiting N.
+/// line goes through frames whose N tops every earlier one (the very first frame is skipped, its timing is off).
+/// The decoder can output frames out of order, so each decoded frame takes the smallest waiting N.
 #[derive(Debug, Default)]
 pub struct CaptureClock {
     max_waiting: usize,
+    window_ns: u64,
     /// frames given to the decoder and not yet out of it: unwrapped ticks and their first packet's arrival
     waiting: BinaryHeap<Reverse<(i64, u64)>>,
     last_rtp: Option<u32>,
     unwrapped: i64,
-    second: Option<(i64, u64)>,
-    latest: Option<(i64, u64)>,
-    anchors: u32,
+    /// the frames the line goes through, newest last: (ticks, first arrival) within the window
+    anchors: VecDeque<(i64, u64)>,
+    first_seen: bool,
 }
 
 impl CaptureClock {
-    pub fn new(max_waiting: usize) -> Self {
+    pub fn new(max_waiting: usize, window_secs: f64) -> Self {
         Self {
             max_waiting,
+            window_ns: (window_secs * NANOS_PER_SEC as f64) as u64,
             ..Self::default()
         }
     }
@@ -144,12 +147,17 @@ impl CaptureClock {
     /// A frame went into the decoder: its RTP time and when its first packet arrived.
     pub fn submitted(&mut self, rtp: u32, first_arrival_ns: u64) {
         let ticks = self.unwrap(rtp);
-        if self.latest.is_none_or(|(t, _)| ticks > t) {
-            self.anchors += 1;
-            if self.anchors == 2 {
-                self.second = Some((ticks, first_arrival_ns));
+        if !std::mem::replace(&mut self.first_seen, true) {
+            // the very first frame goes out a reorder window early
+        } else if self.anchors.back().is_none_or(|&(t, _)| ticks > t) {
+            self.anchors.push_back((ticks, first_arrival_ns));
+            while self
+                .anchors
+                .front()
+                .is_some_and(|&(_, at)| at + self.window_ns < first_arrival_ns)
+            {
+                self.anchors.pop_front();
             }
-            self.latest = Some((ticks, first_arrival_ns));
         }
         self.waiting.push(Reverse((ticks, first_arrival_ns)));
         // a frame the decoder never hands out mustn't shift every later frame's time
@@ -158,16 +166,45 @@ impl CaptureClock {
         }
     }
 
-    /// The capture time of the frame the decoder just handed out; its first packet's arrival until the rate is known
-    /// (three anchors).
+    /// The line's ns per tick and a point on it, once two anchors span some time.
+    fn line(&self) -> Option<(f64, i64, i64)> {
+        let (&(t_first, a_first), &(t_last, a_last)) =
+            (self.anchors.front()?, self.anchors.back()?);
+        if t_last <= t_first || a_last <= a_first {
+            return None;
+        }
+        // a rough rate from the ends, then the fastest anchor in each half: the line rests on those two
+        let rough = (a_last - a_first) as f64 / (t_last - t_first) as f64;
+        let behind = |&(t, at): &(i64, u64)| at as f64 - (t - t_first) as f64 * rough;
+        let half = self.anchors.len() / 2;
+        let fastest = |range: std::collections::vec_deque::Iter<'_, (i64, u64)>| {
+            range
+                .min_by(|a, b| behind(a).total_cmp(&behind(b)))
+                .copied()
+        };
+        let (t0, a0) = fastest(self.anchors.range(..half.max(1)))?;
+        let (t1, a1) = fastest(self.anchors.range(half.max(1)..)).unwrap_or((t_last, a_last));
+        let ns_per_tick = if t1 > t0 && a1 > a0 {
+            (a1 - a0) as f64 / (t1 - t0) as f64
+        } else {
+            rough
+        };
+        let start = self
+            .anchors
+            .iter()
+            .map(|&(t, at)| at as i64 - ((t - t0) as f64 * ns_per_tick) as i64)
+            .min()?;
+        Some((ns_per_tick, t0, start))
+    }
+
+    /// The capture time of the frame the decoder just handed out; its first packet's arrival until the line is known.
     pub fn decoded(&mut self) -> Option<u64> {
         let Reverse((ticks, first_arrival_ns)) = self.waiting.pop()?;
-        let placed = match (self.second, self.latest) {
-            (Some((t0, a0)), Some((t1, a1))) if t1 > t0 && a1 > a0 => {
-                let ns_per_tick = (a1 - a0) as f64 / (t1 - t0) as f64;
-                (a0 as i64 + ((ticks - t0) as f64 * ns_per_tick) as i64).max(0) as u64
+        let placed = match self.line() {
+            Some((ns_per_tick, t0, start)) => {
+                (start + ((ticks - t0) as f64 * ns_per_tick) as i64).max(0) as u64
             }
-            _ => first_arrival_ns,
+            None => first_arrival_ns,
         };
         Some(placed)
     }
@@ -223,7 +260,7 @@ mod tests {
     #[test]
     fn frames_land_on_their_tick_spacing_at_the_measured_rate() {
         // 60 ticks a frame, a frame every 70 ms, arrivals jittered by 0..9 ms
-        let mut clock = CaptureClock::new(16);
+        let mut clock = CaptureClock::new(16, 30.0);
         let base = 1_700_000_000_000 * MS as u64;
         let mut stamps = Vec::new();
         for i in 0..100u64 {
@@ -234,14 +271,34 @@ mod tests {
         for (i, stamp) in stamps.iter().enumerate().skip(3) {
             let capture = base + i as u64 * 70 * MS as u64;
             let off = *stamp as i64 - capture as i64;
-            // within the jitter band: the anchors carry their own jitter
-            assert!((-MS..=10 * MS).contains(&off), "frame {i}: {off} ns");
+            // the first few rest on a handful of jittered arrivals; later the line is within a couple of ms
+            let band = if i < 20 {
+                -10 * MS..=10 * MS
+            } else {
+                -2 * MS..=2 * MS
+            };
+            assert!(band.contains(&off), "frame {i}: {off} ns");
         }
     }
 
     #[test]
+    fn a_slow_anchor_frame_doesnt_shift_the_line() {
+        // the frame the rate is anchored on arrives 40 ms late; the rest are on time
+        let mut clock = CaptureClock::new(16, 30.0);
+        let base = 1_700_000_000_000 * MS as u64;
+        let mut last = 0;
+        for i in 0..50u64 {
+            let late = if i == 1 { 40 * MS as u64 } else { 0 };
+            clock.submitted(60 * i as u32, base + i * 70 * MS as u64 + late);
+            last = clock.decoded().unwrap();
+        }
+        let off = last as i64 - (base + 49 * 70 * MS as u64) as i64;
+        assert!(off.abs() <= MS, "{off} ns");
+    }
+
+    #[test]
     fn a_reordered_frame_takes_the_earliest_ticks_waiting() {
-        let mut clock = CaptureClock::new(16);
+        let mut clock = CaptureClock::new(16, 30.0);
         // decode order I P B: the decoder hands out I, then B (ticks 60) before P (ticks 120)
         clock.submitted(0, 1_000);
         assert_eq!(clock.decoded(), Some(1_000));
