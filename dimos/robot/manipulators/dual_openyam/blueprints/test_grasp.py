@@ -66,8 +66,8 @@ def test_tcp_is_the_grasp_frame_turned_to_point_down_the_fingers() -> None:
     frames = {frame.name: frame for frame in config.model._fixed_frames}
     assert frames["right_tcp"].parent == "right_grasp_frame"
     assert frames["right_tcp"].rpy == (0.0, math.pi, 0.0)
-    assert frames["right_tcp"].xyz[2] == pytest.approx(-0.097)
-    assert frames["left_tcp"].xyz[2] == pytest.approx(-0.082)
+    assert frames["right_tcp"].xyz[2] == pytest.approx(-0.046)
+    assert frames["left_tcp"].xyz[2] == pytest.approx(-0.046)
 
 
 def test_each_side_names_its_own_gripper_and_shares_the_tasks() -> None:
