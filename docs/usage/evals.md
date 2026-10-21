@@ -457,7 +457,7 @@ in the agent's artifact selection. This separation is not a sandbox: an agent
 with unrestricted filesystem or simulator RPC access can still obtain truth.
 
 ```python session=evals ansi=false no-result
-from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.runtime.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.types import truth_recording
 

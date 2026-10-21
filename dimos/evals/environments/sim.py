@@ -30,7 +30,7 @@ from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
 from dimos.evals.environments.base import Environment, EnvironmentConfig
-from dimos.evals.environments.lib.launch import (
+from dimos.evals.environments.runtime.launch import (
     default_mcp_url,
     launched_mcp_url,
     validate_blueprints,

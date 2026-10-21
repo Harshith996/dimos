@@ -104,6 +104,17 @@ is retained for calibration/regression rollouts, not used by sim2's live loop.
 Small xArm/Piper packages keep `connection.py`, `config.py`, and `simulation.py`
 alongside `blueprints/`; they do not need empty policy/device directories.
 
+Go2's procedural scene and telemetry are in `go2/simulation/scene.py`. Shared
+procedural geometry stays in `simulation/scenes/`; DimSim and Habitat retain
+their existing packages. Mid360's rolling model, firing pattern and measured
+return/occlusion parameters live together in `sim2/sensors/lidar/models/mid360/`.
+
+Eval integrations stay outside the emulator: `evals/environments/mujoco_sim.py`
+owns launch/reset/recording, `evals/environments/runtime/` holds shared process
+and recorded-pose helpers, and `evals/benchmarks/` holds manifest-to-case
+conversion and smoke exports. Scene conversion stays in
+`experimental/scene_cooking/`. These are consumers of sim2, not parts of physics.
+
 | Component | Owns |
 | --- | --- |
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |

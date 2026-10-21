@@ -30,15 +30,15 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.simulation.scene import Go2SimTelemetry, procedural_scene
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.spec import WorldConfig
 from dimos.sim2.world.scene import describe_scene
-from dimos.simulation.go2_sim.world import Go2SimTelemetry, procedural_scene
 from dimos.simulation.scenes.procedural import generate
 
 
 def test_procedural_world_contains_the_same_boxes_without_a_robot(tmp_path, monkeypatch):
-    monkeypatch.setattr("dimos.simulation.go2_sim.world.CACHE_DIR", tmp_path)
+    monkeypatch.setattr("dimos.robot.unitree.go2.simulation.scene.CACHE_DIR", tmp_path)
     path = procedural_scene(seed=7)
     scene = generate("office", 7)
     model = mujoco.MjModel.from_xml_path(str(path))
@@ -52,7 +52,7 @@ def test_procedural_world_contains_the_same_boxes_without_a_robot(tmp_path, monk
 
 @pytest.fixture
 def world_stack(tmp_path, monkeypatch):
-    monkeypatch.setattr("dimos.simulation.go2_sim.world.CACHE_DIR", tmp_path)
+    monkeypatch.setattr("dimos.robot.unitree.go2.simulation.scene.CACHE_DIR", tmp_path)
     blueprint = autoconnect(
         SimulationModule.blueprint(
             world=WorldConfig(scene=procedural_scene(), robots={}, timestep=0.002)

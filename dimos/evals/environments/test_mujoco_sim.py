@@ -22,8 +22,8 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
-from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+from dimos.evals.environments.runtime.recorded_poses import last_body_transform
 from dimos.evals.scorers import lifted
 from dimos.evals.types import Outcome, truth_recording
 from dimos.memory.store.memory import MemoryStore
@@ -35,11 +35,11 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
-from dimos.robot.manipulators.xarm.sim2 import xarm_definition
-from dimos.sim2.runtime import SimulationRuntime
-from dimos.sim2.scene import scene_robot
-from dimos.sim2.scene_types import EntityState, SceneControlSpec, SceneState, SceneUpdate
+from dimos.robot.manipulators.xarm.simulation import xarm_definition
 from dimos.sim2.spec import WorldConfig
+from dimos.sim2.world.runtime import SimulationRuntime
+from dimos.sim2.world.scene import scene_robot
+from dimos.sim2.world.scene_types import EntityState, SceneControlSpec, SceneState, SceneUpdate
 from dimos.utils.data import LfsPath
 
 

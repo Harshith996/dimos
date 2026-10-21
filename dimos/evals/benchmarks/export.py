@@ -14,7 +14,7 @@
 
 """Smoke-export LIBERO-PRO / RoboCasa textures into DimOS ``data/`` MJCF packs.
 
-    python -m dimos.evals.environments.lib.export_benchmark_scenes \\
+    python -m dimos.evals.benchmarks.export \\
         --libero-pro /path/to/LIBERO-PRO --robocasa /path/to/robocasa
 """
 
@@ -27,7 +27,7 @@ import shutil
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from dimos.evals.environments.lib.benchmark_scenes import write_manifest
+from dimos.evals.benchmarks.manifest import write_manifest
 from dimos.utils.data import get_data_dir
 
 # Attribute values are filled via ElementTree (not str.format).

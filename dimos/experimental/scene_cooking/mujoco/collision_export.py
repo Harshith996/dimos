@@ -91,7 +91,7 @@ CACHE_DIR = _DIMOS_CACHE_DIR / "scene_meshes"
 
 
 # Scene-only wrapper -- no robot include. Robots are attached at runtime
-# via ``MjSpec.attach()`` (see ``sim2.scene.load_scene``), keeping the
+# via ``MjSpec.attach()`` (see ``sim2.world.scene.load_scene``), keeping the
 # cooked package robot-agnostic. ``meshdir="."`` resolves the cooked
 # scene OBJs that sit alongside this file.
 #
@@ -229,7 +229,7 @@ def bake_scene_mjcf(
 
     The wrapper is robot-agnostic: it declares the cooked scene as the
     ``dimos_scene`` static body and nothing else. Robots are attached at
-    runtime via ``MjSpec.attach()`` inside ``sim2.scene.load_scene``.
+    runtime via ``MjSpec.attach()`` inside ``sim2.world.scene.load_scene``.
 
     Args:
         scene_mesh_path: ``.usdz`` / ``.usda`` / ``.glb`` / ``.obj`` /

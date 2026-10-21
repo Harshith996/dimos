@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.core.run_registry import RunEntry
-from dimos.evals.environments.lib.launch import launched_mcp_url
+from dimos.evals.environments.runtime.launch import launched_mcp_url
 
 
 def _entry(run_id: str, pid: int, mcp_url: str | None) -> RunEntry:
@@ -31,7 +31,7 @@ def _entry(run_id: str, pid: int, mcp_url: str | None) -> RunEntry:
 @pytest.fixture(autouse=True)
 def _registry(mocker, tmp_path):
     mocker.patch("dimos.core.run_registry.REGISTRY_DIR", tmp_path)
-    mocker.patch("dimos.evals.environments.lib.launch._REGISTRY_POLL_S", 0.01)
+    mocker.patch("dimos.evals.environments.runtime.launch._REGISTRY_POLL_S", 0.01)
 
 
 def test_returns_the_endpoint_registered_by_the_launched_process() -> None:

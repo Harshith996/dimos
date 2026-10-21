@@ -52,15 +52,17 @@ def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_comman
     device = Go2SimDevice()
     mocker.patch.object(device, "check_health")
     now = [0.0]
-    mocker.patch("dimos.robot.unitree.go2.sim_device.time.monotonic", side_effect=lambda: now[0])
+    mocker.patch(
+        "dimos.robot.unitree.go2.simulation.device.time.monotonic", side_effect=lambda: now[0]
+    )
     mocker.patch.object(device._stop, "wait")
     commands = []
     policy = mocker.Mock()
     policy.kp = np.ones(12)
     policy.kd = np.ones(12)
     policy.joint_names = tuple(f"joint_{i}" for i in range(12))
-    mocker.patch("dimos.robot.unitree.go2.sim_device.load_policy", return_value=policy)
-    thread = mocker.patch("dimos.robot.unitree.go2.sim_device.Thread").return_value
+    mocker.patch("dimos.robot.unitree.go2.simulation.device.load_policy", return_value=policy)
+    thread = mocker.patch("dimos.robot.unitree.go2.simulation.device.Thread").return_value
     thread.is_alive.return_value = False
 
     def act(state, command):

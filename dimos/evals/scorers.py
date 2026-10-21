@@ -32,7 +32,10 @@ from typing import TypeVar
 
 import numpy as np
 
-from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
+from dimos.evals.environments.runtime.recorded_poses import (
+    first_body_transform,
+    last_body_transform,
+)
 from dimos.evals.types import Outcome, truth_recording
 
 T = TypeVar("T")

@@ -23,7 +23,8 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.environments.lib.benchmark_scenes import (
+from dimos.evals.benchmarks.export import export_libero_pro, export_robocasa
+from dimos.evals.benchmarks.manifest import (
     BenchmarkCase,
     GradeSpec,
     cases_from_manifest,
@@ -32,7 +33,6 @@ from dimos.evals.environments.lib.benchmark_scenes import (
     write_manifest,
     xarm_table_env,
 )
-from dimos.evals.environments.lib.export_benchmark_scenes import export_libero_pro, export_robocasa
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 
 
@@ -84,7 +84,7 @@ def exported(data_root: Path) -> Path:
 
 def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "dimos.evals.environments.lib.benchmark_scenes.get_data",
+        "dimos.evals.benchmarks.manifest.get_data",
         lambda name: exported / name,
     )
     for root, body in (("libero_pro", "akita_black_bowl"), ("robocasa", "apple")):
@@ -156,7 +156,7 @@ def test_local_manifest_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         },
     )
     monkeypatch.setattr(
-        "dimos.evals.environments.lib.benchmark_scenes.get_data",
+        "dimos.evals.benchmarks.manifest.get_data",
         lambda name: tmp_path / name,
     )
     suite = cases_from_manifest(load_manifest("fixture_bench"))

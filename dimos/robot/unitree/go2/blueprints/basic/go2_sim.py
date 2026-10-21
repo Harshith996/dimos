@@ -26,10 +26,10 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
+from dimos.robot.unitree.go2.simulation.scene import Go2SimTelemetry, procedural_scene
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene import scene_path
 from dimos.sim2.spec import WorldConfig
-from dimos.simulation.go2_sim.world import Go2SimTelemetry, procedural_scene
+from dimos.sim2.world.scene import scene_path
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:

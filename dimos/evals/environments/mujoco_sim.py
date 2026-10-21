@@ -24,13 +24,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import Field
 
-from dimos.evals.environments.lib.recorded_poses import last_body_transform
+from dimos.evals.environments.runtime.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.porcelain.dimos import Dimos
-from dimos.sim2.scene_types import SceneControlSpec
+from dimos.sim2.world.scene_types import SceneControlSpec
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
