@@ -76,8 +76,6 @@ def test_model_has_one_geometry_free_root_and_the_calibrated_base_poses() -> Non
         if (child := joint.find("child")) is not None
     }
     assert link_names - child_names == {"dual_openyam_base"}
-    # Mustafa's rig calibration 2026-10-15: bases 444.4 mm apart, the right one
-    # 17 mm forward and 11 mm higher than the left and rolled -3.7 deg (SOURCE.md).
     left = _joint(root, "left_arm_fixed_joint")
     right = _joint(root, "right_arm_fixed_joint")
     assert _origin_xyz(left) == (-0.00862, 0.22219, -0.00559)
@@ -87,17 +85,13 @@ def test_model_has_one_geometry_free_root_and_the_calibrated_base_poses() -> Non
 
 
 def test_joint_three_origins_carry_the_calibrated_zero_offsets() -> None:
-    # True joint 3 angle = encoder reading - offset; the offset is folded into the
-    # joint origin as a rotation about the joint axis (y), so the joint variable
-    # stays the encoder reading.
+    # The offset lives in the joint origin, so the joint variable stays the encoder reading.
     root = _tree()
     assert _origin(_joint(root, "left_joint3"), "rpy") == pytest.approx((0.0, -0.04907, -3.14159))
     assert _origin(_joint(root, "right_joint3"), "rpy") == pytest.approx((0.0, -0.06793, -3.14159))
 
 
 def test_joint_one_limits_sit_inside_the_measured_stops() -> None:
-    # Stop-to-stop sweep 2026-10-12: about -232 to +93 deg on both arms. The
-    # package keeps the Anvil openyam profile, -225 to +90 deg, inside them.
     root = _tree()
     for side in ("left", "right"):
         limit = _joint(root, f"{side}_joint1").find("limit")
@@ -117,7 +111,6 @@ def test_both_arm_chains_are_symmetric_and_use_two_rad_s_limits() -> None:
             right_element = right.find(element_name)
             assert left_element is not None and right_element is not None
             if element_name == "origin" and index == 3:
-                # Only the calibrated zero offset differs between the arms.
                 assert left_element.attrib["xyz"] == right_element.attrib["xyz"]
                 continue
             assert left_element.attrib == right_element.attrib
