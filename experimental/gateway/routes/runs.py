@@ -60,10 +60,11 @@ async def is_own_launch(run_id: str) -> bool:
 
 
 def with_saved(name: str, one_off: ov.LaunchOverrides, args: list[str]) -> LaunchConfig:
-    """Defaults, then /config/global, then what's saved for `name`, then this launch's own config."""
+    """/config/global, then what's saved for `name`, then this launch's own config."""
     saved = store.blueprint_config(name)
-    effective = ov.merge(ov.LAUNCH_GLOBAL_DEFAULTS, store.global_config_overrides())
-    effective = ov.merge(ov.merge(effective, saved["global"]), one_off.global_)
+    effective = ov.merge(
+        ov.merge(store.global_config_overrides(), saved["global"]), one_off.global_
+    )
     try:
         ov.check_global(effective)
     except ValueError as error:

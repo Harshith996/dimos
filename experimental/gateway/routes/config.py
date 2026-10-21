@@ -53,7 +53,7 @@ async def global_config() -> dict[str, Any]:
     shown, _ = ov.redact(store.global_config_overrides(), {}, secrets)
     return {
         "schema": schema,
-        "defaults": {**defaults, **ov.LAUNCH_GLOBAL_DEFAULTS},
+        "defaults": defaults,
         "overrides": shown,
         "secrets": secrets,
     }

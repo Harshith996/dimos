@@ -61,3 +61,10 @@ def test_flags_spell_values_as_dimos_reads_them() -> None:
         f"--token={ov.HIDDEN}",
         "--fps=3",
     ]
+
+
+def test_dotted_module_fields_become_one_object_flag() -> None:
+    flags = ov.module_flags(
+        {"controlcoordinator": {"addresses.xarm_arm": "192.0.2.1", "addresses.piper_arm": "can0"}}
+    )
+    assert flags == ['--controlcoordinator.addresses={"piper_arm":"can0","xarm_arm":"192.0.2.1"}']

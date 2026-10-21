@@ -26,7 +26,11 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 SECRET_WORDS = ("secret", "token", "password", "passwd")
 STRUCTURED = ("global", "modules", "secrets")
-LAUNCH_GLOBAL_DEFAULTS: dict[str, Any] = {"rerun_open": "none", "rerun_web": True}
+# Env, not flags: a flag for a module the blueprint doesn't have is refused, and flags still win.
+LAUNCH_ENV_DEFAULTS = {
+    "RERUNBRIDGEMODULE__RERUN_OPEN": "none",
+    "RERUNBRIDGEMODULE__RERUN_WEB": "true",
+}
 
 
 @dataclass
@@ -194,13 +198,26 @@ def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[s
     return flags
 
 
+def nested(fields: dict[str, Any]) -> dict[str, Any]:
+    """`addresses.arm` and `addresses.base` become one `addresses` object."""
+    out: dict[str, Any] = {}
+    for name, value in sorted(fields.items()):
+        if value is None:
+            continue
+        head, dot, rest = name.partition(".")
+        if dot:
+            out.setdefault(head, {})[rest] = value
+        else:
+            out[name] = value
+    return out
+
+
 def module_flags(modules: ModuleValues) -> list[str]:
     flags = []
     for module, fields in sorted(modules.items()):
         root = module.replace("/", "_").replace("_", "-")
-        for name, value in sorted(fields.items()):
-            if value is not None:
-                flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
+        for name, value in nested(fields).items():
+            flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
     return flags
 
 

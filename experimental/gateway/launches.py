@@ -273,6 +273,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "VIRTUAL_ENV": str(venv),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
+            **ov.LAUNCH_ENV_DEFAULTS,
             **secret_env,
         }
         with launch_log().open("a") as log:

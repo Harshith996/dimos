@@ -52,8 +52,10 @@ def launched(client: TestClient) -> Any:
 def test_launch_runs_dimos_with_saved_and_one_off_config(
     client: TestClient, launched: None
 ) -> None:
-    client.put("/config/global", json={"overrides": {"n_workers": 3, "typesafe_api_key": "k1"}})
-    store.set_blueprint_config("demo", {"n_workers": 5, "viewer": "none"}, {})
+    client.put("/config/global", json={"overrides": {"n_workers": 3}})
+    store.set_blueprint_config(
+        "demo", {"n_workers": 5, "viewer": "none"}, {"agent": {"api_key": "k1"}}
+    )
     started = client.post(
         "/runs", json={"blueprint": "demo", "config": {"global": {"n_workers": 4, "replay": True}}}
     )
@@ -65,7 +67,7 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     assert "--viewer=none" in launch["output"]
     assert f"run --run-id {launch['runId']} demo" in launch["output"].splitlines()[0]
     assert "k1" not in launch["output"].splitlines()[0]
-    assert launch["overrides"]["typesafe_api_key"] == ov.HIDDEN
+    assert launch["modules"]["agent"]["api_key"] == ov.HIDDEN
     assert launch["oneOff"]["global"] == {"n_workers": 4, "replay": True}
     again = client.post("/runs", json={"blueprint": "demo"})
     assert again.status_code == 400

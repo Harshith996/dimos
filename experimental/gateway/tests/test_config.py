@@ -126,7 +126,6 @@ def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, ho
     assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
     shown = client.get("/config/global").json()
     assert "robot_ip" in shown["schema"]["properties"]
-    assert shown["defaults"]["rerun_open"] == "none"
 
 
 def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
@@ -135,15 +134,6 @@ def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
     assert "robot_iq" in unknown.json()["error"]
     wrong = client.put("/config/global", json={"overrides": {"n_workers": "many"}})
     assert wrong.status_code == 400
-
-
-def test_a_secret_is_hidden_and_kept_when_sent_back(client: TestClient) -> None:
-    client.put("/config/global", json={"overrides": {"typesafe_api_key": "s3cret"}})
-    assert client.get("/config/global").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
-    client.put(
-        "/config/global", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
-    )
-    assert store.global_config_overrides() == {"typesafe_api_key": "s3cret", "n_workers": 2}
 
 
 def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]) -> None:

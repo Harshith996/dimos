@@ -29,7 +29,7 @@ from experimental.gateway.state import State, new_state
 FAKE_DIMOS = """#!{python}
 import os, sys, time
 print("args", *sys.argv[1:], flush=True)
-print("secret", os.environ.get("TYPESAFE_API_KEY"), flush=True)
+print("secret", os.environ.get("AGENT__API_KEY"), flush=True)
 if "fail" in sys.argv:
     print("ValueError: no robot answered", flush=True)
     sys.exit(1)
