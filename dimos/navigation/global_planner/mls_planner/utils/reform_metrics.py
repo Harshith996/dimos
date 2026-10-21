@@ -105,8 +105,12 @@ def newest_run_log(since: float) -> Path | None:
 
 def native_processes() -> dict[str, psutil.Process]:
     found = {}
-    for proc in psutil.process_iter(["cmdline"]):
-        cmdline = " ".join(proc.info["cmdline"] or [])
+    for proc in psutil.process_iter():
+        # macOS can refuse or fail to read another process's cmdline; skip it.
+        try:
+            cmdline = " ".join(proc.cmdline())
+        except (psutil.Error, SystemError, OSError):
+            continue
         for name in NATIVE:
             if f"result/bin/{name}" in cmdline:
                 found[name] = proc
