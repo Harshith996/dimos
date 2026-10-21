@@ -209,6 +209,8 @@ def params(fn: Any) -> list[dict[str, Any]]:
             if param.annotation is inspect.Parameter.empty
             else getattr(param.annotation, "__name__", str(param.annotation)),
             "default": None if param.default is inspect.Parameter.empty else repr(param.default),
+            "required": param.default is inspect.Parameter.empty,
+            "choices": choices(param.annotation),
         }
         for name, param in signature.parameters.items()
         if name not in ("self", "cls")

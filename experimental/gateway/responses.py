@@ -67,9 +67,13 @@ class Stopping(Body):
 
 
 class Param(Body):
+    """A parameter: its type's name, its default as python source, and its choices (a Literal's or an Enum's values)."""
+
     name: str
     type: str | None
     default: str | None
+    required: bool
+    choices: list[Any] | None
 
 
 class Method(Body):
