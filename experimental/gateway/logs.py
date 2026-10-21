@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from dimos.constants import LOG_DIR
 
 MAX_READ = 4 * 1024 * 1024
+RUN_ID = re.compile(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)")
 LEVEL_RANK = {"debug": 10, "warning": 30, "warn": 30, "error": 40, "critical": 50}
 
 
@@ -102,13 +104,38 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
     return [
         {
             "runId": run_id,
-            "blueprint": known[run_id].blueprint if run_id in known else None,
-            "startedAt": known[run_id].started_at if run_id in known else None,
+            # a stopped run leaves the registry: its blueprint is in its id, its start in its log
+            "blueprint": known[run_id].blueprint if run_id in known else blueprint_of(run_id),
+            "startedAt": known[run_id].started_at
+            if run_id in known
+            else first_time(find(dimos_dir, run_id)),
             "endedAt": None if run_id in alive else last_time(find(dimos_dir, run_id)),
             "running": run_id in alive,
         }
         for run_id in sorted(ids, reverse=True)
     ]
+
+
+def blueprint_of(run_id: str) -> str | None:
+    """The blueprint in a run id: `<YYYYMMDD-HHMMSS>[-<4 hex>]-<blueprint>`."""
+    found = RUN_ID.fullmatch(run_id)
+    return found.group(1) if found else None
+
+
+def first_time(file: Path | None) -> str | None:
+    """The timestamp of a log's first record."""
+    if file is None:
+        return None
+    try:
+        with file.open("rb") as handle:
+            lines = handle.read(8192).decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        record = parse_line(line)
+        if record is not None and record["timestamp"]:
+            return str(record["timestamp"])
+    return None
 
 
 def last_time(file: Path | None) -> str | None:

@@ -230,6 +230,9 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     past = client.get("/history").json()["runs"]
     assert [r["runId"] for r in past] == ["20260101-120000-demo", "20260101-110000-old"]
     assert past[0]["endedAt"] == "2026-01-01T12:00:02" and not past[0]["running"]
+    # neither is in the registry: the blueprint comes from the id, the start from the log
+    assert (past[0]["blueprint"], past[0]["startedAt"]) == ("demo", "2026-01-01T12:00:01")
+    assert (past[1]["blueprint"], past[1]["startedAt"]) == ("old", None)
     assert client.get("/history/latest").json()["logDir"] == str(run)
     assert client.get("/history/20990101-000000-nope").status_code == 404
     errors = client.get("/history/20260101-120000-demo/logs?level=error").json()
