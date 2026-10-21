@@ -61,11 +61,8 @@ async def recordings() -> dict[str, Any]:
 async def past_run(state: GatewayState, run_id: RunId) -> dict[str, Any]:
     """One run's entry and its log directory; `latest` is the newest."""
     runs = await asyncio.to_thread(logs.history, state.dimos_dir)
-    found = (
-        runs[0]
-        if run_id == "latest" and runs
-        else next((r for r in runs if r["runId"] == run_id), None)
-    )
+    wanted = runs[:1] if run_id == "latest" else [r for r in runs if r["runId"] == run_id]
+    found = wanted[0] if wanted else None
     file = await asyncio.to_thread(logs.find, state.dimos_dir, found["runId"]) if found else None
     if found is None or file is None:
         raise ApiError(404, f"no run {run_id}")
