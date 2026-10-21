@@ -103,7 +103,9 @@ r1pro_nav = autoconnect(
         wall_clearance_m=WALL_CLEARANCE_M,
         wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
         wall_buffer_weight=100.0,
-        step_threshold_m=R1PRO_MAX_STEP_HEIGHT_M,
+        # MLS counts steps in whole voxels (rounding down): under one voxel no two floor cells a layer apart connect,
+        # and a flat floor straddling a voxel boundary is such a pair.
+        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, VOXEL_SIZE_M),
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
