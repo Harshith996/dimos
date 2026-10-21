@@ -88,13 +88,11 @@ learning_collect_webxr_piper = autoconnect(
 
 
 def _dual_openyam_cameras_if_real() -> tuple[Blueprint, ...]:
-    """The overhead camera plus both wrist cameras; none in `--simulation`, where
-    the dual OpenYAM has no MuJoCo model either, so this blueprint is hardware only."""
+    """Overhead plus both wrist cameras; none in --simulation."""
     if global_config.simulation:
         return ()
     return (
-        # The overhead D405 has no 848x480 at 15 fps mode (the RealSense
-        # defaults): it streams 640x480 at 30 fps, as the wrist cameras do.
+        # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(width=640, height=480, fps=30, enable_pointcloud=False),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),

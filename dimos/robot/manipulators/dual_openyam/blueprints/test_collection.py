@@ -99,7 +99,6 @@ def test_collection_graph_only_swaps_the_teleop_task_and_module() -> None:
     stock = teleop_webxr_dual_openyam
     ours = teleop_webxr_dual_openyam_collection
 
-    # same wiring, the teleop module slot holds the scaling subclass
     assert sorted(ours.remapping_map.values()) == sorted(stock.remapping_map.values())
     ours_modules = [atom.module for atom in ours.blueprints]
     stock_modules = [atom.module for atom in stock.blueprints]
@@ -130,8 +129,6 @@ def test_wrist_camera_streams_carry_the_side_prefix(side: str) -> None:
     assert atom.kwargs["enable_depth"] is False
     remapped = {camera.remapping_map[(atom.name, s.name)] for s in atom.streams}
     assert f"{side}_wrist_color_image" in remapped
-    # a prefix with an underscore, not a namespace: the recorder stores stream
-    # names as SQL identifiers
     assert all("/" not in name for name in remapped)
 
 
@@ -185,7 +182,6 @@ def test_home_button_module_binds_buttons_and_the_planner() -> None:
     inputs = {s.name for s in atom.streams if s.direction == "in"}
     assert {"button_pressed", "teleop_buttons", "coordinator_joint_state"} <= inputs
     assert [(r.name, r.spec) for r in atom.module_refs] == [("_manipulation", ManipulationModule)]
-    # the episode monitor keeps B and Y; parking uses the free face buttons
     assert {
         DualOpenYamHomeButtonConfig().home_button,
         DualOpenYamHomeButtonConfig().set_home_button,

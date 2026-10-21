@@ -49,16 +49,8 @@ logger = setup_logger()
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 
-# Collection teleop pacing, chosen on the benchmark rig (2026-10-13 sessions).
-# Joint-speed ceiling: the stock task allows 2.0 rad/s; the operator asked for a
-# calmer arm (90th percentile joint speed 1.06 rad/s, 1.2 clips 6.5 percent).
 DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S = 1.2
-# Joint 1 swings the whole arm sideways toward the camera post between the arms
-# with the least hand motion, so it gets its own, lower ceiling.
 DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S = 0.6
-# The gripper travels this fraction of the hand's distance. The task derives arm
-# targets from differences between published controller poses, so scaling the
-# published position scales the motion without touching the control task.
 DUAL_OPENYAM_COLLECTION_MOTION_SCALE = 0.75
 
 
@@ -93,7 +85,6 @@ def dual_openyam_collection_teleop_task() -> TaskConfig:
     )
 
 
-# The stock dual OpenYAM WebXR graph at the collection pacing.
 teleop_webxr_dual_openyam_collection = autoconnect(
     build_dual_openyam_webxr(
         teleop_task=dual_openyam_collection_teleop_task(),
@@ -101,9 +92,7 @@ teleop_webxr_dual_openyam_collection = autoconnect(
     )
 )
 
-# The benchmark rig's wrist D405s. Override with --left-wrist-camera.serial-number
-# and --right-wrist-camera.serial-number; the overhead camera takes
-# --realsensecamera.serial-number.
+# Override with --left-wrist-camera.serial-number / --right-wrist-camera.serial-number.
 DUAL_OPENYAM_WRIST_CAMERA_SERIALS = {"left": "260322272983", "right": "260322276650"}
 
 DUAL_OPENYAM_COLLECTION_STREAMS = [
@@ -122,15 +111,7 @@ DUAL_OPENYAM_COLLECTION_STREAMS = [
 
 
 class DualOpenYamCollectionRecorder(CollectionRecorder):
-    """The collection streams plus the commands, both wrist views and the buttons.
-
-    coordinator_joint_command is the position command the coordinator sent each
-    tick, the action a policy is trained on. The controller poses and gripper
-    commands are what the operator asked for before IK; the button word says
-    when the grips were held. Wrist images are what a grasping policy looks at.
-    DataPrep selects streams by name, so the extra streams cost nothing until a
-    config asks for them.
-    """
+    """The collection streams plus commands, wrist views and buttons."""
 
     coordinator_joint_command: In[JointState]
 
@@ -143,12 +124,9 @@ class DualOpenYamCollectionRecorder(CollectionRecorder):
     teleop_buttons: In[Buttons]
 
 
-# Planning groups of the dual OpenYAM model, in DUAL_OPENYAM_ARM_JOINTS order.
 DUAL_OPENYAM_PLANNING_GROUPS = ("left_manipulator", "right_manipulator")
 
-# Home pose for the collection graph: the parking pose the operator chose on
-# 2026-10-13 (both arms raised above the table, elbows clear of the camera post).
-# Order: left_joint1..6, right_joint1..6. X redefines it at runtime.
+# left_joint1..6, right_joint1..6; X redefines it at runtime.
 DUAL_OPENYAM_COLLECTION_HOME_JOINTS = [
     -0.127, 0.560, 0.489, -0.574, -0.010, -0.038,
     -0.347, 0.695, 0.335, 0.017, -0.776, 0.144,
@@ -173,8 +151,7 @@ class DualOpenYamHomeButtonConfig(ModuleConfig):
     home_button: str = "A"
     set_home_button: str = "X"
     speed_scale: float = Field(default=0.2, gt=0.0, le=1.0)
-    # Below this joint distance the arms count as home: a zero-length path makes
-    # the trajectory parametrization fail, so it is skipped instead.
+    # A zero-length path fails trajectory parametrization, so skip when already home.
     at_home_tolerance_rad: float = Field(default=0.02, gt=0.0)
     home_joints: list[float] = Field(
         default_factory=lambda: list(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
@@ -196,13 +173,7 @@ class DualOpenYamHomeButtonConfig(ModuleConfig):
 
 
 class DualOpenYamHomeButtonModule(Module):
-    """Quest face buttons for parking the arms during collection.
-
-    A: plan both arms to the home pose through the ManipulationModule and run
-    it at a low speed scale. Refused while either grip is held, so teleop and
-    the parking move never compete for the joints. X: take the current pose as
-    the new home for the rest of the session.
-    """
+    """Quest face buttons that park the arms during collection."""
 
     config: DualOpenYamHomeButtonConfig
 
@@ -315,9 +286,7 @@ class DualOpenYamHomeButtonModule(Module):
 
 
 def dual_openyam_wrist_camera(side: str) -> Blueprint:
-    """A wrist D405 whose streams carry a ``{side}_wrist_`` prefix, so they never
-    collide with the overhead camera. Colour only at 640x480 30 fps: the three
-    D405s share USB 2 hubs, and the recorder needs stream names without a slash."""
+    """A wrist D405 with ``{side}_wrist_`` stream names; colour only, the D405s share USB 2 hubs."""
     if side not in DUAL_OPENYAM_SIDES:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
     name = f"{side}_wrist_camera"
