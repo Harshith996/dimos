@@ -207,8 +207,7 @@ class UrdfManager(Module):
 
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
         with self._filter_lock:
-            # A capture older than the last one is still filtered: sensors sharing the input (a lidar, a lagging depth
-            # camera) interleave, and each is matched to the state and tf at its own capture time.
+            # Sensors sharing this input interleave, so an older capture is filtered at its own time rather than dropped.
             if not np.isfinite(cloud.ts):
                 logger.warning("Dropping cloud: invalid capture timestamp")
                 return None
