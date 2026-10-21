@@ -117,13 +117,15 @@ pub struct Config {
     height_frame: String,
     min_height_m: f64,
     max_height_m: f64,
-    /// Floor prior, with `height_frame`'s z = 0 the floor (a robot's base): one pixel per block of this many is probed,
-    /// and those the calibration puts at most `floor_tolerance_m` above the floor (or under it) are anchored on it.
-    /// 0 turns it off. A chassis lidar never sees the near floor, so without it the calibration there extrapolates.
+    /// Floor prior (`height_frame`'s z = 0 is the floor): pixels probed one per block of this many, 0 for off.
     #[validate(range(min = 0, max = 256))]
     floor_anchor_step: i64,
+    /// A probed pixel the calibration puts at most this above the floor (or under it) is anchored on it.
     #[validate(range(min = 0.0, max = 10.0))]
     floor_tolerance_m: f64,
+    /// Probe-and-anchor rounds per frame: each round's anchors recalibrate the pixels the next one probes.
+    #[validate(range(min = 1, max = 16))]
+    floor_anchor_rounds: i64,
 }
 
 #[derive(Module)]
@@ -523,6 +525,7 @@ impl Worker {
                 let floor = FloorPrior {
                     step: cfg.floor_anchor_step as usize,
                     tolerance: cfg.floor_tolerance_m,
+                    rounds: cfg.floor_anchor_rounds as usize,
                     max_range: cfg.max_range_m,
                 }
                 .anchors(
@@ -844,21 +847,16 @@ impl Timing {
     }
 }
 
-/// Probe-and-anchor rounds per frame for the floor prior.
-const FLOOR_ROUNDS: usize = 3;
-
-/// Floor prior: pixels probed one per `step` block, the floor counted out to `max_range` along the optical axis, and
-/// a pixel the calibration puts at most `tolerance` above the floor (or under it) is floor.
+/// Floor prior: the Config fields of the same names, and the floor counted out to `max_range` along the optical axis.
 struct FloorPrior {
     step: usize,
     tolerance: f64,
+    rounds: usize,
     max_range: f64,
 }
 
 impl FloorPrior {
-    /// Anchors on the floor (`floor_from_camera`'s z = 0) for probed pixels the calibration would put at
-    /// most `tolerance` above it or under it: such a pixel can only be floor read too far or too near, while an
-    /// obstacle's face stays above the floor and keeps its own depth.
+    /// Floor anchors (`floor_from_camera`'s z = 0) for the probed pixels the calibration puts on or just over the floor.
     fn anchors(
         &self,
         calibration: &Calibration,
@@ -887,8 +885,8 @@ impl FloorPrior {
         let pixels: Vec<(usize, usize)> = candidates.iter().map(|&(u, v, _, _)| (u, v)).collect();
         let mut anchored = vec![false; candidates.len()];
         let mut floor: Vec<Anchor> = Vec::new();
-        // Each round's floor anchors recalibrate the rest: floor read too near drops onto the floor, an obstacle keeps its height.
-        for _ in 0..FLOOR_ROUNDS {
+        // Floor read too near drops onto the floor once its neighbours are anchored; an obstacle keeps its height.
+        for _ in 0..self.rounds {
             let with_floor: Vec<Anchor> = visible.iter().chain(&floor).copied().collect();
             let probed = calibration.probe(pred, map.height, map.width, &with_floor, &pixels);
             let before = floor.len();
@@ -964,6 +962,7 @@ mod tests {
         let floor = FloorPrior {
             step: 4,
             tolerance: 0.05,
+            rounds: 3,
             max_range: 6.0,
         }
         .anchors(&calibration, &pred, &map, &[], &floor_from_camera);
