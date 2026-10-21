@@ -1013,11 +1013,11 @@ class ControlCoordinator(Module):
 
     @rpc
     def describe_task(self, task_name: TaskName) -> dict[str, Any] | None:
-        """Describe a task's declared commands and stream routes.
+        """Describe a task's claimed joints, declared commands and stream routes.
 
         Each declared command reports its live signature (rendered string
         plus parameter names) — the method signature is the argument
-        contract. Returns ``{"task", "commands": {name: {"signature",
+        contract. Returns ``{"task", "joint_names", "commands": {name: {"signature",
         "params"}}, "streams": [(stream, routing), ...]}`` or ``None`` for
         an unknown task.
         """
@@ -1038,7 +1038,12 @@ class ControlCoordinator(Module):
                 for entry_task, _handler, routing in entries
                 if entry_task is task
             )
-            return {"task": task_name, "commands": commands, "streams": streams}
+            return {
+                "task": task_name,
+                "joint_names": sorted(task.claim().joints),
+                "commands": commands,
+                "streams": streams,
+            }
 
     @rpc
     def start(self) -> None:

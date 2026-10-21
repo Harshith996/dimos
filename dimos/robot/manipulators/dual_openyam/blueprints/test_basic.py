@@ -41,13 +41,14 @@ def test_planner_groups_route_to_their_own_registered_gripper_tasks():
     )
     tasks = {task.name: task for task in coordinator.tasks if task.type == "gripper"}
 
-    assert {
-        group.name: tasks[f"{group.gripper_hardware_id}_gripper"].joint_names
-        for group in model.planning_groups
-    } == {
-        "left_manipulator": ["left_arm/gripper"],
-        "right_manipulator": ["right_arm/gripper"],
+    assert {name: task.joint_names for name, task in tasks.items()} == {
+        "left_arm_gripper": ["left_arm/gripper"],
+        "right_arm_gripper": ["right_arm/gripper"],
     }
+    assert [group.name for group in model.planning_groups] == [
+        "left_manipulator",
+        "right_manipulator",
+    ]
     trajectory = next(task for task in coordinator.tasks if task.type == "trajectory")
     assert not set(trajectory.joint_names) & {"left_arm/gripper", "right_arm/gripper"}
 

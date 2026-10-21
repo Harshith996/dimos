@@ -385,7 +385,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                     definition.base_link,
                     definition.tip_link,
                     definition.source,
-                    definition.gripper_hardware_id,
                 )
         raise KeyError(f"Unknown planning group ID: {group_id}")
 

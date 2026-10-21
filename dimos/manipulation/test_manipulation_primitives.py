@@ -42,6 +42,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 
 
@@ -183,37 +184,39 @@ def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factor
     coordinator.task_invoke.assert_called_once_with("openyam_gripper", "get_normalized", {})
 
 
+def _register_grippers(module, joints_by_task):
+    descriptions = {
+        task: {"joint_names": joints, "commands": {"set_normalized": {}, "get_normalized": {}}}
+        for task, joints in joints_by_task.items()
+    }
+    module._control_coordinator.list_tasks.return_value = list(descriptions)
+    module._control_coordinator.describe_task.side_effect = descriptions.get
+
+
 def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) -> None:
     module = module_factory()
-    _set_groups(
+    model = dual_openyam_model_config()
+    model.planning_groups.append(PlanningGroupDefinition("both", tuple(model.joint_names), "base"))
+    _set_groups(module, model)
+    _register_grippers(
         module,
-        _model(
-            groups=(
-                PlanningGroupDefinition(
-                    "left", ("j0",), "base", "left_tcp", gripper_hardware_id="left_arm"
-                ),
-                PlanningGroupDefinition(
-                    "right", ("j1",), "base", "right_tcp", gripper_hardware_id="right_arm"
-                ),
-                PlanningGroupDefinition("both", ("j0", "j1"), "base"),
-            ),
-        ),
+        {"clamp_a": ["left_arm/gripper"], "clamp_b": ["right_arm/gripper"]},
     )
     invoke = module._control_coordinator.task_invoke
     invoke.return_value = True
 
     assert {info.id: info.has_gripper for info in module.list_planning_groups()} == {
-        "left": True,
-        "right": True,
+        "left_manipulator": True,
+        "right_manipulator": True,
         "both": False,
     }
-    assert module.set_gripper_position(0.2, "left").succeeded
-    assert module.set_gripper_position(0.8, "right").succeeded
+    assert module.set_gripper_position(0.2, "left_manipulator").succeeded
+    assert module.set_gripper_position(0.8, "right_manipulator").succeeded
     assert module.set_gripper_position(0.5).status is CommandStatus.REJECTED
     assert module.set_gripper_position(0.5, "both").status is CommandStatus.REJECTED
     assert invoke.call_args_list == [
-        call("left_arm_gripper", "set_normalized", {"values": [0.2]}),
-        call("right_arm_gripper", "set_normalized", {"values": [0.8]}),
+        call("clamp_a", "set_normalized", {"values": [0.2]}),
+        call("clamp_b", "set_normalized", {"values": [0.8]}),
     ]
     invoke.reset_mock()
     invoke.side_effect = [[0.2], [0.8]]
@@ -223,36 +226,54 @@ def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) 
     snapshot = module.get_state()
 
     assert {name: state.gripper_position for name, state in snapshot.groups.items()} == {
-        "left": 0.2,
-        "right": 0.8,
+        "left_manipulator": 0.2,
+        "right_manipulator": 0.8,
         "both": None,
     }
     assert invoke.call_args_list == [
-        call("left_arm_gripper", "get_normalized", {}),
-        call("right_arm_gripper", "get_normalized", {}),
+        call("clamp_a", "get_normalized", {}),
+        call("clamp_b", "get_normalized", {}),
     ]
 
 
 @pytest.mark.parametrize(
-    ("group_gripper", "expected_task"), [(None, "arm_gripper"), ("tool", "tool_gripper")]
+    ("joint_names", "grippers", "expected_message"),
+    [
+        (("left/j1",), {"a": ["left/gripper"], "b": ["left/gripper"]}, "Ambiguous"),
+        (("left/j1",), {"a": ["leftover/gripper"]}, "not gripper-capable"),
+        (("left_joint10",), {"a": ["left_arm/gripper"]}, "not gripper-capable"),
+        (("left/j1",), {}, "not gripper-capable"),
+    ],
 )
-def test_group_gripper_overrides_model_default(
-    module_factory, group_gripper, expected_task
+def test_gripper_matching_rejects_ambiguous_or_absent_match(
+    module_factory, joint_names, grippers, expected_message
 ) -> None:
     module = module_factory()
-    group = PlanningGroupDefinition(
-        "tool", ("j0",), "base", "tcp", gripper_hardware_id=group_gripper
-    )
-    _set_groups(
-        module,
-        _model(groups=(group,), gripper=True),
-    )
-    invoke = module._control_coordinator.task_invoke
-    invoke.return_value = True
+    _set_groups(module, _model(groups=(PlanningGroupDefinition("tool", joint_names, "base"),)))
+    _register_grippers(module, grippers)
+    module._world_monitor.current_group_joint_state.return_value = None
 
-    assert module.list_planning_groups()[0].has_gripper
+    result = module.set_gripper_position(0.4, "tool")
+
+    assert result.status is CommandStatus.REJECTED
+    assert expected_message in result.message
+    assert not module.list_planning_groups()[0].has_gripper
+    assert module.get_state().groups["tool"].gripper_position is None
+    module._control_coordinator.task_invoke.assert_not_called()
+
+
+def test_gripper_matching_uses_exact_joint_namespace(module_factory) -> None:
+    module = module_factory()
+    _set_groups(
+        module, _model(groups=(PlanningGroupDefinition("tool", ("left/j1", "left/j2"), "base"),))
+    )
+    _register_grippers(module, {"arbitrary_name": ["left/gripper"]})
+    module._control_coordinator.task_invoke.return_value = True
+
     assert module.set_gripper_position(0.4).succeeded
-    invoke.assert_called_once_with(expected_task, "set_normalized", {"values": [0.4]})
+    module._control_coordinator.task_invoke.assert_called_once_with(
+        "arbitrary_name", "set_normalized", {"values": [0.4]}
+    )
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
