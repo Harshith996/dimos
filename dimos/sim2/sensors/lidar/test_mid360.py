@@ -25,6 +25,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import ZenohTransport
@@ -38,14 +39,16 @@ from dimos.sim2.client import SimRobotClient
 from dimos.sim2.ipc.abi import ChannelDescriptor, FrameField, FrameLayout, make_channel_descriptor
 from dimos.sim2.ipc.channel import FrameMetadata, RobotChannel
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.runtime import STATE
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.device import LidarDevice
-from dimos.sim2.sensors.lidar.models.mid360 import Mid360
+from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
+from dimos.sim2.sensors.lidar.models.mid360.pattern import Mid360Pattern
 from dimos.sim2.sensors.lidar.module import LidarModule
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar
 from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
-from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
+from dimos.sim2.world.runtime import STATE
 
 
 def test_return_noise_is_seeded_per_scan_and_rejects_grazing_misses():
@@ -89,7 +92,7 @@ def pattern(mocker):
     coefs[:, 1] = [[1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]]
     coefs[:, 2] = [[0, 1, 0], [-1, 0, 0], [0, -1, 0], [1, 0, 0]]
     mocker.patch(
-        "dimos.sim2.sensors.lidar.models.mid360._pattern",
+        "dimos.sim2.sensors.lidar.models.mid360.model._pattern",
         return_value=Mid360Pattern(2.3, 0, 1, 0, coefs),
     )
     return Mid360()
@@ -227,7 +230,7 @@ def scanner(history, mocker):
     coefs = np.zeros((4, 1, 3))
     coefs[:, 0, 0] = 1
     mocker.patch(
-        "dimos.sim2.sensors.lidar.models.mid360._pattern",
+        "dimos.sim2.sensors.lidar.models.mid360.model._pattern",
         return_value=Mid360Pattern(0, 0, 0, 0, coefs),
     )
     module = LidarModule(
@@ -493,7 +496,7 @@ def test_installed_calibration_is_continuous_and_covers_full_sensor_field(calibr
 def test_resuming_physics_reanchors_rolling_acquisition_clock(
     worlds, world_config, tmp_path, pattern, mocker
 ):
-    clock = mocker.patch("dimos.sim2.runtime.time.time", return_value=1000.0)
+    clock = mocker.patch("dimos.sim2.world.runtime.time.time", return_value=1000.0)
     sensor = Lidar(
         "lidar",
         "scan",
@@ -549,7 +552,7 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
     binary = Path(
         os.environ.get(
             "SIM2_POINTLIO_BINARY",
-            str(Path(__file__).parents[2] / "target/release/pointlio_native"),
+            str(DIMOS_PROJECT_ROOT / "target/release/pointlio_native"),
         )
     ).resolve()
     assert binary.is_file(), "build current main's pointlio_native or set SIM2_POINTLIO_BINARY"

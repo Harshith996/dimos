@@ -27,9 +27,9 @@ from typing import Literal
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.sim2.sensors.spec import TimedRays
-from dimos.simulation.sensors.mid360.lidar import OcclusionMap, ReturnModel
-from dimos.simulation.sensors.mid360.pattern import POINT_RATE, Mid360Pattern
+from dimos.sim2.sensors.lidar.models.mid360.pattern import POINT_RATE, Mid360Pattern
+from dimos.sim2.sensors.lidar.models.mid360.returns import OcclusionMap, ReturnModel
+from dimos.sim2.sensors.lidar.spec import TimedRays
 from dimos.utils.data import get_data
 
 

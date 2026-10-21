@@ -206,8 +206,9 @@ maps and policy history; physics reset alone does not do that.
 Use `Mid360` as a `Lidar.model` and attach its IMU to the same named site:
 
 ```python skip
-from dimos.sim2.sensors.lidar.models.mid360 import Mid360
-from dimos.sim2.sensors.spec import Imu, Lidar
+from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
+from dimos.sim2.sensors.imu.spec import Imu
+from dimos.sim2.sensors.lidar.spec import Lidar
 
 lidar = Lidar(
     "lidar", "mid360_link", Mid360,
@@ -309,7 +310,7 @@ against independently read truth, with and without a 640x480 RGB-D worker:
 ```bash
 cargo build --release --locked --bin pointlio_native \
   --manifest-path dimos/hardware/sensors/lidar/pointlio/rust/Cargo.toml
-uv run pytest dimos/sim2/test_mid360.py -m native_e2e \
+uv run pytest dimos/sim2/sensors/lidar/test_mid360.py -m native_e2e \
   -o junit_family=legacy --junitxml=/tmp/sim2-mid360-native.xml
 ```
 
