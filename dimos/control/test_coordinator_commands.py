@@ -33,6 +33,7 @@ from typing import Any
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType
 import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
@@ -41,6 +42,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.hardware.manipulators.mock.adapter import MockAdapter
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -323,6 +325,14 @@ class TestValidatedDispatch:
 
 class TestDescribeTask:
     def test_reports_command_signatures(self, coordinator):
+        coordinator.add_hardware(
+            MockAdapter(dof=3),
+            HardwareComponent(
+                hardware_id="arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=["arm/joint1", "arm/joint2", "arm/gripper"],
+            ),
+        )
         task = CommandRecordingTask("traj_arm")
         coordinator.add_task(task, task_type="trajectory")
 
@@ -330,6 +340,7 @@ class TestDescribeTask:
 
         assert desc["task"] == "traj_arm"
         assert desc["joint_names"] == ["arm/joint1", "arm/joint2"]
+        assert desc["hardware_joint_names"] == ["arm/gripper", "arm/joint1", "arm/joint2"]
         assert set(desc["commands"]) == {"execute", "cancel", "get_state"}
         execute = desc["commands"]["execute"]
         assert execute["params"] == ["trajectory"]

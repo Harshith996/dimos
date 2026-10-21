@@ -67,7 +67,6 @@ xarm7_planner_coordinator = autoconnect(
     planner(
         model=make_xarm7_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         )
     ),
     coordinator(
@@ -109,7 +108,6 @@ lite6_planner_coordinator = autoconnect(
     planner(
         model=make_lite6_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         ),
         visualization={"backend": "viser"},
     ),
