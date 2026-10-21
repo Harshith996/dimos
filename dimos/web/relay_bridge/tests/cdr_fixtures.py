@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regenerate browser fixtures with: python -m dimos.web.relay_bridge.gen_cdr_fixtures."""
+"""Regenerate browser fixtures with: python -m dimos.web.relay_bridge.tests.cdr_fixtures."""
 
 import base64
 import json
@@ -130,7 +130,7 @@ def build_vectors() -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    path = find_web_dir() / "shared" / "fixtures" / "cdr_frames.json"
+    path = find_web_dir() / "sdk" / "tests" / "fixtures" / "cdr_frames.json"
     path.write_text(json.dumps({"vectors": build_vectors()}, indent=2, ensure_ascii=False) + "\n")
     print(path)
 

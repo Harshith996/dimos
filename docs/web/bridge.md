@@ -111,8 +111,8 @@ Stop terminal 1 with Ctrl-C. Use `--port` to select a different relay port and
 open the exact URL printed by the program.
 
 Without `?live=1`, the same page uses fixed packets to inspect little- and
-big-endian decoding. Those packets are generated with
-`python -m dimos.web.relay_bridge.gen_cdr_fixtures`. SDK tests check both byte
+big-endian decoding. Generate `web/sdk/tests/fixtures/cdr_frames.json` with
+`python -m dimos.web.relay_bridge.tests.cdr_fixtures`. SDK tests check both byte
 orders; the fixture does not validate a live connection.
 
 ### Existing channels

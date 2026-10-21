@@ -180,7 +180,7 @@ uv run --extra visualization rerun mcap convert cdr-viewer.mcap -o cdr-viewer-na
 Rerun 0.32 converts supported standard ROS2 types into visualizations. Other
 messages, including this scene's Path and custom EntityMarkers, are available
 as reflected fields; they do not automatically acquire the live bridge's path
-or labeled-entity display. No DimOS Python renderer is used for this import.
+or labeled-entity display. No dimOS Python renderer is used for this import.
 Existing `dimos mem rerun` behavior for legacy stores, including `--seconds`
 and `--root`, is unchanged. Use the native Rerun command for CDR MCAP files.
 

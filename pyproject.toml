@@ -33,6 +33,7 @@ include = ["dimos*"]
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
 exclude = [
+    "dimos.web.relay_bridge.tests*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",

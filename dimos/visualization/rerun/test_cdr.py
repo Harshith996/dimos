@@ -55,7 +55,7 @@ from dimos.visualization.rerun.cdr import (
     image_archetype,
 )
 from dimos.visualization.vis_module import vis_module
-from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
+from dimos.web.relay_bridge.tests.cdr_fixtures import build_messages
 
 
 def image_from_array(pixels, *, encoding, header=None):

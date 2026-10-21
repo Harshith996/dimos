@@ -1,4 +1,4 @@
-import frames from "../../shared/fixtures/cdr_frames.json";
+import frames from "../tests/fixtures/cdr_frames.json";
 import { connect, createDecoderRegistry } from "@dimos/sdk";
 import type { ChannelSpec } from "@dimos/shared";
 

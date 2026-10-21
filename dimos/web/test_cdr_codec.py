@@ -28,8 +28,8 @@ from dimos.messages.geometry_msgs.msg import Point, PoseStamped
 from dimos.web.cdr_codec import check_cdr_params, encode_cdr_v1, export_schema
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import resolve_encoder
-from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages, build_vectors
 from dimos.web.relay_bridge.locate import find_web_dir
+from dimos.web.relay_bridge.tests.cdr_fixtures import build_messages, build_vectors
 
 
 def test_cdr_channel_embeds_schema_and_preserves_owned_encoder() -> None:
@@ -77,7 +77,7 @@ def test_missing_schema_is_rejected(params: dict[str, Any]) -> None:
 
 
 def test_browser_vectors_are_actual_generated_messages_in_both_byte_orders() -> None:
-    vectors = json.loads((find_web_dir() / "shared/fixtures/cdr_frames.json").read_text())[
+    vectors = json.loads((find_web_dir() / "sdk/tests/fixtures/cdr_frames.json").read_text())[
         "vectors"
     ]
     assert vectors == build_vectors()

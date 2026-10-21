@@ -52,7 +52,6 @@ from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.channels import RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
-from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
     FakeTransport,
@@ -71,6 +70,7 @@ from dimos.web.relay_bridge.protocol import (
     Subs,
 )
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule, with_relay_bridge
+from dimos.web.relay_bridge.tests.cdr_fixtures import build_messages
 
 
 # Composition helpers live at module level: under PEP 563 (`from __future__

@@ -22,18 +22,17 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.message_utils.image import (
+    image_from_compressed,
+    image_to_rgb,
+    image_view,
+)
+from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
 from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.visualization.rerun._cdr_sensors import (
-    image_from_compressed,
-    image_to_rgb,
-    image_view,
-    pointcloud_rgb,
-    pointcloud_xyz,
-)
 
 if TYPE_CHECKING:
     import rerun as rr

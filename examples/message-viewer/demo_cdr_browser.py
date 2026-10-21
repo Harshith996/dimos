@@ -24,12 +24,82 @@ from contextlib import ExitStack
 import threading
 from typing import Any
 
+import numpy as np
+
 from dimos.core.transport import ZenohTransport
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos.messages.sensor_msgs.msg import Image, Imu, JointState
+from dimos.messages.std_msgs.msg import Empty, Header, Int64, String
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.relay_bridge.config import RelayBridgeConfig
-from dimos.web.relay_bridge.gen_cdr_fixtures import build_messages
+
+
+def build_messages() -> list[tuple[str, Any]]:
+    header = Header(stamp=Time(sec=1757400000, nanosec=500000123), frame_id="map")
+    return [
+        (
+            "pose_stamped",
+            PoseStamped(
+                header=header,
+                pose=Pose(
+                    position=Point(x=1.5, y=-2.5, z=0.25),
+                    orientation=Quaternion(z=0.6, w=0.8, x=0.0, y=0.0),
+                ),
+            ),
+        ),
+        (
+            "custom_segments",
+            LineSegments3D(
+                header=header,
+                segments=[
+                    LineSegment3D(
+                        start=Point(x=1, y=0.0, z=0.0), end=Point(y=2, x=0.0, z=0.0), weight=4
+                    )
+                ],
+            ),
+        ),
+        (
+            "image",
+            Image(
+                header=header,
+                width=2,
+                height=1,
+                encoding="rgb8",
+                step=6,
+                data=np.array([0, 1, 2, 253, 254, 255], dtype=np.uint8),
+                is_bigendian=0,
+            ),
+        ),
+        (
+            "imu",
+            Imu(
+                header=header,
+                orientation_covariance=np.asarray(range(9), dtype=np.float64),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+                angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+                linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+                linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+            ),
+        ),
+        (
+            "joints",
+            JointState(
+                header=header,
+                name=["joint_a", "joint_b"],
+                position=np.array([1.5, -2.5], dtype=np.float64),
+                velocity=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+            ),
+        ),
+        ("int64", Int64(data=-9007199254740993)),
+        ("empty", Empty()),
+        ("string", String(data="robot 🦾 café")),
+    ]
 
 
 class LoopbackRPC(ZenohRPC):
