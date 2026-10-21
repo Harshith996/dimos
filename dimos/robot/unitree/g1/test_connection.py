@@ -28,7 +28,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
-from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.costmapper import Config as CostMapperConfig, CostMapper
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -83,6 +83,9 @@ def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
     blueprint = load_g1_blueprint(name)
     scene = tmp_path / "floor.xml"
     scene.write_text("<mujoco/>")
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    costmap_config = CostMapperConfig(**parsed.module_kwargs(CostMapper.name))
+    assert costmap_config.initial_safe_radius_meters == 0.0
     expanded, _ = collect_simulation(
         blueprint, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
     )
@@ -102,6 +105,9 @@ def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
     assert _stream_key(expanded, MovementManager, "cmd_vel") == _stream_key(
         expanded, G1Connection, "cmd_vel"
     )
+    assert _stream_key(expanded, G1Connection, "odom") == _stream_key(
+        expanded, ReplanningAStarPlanner, "odom"
+    )
     assert _stream_key(expanded, SimRGBDCameraModule, "color_image")[0] == "color_image"
     assert blueprint.transport_map == {}
     assert sum(a.module is SimulationModule for a in expanded.active_blueprints) == 1
@@ -110,6 +116,8 @@ def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
 @pytest.mark.parametrize("name", ["unitree_g1_groot_wbc", "unitree_g1_sonic_wbc"])
 def test_hardware_blueprints_keep_pointlio_navigation(load_g1_blueprint, name):
     blueprint = load_g1_blueprint(name, simulation="")
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    assert CostMapperConfig(**parsed.module_kwargs(CostMapper.name)).initial_safe_radius_meters > 0
 
     assert _stream_key(blueprint, PointLio, "lidar") == _stream_key(
         blueprint, RayTracingVoxelMap, "lidar"
