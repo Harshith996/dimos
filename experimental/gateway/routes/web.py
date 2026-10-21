@@ -75,10 +75,7 @@ async def source(state: GatewayState, file: str) -> dict[str, Any]:
 
 @router.get("/msgs.js")
 async def msgs_js(request: Request) -> Response:
-    try:
-        path = await msgs.built_js(store.gateway_dir() / "msgs")
-    except RuntimeError as error:
-        raise ApiError(503, str(error)) from error
+    path = await msgs.built_js(store.gateway_dir() / "msgs")
     etag = f'"{path.stem}"'  # the file name holds the hash of everything it's built from
     headers = {"etag": etag, "cache-control": "no-cache"}
     if etag in (tag.strip() for tag in request.headers.get("if-none-match", "").split(",")):

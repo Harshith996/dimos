@@ -33,6 +33,7 @@ from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.core.run_registry import generate_run_id, list_runs, stop_entry
 from experimental.gateway import overrides as ov, store
+from experimental.gateway.errors import StatusError
 from experimental.gateway.overrides import LaunchOverrides, ModuleValues
 
 ACTIVE = ("starting", "running", "stopping")
@@ -42,16 +43,16 @@ OUTPUT_TAIL = 200_000
 _lock = threading.RLock()
 
 
-class RunError(Exception):
+class RunError(StatusError):
     pass
 
 
 class StillRunningError(RunError):
-    pass
+    status = 400
 
 
 class NoSuchRunError(RunError):
-    pass
+    status = 400
 
 
 @dataclass
