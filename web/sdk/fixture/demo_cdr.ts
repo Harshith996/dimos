@@ -134,7 +134,7 @@ function renderLive(): void {
     render();
   });
   messages.onchange = render;
-  window.addEventListener("pagehide", () => {
+  globalThis.addEventListener("pagehide", () => {
     for (const stop of subscriptions.values()) stop();
     session.close();
   }, { once: true });
