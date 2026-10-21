@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -24,7 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import overrides as ov, robots, store
+from experimental.gateway import overrides as ov, robots
 from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
@@ -60,6 +59,17 @@ REMOVED = [
     ("get", "/runs/skills"),
     ("get", "/catalog/skills"),
     ("get", "/runs/latest/log"),
+    ("get", "/runs"),
+    ("post", "/runs"),
+    ("post", "/runs/stop"),
+    ("post", "/runs/restart"),
+    ("get", "/runs/rpcs"),
+    ("get", "/runs/logs"),
+    ("get", "/runs/log_hist"),
+    ("get", "/config/global"),
+    ("put", "/config/global"),
+    ("get", "/config/blueprints/demo"),
+    ("put", "/config/blueprints/demo"),
 ]
 
 
@@ -101,7 +111,9 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
-    assert {"/runs", "/runs/rpcs", "/catalog/rpcs", "/catalog", "/config/global"} <= set(routes)
+    assert {"/active", "/active/modules", "/catalog/rpcs", "/catalog", "/catalog/config"} <= set(
+        routes
+    )
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
     assert slow == {
         "/catalog/blueprints/{name}",
@@ -115,57 +127,15 @@ def test_openapi_lists_the_routes(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(("method", "path"), REMOVED)
-def test_the_4x_routes_are_gone(client: TestClient, method: str, path: str) -> None:
+def test_the_old_routes_are_gone(client: TestClient, method: str, path: str) -> None:
     assert getattr(client, method)(path).status_code in (404, 405)
 
 
-def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:
-    answer = client.put("/config/global", json={"overrides": {"robot_ip": "10.0.0.2"}})
-    assert answer.status_code == 200
-    assert answer.json()["overrides"] == {"robot_ip": "10.0.0.2"}
-    saved = json.loads((home / "state" / "gateway" / "settings.json").read_text())
-    assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
-    shown = client.get("/config/global").json()
+def test_global_config_is_its_schema_defaults_and_secret_names(client: TestClient) -> None:
+    shown = client.get("/catalog/config").json()
+    assert set(shown) == {"schema", "defaults", "secrets"}
     assert "robot_ip" in shown["schema"]["properties"]
-
-
-def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
-    unknown = client.put("/config/global", json={"overrides": {"robot_iq": "x"}})
-    assert unknown.status_code == 400
-    assert "robot_iq" in unknown.json()["error"]
-    wrong = client.put("/config/global", json={"overrides": {"n_workers": "many"}})
-    assert wrong.status_code == 400
-
-
-def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]) -> None:
-    sent = {"global": {"n_workers": 3}, "modules": {"camera": {"fps": 5, "api_key": "k"}}}
-    put = client.put("/config/blueprints/demo", json=sent)
-    assert put.status_code == 200, put.text
-    assert store.blueprint_config("demo") == sent
-    shown = client.get("/config/blueprints/demo").json()
-    assert shown == {
-        "name": "demo",
-        "global": {"n_workers": 3},
-        "modules": {"camera": {"api_key": ov.HIDDEN, "fps": 5}},
-    }
-    kept = client.put(
-        "/config/blueprints/demo", json={"modules": {"camera": {"api_key": ov.HIDDEN}}}
-    )
-    assert kept.status_code == 200
-    assert store.blueprint_config("demo")["modules"] == {"camera": {"api_key": "k"}}
-
-
-def test_blueprint_config_refuses_a_bad_global_value(
-    client: TestClient, introspected: list[Any]
-) -> None:
-    refused = client.put(
-        "/config/blueprints/demo",
-        json={"global": {"n_workers": "many"}, "modules": {"camera": {"fps": "fast"}}},
-    )
-    assert refused.status_code == 400
-    assert {p["key"] for p in refused.json()["problems"]} == {"global"}
-    assert store.blueprint_config("demo") == {"global": {}, "modules": {}}
-    assert client.get("/config/blueprints/nope").status_code == 404
+    assert all(ov.is_secret_name(key) for key in shown["secrets"])
 
 
 def test_a_blueprints_config_schema_is_global_and_module_fields(
@@ -224,7 +194,6 @@ def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
     assert wire_shown() == ("lidar", None, None)
     # a blueprint only a branch has is unknown until it runs from that branch
     assert client.get("/catalog/blueprints/branch-only").status_code == 404
-    assert client.get("/config/blueprints/branch-only").status_code == 404
 
     from_gateway = started_from(state.dimos_dir / ".venv" / "bin" / "dimos", "20260101-120000-demo")
     assert wire_shown() == ("lidar", None, None)
@@ -237,7 +206,6 @@ def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
     only = started_from(branch / ".venv" / "bin" / "dimos", "20260101-120003-only", "branch-only")
     assert wire_shown("branch-only") == ("lidar_with_robot", str(branch), None)
     assert client.get("/catalog/blueprints/branch-only/config").json()["name"] == "branch-only"
-    assert client.get("/config/blueprints/branch-only").status_code == 200
     only.remove()
     assert client.get("/catalog/blueprints/branch-only").status_code == 404
 
@@ -248,7 +216,6 @@ def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
     assert client.get("/catalog/blueprints/-x").status_code == 400
-    assert client.get("/config/blueprints/-x").status_code == 400
 
 
 def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestClient) -> None:

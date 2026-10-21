@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from fastapi import APIRouter
 
-from experimental.gateway import catalog, introspect, launches, responses
+from experimental.gateway import catalog, introspect, launches, overrides as ov, responses
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
@@ -201,6 +202,25 @@ async def importable_module(state: State, name: str) -> dict[str, Any]:
     return found
 
 
+@router.get("/config", response_model=responses.GlobalConfig)
+async def global_config() -> dict[str, Any]:
+    """dimos's GlobalConfig: the keys a launch's `config.global` can set, their defaults, and which are secret."""
+    from dimos.core.global_config import GlobalConfig
+
+    defaults = {
+        key: json.loads(json.dumps(field.default, default=str))
+        for key, field in GlobalConfig.model_fields.items()
+        if field.default_factory is None
+    }
+    schema = GlobalConfig.model_json_schema()
+    names = [*GlobalConfig.model_fields, *schema.get("properties", {})]
+    return {
+        "schema": schema,
+        "defaults": defaults,
+        "secrets": sorted({key for key in names if ov.is_secret_name(key)}),
+    }
+
+
 @router.get("/modules", response_model=responses.ModuleList)
 async def modules(state: GatewayState, fields: str | None = None) -> dict[str, Any]:
     return picked(
@@ -218,7 +238,7 @@ async def module(state: GatewayState, name: str) -> dict[str, Any]:
 
 @router.get("/modules/{name}/config", response_model=responses.ModuleSchema, openapi_extra=SLOW)
 async def module_config(state: GatewayState, name: str) -> Any:
-    """The module's config fields with the code's defaults; saved values are per blueprint (/config/blueprints/{name})."""
+    """The module's config fields with the code's defaults; a launch sets them in its config.modules."""
     found = await importable_module(state, name)
     return await state.introspected(["module_config", found["class"]])
 
@@ -227,7 +247,7 @@ async def module_config(state: GatewayState, name: str) -> Any:
 async def rpcs(
     state: GatewayState, namespace: str | None = None, fields: str | None = None
 ) -> dict[str, Any]:
-    """Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that namespace would. The running blueprint's are at /runs/rpcs."""
+    """Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that namespace would. The running blueprint's are at /active/modules."""
     found = catalog.rpcs(state.scanner.cache(), namespace)
     return picked({"rpcs": found, "scan": await scan(state)}, fields)
 

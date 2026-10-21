@@ -1,0 +1,237 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from fastapi.testclient import TestClient
+import pytest
+
+from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, StreamInfo
+from experimental.gateway import live
+from experimental.gateway.state import State
+
+SPEAK = {
+    "name": "speak",
+    "doc": "Say something.",
+    "params": [],
+    "return_type": "str",
+    "skill": True,
+}
+
+
+@dataclass
+class Reading:
+    ts: float
+    x: float
+
+
+@dataclass
+class FakeDimos:
+    """What the gateway uses of a connected `Dimos`: two Speaker instances (namespaced) and a Camera."""
+
+    calls: list[tuple[str, Any]] = field(default_factory=list)
+    stopped: bool = False
+
+    def list_modules(self) -> list[ModuleInfo]:
+        speaker = [RpcInfo("start"), RpcInfo("speak"), RpcInfo("volume", documentation="Loudness.")]
+        return [
+            ModuleInfo(
+                "robot0/speaker",
+                rpcs=speaker,
+                instance_name="robot0/speaker",
+                class_name="Speaker",
+                qualified_path="x.Speaker",
+            ),
+            ModuleInfo(
+                "robot1/speaker",
+                rpcs=speaker,
+                instance_name="robot1/speaker",
+                class_name="Speaker",
+                qualified_path="x.Speaker",
+            ),
+            ModuleInfo(
+                "Camera",
+                rpcs=[],
+                instance_name="Camera",
+                class_name="Camera",
+                qualified_path="x.Camera",
+                documentation="A camera.",
+            ),
+        ]
+
+    def list_streams(self) -> list[StreamInfo]:
+        return [
+            StreamInfo("image", "Image", "Camera", "out", "/image"),
+            StreamInfo("odom", "Odometry", "robot0/speaker", "in", "/robot0/odom"),
+        ]
+
+    def get_module(self, name: str) -> Any:
+        fake = self
+
+        class Handle:
+            def __getattr__(self, rpc: str) -> Any:
+                def call(*args: Any, **kwargs: Any) -> Any:
+                    fake.calls.append((f"{name}/{rpc}", kwargs))
+                    if kwargs.get("text") == "explode":
+                        raise RuntimeError("speaker on fire")
+                    return {"said": kwargs.get("text")}
+
+                return call
+
+        return Handle()
+
+    def restart(self, name: str) -> None:
+        self.calls.append(("restart", name))
+
+    def unload(self, name: str) -> None:
+        self.calls.append(("unload", name))
+        if name == "camera":
+            raise ValueError("camera is busy")
+
+    def peek_stream(self, name: str, timeout: float) -> Any:
+        return Reading(12.5, 1.0) if name == "image" else None
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+@pytest.fixture
+def dimos(state: State, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    world: dict[str, Any] = {"run": "run-1", "apps": []}
+
+    def connect() -> FakeDimos:
+        world["apps"].append(FakeDimos())
+        return world["apps"][-1]
+
+    state.live = live.Live(connect, lambda: world["run"])
+    monkeypatch.setattr(
+        state.scanner,
+        "cache",
+        lambda: {"modules": {"speaker": {"class": "x.Speaker", "rpcs": [SPEAK]}}},
+    )
+    return world
+
+
+def test_instances_carry_their_rpcs_and_streams(client: TestClient, dimos: dict[str, Any]) -> None:
+    modules = client.get("/active/modules").json()["modules"]
+    assert [m["id"] for m in modules] == ["camera", "robot0:speaker", "robot1:speaker"]
+    camera, speaker = modules[0], modules[1]
+    assert (camera["class"], camera["catalogId"], camera["namespace"], camera["doc"]) == (
+        "Camera",
+        "x.Camera",
+        None,
+        "A camera.",
+    )
+    assert camera["streams"] == [
+        {
+            "name": "image",
+            "type": "Image",
+            "direction": "out",
+            "channel": "/image",
+            "module": "camera",
+        }
+    ]
+    assert speaker["namespace"] == "robot0"
+    # every Module's own RPCs (start) are left out; volume isn't in the scan, so it has no params or skill flag
+    assert [(r["name"], r["skill"], r["doc"]) for r in speaker["rpcs"]] == [
+        ("speak", True, "Say something."),
+        ("volume", None, "Loudness."),
+    ]
+    assert client.get("/active/modules/robot1:speaker").json()["id"] == "robot1:speaker"
+    assert client.get("/active/modules/nope").status_code == 404
+    assert [
+        r["name"] for r in client.get("/active/modules/robot0:speaker/rpcs").json()["rpcs"]
+    ] == [
+        "speak",
+        "volume",
+    ]
+    skills = client.get("/active/skills").json()["skills"]
+    assert [(s["module"], s["name"]) for s in skills] == [
+        ("robot0:speaker", "speak"),
+        ("robot1:speaker", "speak"),
+    ]
+    assert [s["module"] for s in client.get("/active/streams").json()["streams"]] == [
+        "camera",
+        "robot0:speaker",
+    ]
+    assert (
+        client.get("/active/modules/robot0:speaker/streams").json()["streams"][0]["name"] == "odom"
+    )
+
+
+def test_an_rpc_is_called_on_one_instance(client: TestClient, dimos: dict[str, Any]) -> None:
+    called = client.post(
+        "/active/modules/robot1:speaker/rpcs/speak", json={"kwargs": {"text": "hi"}}
+    )
+    assert called.json() == {"ok": True, "result": {"said": "hi"}, "error": None}
+    app = dimos["apps"][-1]
+    assert app.calls == [("robot1/speaker/speak", {"text": "hi"})]
+    failed = client.post(
+        "/active/modules/robot0:speaker/rpcs/speak", json={"kwargs": {"text": "explode"}}
+    ).json()
+    assert not failed["ok"] and "speaker on fire" in failed["error"]
+    assert client.post("/active/modules/robot0:speaker/rpcs/fly").status_code == 404
+    assert client.post("/active/modules/nope/rpcs/speak").status_code == 404
+    assert len(app.calls) == 2
+
+
+def test_restart_and_stop_go_by_instance(client: TestClient, dimos: dict[str, Any]) -> None:
+    assert client.post("/active/modules/robot0:speaker/restart").json() == {
+        "ok": True,
+        "error": None,
+    }
+    assert client.post("/active/modules/robot1:speaker/stop").json() == {"ok": True, "error": None}
+    busy = client.post("/active/modules/camera/stop").json()
+    assert not busy["ok"] and "camera is busy" in busy["error"]
+    assert client.post("/active/modules/nope/stop").status_code == 404
+    calls = [c for c in dimos["apps"][-1].calls if c[0] in ("restart", "unload")]
+    assert calls == [
+        ("restart", "robot0/speaker"),
+        ("unload", "robot1/speaker"),
+        ("unload", "camera"),
+    ]
+
+
+def test_peek_returns_one_message(client: TestClient, dimos: dict[str, Any]) -> None:
+    assert client.get("/active/streams/image/peek").json() == {
+        "name": "image",
+        "type": "Image",
+        "value": {"ts": 12.5, "x": 1.0},
+        "ts": 12.5,
+    }
+    assert client.get("/active/streams/odom/peek?timeout=0.1").status_code == 504
+    assert client.get("/active/streams/nope/peek").status_code == 404
+
+
+def test_one_connection_kept_until_the_run_changes(
+    client: TestClient, dimos: dict[str, Any]
+) -> None:
+    client.get("/active/modules")
+    client.get("/active/streams")
+    assert len(dimos["apps"]) == 1
+    dimos["run"] = "run-2"
+    client.get("/active/modules")
+    assert len(dimos["apps"]) == 2 and dimos["apps"][0].stopped
+    dimos["run"] = None
+    for path in ("/active/modules", "/active/streams", "/active/skills", "/active/modules/camera"):
+        assert client.get(path).status_code == 409, path
+    assert client.post("/active/modules/camera/rpcs/x").status_code == 409
+    assert dimos["apps"][1].stopped
+
+
+def test_instance_ids_are_the_coordinators_keys() -> None:
+    assert live.instance_id("robot0/go2connection") == "robot0:go2connection"
+    assert live.instance_id("fleet/robot0/go2connection") == "fleet:robot0:go2connection"
+    assert live.instance_id("GO2Connection") == "go2connection"

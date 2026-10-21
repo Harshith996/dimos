@@ -104,10 +104,28 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
             "runId": run_id,
             "blueprint": known[run_id].blueprint if run_id in known else None,
             "startedAt": known[run_id].started_at if run_id in known else None,
+            "endedAt": None if run_id in alive else last_time(find(dimos_dir, run_id)),
             "running": run_id in alive,
         }
         for run_id in sorted(ids, reverse=True)
     ]
+
+
+def last_time(file: Path | None) -> str | None:
+    """The timestamp of a log's last record."""
+    if file is None:
+        return None
+    try:
+        with file.open("rb") as handle:
+            handle.seek(max(0, handle.seek(0, 2) - 8192))
+            lines = handle.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        record = parse_line(line)
+        if record is not None and record["timestamp"]:
+            return str(record["timestamp"])
+    return None
 
 
 def read(

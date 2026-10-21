@@ -179,8 +179,18 @@ class RemoteModuleSource(ModuleSource):
         self._coord.call("restart_module_by_class_name", class_name, reload_source=reload_source)
         self.invalidate(class_name)
 
+    def restart_module_by_name(self, name: str, *, reload_source: bool) -> None:
+        self._coord.call("restart_module_by_name", name, reload_source=reload_source)
+        self.invalidate(name)
+
     def unload_module_by_class_name(self, class_name: str) -> None:
-        self._coord.call("unload_module_by_class_name", class_name)
+        self._unload("unload_module_by_class_name", class_name)
+
+    def unload_module_by_name(self, name: str) -> None:
+        self._unload("unload_module_by_name", name)
+
+    def _unload(self, method: str, target: str) -> None:
+        self._coord.call(method, target)
         with self._lock:
             deployed = set(self._refresh_descriptors())
             undeployed = {*self._cache, *(module for module, _ in self._streams)} - deployed

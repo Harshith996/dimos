@@ -30,10 +30,10 @@ from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
+from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
-from experimental.gateway.rpcs import Rpcs
 
-API_VERSION = "6.0.0"
+API_VERSION = "7.0.0"
 INTROSPECT_TTL_S = 600.0
 
 
@@ -43,7 +43,7 @@ class State:
     bus: events.Bus
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
-    rpcs: Rpcs = field(default_factory=Rpcs)
+    live: Live = field(default_factory=Live)
     process_stats: ProcessStats = field(default_factory=ProcessStats)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
     listed: list[dict[str, Any]] | None = None

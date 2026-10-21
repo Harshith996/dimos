@@ -27,13 +27,20 @@ from experimental.gateway.app import create_app
 from experimental.gateway.state import State, new_state
 
 FAKE_DIMOS = """#!{python}
-import os, sys, time
+import json, os, pathlib, sys, time
 print("args", *sys.argv[1:], flush=True)
 print("secret", os.environ.get("AGENT__API_KEY"), flush=True)
 print("dtop", os.environ.get("DTOP"), flush=True)
 if "fail" in sys.argv:
     print("ValueError: no robot answered", flush=True)
     sys.exit(1)
+# registers like `dimos run` does, under the id it picks itself
+blueprint = sys.argv[sys.argv.index("run") + 1]
+run_id = time.strftime("%Y%m%d-%H%M%S-") + blueprint + "-" + str(os.getpid())
+registry = pathlib.Path(os.environ["FAKE_REGISTRY_DIR"])
+registry.mkdir(parents=True, exist_ok=True)
+entry = dict(run_id=run_id, pid=os.getpid(), blueprint=blueprint, started_at="2026-01-01T12:00:00+00:00", log_dir="/tmp")
+(registry / (run_id + ".json")).write_text(json.dumps(entry))
 time.sleep(60)
 """
 
@@ -42,6 +49,7 @@ time.sleep(60)
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(store, "STATE_DIR", tmp_path / "state")
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "state" / "runs")
+    monkeypatch.setenv("FAKE_REGISTRY_DIR", str(tmp_path / "state" / "runs"))
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
     monkeypatch.delenv("DIMOS_ZENOH_NAMESPACE", raising=False)

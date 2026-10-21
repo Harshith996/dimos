@@ -14,9 +14,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from contextlib import suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -30,11 +29,10 @@ from typing import Any
 import psutil
 
 from dimos.constants import LOG_DIR
-from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.core.run_registry import generate_run_id, list_runs, stop_entry
+from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import overrides as ov, store
-from experimental.gateway.errors import StatusError
-from experimental.gateway.overrides import LaunchOverrides, ModuleValues
+from experimental.gateway.errors import ApiError, StatusError
+from experimental.gateway.overrides import ModuleValues
 
 ACTIVE = ("starting", "running", "stopping")
 # GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
@@ -48,32 +46,51 @@ class RunError(StatusError):
 
 
 class StillRunningError(RunError):
-    status = 400
-
-
-class NoSuchRunError(RunError):
-    status = 400
+    status = 409
 
 
 @dataclass
 class LaunchConfig:
+    """One launch's config, all of it: the gateway saves none, the caller sends it every time."""
+
     global_: dict[str, Any] = field(default_factory=dict)
     modules: ModuleValues = field(default_factory=dict)
-    one_off: LaunchOverrides = field(default_factory=LaunchOverrides)
+    secrets: list[str] = field(default_factory=list)
     args: list[str] = field(default_factory=list)
-    # a /runs/exec launch: exactly these args, no saved config (a restart keeps it that way)
+    # POST /active/exec: exactly these args (a relaunch keeps it that way)
     exact: bool = False
 
-    def secrets(self) -> list[str]:
-        return ov.secret_paths(self.global_, self.modules, self.one_off.secrets)
+    def secret_paths(self) -> list[str]:
+        return ov.secret_paths(self.global_, self.modules, self.secrets)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "global": self.global_,
+            "modules": self.modules,
+            "secrets": self.secrets,
+            "args": self.args,
+            "exact": self.exact,
+        }
+
+    @staticmethod
+    def from_json(value: dict[str, Any]) -> LaunchConfig:
+        parsed = ov.parse({k: value[k] for k in ("global", "modules", "secrets") if k in value})
+        return LaunchConfig(
+            parsed.global_,
+            parsed.modules,
+            parsed.secrets,
+            [str(a) for a in value.get("args") or []],
+            bool(value.get("exact")),
+        )
 
 
 def launch_file() -> Path:
     return store.gateway_dir() / "launch.json"
 
 
-def secrets_file() -> Path:
-    return store.gateway_dir() / "launch_secrets.json"
+def request_file() -> Path:
+    """What the last launch was started with, secrets included (0600), for POST /active/relaunch."""
+    return store.gateway_dir() / "launch_request.json"
 
 
 def launch_log() -> Path:
@@ -155,8 +172,7 @@ def _tail(path: Path, size: int) -> str:
 
 def _record() -> dict[str, Any] | None:
     record = store.read_json(launch_file())
-    keys = ("pid", "run_id", "blueprint", "started_at")
-    ok = isinstance(record, dict) and all(k in record for k in keys)
+    ok = isinstance(record, dict) and all(k in record for k in ("pid", "blueprint", "started_at"))
     return record if ok else None
 
 
@@ -170,13 +186,14 @@ def last_error(output: str) -> str:
 
 
 def current_launch() -> dict[str, Any] | None:
+    """The gateway's last launch; its runId is the run registry's, known once the run registers."""
     record = _record()
     if record is None:
         return None
     pid = int(record["pid"])
-    entry = next((run for run in registry_runs() if run["run_id"] == record["run_id"]), None)
-    if entry and not record.get("ever_ran"):
-        record.update(ever_ran=True)
+    entry = next((run for run in registry_runs() if int(run["pid"]) == pid), None)
+    if entry and not record.get("run_id"):
+        record.update(run_id=str(entry["run_id"]), ever_ran=True)
         _save(record)
     running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
@@ -190,8 +207,8 @@ def current_launch() -> dict[str, Any] | None:
         phase = "stopped"
     else:
         phase = "failed"
-    run_id = str(record["run_id"])
-    log_dir = LOG_DIR / run_id
+    run_id = record.get("run_id")
+    log_dir = LOG_DIR / run_id if run_id else None
     output = _tail(launch_log(), OUTPUT_TAIL)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
@@ -200,104 +217,97 @@ def current_launch() -> dict[str, Any] | None:
         "pid": pid,
         "output": output,
         "runId": run_id,
-        "logDir": str(log_dir) if log_dir.is_dir() else None,
+        "logDir": str(log_dir) if log_dir and log_dir.is_dir() else None,
         "error": last_error(output) if phase == "failed" else None,
-        "overrides": record.get("overrides") or {},
-        "modules": record.get("modules") or {},
-        "oneOff": LaunchOverrides.from_json(record.get("one_off")).to_json(),
+        "config": record.get("config") or {"global": {}, "modules": {}},
     }
-    if isinstance(record.get("args"), list):
+    if record.get("args"):
         launch["args"] = record["args"]
     return launch
 
 
-def last_launch_args() -> tuple[str, LaunchConfig] | None:
-    record = _record()
-    if record is None:
-        return None
-    real = store.read_json(secrets_file()) or {}
+def active() -> dict[str, Any]:
+    """The running blueprint, however it was started, and the gateway's last launch."""
+    entry = get_most_recent(alive_only=True)
+    launch = current_launch()
+    starting = launch if launch is not None and launch["phase"] == "starting" else {}
+    return {
+        "running": entry is not None,
+        "runId": entry.run_id if entry else None,
+        "pid": entry.pid if entry else starting.get("pid"),
+        "blueprint": entry.blueprint if entry else starting.get("blueprint"),
+        "startedAt": entry.started_at if entry else None,
+        "logDir": entry.log_dir if entry else None,
+        "launch": launch,
+    }
 
-    def restored(values: Any, saved: Any) -> dict[str, Any]:
-        values, saved = values or {}, saved or {}
-        return {k: saved[k] if v == ov.HIDDEN and k in saved else v for k, v in values.items()}
 
-    def restored_modules(values: Any, saved: Any) -> ModuleValues:
-        saved = saved or {}
-        return {m: restored(f, saved.get(m)) for m, f in (values or {}).items()}
+def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
+    global_, modules = ov.without_secrets(launch.global_, launch.modules, launch.secret_paths())
+    if launch.args:
+        flags = ov.global_flags(global_, explicit_bools=True)
+        return ["run", blueprint, *flags, *ov.module_flags(modules), *launch.args]
+    return [*ov.global_flags(global_), "run", blueprint, *ov.module_flags(modules)]
 
-    one_off = LaunchOverrides.from_json(record.get("one_off"))
-    args = real.get("args") or record.get("args") or []
-    return str(record["blueprint"]), LaunchConfig(
-        restored(record.get("overrides"), real.get("global")),
-        restored_modules(record.get("modules"), real.get("modules")),
-        LaunchOverrides(
-            restored(one_off.global_, real.get("one_off_global")),
-            restored_modules(one_off.modules, real.get("one_off_modules")),
-            one_off.secrets,
-        ),
-        [str(arg) for arg in args],
-        bool(record.get("exact")),
+
+def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
+    launch_log().parent.mkdir(parents=True, exist_ok=True)
+    launch_log().write_text(f"$ {shlex.join(shown)}\n")
+    with launch_log().open("a") as log:
+        child = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+    threading.Thread(target=child.wait, daemon=True).start()
+    return child.pid
+
+
+def _remember(blueprint: str, pid: int, request: dict[str, Any], shown: dict[str, Any]) -> None:
+    request_file().unlink(missing_ok=True)
+    request_file().parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(request_file(), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w") as handle:
+        json.dump({"blueprint": blueprint, **request}, handle)
+    _save(
+        {
+            "blueprint": blueprint,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "pid": pid,
+            "pid_started": started_time(pid),
+            "ever_ran": False,
+            **shown,
+        }
     )
 
 
-def run_args(blueprint: str, launch: LaunchConfig, run_id: str) -> list[str]:
-    global_, modules = ov.without_secrets(launch.global_, launch.modules, launch.secrets())
-    run = ["run", "--run-id", run_id, blueprint]
-    if launch.args:
-        flags = ov.global_flags(global_, explicit_bools=True)
-        return [*run, *flags, *ov.module_flags(modules), *launch.args]
-    return [*ov.global_flags(global_), *run, *ov.module_flags(modules)]
-
-
-def write_secrets(launch: LaunchConfig) -> None:
-    secrets_file().unlink(missing_ok=True)
-    one_off = launch.one_off
-    paths = launch.secrets() + ov.secret_paths(one_off.global_, one_off.modules, one_off.secrets)
-    secret_args = ov.shown_args(launch.args) != launch.args
-    if not paths and not secret_args:
-        return
-
-    def only(values: dict[str, Any]) -> dict[str, Any]:
-        return {k: v for k, v in values.items() if k in paths}
-
-    def only_modules(values: ModuleValues) -> ModuleValues:
-        return {m: {k: v for k, v in f.items() if f"{m}.{k}" in paths} for m, f in values.items()}
-
-    secrets_file().parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(secrets_file(), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        json.dump(
-            {
-                "global": only(launch.global_),
-                "modules": only_modules(launch.modules),
-                "one_off_global": only(one_off.global_),
-                "one_off_modules": only_modules(one_off.modules),
-                **({"args": launch.args} if secret_args else {}),
-            },
-            handle,
+def check_idle() -> None:
+    previous = current_launch()
+    if previous and previous["phase"] in ACTIVE:
+        raise StillRunningError(
+            f"{previous['blueprint']} is still {previous['phase']}; stop it first"
+        )
+    if other := next(iter(registry_runs()), None):
+        raise StillRunningError(
+            f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
         )
 
 
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     with _lock:
-        previous = current_launch()
-        if previous and previous["phase"] in ACTIVE:
-            raise StillRunningError(
-                f"{previous['blueprint']} is still {previous['phase']}; stop it first"
-            )
-        if other := next(iter(registry_runs()), None):
-            raise StillRunningError(
-                f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
-            )
+        check_idle()
         program = store.dimos_bin(dimos_dir)
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
-        secret_env = ov.secret_env(launch.global_, launch.modules, launch.secrets())
-        shown_env = "".join(f"{name}={ov.HIDDEN} " for name in secret_env)
-        run_id = generate_run_id(blueprint)
-        shown = run_args(blueprint, replace(launch, args=ov.shown_args(launch.args)), run_id)
-        launch_log().parent.mkdir(parents=True, exist_ok=True)
-        launch_log().write_text(f"$ {shown_env}dimos {shlex.join(shown)}\n")
+        paths = launch.secret_paths()
+        secret_env = ov.secret_env(launch.global_, launch.modules, paths)
+        shown_env = [f"{name}={ov.HIDDEN}" for name in secret_env]
+        shown_args = ov.shown_args(launch.args)
+        shown_run = run_args(blueprint, LaunchConfig(**{**launch.__dict__, "args": shown_args}))
         venv = store.venv_dir(dimos_dir)
         env = {
             **os.environ,
@@ -306,141 +316,82 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
             **ov.launch_env_defaults(),
-            # dtop's stats for the blueprint view's process table (GET /runs/stats); a --no-dtop flag still wins
+            # dtop's stats for GET /active/stats; a --no-dtop flag still wins
             DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
             **secret_env,
         }
-        with launch_log().open("a") as log:
-            child = subprocess.Popen(
-                [str(program), *run_args(blueprint, launch, run_id)],
-                cwd=dimos_dir,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-            )
-        threading.Thread(target=child.wait, daemon=True).start()
-        write_secrets(launch)
-        global_, modules = ov.redact(launch.global_, launch.modules, launch.secrets())
-        one_off = launch.one_off
-        one_off_paths = ov.secret_paths(one_off.global_, one_off.modules, one_off.secrets)
-        one_off_global, one_off_modules = ov.redact(one_off.global_, one_off.modules, one_off_paths)
-        record = {
-            "blueprint": blueprint,
-            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "pid": child.pid,
-            "pid_started": started_time(child.pid),
-            "run_id": run_id,
-            "ever_ran": False,
-            "overrides": global_,
-            "modules": modules,
-            "one_off": LaunchOverrides(one_off_global, one_off_modules, one_off.secrets).to_json(),
-            **({"args": ov.shown_args(launch.args)} if launch.args else {}),
-            **({"exact": True} if launch.exact else {}),
-        }
-        _save(record)
-        started = current_launch()
-        assert started is not None
-        return started
-
-
-def snapshot(pid: int) -> tuple[list[str], str, dict[str, str]]:
-    """The command line, working directory and environment that started `pid`."""
-    # from psutil, since the run registry doesn't record the working directory or environment
-    try:
-        process = psutil.Process(pid)
-        with process.oneshot():
-            return process.cmdline(), process.cwd(), process.environ()
-    except psutil.Error as error:
-        raise RunError(f"can't read how pid {pid} was started: {error}")
-
-
-def run_to_relaunch(run_id: str) -> dict[str, Any] | None:
-    """The live run `restart` copies instead of relaunching from saved config, if any."""
-    launch = current_launch()
-    if launch is not None and launch["phase"] in ACTIVE and run_id == launch["runId"]:
-        if not (_record() or {}).get("relaunched"):
-            return None
-        return {"run_id": launch["runId"], "pid": launch["pid"], "blueprint": launch["blueprint"]}
-    runs = registry_runs()
-    run = next((r for r in runs if r["run_id"] == run_id), None)
-    if run is None:
-        raise NoSuchRunError(f"no live run {run_id}")
-    return run
-
-
-def with_run_id(command: list[str], run_id: str) -> list[str]:
-    """`command` (a `dimos ... run ...` command line) set to start as run `run_id`."""
-    if "run" not in command:
-        raise RunError(f"not a `dimos run` command: {shlex.join(command)}")
-    start = command.index("run") + 1
-    rest = command[start:]
-    if "--run-id" in rest:
-        at = rest.index("--run-id")
-        rest = rest[:at] + rest[at + 2 :]
-    rest = [arg for arg in rest if not arg.startswith("--run-id=")]
-    return [*command[:start], "--run-id", run_id, *rest]
-
-
-def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) -> dict[str, Any]:
-    """Start `command` again as this gateway's launch, for a run the gateway didn't start."""
-    run_id = generate_run_id(blueprint)
-    command = with_run_id(command, run_id)
-    with _lock:
-        launch_log().parent.mkdir(parents=True, exist_ok=True)
-        launch_log().write_text(f"$ {shlex.join(ov.shown_args(command))}\n")
-        with launch_log().open("a") as log:
-            child = subprocess.Popen(
-                command,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-            )
-        threading.Thread(target=child.wait, daemon=True).start()
-        started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        _save(
-            {
-                "blueprint": blueprint,
-                "started_at": started_at,
-                "pid": child.pid,
-                "pid_started": started_time(child.pid),
-                "run_id": run_id,
-                "ever_ran": False,
-                "relaunched": True,
-            }
+        pid = _spawn(
+            [str(program), *run_args(blueprint, launch)],
+            [*shown_env, "dimos", *shown_run],
+            str(dimos_dir),
+            env,
+        )
+        global_, modules = ov.redact(launch.global_, launch.modules, paths)
+        shown = {"config": {"global": global_, "modules": modules}}
+        _remember(
+            blueprint,
+            pid,
+            launch.to_json(),
+            {**shown, **({"args": shown_args} if launch.args else {})},
         )
         started = current_launch()
         assert started is not None
         return started
 
 
-async def stop(run_id: str) -> str:
-    launch = current_launch()
-    if launch and launch["runId"] == run_id and launch["phase"] in ACTIVE:
-        pid, name = launch["pid"], launch["blueprint"]
-    else:
-        run = next((r for r in registry_runs() if r["run_id"] == run_id), None)
-        if run is None:
-            raise NoSuchRunError(f"no live run {run_id}")
-        pid, name = int(run["pid"]), str(run["blueprint"])
+def copy_of(entry: Any) -> dict[str, Any]:
+    """The command line, working directory and environment that started a run the gateway didn't launch."""
+    # from psutil, since the run registry doesn't record the working directory or environment
     try:
-        leads = os.getpgid(pid) == pid
-    except ProcessLookupError:
-        leads = True
+        process = psutil.Process(entry.pid)
+        with process.oneshot():
+            return {"command": process.cmdline(), "cwd": process.cwd(), "env": process.environ()}
+    except psutil.Error as error:
+        raise RunError(f"can't read how pid {entry.pid} was started: {error}")
+
+
+def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
+    with _lock:
+        check_idle()
+        command = [str(arg) for arg in copy["command"]]
+        pid = _spawn(command, ov.shown_args(command), str(copy["cwd"]), dict(copy["env"]))
+        _remember(blueprint, pid, {"copy": copy}, {"relaunched": True})
+        started = current_launch()
+        assert started is not None
+        return started
+
+
+def stop() -> str:
+    """Exactly `dimos stop`: SIGTERM the newest run, SIGKILL after 5 s. A launch that hasn't registered yet is killed."""
+    entry = get_most_recent(alive_only=True)
     record = _record()
-    if record is not None and record.get("pid") == pid:
-        _save({**record, "stopping": True})
-    entry = next((e for e in list_runs(alive_only=True) if e.run_id == run_id), None)
-    if entry is not None:
-        # what `dimos stop` does: SIGTERM, then SIGKILL
-        await asyncio.to_thread(stop_entry, entry)
-    else:
-        # still starting (not in the registry yet): nothing to shut down gracefully
+    if entry is None:
+        launch = current_launch()
+        if launch is None or launch["phase"] != "starting":
+            raise ApiError(409, "nothing running")
         with suppress(ProcessLookupError, PermissionError):
-            (os.killpg if leads else os.kill)(pid, signal.SIGKILL)
-    await asyncio.to_thread(kill_run_processes, run_id)
-    return f"stopped {name} (pid {pid})"
+            os.killpg(launch["pid"], signal.SIGKILL)
+        return f"Killed {launch['blueprint']} (PID {launch['pid']}) while it was starting"
+    if record is not None and int(record["pid"]) == entry.pid:
+        _save({**record, "stopping": True})
+    message, _ = stop_entry(entry)
+    return f"Stopping {entry.run_id} (PID {entry.pid}) with SIGTERM...\n  {message}"
+
+
+def relaunch(dimos_dir: Path) -> dict[str, Any]:
+    """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed, another one
+    (`dimos run` in a terminal) as a copy of its process."""
+    entry = get_most_recent(alive_only=True)
+    record = _record()
+    ours = entry is not None and record is not None and int(record["pid"]) == entry.pid
+    request = store.read_json(request_file()) if entry is None or ours else None
+    if entry is not None and request is None:
+        request = {"blueprint": entry.blueprint, "copy": copy_of(entry)}
+    if request is None:
+        raise ApiError(409, "nothing running, and the gateway hasn't launched anything to relaunch")
+    if entry is not None:
+        stop()
+    blueprint = str(request["blueprint"])
+    if "copy" in request:
+        return start_copy(blueprint, request["copy"])
+    return start(dimos_dir, blueprint, LaunchConfig.from_json(request))

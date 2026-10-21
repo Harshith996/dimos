@@ -105,11 +105,6 @@ def run(
         help="Bridge this robot to a relay started elsewhere (its HTTP URL, e.g. "
         "http://localhost:7780)",
     ),
-    run_id: str | None = typer.Option(
-        None,
-        "--run-id",
-        help="Use this run id instead of a new one (for a launcher that needs it up front)",
-    ),
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
@@ -233,7 +228,7 @@ def run(
     inherited_run_id = (
         os.environ.get(DIMOS_RUN_ID_ENV) if daemon and DAEMON_STATUS_FD_ENV in os.environ else None
     )
-    run_id = run_id or inherited_run_id or generate_run_id(blueprint_name)
+    run_id = inherited_run_id or generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
     # Tag every descendant with the run id so the watchdog and stale-run

@@ -102,11 +102,12 @@ class Dimos:
             else:
                 self._coordinator.load_blueprint(blueprint)
 
-    def restart(self, module_class: type[ModuleBase], *, reload_source: bool = True) -> None:
+    def restart(self, module_class: type[ModuleBase] | str, *, reload_source: bool = True) -> None:
         """Restart a running module, optionally reloading its source.
 
         Args:
-            module_class: The module class to restart.
+            module_class: The module class to restart, or its instance name (e.g.
+                ``robot0/go2connection``) when several instances share a class.
             reload_source: If True (default), reload the module's source file
                 so code changes are picked up.
         """
@@ -115,27 +116,35 @@ class Dimos:
                 raise RuntimeError("No modules are running")
             if self._source.is_remote:
                 assert isinstance(self._source, RemoteModuleSource)
-                self._source.restart_module_by_class_name(
-                    module_class.__name__, reload_source=reload_source
-                )
+                if isinstance(module_class, str):
+                    self._source.restart_module_by_name(module_class, reload_source=reload_source)
+                else:
+                    self._source.restart_module_by_class_name(
+                        module_class.__name__, reload_source=reload_source
+                    )
                 return
             assert isinstance(self._source, LocalModuleSource)
             assert self._coordinator is not None
-            self._source.invalidate(module_class.__name__)
+            name = module_class if isinstance(module_class, str) else module_class.__name__
+            self._source.invalidate(name)
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
-    def unload(self, module_class: type[ModuleBase]) -> None:
+    def unload(self, module_class: type[ModuleBase] | str) -> None:
         """Stop and remove a running module.
 
         Args:
-            module_class: The module class to unload.
+            module_class: The module class to unload, or its instance name (e.g.
+                ``robot0/go2connection``) when several instances share a class.
         """
         with self._lock:
             if self._source is None:
                 raise RuntimeError("No modules are running")
             if self._source.is_remote:
                 assert isinstance(self._source, RemoteModuleSource)
-                self._source.unload_module_by_class_name(module_class.__name__)
+                if isinstance(module_class, str):
+                    self._source.unload_module_by_name(module_class)
+                else:
+                    self._source.unload_module_by_class_name(module_class.__name__)
                 return
             assert self._coordinator is not None
             self._coordinator.unload_module(module_class)
