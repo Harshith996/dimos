@@ -139,12 +139,9 @@ robots:
         title: Go2 3D navigation in a saved map (replay)
         description: The relocalized 3D navigation stack driven by a recording instead of a robot.
         recommended_config: *robot_ip_only
-      unitree-go2-pgo:
-        title: Go2 with loop closure
-        description: Map and navigation with live loop closure (pose-graph optimization).
-      unitree-go2-relocalization:
-        title: Go2 relocalization
-        description: Map and navigation that relocalizes in a saved map.
+      unitree-go2-map:
+        title: Go2 with a permanent map
+        description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
       unitree-go2-ros:
         title: Go2 with ROS
         description: Map and navigation, bridged to ROS.
