@@ -18,7 +18,6 @@ import asyncio
 from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
 import contextlib
-import difflib
 import enum
 import functools
 import importlib
@@ -34,14 +33,6 @@ import typing
 from typing import Any
 
 MARKER = "@@DIMOS_GATEWAY@@"
-INTERNAL_FIELDS = {"g", "rpc_transport", "rpc_timeouts", "default_rpc_timeout", "instance_name"}
-RUN_VALUE_OPTIONS = {"--disable", "--config", "-c", "--relay-url", "--relay-ca"}
-RUN_SWITCHES = {"--local-relay", "--no-local-relay"}
-RUN_REFUSED = {
-    "--daemon": "the gateway runs dimos in the foreground",
-    "-d": "the gateway runs dimos in the foreground",
-    "--help": "try `dimos run <blueprint> --help` in a terminal",
-}
 
 
 class IntrospectError(Exception):
@@ -73,10 +64,15 @@ class Cache:
 
 
 async def run_child(
-    dimos_dir: Path, args: list[str], stdin: Any = None, timeout: float = 180
+    dimos_dir: Path,
+    args: list[str],
+    stdin: Any = None,
+    timeout: float = 180,
+    python: str | None = None,
 ) -> dict[str, Any]:
+    """Introspect in dimos_dir's python, or (python given: another checkout, a run's) with this file in that one."""
     child = await asyncio.create_subprocess_exec(
-        *child_command(dimos_dir),
+        *(child_command(dimos_dir) if python is None else foreign_command(python)),
         *args,
         cwd=dimos_dir,
         stdin=asyncio.subprocess.PIPE,
@@ -106,6 +102,22 @@ def child_command(dimos_dir: Path) -> list[str]:
     from experimental.gateway.store import python_for
 
     return [python_for(dimos_dir), "-m", "experimental.gateway.introspect"]
+
+
+def foreign_command(python: str) -> list[str]:
+    # the checkout may have no gateway or an older one, so this file runs there, importing that checkout's dimos;
+    # the gateway's checkout goes last on the path, only for the experimental.gateway helpers that one lacks
+    run = (
+        "import runpy, sys\n"
+        "sys.argv.pop(0)\n"
+        "sys.path.append(sys.argv.pop(0))\n"
+        # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
+        "for name in [n for n in sys.modules if n == 'dimos' or n.startswith('dimos.')]:\n"
+        "    del sys.modules[name]\n"
+        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+    )
+    here = Path(__file__).resolve()
+    return [python, "-c", run, str(here.parents[2]), str(here)]
 
 
 def kill_group(pid: int) -> None:
@@ -197,6 +209,8 @@ def params(fn: Any) -> list[dict[str, Any]]:
             if param.annotation is inspect.Parameter.empty
             else getattr(param.annotation, "__name__", str(param.annotation)),
             "default": None if param.default is inspect.Parameter.empty else repr(param.default),
+            "required": param.default is inspect.Parameter.empty,
+            "choices": choices(param.annotation),
         }
         for name, param in signature.parameters.items()
         if name not in ("self", "cls")
@@ -220,21 +234,22 @@ def base_rpcs() -> frozenset[str]:
     return frozenset(dict(Module.rpcs))
 
 
-def methods(cls: Any) -> dict[str, list[dict[str, Any]]]:
-    rpcs: list[dict[str, Any]] = []
-    skills: list[dict[str, Any]] = []
+def rpcs(cls: Any) -> list[dict[str, Any]]:
+    """The module's own RPCs (not every Module's), each saying whether it's also a skill."""
+    found = []
     for name, fn in sorted(dict(getattr(cls, "rpcs", {}) or {}).items()):
         skill = bool(getattr(fn, "__skill__", False))
-        if not skill and name in base_rpcs():
-            continue
-        entry = {
-            "name": name,
-            "params": params(fn),
-            "return_type": return_type(fn),
-            "doc": inspect.getdoc(fn) or "",
-        }
-        (skills if skill else rpcs).append(entry)
-    return {"rpcs": rpcs, "skills": skills}
+        if skill or name not in base_rpcs():
+            found.append(
+                {
+                    "name": name,
+                    "params": params(fn),
+                    "return_type": return_type(fn),
+                    "doc": inspect.getdoc(fn) or "",
+                    "skill": skill,
+                }
+            )
+    return found
 
 
 def spec_topic(spec: Any) -> str | None:
@@ -307,7 +322,7 @@ def blueprint(name: str) -> dict[str, Any]:
                 "doc": doc,
                 "summary": doc.split("\n\n")[0].replace("\n", " ")[:300],
                 "streams": entry["streams"],
-                **methods(atom.module),
+                "rpcs": rpcs(atom.module),
                 **source_of(atom.module),
             }
         )
@@ -358,8 +373,6 @@ def field_args(
 
     args = {}
     for name, field in fields.items():
-        if name in INTERNAL_FIELDS:
-            continue
         required, kind = field.is_required(), field.annotation
         try:
             default = None if required else field.get_default(call_default_factory=True)
@@ -386,32 +399,55 @@ def field_args(
     return args
 
 
+def parser_schema(bp: Any) -> Any:
+    """dimos run's own view of a blueprint's settings (a private method: dimos has no public one)."""
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+
+    return BlueprintConfigParser(bp)._get_schema()
+
+
+def settable(schema: Any, root: str) -> set[str]:
+    """The fields `dimos run` takes a flag for under `root` (a module's name, or "g")."""
+    return {target.path[0] for target in schema.targets if target.root == root}
+
+
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     from dimos.core.module import ModuleConfig
 
-    fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
-    if fields is None:
-        raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
-    return field_args(fields, set(ModuleConfig.model_fields), values)
+    schema = parser_schema(module.blueprint())
+    (only,) = schema.modules
+    fields = only.config_cls.model_fields
+    keep = settable(schema, only.atom.name)
+    return field_args(
+        {k: f for k, f in fields.items() if k in keep}, set(ModuleConfig.model_fields), values
+    )
 
 
 def config(name: str) -> dict[str, Any]:
-    """A blueprint's config schema: GlobalConfig's fields, and each module's."""
+    """A blueprint's config schema: the GlobalConfig and module fields `dimos run` takes flags for."""
     from dimos.core.global_config import GlobalConfig
+    from dimos.core.module import ModuleConfig
     from dimos.robot.get_all_blueprints import get_by_name
 
+    schema = parser_schema(get_by_name(name))
     modules: dict[str, Any] = {}
-    for atom in get_by_name(name).active_blueprints:
+    for module in schema.modules:
+        atom = module.atom
         entry: dict[str, Any] = {"class": type_name(atom.module)}
         try:
-            entry["args"] = module_args(atom.module, dict(atom.kwargs))
+            keep = settable(schema, atom.name)
+            fields = {k: f for k, f in module.config_cls.model_fields.items() if k in keep}
+            entry["args"] = field_args(fields, set(ModuleConfig.model_fields), dict(atom.kwargs))
         except Exception as error:  # a module's config class is its own code
             entry["args"] = {}
             entry["error"] = f"{type(error).__name__}: {error}"
         modules[atom.name] = entry
+    keep = settable(schema, "g")
     return {
         "name": name,
-        "global": field_args(GlobalConfig.model_fields, set()),
+        "global": field_args(
+            {k: f for k, f in GlobalConfig.model_fields.items() if k in keep}, set()
+        ),
         "modules": modules,
     }
 
@@ -431,13 +467,7 @@ def module_class(name: str) -> tuple[str, Any]:
 def module(name: str) -> dict[str, Any]:
     registry, cls = module_class(name)
     record = module_record(registry, cls)
-    found = methods(cls)
-    return {
-        **{k: v for k, v in record.items() if k not in ("kind", "skills")},
-        "rpcs": found["rpcs"],
-        "skill_methods": found["skills"],
-        **source_of(cls),
-    }
+    return {**{k: v for k, v in record.items() if k != "kind"}, **source_of(cls)}
 
 
 def module_config(name: str) -> dict[str, Any]:
@@ -445,110 +475,11 @@ def module_config(name: str) -> dict[str, Any]:
     return {"name": registry, "class": type_name(cls), "args": module_args(cls)}
 
 
-def check_args(name: str, args: list[str]) -> dict[str, Any]:
-    from pydantic import TypeAdapter, ValidationError
-
-    from dimos.cli.dimos import normalize_argv
-    from dimos.core.coordination.blueprint_config.merging import _resolve_target, merge_cli
-    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-    from dimos.core.coordination.blueprint_config.schema import normalize_option_name
-    from dimos.core.coordination.blueprint_config.sources import (
-        global_schema_defaults,
-        validate_global_values,
-    )
-    from dimos.robot.all_blueprints import all_modules
-    from dimos.robot.get_all_blueprints import get_by_name
-
-    tokens = normalize_argv(args)
-    schema = BlueprintConfigParser(get_by_name(name))._get_schema()
-
-    def target_of(token: str) -> tuple[Any, bool]:
-        option = normalize_option_name(token[2:].partition("=")[0])
-        target = _resolve_target(option, schema)
-        if target is None and option.startswith("no_"):
-            positive = _resolve_target(option.removeprefix("no_"), schema)
-            if positive is not None and positive.section == "global" and positive.is_bool:
-                return positive, True
-        return target, False
-
-    checked: list[dict[str, Any]] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        option = token.partition("=")[0]
-        group = [token]
-        entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
-        checked.append(entry)
-        index += 1
-        if option in RUN_REFUSED:
-            entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
-            continue
-        if option in RUN_VALUE_OPTIONS:
-            entry["target"] = f"run {option}"
-            if "=" not in token:
-                if index >= len(tokens) or tokens[index].startswith("-"):
-                    entry["error"] = f"{option} needs a value"
-                    continue
-                group.append(tokens[index])
-                index += 1
-            given = token.partition("=")[2] if "=" in token else group[-1]
-            if option == "--disable" and given not in all_modules:
-                close = difflib.get_close_matches(given, list(all_modules), n=3)
-                entry["error"] = f"--disable: no module {given!r}" + (
-                    f" (did you mean {', '.join(close)}?)" if close else ""
-                )
-            elif option in ("--config", "-c") and not Path(given).expanduser().is_file():
-                entry["error"] = f"{option}: no file {given}"
-            continue
-        if option in RUN_SWITCHES:
-            entry["target"] = f"run {option}"
-            continue
-        if not token.startswith("--") or option in ("-o", "--option"):
-            entry["error"] = (
-                f"{token!r}: one blueprint per launch, and options start with '--'"
-                if not token.startswith("-")
-                else f"unexpected {token!r}"
-            )
-            continue
-        try:
-            target, negated = target_of(token)
-        except Exception as error:
-            target, negated = None, False
-            entry["error"] = str(error)
-        if "=" not in token and not negated and index < len(tokens):
-            if not tokens[index].startswith("--") and (
-                target is not None or not tokens[index].startswith("-")
-            ):
-                group.append(tokens[index])
-                index += 1
-        if entry["error"]:
-            continue
-        modules: dict[str, dict[str, Any]] = defaultdict(dict)
-        global_values: dict[str, Any] = {}
-        try:
-            merge_cli(modules, global_values, {}, tuple(group), schema)
-            assert target is not None
-            entry["target"] = target.qualified_name
-            if target.section == "global":
-                validate_global_values({**global_schema_defaults(), **global_values})
-            elif target.section == "module":
-                value: Any = modules[target.root]
-                for part in target.path:
-                    value = value[part]
-                TypeAdapter(target.annotations[0]).validate_python(value)
-        except ValidationError as error:
-            entry["error"] = f"--{target.relative_name}: {error.errors()[0]['msg']}"
-        except Exception as error:
-            text = str(error).strip()
-            entry["error"] = text.splitlines()[0] if text else type(error).__name__
-    return {"name": name, "args": checked}
-
-
 def blueprint_list() -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_blueprints
     from dimos.robot.external_blueprints import list_external_blueprint_names
 
-    builtin = sorted(name for name in all_blueprints if not name.startswith("demo-"))
+    builtin = sorted(all_blueprints)
     return {
         "blueprints": [{"name": name, "kind": "builtin"} for name in builtin]
         + [{"name": name, "kind": "external"} for name in list_external_blueprint_names()]
@@ -568,11 +499,6 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
     from dimos.core.coordination.blueprints import BlueprintAtom
 
     streams = list(BlueprintAtom.create(cls, {}).streams)
-    skills = [
-        {"name": skill, "doc": first_line(fn), "params": params(fn)}
-        for skill, fn in sorted(dict(getattr(cls, "rpcs", {}) or {}).items())
-        if getattr(fn, "__skill__", False)
-    ]
     return {
         "kind": "module",
         "name": name,
@@ -584,7 +510,7 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
         "outputs": [
             {"name": s.name, "type": s.type.__name__} for s in streams if s.direction != "in"
         ],
-        "skills": skills,
+        "rpcs": rpcs(cls),
     }
 
 
@@ -695,7 +621,6 @@ COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
     "config": config,
     "module": module,
     "module_config": module_config,
-    "args": check_args,
     "list": blueprint_list,
     "packages": packages,
     "scan": scan,
@@ -706,7 +631,7 @@ def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     try:
         command = COMMANDS[argv[0]]
-        result = command(*argv[1:], request) if argv[0] in ("args", "scan") else command(*argv[1:])
+        result = command(*argv[1:], request) if argv[0] == "scan" else command(*argv[1:])
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}
     emit(result)

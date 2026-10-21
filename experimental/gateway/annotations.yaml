@@ -51,7 +51,8 @@ robots:
         - *robot_replay_or_simulator
         - global: robot_ip
         - global: replay_db
-        - global: detection_model
+        - module: perceiveloopskill
+          field: detection_model
           label: Detection model
       unitree-go2-webrtc-keyboard-teleop:
         title: Go2 keyboard driving
@@ -196,12 +197,12 @@ robots:
       go2-dds-mid360:
         title: 'Go2 over DDS + Mid-360'
         description: 'DDS Go2 with a Mid-360: Point-LIO odometry in place of the head lidar''s.'
-      go2-dds-nav:
-        title: 'Go2 over DDS: navigation'
+      go2-nav:
+        title: 'Go2: navigation'
         description: 'DDS Go2 with a Mid-360 (Point-LIO), MLS global planner and local planner; headless, watch it with the nav viewer.'
-      go2-dds-nav-viewer:
-        title: 'Go2 over DDS: nav viewer'
-        description: 'The screen for go2-dds-nav on another machine: dials the Go2''s zenoh router and shows its maps and plans.'
+      go2-nav-viewer:
+        title: 'Go2: nav viewer'
+        description: 'The screen for go2-nav on another machine: dials the Go2''s zenoh router and shows its maps and plans.'
       go2-sim:
         title: 'Go2 in simulation (keyboard)'
         description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
@@ -408,7 +409,8 @@ robots:
     defaults:
       recommended_config:
       - *robot_or_simulator
-      - global: xarm7_ip
+      - module: controlcoordinator
+        field: addresses.arm
         label: xArm7 IP
         placeholder: 192.168.1.185
         required: false
@@ -433,14 +435,15 @@ robots:
         recommended_config: &xarm6_config
         - *robot_or_simulator
         - &xarm6_ip
-          <<: &xarm6_ip_anywhere {global: xarm6_ip, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
+          <<: &xarm6_ip_anywhere {module: controlcoordinator, field: addresses.arm, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
           when: {simulation: ''}
       keyboard-teleop-lite6:
         title: Lite6 keyboard driving
         description: Move a UFactory Lite6 with this computer's keyboard.
         recommended_config: &lite6_config
         - *robot_or_simulator
-        - global: lite6_ip
+        - module: controlcoordinator
+          field: addresses.arm
           label: Lite6 IP
           placeholder: 192.168.1.185
           required: false
@@ -494,7 +497,9 @@ robots:
       coordinator-teleop-xarm6:
         title: xArm6 teleop coordinator
         description: The xArm6 teleop coordinator (a building block).
-        recommended_config: *xarm6_config
+        recommended_config: &teleop_xarm6_config
+        - *robot_or_simulator
+        - {<<: *xarm6_ip, module: teleopcontrolcoordinator}
       coordinator-teleop-xarm7:
         title: xArm7 teleop coordinator
         description: The xArm7 teleop coordinator (a building block).
@@ -512,7 +517,7 @@ robots:
       teleop-webxr-xarm6:
         title: xArm6 VR teleop
         description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-        recommended_config: *xarm6_config
+        recommended_config: *teleop_xarm6_config
       teleop-webxr-hand-xarm7:
         title: xArm7 VR hand teleop
         description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -522,15 +527,15 @@ robots:
       teleop-hosted-xarm6:
         title: xArm6 remote teleop
         description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
-        recommended_config: [*xarm6_ip_anywhere]
+        recommended_config: [{<<: *xarm6_ip_anywhere, module: teleopcontrolcoordinator}]
       teleop-hosted-xarm7:
         title: xArm7 remote teleop
         description: Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.
-        recommended_config: [{global: xarm7_ip}]
+        recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
       learning-collect-webxr-xarm7:
         title: xArm7 demonstration recording
         description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
-        recommended_config: [{global: xarm7_ip}]
+        recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
       xarm-feed:
         title: xArm camera feed (recording)
         description: A depth-camera recording published at wall-clock pace, as if live.
@@ -556,7 +561,8 @@ robots:
       recommended_config: &can_arm_config
       - *robot_or_simulator
       - &can_port
-        global: can_port
+        module: controlcoordinator
+        field: addresses.arm
         label: CAN port
         placeholder: can0
         when: {simulation: ''}
@@ -583,7 +589,7 @@ robots:
       learning-collect-webxr-piper:
         title: Piper demonstration recording
         description: Teleoperate a Piper in VR and record episodes for imitation learning.
-        recommended_config: [{global: can_port}]
+        recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
   openyam:
     name: OpenYAM
     description: The OpenYAM arm, over CAN.
@@ -675,7 +681,8 @@ robots:
         title: A-750 keyboard driving
         description: Move an A-750 arm with this computer's keyboard.
         recommended_config:
-        - global: device_path
+        - module: controlcoordinator
+          field: addresses.arm
           label: Device
           placeholder: /dev/ttyUSB0
   coordinators:
@@ -688,7 +695,10 @@ robots:
       coordinator-piper-xarm:
         title: Piper + xArm6 coordinator
         description: A Piper and an xArm6 behind one coordinator.
-        recommended_config: &piper_xarm6_config [*robot_or_simulator, *xarm6_ip, *can_port]
+        recommended_config: &piper_xarm6_config
+        - *robot_or_simulator
+        - {<<: *xarm6_ip, field: addresses.xarm_arm}
+        - {<<: *can_port, field: addresses.piper_arm}
       coordinator-teleop-dual:
         title: Dual-arm teleop coordinator
         description: Teleop coordinator for a Piper and an xArm6 together (a building block).

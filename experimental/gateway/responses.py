@@ -69,16 +69,23 @@ class Stopping(Body):
 
 
 class Param(Body):
+    """A parameter: its type's name, its default as python source, and its choices (a Literal's or an Enum's values)."""
+
     name: str
     type: str | None
     default: str | None
+    required: bool
+    choices: list[Any] | None
 
 
 class Method(Body):
+    """An RPC; `skill` says whether it's also a skill."""
+
     name: str
     params: list[Param]
     return_type: str | None
     doc: str
+    skill: bool
 
 
 class Stream(Body):
@@ -98,7 +105,6 @@ BlueprintModule = TypedDict(
         "summary": str,
         "streams": list[Stream],
         "rpcs": list[Method],
-        "skills": list[Method],
         "file": str | None,
         "line": int | None,
     },
@@ -198,11 +204,14 @@ class CatalogBlueprint(BlueprintFields, total=False):
 
 
 class BlueprintDetail(BlueprintFields, total=False):
-    """A blueprint with its file and line, and its modules' streams, RPCs and skills."""
+    """A blueprint with its file and line, and its modules' streams and RPCs."""
 
     file: str | None
     line: int | None
     modules: list[BlueprintModule]
+    # set while it runs from another checkout: the one it was read from, or why that failed
+    checkout: str | None
+    checkoutError: str | None
 
 
 class BlueprintList(Body, total=False):
@@ -215,8 +224,8 @@ class PortType(Body):
     type: str
 
 
-CatalogModule = TypedDict(
-    "CatalogModule",
+ModuleFields = TypedDict(
+    "ModuleFields",
     {
         "name": str,
         "class": str,
@@ -224,19 +233,21 @@ CatalogModule = TypedDict(
         "inputs": list[PortType],
         "outputs": list[PortType],
         "robots": list[str],
-        "skills": list[str],
         "blueprints": list[str],
     },
     total=False,
 )
-with_config(CONFIG)(CatalogModule)
+with_config(CONFIG)(ModuleFields)
 
 
-class ModuleDetail(CatalogModule, total=False):
-    """A module, the blueprints using it, and its RPCs and skills."""
+class CatalogModule(ModuleFields, total=False):
+    rpcs: list[str]
+
+
+class ModuleDetail(ModuleFields, total=False):
+    """A module, the blueprints using it, and its RPCs."""
 
     rpcs: list[Method]
-    skill_methods: list[Method]
     file: str | None
     line: int | None
 
@@ -246,17 +257,14 @@ class ModuleList(Body, total=False):
     scan: ScanStatus
 
 
-class CatalogSkill(Body, total=False):
-    name: str
-    doc: str
-    params: list[Param]
+class CatalogRpc(Method, total=False):
     module: str
     robots: list[str]
     rpc: str
 
 
-class CatalogSkills(Body, total=False):
-    skills: list[CatalogSkill]
+class CatalogRpcs(Body, total=False):
+    rpcs: list[CatalogRpc]
     scan: ScanStatus
 
 
@@ -278,11 +286,11 @@ class Robots(Body, total=False):
 
 
 class Catalog(Body, total=False):
-    """Every blueprint, module, skill and robot the last scan found."""
+    """Every blueprint, module, RPC and robot the last scan found."""
 
     blueprints: list[CatalogBlueprint]
     modules: list[CatalogModule]
-    skills: list[CatalogSkill]
+    rpcs: list[CatalogRpc]
     robots: dict[str, CatalogRobot]
     types: dict[str, dict[str, Any]]
     errors: list[str]
@@ -514,47 +522,39 @@ class Uploads(Body):
     byPath: dict[str, Uploaded]
 
 
-class SkillRun(Body):
+class RpcRun(Body):
     runId: str | None
     blueprint: str | None
 
 
-class Skill(Body):
+class Rpc(Body):
+    """A running module's RPC; doc, params, return_type and skill come from the last scan (None if it hasn't seen it)."""
+
     name: str
     module: str
-    description: str
-    params: dict[str, Any]
-    required: list[str]
-    lifecycle: str
-    uses: list[str]
+    rpc: str
+    doc: str
+    params: list[Param] | None
+    return_type: str | None
+    skill: bool | None
+
+
+class Rpcs(Body):
+    """The running blueprint's RPCs."""
+
+    rpcs: list[Rpc]
+    run: RpcRun | None
+
+
+class RpcResult(Body):
+    """What the RPC returned (as JSON, or its text if it isn't JSON-able), or the error it raised."""
+
+    rpc: str
     runId: str | None
     blueprint: str | None
-
-
-class SkillError(Body):
-    module: str
-    error: str
-
-
-class Skills(Body):
-    """The running blueprint's skills, with each one's JSON schema for its args."""
-
-    skills: list[Skill]
-    run: SkillRun | None
-    errors: list[SkillError]
-
-
-class SkillResult(Body):
-    """What the skill answered, as text and as MCP content blocks."""
-
-    skill: str
-    module: str
-    runId: str | None
-    blueprint: str | None
-    via: Literal["mcp", "rpc"]
     ok: bool
-    text: str
-    content: list[dict[str, Any]]
+    result: Any
+    error: str | None
 
 
 class SourceFile(Body):

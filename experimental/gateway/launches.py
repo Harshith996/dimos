@@ -31,12 +31,13 @@ import psutil
 
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
-from dimos.core.run_registry import generate_run_id, list_runs
+from dimos.core.run_registry import generate_run_id, list_runs, stop_entry
 from experimental.gateway import overrides as ov, store
 from experimental.gateway.overrides import LaunchOverrides, ModuleValues
 
 ACTIVE = ("starting", "running", "stopping")
-STOP_WAITS = ((signal.SIGINT, 20.0), (signal.SIGTERM, 10.0), (signal.SIGKILL, 5.0))
+# GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
+DTOP_ENV = "DTOP"
 OUTPUT_TAIL = 200_000
 _lock = threading.RLock()
 
@@ -59,6 +60,8 @@ class LaunchConfig:
     modules: ModuleValues = field(default_factory=dict)
     one_off: LaunchOverrides = field(default_factory=LaunchOverrides)
     args: list[str] = field(default_factory=list)
+    # a /runs/exec launch: exactly these args, no saved config (a restart keeps it that way)
+    exact: bool = False
 
     def secrets(self) -> list[str]:
         return ov.secret_paths(self.global_, self.modules, self.one_off.secrets)
@@ -80,6 +83,53 @@ def registry_runs() -> list[dict[str, Any]]:
     keys = ("run_id", "pid", "blueprint", "started_at", "log_dir")
     runs = [{key: getattr(entry, key) for key in keys} for entry in list_runs(alive_only=True)]
     return sorted(runs, key=lambda run: str(run["run_id"]), reverse=True)
+
+
+def run_of(blueprint: str) -> dict[str, Any] | None:
+    """The newest live run of this blueprint, however it was started (Desktop, a terminal, tmux)."""
+    return next((run for run in registry_runs() if run["blueprint"] == blueprint), None)
+
+
+@dataclass(frozen=True)
+class RunSource:
+    """Where a run's dimos came from: its checkout, and the python it runs on."""
+
+    checkout: Path
+    python: str
+    run_id: str
+
+
+def run_source(run_id: str) -> RunSource | None:
+    """Where a run's dimos came from (None when it isn't a checkout, as for a pip install)."""
+    entry = next((e for e in list_runs(alive_only=True) if e.run_id == run_id), None)
+    if entry is None:
+        return None
+    try:
+        command = psutil.Process(entry.pid).cmdline()
+    except psutil.Error:
+        command = []
+    paths = [Path(p) for p in [*entry.original_argv[:1], *command[:2]] if p.startswith("/")]
+    for path in [*paths, Path(entry.log_dir)]:
+        root = next((p for p in path.parents if store.checkout_version(p)[0]), None)
+        if root is not None:
+            ran_on = command[0] if command else ""
+            is_python = ran_on.startswith("/") and Path(ran_on).name.startswith("python")
+            return RunSource(root, ran_on if is_python else store.python_for(root), run_id)
+    return None
+
+
+def started_time(pid: int) -> float | None:
+    """When `pid` started: with the pid, names one process even after the OS reuses the number."""
+    try:
+        return float(psutil.Process(pid).create_time())
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def is_launched_process(record: dict[str, Any]) -> bool:
+    """The recorded launch is still the process at its pid (not a later one the pid was reused for)."""
+    pid = int(record["pid"])
+    return alive(pid) and started_time(pid) == record.get("pid_started")
 
 
 def alive(pid: int, group: bool = True) -> bool:
@@ -127,7 +177,7 @@ def current_launch() -> dict[str, Any] | None:
     if entry and not record.get("ever_ran"):
         record.update(ever_ran=True)
         _save(record)
-    running = alive(pid)
+    running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
     if running and (stopping or (record.get("ever_ran") and not entry)):
         phase = "stopping"
@@ -185,6 +235,7 @@ def last_launch_args() -> tuple[str, LaunchConfig] | None:
             one_off.secrets,
         ),
         [str(arg) for arg in args],
+        bool(record.get("exact")),
     )
 
 
@@ -226,24 +277,6 @@ def write_secrets(launch: LaunchConfig) -> None:
         )
 
 
-def coordinator_on_bus() -> bool:
-    from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-    from dimos.core.transport_factory import rpc_backend
-    from dimos.protocol.rpc.spec import RPCSpec
-    from dimos.protocol.rpc.zenohrpc import ZenohRPC
-
-    backend = rpc_backend()
-    probe: RPCSpec = ZenohRPC(gossip=False, connect=[]) if backend is ZenohRPC else backend()
-    probe.start()
-    try:
-        probe.call_sync(f"{CoordinatorRPC.NAME}/ping", ([], {}), rpc_timeout=0.5)
-        return True
-    except TimeoutError:
-        return False
-    finally:
-        probe.stop()
-
-
 def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, Any]:
     with _lock:
         previous = current_launch()
@@ -255,8 +288,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             raise StillRunningError(
                 f"{other['blueprint']} (run {other['run_id']}, pid {other['pid']}) is running; stop it first"
             )
-        if coordinator_on_bus():
-            raise StillRunningError("another dimos run is running on this machine; stop it first")
         program = store.dimos_bin(dimos_dir)
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
@@ -273,8 +304,9 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "VIRTUAL_ENV": str(venv),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
+            **ov.launch_env_defaults(),
             # dtop's stats for the blueprint view's process table (GET /runs/stats); a --no-dtop flag still wins
-            "DTOP": os.environ.get("DTOP", "1"),
+            DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
             **secret_env,
         }
         with launch_log().open("a") as log:
@@ -297,12 +329,14 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "blueprint": blueprint,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "pid": child.pid,
+            "pid_started": started_time(child.pid),
             "run_id": run_id,
             "ever_ran": False,
             "overrides": global_,
             "modules": modules,
             "one_off": LaunchOverrides(one_off_global, one_off_modules, one_off.secrets).to_json(),
             **({"args": ov.shown_args(launch.args)} if launch.args else {}),
+            **({"exact": True} if launch.exact else {}),
         }
         _save(record)
         started = current_launch()
@@ -372,6 +406,7 @@ def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) 
                 "blueprint": blueprint,
                 "started_at": started_at,
                 "pid": child.pid,
+                "pid_started": started_time(child.pid),
                 "run_id": run_id,
                 "ever_ran": False,
                 "relaunched": True,
@@ -398,15 +433,13 @@ async def stop(run_id: str) -> str:
     record = _record()
     if record is not None and record.get("pid") == pid:
         _save({**record, "stopping": True})
-    for signum, wait in STOP_WAITS:
-        with suppress(ProcessLookupError, PermissionError):
-            (os.killpg if leads else os.kill)(pid, signum)
-        deadline = time.monotonic() + wait
-        while alive(pid, leads) and time.monotonic() < deadline:
-            await asyncio.sleep(0.1)
-        if not alive(pid, leads):
-            break
+    entry = next((e for e in list_runs(alive_only=True) if e.run_id == run_id), None)
+    if entry is not None:
+        # what `dimos stop` does: SIGTERM, then SIGKILL
+        await asyncio.to_thread(stop_entry, entry)
     else:
-        raise RunError(f"{name} (pid {pid}) won't stop")
+        # still starting (not in the registry yet): nothing to shut down gracefully
+        with suppress(ProcessLookupError, PermissionError):
+            (os.killpg if leads else os.kill)(pid, signal.SIGKILL)
     await asyncio.to_thread(kill_run_processes, run_id)
     return f"stopped {name} (pid {pid})"

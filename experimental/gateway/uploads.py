@@ -30,7 +30,7 @@ import urllib.error
 import urllib.request
 
 from dimos.cli import cloud
-from dimos.core.global_config import global_config
+from dimos.cloud.config import CloudConfig
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import store
 from experimental.gateway.events import Bus
@@ -139,7 +139,7 @@ def classify(error: BaseException) -> tuple[str, str]:
 
 
 def console_datasets_url() -> str | None:
-    base = global_config.dimos_cloud_url.rstrip("/")
+    base = CloudConfig().url.rstrip("/")
     return (
         base.replace("://api.", "://console.", 1) + "/console/data" if "://api." in base else None
     )
@@ -176,7 +176,7 @@ def new_upload(
 
 def account() -> dict[str, Any]:
     key = cloud.api_key()
-    base = global_config.dimos_cloud_url.rstrip("/")
+    base = CloudConfig().url.rstrip("/")
     result: dict[str, Any] = {
         "loggedIn": False,
         "email": None,
@@ -187,12 +187,12 @@ def account() -> dict[str, Any]:
     }
     if not key:
         return result
-    result.update(loggedIn=True, source="env" if global_config.dimos_api_key else "stored")
+    result.update(loggedIn=True, source="env" if CloudConfig().api_key else "stored")
     request = urllib.request.Request(
         base + "/auth/whoami", headers={"Authorization": f"Bearer {key}"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=global_config.dimos_http_timeout) as answer:
+        with urllib.request.urlopen(request, timeout=CloudConfig().http_timeout) as answer:
             who = json.load(answer)
     except urllib.error.HTTPError as error:
         if error.code == 401:

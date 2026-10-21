@@ -14,10 +14,10 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 5.1.0
+    version: 6.0.0
     description: >-
-      The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; runs (launch, stop, logs,
-      skills); and recording uploads to the Dimensional cloud. Desktop serves it at /dimos-gateway/; GET openapi.json has
+      The dimos gateway: the catalog of blueprints, modules, RPCs and robots; their saved config; runs (launch, stop, logs,
+      RPCs); and recording uploads to the Dimensional cloud. Desktop serves it at /dimos-gateway/; GET openapi.json has
       every request and answer.
   paths:
     /info:
@@ -31,7 +31,7 @@ provides:
     /catalog:
       get:
         description: >-
-          Every blueprint, module, skill and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
           age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
     /catalog/blueprints:
       get:
@@ -39,7 +39,8 @@ provides:
     /catalog/blueprints/{name}:
       get:
         description: >-
-          A blueprint, plus its file and line and its modules' streams, RPCs and skills. (slow: imports python)
+          A blueprint, plus its file and line and its modules' streams and RPCs; while it runs from another checkout, read
+          from that one (`checkout`, `checkoutError`). (slow: imports python)
         parameters:
           - name: name
             in: path
@@ -49,8 +50,8 @@ provides:
     /catalog/blueprints/{name}/config:
       get:
         description: >-
-          The blueprint's config schema: GlobalConfig's fields and each module's, with types, defaults and choices. (slow:
-          imports python)
+          The blueprint's config schema: GlobalConfig's fields and each module's, with types, defaults and choices; read from
+          the checkout of its live run, like /catalog/blueprints/{name}. (slow: imports python)
         parameters:
           - name: name
             in: path
@@ -60,12 +61,12 @@ provides:
     /catalog/modules:
       get:
         description: >-
-          Every module the last scan found, with its streams, robots, skills and the blueprints using it; ?fields= keeps only
+          Every module the last scan found, with its streams, robots, RPCs and the blueprints using it; ?fields= keeps only
           those (dot paths)
     /catalog/modules/{name}:
       get:
         description: >-
-          A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class). (slow: imports
+          A module, the blueprints using it, and its RPCs (`name` is its registry name or class). (slow: imports
           python)
         parameters:
           - name: name
@@ -112,22 +113,22 @@ provides:
             required: true
             schema:
               type: string
-    /catalog/skills:
+    /catalog/rpcs:
       get:
         description: >-
-          Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint's are at
-          /runs/skills.
-    /catalog/skills/{module}/{skill}:
+          Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that
+          namespace would. The running blueprint's are at /runs/rpcs.
+    /catalog/rpcs/{module}/{name}:
       get:
         description: >-
-          One skill from the last scan: its doc, params and rpc name; ?namespace= names it as that namespace would
+          One RPC from the last scan: its doc, params, skill flag and rpc name; ?namespace= names it as that namespace would
         parameters:
           - name: module
             in: path
             required: true
             schema:
               type: string
-          - name: skill
+          - name: name
             in: path
             required: true
             schema:
@@ -143,7 +144,7 @@ provides:
             schema:
               type: string
       put:
-        summary: Replace the values saved for this blueprint; a 400 lists every key dimos would refuse.
+        summary: Replace the values saved for this blueprint; a 400 if a global value isn't one dimos takes (module values are checked at launch).
         parameters:
           - name: name
             in: path
@@ -161,8 +162,8 @@ provides:
         summary: The running dimos runs (run id, pid, blueprint, start, log dir) and the launch this gateway started
       post:
         description: >-
-          Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call a skill of
-          the running blueprint ({skill: {module, name, args}})
+          Launch {blueprint} or {module} with the saved config plus a one-off config {global, modules}, or call an RPC of
+          the running blueprint ({rpc: {module, name, args}})
     /runs/exec:
       post:
         summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module), without the saved config.
@@ -190,9 +191,11 @@ provides:
     /runs/restart:
       post:
         summary: Stop the run {runId} and launch it again
-    /runs/skills:
+    /runs/rpcs:
       get:
-        summary: The running blueprint's skills, live, with each one's JSON schema; call one with POST /runs {skill}.
+        description: >-
+          The running blueprint's RPCs, live (doc, params and skill flag from the last scan); call one with POST /runs {rpc}.
+          For buttons: called directly, not through MCP, so skills' capability holds don't apply; agents use the python API.
     /runs/stop:
       post:
         summary: Stop the run {runId}
@@ -257,52 +260,6 @@ provides:
     /cloud/login/page:
       get:
         summary: The cloud login page apps embed
-  # the same as the shorthand Desktops 0.2.204 and older read (paths: is nothing to them): delete once they're gone
-  endpoints:
-    - { method: GET, path: "info" }
-    - { method: POST, path: "server/stop" }
-    - { method: GET, path: "catalog" }
-    - { method: GET, path: "catalog/blueprints" }
-    - { method: GET, path: "catalog/blueprints/{name}" }
-    - { method: GET, path: "catalog/blueprints/{name}/config" }
-    - { method: GET, path: "catalog/modules" }
-    - { method: GET, path: "catalog/modules/{name}" }
-    - { method: GET, path: "catalog/modules/{name}/config" }
-    - { method: GET, path: "catalog/msgs/{name}" }
-    - { method: GET, path: "catalog/robots" }
-    - { method: POST, path: "catalog/scan" }
-    - { method: POST, path: "catalog/scan/blueprints/{name}" }
-    - { method: GET, path: "catalog/skills" }
-    - { method: GET, path: "catalog/skills/{module}/{skill}" }
-    - { method: GET, path: "config/blueprints/{name}" }
-    - { method: PUT, path: "config/blueprints/{name}" }
-    - { method: GET, path: "config/global" }
-    - { method: PUT, path: "config/global" }
-    - { method: GET, path: "runs" }
-    - { method: POST, path: "runs" }
-    - { method: POST, path: "runs/exec" }
-    - { method: GET, path: "runs/log_hist" }
-    - { method: GET, path: "runs/log_hist/{runId}" }
-    - { method: GET, path: "runs/logs" }
-    - { method: GET, path: "runs/stats" }
-    - { method: POST, path: "runs/restart" }
-    - { method: GET, path: "runs/skills" }
-    - { method: POST, path: "runs/stop" }
-    - { method: GET, path: "cloud/account" }
-    - { method: POST, path: "cloud/login" }
-    - { method: DELETE, path: "cloud/login" }
-    - { method: GET, path: "cloud/uploads" }
-    - { method: POST, path: "cloud/uploads" }
-    - { method: DELETE, path: "cloud/uploads" }
-    - { method: GET, path: "extras" }
-    - { method: POST, path: "extras/install" }
-    - { method: GET, path: "jobs/{job}" }
-    - { method: GET, path: "docs/search" }
-    - { method: GET, path: "blueprint_view" }
-    - { method: GET, path: "blueprint_view/{file}" }
-    - { method: GET, path: "source" }
-    - { method: GET, path: "msgs.js" }
-    - { method: GET, path: "cloud/login/page" }
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
 socket: |

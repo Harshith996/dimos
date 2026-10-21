@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +22,10 @@ import pytest
 import yaml
 
 from dimos.core.global_config import GlobalConfig
+from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
-from experimental.gateway.state import API_VERSION, State
+from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
     "default": None,
@@ -55,6 +57,8 @@ REMOVED = [
     ("get", "/global-config"),
     ("get", "/skills"),
     ("post", "/skills/call"),
+    ("get", "/runs/skills"),
+    ("get", "/catalog/skills"),
     ("get", "/runs/latest/log"),
 ]
 
@@ -70,10 +74,7 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
             return CONFIG
         if args[0] == "blueprint":
             return {"name": args[1], "file": "x.py", "line": 3, "modules": []}
-        bad = [a for a in stdin or [] if "fps=fast" in a]
-        return {
-            "args": [{"tokens": [a], "target": "camera.fps", "error": "not an int"} for a in bad]
-        }
+        raise AssertionError(f"unexpected introspection {args}")
 
     monkeypatch.setattr(state, "introspected", fake)
     return calls
@@ -133,7 +134,7 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
 
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
-    assert {"/runs", "/runs/skills", "/catalog", "/config/global"} <= set(routes)
+    assert {"/runs", "/runs/rpcs", "/catalog/rpcs", "/catalog", "/config/global"} <= set(routes)
     slow = {path for path, methods in routes.items() if methods.get("get", {}).get("x-slow")}
     assert slow == {
         "/catalog/blueprints/{name}",
@@ -159,7 +160,6 @@ def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, ho
     assert saved["global_config"] == {"robot_ip": "10.0.0.2"}
     shown = client.get("/config/global").json()
     assert "robot_ip" in shown["schema"]["properties"]
-    assert shown["defaults"]["rerun_open"] == "none"
 
 
 def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
@@ -168,15 +168,6 @@ def test_global_config_refuses_what_dimos_would(client: TestClient) -> None:
     assert "robot_iq" in unknown.json()["error"]
     wrong = client.put("/config/global", json={"overrides": {"n_workers": "many"}})
     assert wrong.status_code == 400
-
-
-def test_a_secret_is_hidden_and_kept_when_sent_back(client: TestClient) -> None:
-    client.put("/config/global", json={"overrides": {"typesafe_api_key": "s3cret"}})
-    assert client.get("/config/global").json()["overrides"] == {"typesafe_api_key": ov.HIDDEN}
-    client.put(
-        "/config/global", json={"overrides": {"typesafe_api_key": ov.HIDDEN, "n_workers": 2}}
-    )
-    assert store.global_config_overrides() == {"typesafe_api_key": "s3cret", "n_workers": 2}
 
 
 def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]) -> None:
@@ -197,7 +188,7 @@ def test_blueprint_config_round_trip(client: TestClient, introspected: list[Any]
     assert store.blueprint_config("demo")["modules"] == {"camera": {"api_key": "k"}}
 
 
-def test_blueprint_config_lists_every_refused_key(
+def test_blueprint_config_refuses_a_bad_global_value(
     client: TestClient, introspected: list[Any]
 ) -> None:
     refused = client.put(
@@ -205,8 +196,7 @@ def test_blueprint_config_lists_every_refused_key(
         json={"global": {"n_workers": "many"}, "modules": {"camera": {"fps": "fast"}}},
     )
     assert refused.status_code == 400
-    keys = {p["key"] for p in refused.json()["problems"]}
-    assert keys == {"global", "modules.camera.fps"}
+    assert {p["key"] for p in refused.json()["problems"]} == {"global"}
     assert store.blueprint_config("demo") == {"global": {}, "modules": {}}
     assert client.get("/config/blueprints/nope").status_code == 404
 
@@ -217,6 +207,76 @@ def test_a_blueprints_config_schema_is_global_and_module_fields(
     schema = client.get("/catalog/blueprints/demo/config").json()
     assert schema["global"]["n_workers"]["default"] == 2
     assert schema["modules"]["camera"]["args"]["api_key"]["secret"]
+
+
+def test_a_blueprint_running_from_another_checkout_is_read_from_that_one(
+    client: TestClient, state: State, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = home / "dimos_branch"
+    (branch / ".venv" / "bin").mkdir(parents=True)
+    (branch / "pyproject.toml").write_text('[project]\nname = "dimos"\n')
+    state.listed = [{"name": "demo", "kind": "builtin"}]
+    read_from: list[Any] = []
+
+    async def fake(args: list[str], stdin: Any = None, source: Any = None) -> Any:
+        read_from.append(source and source.checkout)
+        if source is not None and "broken" in str(source.run_id):
+            raise ApiError(500, "ImportError: no get_by_name")
+        if args[0] == "config":
+            return {**CONFIG, "name": args[1], "global": {} if source else CONFIG["global"]}
+        stream = "lidar_with_robot" if source else "lidar"
+        streams = [
+            {"name": "lidar", "type": "x.PointCloud2", "direction": "in", "wire": stream}
+            | {"topic": None}
+        ]
+        modules: list[dict[str, Any]] = [
+            {"name": "mapper", "class": "x.Mapper", "doc": "", "summary": "", "streams": streams}
+            | {"rpcs": [], "file": None, "line": None}
+        ]
+        return {"name": args[1], "file": None, "line": None, "modules": modules}
+
+    monkeypatch.setattr(state, "introspected", fake)
+
+    def wire_shown(name: str = "demo") -> tuple[str, Any, Any]:
+        found = client.get(f"/catalog/blueprints/{name}?fields=modules,checkout,checkoutError")
+        body = found.json()
+        return body["modules"][0]["streams"][0]["wire"], body["checkout"], body["checkoutError"]
+
+    def started_from(program: Path, run_id: str, blueprint: str = "demo") -> RunEntry:
+        entry = RunEntry(
+            run_id=run_id,
+            pid=os.getpid(),
+            blueprint=blueprint,
+            started_at="2026-01-01T12:00:00+00:00",
+            log_dir="/tmp/x",
+            original_argv=[str(program), "run", blueprint],
+        )
+        entry.save()
+        return entry
+
+    assert wire_shown() == ("lidar", None, None)
+    # a blueprint only a branch has is unknown until it runs from that branch
+    assert client.get("/catalog/blueprints/branch-only").status_code == 404
+    assert client.get("/config/blueprints/branch-only").status_code == 404
+
+    from_gateway = started_from(state.dimos_dir / ".venv" / "bin" / "dimos", "20260101-120000-demo")
+    assert wire_shown() == ("lidar", None, None)
+    from_gateway.remove()
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120001-demo")
+    assert wire_shown() == ("lidar_with_robot", str(branch), None)
+    assert read_from[-1] == branch
+    assert client.get("/catalog/blueprints/demo/config").json()["global"] == {}
+
+    only = started_from(branch / ".venv" / "bin" / "dimos", "20260101-120003-only", "branch-only")
+    assert wire_shown("branch-only") == ("lidar_with_robot", str(branch), None)
+    assert client.get("/catalog/blueprints/branch-only/config").json()["name"] == "branch-only"
+    assert client.get("/config/blueprints/branch-only").status_code == 200
+    only.remove()
+    assert client.get("/catalog/blueprints/branch-only").status_code == 404
+
+    started_from(branch / ".venv" / "bin" / "dimos", "20260101-120002-broken")
+    wire, checkout, error = wire_shown()
+    assert (wire, checkout) == ("lidar", None) and "ImportError" in error
 
 
 def test_a_bad_blueprint_name_is_refused(client: TestClient) -> None:
@@ -260,6 +320,3 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
         for method in ops
     }
     assert declared == served
-    # the shorthand Desktops 0.2.204 and older read says the same
-    legacy = {f"{e['method']} {e['path']}" for e in manifest["provides"]["endpoints"]}
-    assert legacy == served

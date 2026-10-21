@@ -325,8 +325,8 @@ export function ModuleView(
   },
 ) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const rpcs = module.rpcs ?? [];
-  const skills = module.skills ?? [];
+  const skills = (module.rpcs ?? []).filter((method) => method.skill);
+  const rpcs = (module.rpcs ?? []).filter((method) => !method.skill);
   const known = module.doc !== undefined;
   const expand = (key: string | null, spot: { topic: string } | null) => {
     setExpanded(key);

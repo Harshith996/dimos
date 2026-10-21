@@ -13,6 +13,7 @@ export interface Method {
   params: { name: string; type: string | null; default: string | null }[];
   return_type: string | null;
   doc: string;
+  skill: boolean;
 }
 
 export interface Module {
@@ -22,7 +23,6 @@ export interface Module {
   summary?: string;
   streams: Stream[];
   rpcs?: Method[];
-  skills?: Method[];
   file?: string | null;
   line?: number | null;
 }

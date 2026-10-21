@@ -17,14 +17,25 @@
 from __future__ import annotations
 
 from collections import deque
+import inspect
 import threading
 import time
 from typing import Any
 
-TOPIC = "/resource_stats"
-HISTORY = 60  # cpu samples per process (the monitor sends one a second)
+from dimos.core.resource_monitor.logger import LCMResourceLogger
+from dimos.core.resource_monitor.monitor import StatsMonitor
+
+
+def _default(function: Any, name: str) -> Any:
+    return inspect.signature(function).parameters[name].default
+
+
+TOPIC: str = _default(LCMResourceLogger, "topic")
+SAMPLE_S: float = _default(StatsMonitor, "interval")
+HISTORY_S = 60.0  # the API's "a minute of cpu history"
+HISTORY = round(HISTORY_S / SAMPLE_S)  # cpu samples kept per process
+STALE_S = 3 * SAMPLE_S  # three samples missed
 IDLE_S = 30.0  # nobody asked this long: unsubscribe
-STALE_S = 3.0
 
 
 class ProcessStats:

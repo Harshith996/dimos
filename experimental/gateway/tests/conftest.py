@@ -29,7 +29,7 @@ from experimental.gateway.state import State, new_state
 FAKE_DIMOS = """#!{python}
 import os, sys, time
 print("args", *sys.argv[1:], flush=True)
-print("secret", os.environ.get("TYPESAFE_API_KEY"), flush=True)
+print("secret", os.environ.get("AGENT__API_KEY"), flush=True)
 print("dtop", os.environ.get("DTOP"), flush=True)
 if "fail" in sys.argv:
     print("ValueError: no robot answered", flush=True)
@@ -44,7 +44,6 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "state" / "runs")
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr(launches, "coordinator_on_bus", lambda: False)
     monkeypatch.delenv("DIMOS_ZENOH_NAMESPACE", raising=False)
     return tmp_path
 
