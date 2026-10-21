@@ -16,9 +16,10 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import _nav_stack, _viewer
+from dimos.robot.unitree.g1.blueprints.navigation._g1_navigation import g1_navigation
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.control_safety import COMMAND_TIMEOUT_SECONDS
+from dimos.robot.unitree.g1.g1_rerun import g1_viewer
 from dimos.robot.unitree.g1.motor_device import G1MotorConfig
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 
@@ -50,4 +51,8 @@ _unitree_g1_sonic_wbc_core = (
     .global_config(robot_model="unitree_g1")
 )
 
-unitree_g1_sonic_wbc = autoconnect(_unitree_g1_sonic_wbc_core, _nav_stack, _viewer())
+unitree_g1_sonic_wbc = autoconnect(
+    _unitree_g1_sonic_wbc_core,
+    g1_navigation(simulated=_simulated),
+    g1_viewer(global_config.viewer, simulated=_simulated, joint_topic="joint_state"),
+)
