@@ -28,18 +28,13 @@ from pydantic import BeforeValidator
 
 from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
+from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
 from experimental.gateway.process_stats import ProcessStats
 from experimental.gateway.rpcs import Rpcs
 
 API_VERSION = "6.0.0"
 INTROSPECT_TTL_S = 600.0
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 @dataclass
@@ -69,6 +64,7 @@ class State:
                 lambda: introspect.run_child(dimos_dir, args, stdin, python=python),
             )
         except introspect.IntrospectError as error:
+            # introspect.py also runs alone in other checkouts, so its error can't import errors.py's StatusError
             raise ApiError(500, str(error))
 
     async def relist(self) -> list[str]:

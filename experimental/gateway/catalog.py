@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from experimental.gateway import robots
+from experimental.gateway.errors import StatusError
 
 SCAN_FIELDS = ("importable", "import_error", "missing_module", "optional_dependency")
 
@@ -124,8 +125,8 @@ def errors(cache: dict[str, Any] | None) -> list[str]:
     return found + [e for e in cache.get("errors", []) if e.startswith("module ")]
 
 
-class FieldError(ValueError):
-    pass
+class FieldError(StatusError, ValueError):
+    status = 400
 
 
 def pick(answer: dict[str, Any], fields: str | None) -> dict[str, Any]:

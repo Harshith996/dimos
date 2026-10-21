@@ -92,10 +92,7 @@ async def get_global() -> dict[str, Any]:
 async def put_global(update: GlobalUpdate) -> dict[str, Any]:
     check_keys(update.overrides)
     values = ov.keep_hidden(dict(update.overrides), store.global_config_overrides())
-    try:
-        ov.check_global(values)
-    except ValueError as error:
-        raise ApiError(400, str(error))
+    ov.check_global(values)
     await asyncio.to_thread(store.set_global_config_overrides, values)
     return await global_config()
 
