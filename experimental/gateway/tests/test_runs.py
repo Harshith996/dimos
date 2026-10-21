@@ -62,6 +62,7 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     assert started.status_code == 200, started.text
     assert started.json()["phase"] == "starting"
     until(output_has(client, "secret k1"))
+    until(output_has(client, "dtop 1"))
     launch = client.get("/runs").json()["launch"]
     assert "--n-workers=4" in launch["output"] and "--replay" in launch["output"]
     assert "--viewer=none" in launch["output"]

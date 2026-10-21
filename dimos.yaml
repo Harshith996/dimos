@@ -14,7 +14,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 5.0.0
+    version: 5.1.0
     description: >-
       The dimos gateway: the catalog of blueprints, modules, skills and robots; their saved config; and runs (launch, stop,
       logs, skills). Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
@@ -181,6 +181,11 @@ provides:
       get:
         description: >-
           The running run's log, or the latest run's when nothing runs, from ?after= on (?level=, ?q=, ?limit=)
+    /runs/stats:
+      get:
+        description: >-
+          dtop for the running blueprint: cpu, memory, threads, fds and io per process (coordinator, workers, their children),
+          with a minute of cpu history; up false until its /resource_stats is heard (launches from here run with dtop)
     /runs/restart:
       post:
         summary: Stop the run {runId} and launch it again

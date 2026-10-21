@@ -266,3 +266,9 @@ async def past_log(
     limit: int | None = None,
 ) -> dict[str, Any]:
     return await read_log(state, run_id, after, level, q, limit)
+
+
+@router.get("/runs/stats", response_model=responses.ProcessStats)
+async def process_stats(state: GatewayState) -> dict[str, Any]:
+    """dtop for the running blueprint: cpu, memory, threads, fds and io per process, with a minute of cpu history."""
+    return await asyncio.to_thread(state.process_stats.snapshot)

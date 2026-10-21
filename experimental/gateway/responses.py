@@ -429,6 +429,17 @@ class RunLog(Body):
     loggers: list[str]
 
 
+class ProcessStats(Body):
+    """dtop's numbers for the running blueprint (its /resource_stats, sent when it runs with `dtop`): `up` false until heard."""
+
+    up: bool
+    age: float | None
+    stale: bool
+    coordinator: dict[str, Any] | None
+    workers: list[dict[str, Any]]
+    cpuHistory: dict[str, list[float]]
+
+
 class SkillRun(Body):
     runId: str | None
     blueprint: str | None

@@ -28,6 +28,12 @@ from experimental.gateway.routes import catalog, config, jobs, runs, server
 from experimental.gateway.state import API_VERSION, ApiError, State, site_dirs
 
 
+async def drop_idle_stats(state: State) -> None:
+    while True:
+        await asyncio.sleep(10)
+        await asyncio.to_thread(state.process_stats.stop_if_idle)
+
+
 def create_app(state: State, background: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -38,6 +44,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
             state.background += [
                 asyncio.create_task(events.watch_launch(state.bus)),
                 asyncio.create_task(watch),
+                asyncio.create_task(drop_idle_stats(state)),
             ]
         yield
         for task in state.background:
