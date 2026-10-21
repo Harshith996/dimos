@@ -19,6 +19,7 @@ import asyncio
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
 from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -127,6 +128,11 @@ def test_restart_before_run(app):
         app.restart(StressTestModule)
 
 
+def test_unload_before_run(app):
+    with pytest.raises(RuntimeError, match="No modules are running"):
+        app.unload(StressTestModule)
+
+
 def test_stop_is_idempotent(app):
     app.run(StressTestModule)
     app.stop()
@@ -232,33 +238,58 @@ def test_restart_no_reload(running_app):
     assert result == "pong"
 
 
+def test_unload_removes_only_that_module(running_app):
+    running_app.run(TickerModule)
+
+    running_app.unload(TickerModule)
+
+    assert "TickerModule" not in running_app._source.list_module_names()
+    assert running_app.skills.ping() == "pong"
+
+
+def test_unload_module_that_is_not_running(running_app):
+    with pytest.raises(ValueError, match="TickerModule is not deployed"):
+        running_app.unload(TickerModule)
+
+
 def test_skills_accessible(running_app):
     skills = running_app.skills
     assert "ping" in dir(skills)
 
 
 def test_connected_run_by_name_adds_module(running_app, client):
-    client.run("mcp-server")
-    assert "McpServer" in client._source.list_module_names()
-    assert "McpServer" in running_app._source.list_module_names()
+    client.run("demo-calculator-skill")
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
+    assert "DemoCalculatorSkill" in running_app._source.list_module_names()
     assert {module.instance_name for module in client.list_modules()} >= {
         "StressTestModule",
-        "McpServer",
+        "DemoCalculatorSkill",
     }
 
 
 def test_connected_run_by_class_adds_module(client):
-    client.run(McpServer)
-    assert "McpServer" in client._source.list_module_names()
+    client.run(DemoCalculatorSkill)
+    assert "DemoCalculatorSkill" in client._source.list_module_names()
 
 
-def test_connected_run_by_blueprint_object(client):
-    client.run(McpServer.blueprint())
+def test_connected_run_by_blueprint_object(client, mcp_port, mcp_url):
+    client.run(McpServer.blueprint(host="localhost", port=mcp_port))
     assert "McpServer" in client._source.list_module_names()
+    assert client.McpServer.mcp_url() == mcp_url
 
 
 def test_connected_restart_no_reload(client):
     client.restart(StressTestModule, reload_source=False)
+    assert client.skills.ping() == "pong"
+
+
+def test_connected_unload_removes_only_that_module(running_app, client):
+    client.run(TickerModule)
+
+    client.unload(TickerModule)
+
+    assert "TickerModule" not in client._source.list_module_names()
+    assert "TickerModule" not in running_app._source.list_module_names()
     assert client.skills.ping() == "pong"
 
 
