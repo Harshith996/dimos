@@ -398,7 +398,7 @@ def test_an_empty_file_request_sends_robot_description_right_away(make_filter, m
     assert [message.data for message in sent] == [module._urdf_xml]
 
 
-def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_captures_drop(
+def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
     make_filter: Callable[..., UrdfManager],
 ) -> None:
     module = make_filter()
@@ -413,9 +413,11 @@ def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_late_capture
     assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
     np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
-    # a capture older than one already published is out of order
+    # a second sensor on the same input lags the first: its older capture is matched to its own capture time
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
-    assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]], ts=1.0)) is None
+    late = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=1.0))
+    assert late is not None
+    np.testing.assert_allclose(late.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
 
 
 def test_with_self_filter_off_no_cloud_is_filtered_or_published(

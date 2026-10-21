@@ -98,7 +98,6 @@ class UrdfManager(Module):
         super().__init__(**kwargs)
         self._filter_lock = RLock()
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
-        self._last_capture: float | None = None
         self._load_scene()
         self._next_joint_tf_t = 0.0
         self._last_urdf_on_request_t = -1.0
@@ -208,10 +207,10 @@ class UrdfManager(Module):
 
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
         with self._filter_lock:
-            if not np.isfinite(cloud.ts) or (
-                self._last_capture is not None and cloud.ts < self._last_capture
-            ):
-                logger.warning("Dropping cloud: invalid or out-of-order capture timestamp")
+            # A capture older than the last one is still filtered: sensors sharing the input (a lidar, a lagging depth
+            # camera) interleave, and each is matched to the state and tf at its own capture time.
+            if not np.isfinite(cloud.ts):
+                logger.warning("Dropping cloud: invalid capture timestamp")
                 return None
             points = cloud.points_f32()
             if not np.isfinite(points).all():
@@ -222,7 +221,6 @@ class UrdfManager(Module):
             filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
             for name, values in cloud.pointcloud_tensor.point.items():
                 filtered.pointcloud_tensor.point[name] = values[keep]
-            self._last_capture = cloud.ts
             return filtered
 
     def _on_pointcloud(self, cloud: PointCloud2) -> None:
