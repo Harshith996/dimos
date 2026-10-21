@@ -276,7 +276,7 @@ from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.localize import LocalizeTrace
-from dimos.perception.localize.rig import Rig, RigCamera, _camera_span, RigCamera
+from dimos.perception.localize.rig import Rig, RigCamera
 from dimos.perception.localize.tools.tool_localize import render
 from dimos.protocol.tf.tf import MultiTBuffer
 with MemoryStore() as memory:
@@ -360,6 +360,8 @@ def test_camera_travel_uses_generated_tf_positions(memory):
     tf = MultiTBuffer(buffer_size=100)
     for ts in range(12):
         tf.receive_transform(_transform("world", "camera", ts * 0.5, ts=float(ts)))
-    info = camera_info_from_intrinsics(1, 1, 1, 1, 2, 2)
+    info = camera_info_from_intrinsics(
+        1, 1, 1, 1, 2, 2, header=Header(stamp=time_from_seconds(0), frame_id="camera")
+    )
     cameras = {"camera": RigCamera(info=info, color=color, depth=None)}
     assert _camera_span(cameras, tf, "world") == 5.5
