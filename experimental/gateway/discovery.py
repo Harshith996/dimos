@@ -264,16 +264,20 @@ class Scanner:
         ok = False
         try:
             problem = await self.child(None)
+            tried: Any = None
             while problem is not None and any(self.pending()):
                 current = self.current or ""
                 self.error(f"{current}: {problem}")
                 if current in self.pending()[0]:
                     self.blueprints[current] = failed_record(current, problem)
-                elif current and current.startswith("module:"):
+                elif current.startswith("module:"):
                     self.finished_modules.add(current[7:])
-                else:
-                    break
-                blueprints, modules = self.pending()
+                # else the child died between items (after a blueprint's record): go on with what's left
+                if self.pending() == tried:
+                    left = sum(map(len, tried))
+                    raise RuntimeError(f"the scan child keeps exiting ({problem}) with {left} left")
+                tried = self.pending()
+                blueprints, modules = tried
                 request = {
                     "blueprints": blueprints,
                     "modules": modules,

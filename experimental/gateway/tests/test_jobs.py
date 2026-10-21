@@ -32,7 +32,7 @@ def emit(value):
     print("\\n{marker}" + json.dumps(value), flush=True)
 names = request.get("blueprints")
 if names is None:
-    names = ["good", "crashes", "missing"]
+    names = json.loads(os.environ.get("FAKE_SCAN_NAMES", '["good", "crashes", "missing"]'))
     emit({{"kind": "names", "blueprints": names, "modules": ["cam"]}})
 for name in names:
     emit({{"kind": "start", "name": name}})
@@ -43,6 +43,8 @@ for name in names:
           "importable": ok, "optional_dependency": False, "import_error": None if ok else "ModuleNotFoundError: x",
           "missing_module": None if ok else "unitree_sdk2py", "doc": "",
           "modules": [{{"name": "cam", "class": "x.Cam", "module": "cam", "streams": []}}] if ok else []}})
+    if name == "dies_after":
+        os._exit(3)
     if ok and request.get("modules") == []:
         emit({{"kind": "module", "name": "cam", "class": "x.Cam", "doc": "A rescanned camera.", "inputs": [],
               "outputs": [], "skills": [{{"name": "snap", "doc": "", "params": []}}]}})
@@ -87,6 +89,17 @@ def test_the_scan_survives_a_restart_and_says_when_the_checkout_changed(
     (checkout / "blueprint.py").write_text("x = 2\n")
     after = discovery.Scanner(checkout, scanned.jobs, ["false"])
     assert after.snapshot()["stale"] and after.catalog()["modules"][0]["name"] == "cam"
+
+
+def test_a_child_dying_right_after_a_record_still_scans_the_rest(
+    client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_SCAN_NAMES", '["dies_after", "good", "missing"]')
+    scanned.listed = [{"name": n, "kind": "builtin"} for n in ("dies_after", "good", "missing")]
+    job = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert client.get(f"/jobs/{job}").json()["ok"]
+    assert set(scanned.scanner.cache()["results"]) == {"dies_after", "good", "missing"}
 
 
 def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
