@@ -98,10 +98,7 @@ def _hardware_component(
     )
 
 
-# At the folded rest pose the arm sits on its joint 2 and 3 stops and the upper
-# arm, forearm and shoulder collision meshes touch; with the calibrated joint 3
-# zero offsets of dual_openyam_workcell_v2 they overlap by a few millimetres.
-# The joint limits already keep these links apart everywhere else.
+# These pairs overlap by a few mm at the folded rest pose.
 DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
     (f"{side}_link{a}", f"{side}_link{b}")
     for side in DUAL_OPENYAM_SIDES
