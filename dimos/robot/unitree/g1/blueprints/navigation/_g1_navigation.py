@@ -22,7 +22,7 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.model.config import G1
 
 
 def g1_navigation(*, simulated: bool) -> Blueprint:

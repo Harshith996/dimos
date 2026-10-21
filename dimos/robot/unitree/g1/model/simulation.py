@@ -17,14 +17,16 @@
 from dataclasses import replace
 from pathlib import Path
 
-from dimos.robot.unitree.g1.control_config import g1_joints
+from dimos.robot.unitree.g1.model.joints import g1_joints
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
-from dimos.sim2.sensors.spec import Camera, Imu, Lidar
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.spec import Joint, RobotConfig
 from dimos.utils.data import LfsPath
 
 G1 = RobotConfig(
-    model=Path(__file__).parent / "assets" / "g1_29dof.xml",
+    model=Path(__file__).parents[1] / "assets" / "g1_29dof.xml",
     meshdir=LfsPath("g1_urdf/meshes"),
     root_body="pelvis",
     floating=True,

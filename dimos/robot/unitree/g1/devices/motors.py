@@ -46,7 +46,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.unitree.g1.control_safety import (
+from dimos.robot.unitree.g1.devices.safety import (
     DAMPING_KD,
     FEEDBACK_TIMEOUT_SECONDS,
     JOINT_VELOCITY_LIMIT,

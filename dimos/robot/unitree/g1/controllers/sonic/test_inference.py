@@ -21,7 +21,7 @@ import numpy as np
 import onnxruntime as ort  # type: ignore[import-untyped]
 import pytest
 
-from dimos.control.sonic.sonic_pipeline import (
+from dimos.robot.unitree.g1.controllers.sonic.inference import (
     DEFAULT_ANGLES_DDS,
     DEFAULT_HEIGHT,
     NUM_JOINTS,
@@ -30,7 +30,7 @@ from dimos.control.sonic.sonic_pipeline import (
     WRISTS_OFFSET,
     SonicPipeline,
 )
-from dimos.robot.unitree.g1.control_safety import G1ControlError
+from dimos.robot.unitree.g1.devices.safety import G1ControlError
 
 
 @pytest.fixture
@@ -458,7 +458,7 @@ def test_failed_or_stuck_planner_raises_a_control_fault(
     velocity_pipeline._planner_future = future
     velocity_pipeline._planner_started_at = 10.0
     mocker.patch(
-        "dimos.control.sonic.sonic_pipeline.time.perf_counter",
+        "dimos.robot.unitree.g1.controllers.sonic.inference.time.perf_counter",
         return_value=10.0 + elapsed,
     )
 
@@ -472,7 +472,9 @@ def test_reset_discards_old_inference_before_starting_a_fresh_deadline(
     old, fresh = Future(), Future()
     old.set_running_or_notify_cancel()
     planner_requests.side_effect = [old, fresh]
-    clock = mocker.patch("dimos.control.sonic.sonic_pipeline.time.perf_counter", return_value=10.0)
+    clock = mocker.patch(
+        "dimos.robot.unitree.g1.controllers.sonic.inference.time.perf_counter", return_value=10.0
+    )
     _step(velocity_pipeline)
 
     velocity_pipeline.reset()
@@ -496,7 +498,9 @@ def test_reset_cannot_extend_a_stuck_planners_deadline(velocity_pipeline, planne
     running = Future()
     running.set_running_or_notify_cancel()
     planner_requests.return_value = running
-    clock = mocker.patch("dimos.control.sonic.sonic_pipeline.time.perf_counter", return_value=10.0)
+    clock = mocker.patch(
+        "dimos.robot.unitree.g1.controllers.sonic.inference.time.perf_counter", return_value=10.0
+    )
     _step(velocity_pipeline)
 
     clock.return_value = 10.8

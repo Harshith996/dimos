@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared GR00T joint ordering, home and gains; no policy execution dependencies."""
-
-from dimos.control.components import make_humanoid_joints
+"""GR00T-trained home pose and motor gains; no policy execution dependencies."""
 
 # The 29 DDS motor names plus the per-joint kp/kd values used with the
 # GR00T-trained policies. Diverging from these on real hardware risks
 # instability because the ONNX models were trained against this control
 # contract.
-g1_joints = make_humanoid_joints("g1")
-g1_legs_waist = g1_joints[:15]  # indices 0..14 - legs (12) + waist (3)
-g1_arms = g1_joints[15:]  # indices 15..28 - left arm (7) + right arm (7)
-
 G1_GROOT_KP: list[float] = [
     150.0,
     150.0,

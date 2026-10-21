@@ -27,7 +27,10 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.sonic_controller import SonicController, SonicControllerConfig
+from dimos.robot.unitree.g1.controllers.sonic.controller import (
+    SonicController,
+    SonicControllerConfig,
+)
 
 
 class G1SonicPolicyConfig(ModuleConfig, SonicControllerConfig):

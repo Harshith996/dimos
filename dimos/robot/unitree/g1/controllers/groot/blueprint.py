@@ -23,17 +23,19 @@ from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.unitree.g1.connection import G1Connection
-from dimos.robot.unitree.g1.control_config import (
+from dimos.robot.unitree.g1.controllers.groot.config import (
     G1_GROOT_KD,
     G1_GROOT_KP,
+)
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.devices.motors import G1MotorConfig
+from dimos.robot.unitree.g1.manipulation.config import G1_TELEOP_ARM_MODEL
+from dimos.robot.unitree.g1.manipulation.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.model.joints import (
     g1_arms,
     g1_joints,
     g1_legs_waist,
 )
-from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
-from dimos.robot.unitree.g1.motor_device import G1MotorConfig
-from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.utils.data import LfsPath
 
 G1_TELEOP_MODEL = RobotModelConfig(

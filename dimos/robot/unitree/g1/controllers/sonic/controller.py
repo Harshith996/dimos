@@ -31,16 +31,6 @@ from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import make_humanoid_joints
-from dimos.control.sonic.models import sonic_model_directory
-from dimos.control.sonic.sonic_pipeline import (
-    DEFAULT_ANGLES_DDS,
-    LOCOMOTION_MODES,
-    NUM_JOINTS,
-    SONIC_KD,
-    SONIC_KP,
-    SonicPipeline,
-)
-from dimos.control.sonic.streamed_motion import StreamedMotion
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -49,7 +39,17 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.unitree.g1.control_safety import (
+from dimos.robot.unitree.g1.controllers.sonic.inference import (
+    DEFAULT_ANGLES_DDS,
+    LOCOMOTION_MODES,
+    NUM_JOINTS,
+    SONIC_KD,
+    SONIC_KP,
+    SonicPipeline,
+)
+from dimos.robot.unitree.g1.controllers.sonic.models import sonic_model_directory
+from dimos.robot.unitree.g1.controllers.sonic.streamed_motion import StreamedMotion
+from dimos.robot.unitree.g1.devices.safety import (
     FEEDBACK_TIMEOUT_SECONDS,
     JOINT_VELOCITY_LIMIT,
     G1ControlError,

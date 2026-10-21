@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 import pytest_asyncio
 
-from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -27,14 +26,17 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
+from dimos.robot.unitree.g1.controllers.sonic.inference import DEFAULT_ANGLES_DDS
+from dimos.robot.unitree.g1.controllers.sonic.module import G1SonicPolicyModule
 
 
 @pytest_asyncio.fixture
 async def connection(mocker, tmp_path):
     model = tmp_path / "model.onnx"
     model.touch()
-    pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline").return_value
+    pipeline = mocker.patch(
+        "dimos.robot.unitree.g1.controllers.sonic.controller.SonicPipeline"
+    ).return_value
     pipeline.step.return_value = np.ones(29, dtype=np.float32)
     pipeline.snapshot.return_value = {"stream_active": False}
     c = G1SonicPolicyModule(
@@ -255,7 +257,7 @@ async def test_standard_inputs_drive_policy_and_publish_measured_state(connectio
 async def test_stream_command_expires_without_an_upstream_task(connection, mocker):
     _arm(connection)
     clock = mocker.patch(
-        "dimos.robot.unitree.g1.sonic_controller.time.perf_counter", return_value=3.0
+        "dimos.robot.unitree.g1.controllers.sonic.controller.time.perf_counter", return_value=3.0
     )
     await connection.handle_base_command(Twist(linear=Vector3(0.5, 0, 0)))
     _step(connection, 3.02)
@@ -311,7 +313,7 @@ def test_blueprint_routes_policy_commands_through_public_robot_connection(
     monkeypatch.setattr(global_config, "transport", "zenoh")
     mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
     blueprint = runpy.run_path(
-        str(Path(__file__).parent / "blueprints/basic/unitree_g1_sonic_wbc.py")
+        str(Path(__file__).parents[2] / "blueprints/basic/unitree_g1_sonic_wbc.py")
     )["unitree_g1_sonic_wbc"]
 
     modules = {atom.module.__name__ for atom in blueprint.active_blueprints}

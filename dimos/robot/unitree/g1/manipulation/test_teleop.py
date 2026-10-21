@@ -39,19 +39,19 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1ManipulationModule,
     unitree_g1_teleop,
 )
-from dimos.robot.unitree.g1.blueprints.primitive._groot_control import G1_TELEOP_MODEL
-from dimos.robot.unitree.g1.control_config import (
-    g1_arms,
-    g1_joints,
-    g1_legs_waist,
-)
-from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.manip_config import (
+from dimos.robot.unitree.g1.controllers.groot.blueprint import G1_TELEOP_MODEL
+from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.manipulation.config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
-from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.manipulation.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.model.joints import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 

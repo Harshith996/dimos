@@ -44,20 +44,22 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree.g1.control_config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP, g1_joints
-from dimos.robot.unitree.g1.motor_device import G1MotorConfig, G1MotorDevice
-from dimos.robot.unitree.g1.sim2 import g1_definition
+from dimos.robot.unitree.g1.controllers.groot.config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
+from dimos.robot.unitree.g1.devices.motors import G1MotorConfig, G1MotorDevice
+from dimos.robot.unitree.g1.model.config import G1_URDF_PATH
+from dimos.robot.unitree.g1.model.joints import g1_joints
+from dimos.robot.unitree.g1.model.simulation import g1_definition
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.module import SimulationSpec
-from dimos.sim2.scene import scene_robot
 from dimos.sim2.spec import RobotInstance
+from dimos.sim2.world.scene import scene_robot
 from dimos.spec.utils import Spec
 from dimos.utils.data import LfsPath
 
 _JOINTS = [name.split("/", 1)[1] for name in g1_joints]
 _MODEL = RobotModel.from_file(
-    Path(__file__).with_name("g1.urdf"), package_paths={"g1": LfsPath("g1_urdf")}
+    G1_URDF_PATH, package_paths={"g1": LfsPath("g1_urdf")}
 ).with_renamed_joints({name + "_joint": name for name in _JOINTS})
 
 
@@ -147,7 +149,11 @@ class G1Connection(ConnectionModule):
         home, kp, kd = G1_GROOT_HOME, G1_GROOT_KP, G1_GROOT_KD
         if config.controller == "sonic":
             # SONIC remains optional; loading physical G1 assets needs no inference package.
-            from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS, SONIC_KD, SONIC_KP
+            from dimos.robot.unitree.g1.controllers.sonic.inference import (
+                DEFAULT_ANGLES_DDS,
+                SONIC_KD,
+                SONIC_KP,
+            )
 
             home, kp, kd = list(DEFAULT_ANGLES_DDS), list(SONIC_KP), list(SONIC_KD)
         instance = scene_robot(

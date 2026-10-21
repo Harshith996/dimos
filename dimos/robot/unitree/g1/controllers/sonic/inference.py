@@ -41,15 +41,15 @@ import numpy as np
 from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
-from dimos.control.sonic.sonic_onnx_runtime import (
+from dimos.robot.unitree.g1.controllers.sonic.onnx import (
     create_sonic_session,
     prepare_sonic_onnx_runtime,
 )
-from dimos.control.sonic.streamed_motion import (
+from dimos.robot.unitree.g1.controllers.sonic.streamed_motion import (
     StreamedMotion,
     StreamedMotionMerger,
 )
-from dimos.robot.unitree.g1.control_safety import G1ControlError
+from dimos.robot.unitree.g1.devices.safety import G1ControlError
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

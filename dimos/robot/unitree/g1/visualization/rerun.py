@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from functools import cache
 from importlib import import_module
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,6 +27,7 @@ import rerun.blueprint as rrb
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.robot.unitree.g1.model.config import G1_URDF_PATH
 from dimos.visualization.rerun.constants import ViewerBackend
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
@@ -127,7 +127,7 @@ def _g1_nav_path(path: NavPath) -> Any:
 @cache
 def _g1_pelvis_to_mid360() -> Any:
     """Rest-pose pelvis-to-lidar transform, loaded only for hardware visualization."""
-    urdf_path = Path(__file__).with_name("g1.urdf")
+    urdf_path = G1_URDF_PATH
     urdf = import_module("yourdfpy").URDF.load(str(urdf_path), load_meshes=False)
     urdf.update_cfg(np.zeros(len(urdf.actuated_joint_names)))
     return urdf.get_transform("mid360_link", "pelvis")

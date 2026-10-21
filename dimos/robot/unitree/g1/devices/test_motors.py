@@ -22,15 +22,15 @@ import pytest
 
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.control_safety import (
-    COMMAND_TIMEOUT_SECONDS,
-    DAMPING_KD,
-)
-from dimos.robot.unitree.g1.motor_device import (
+from dimos.robot.unitree.g1.devices.motors import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
     G1MotorConfig,
     G1MotorDevice,
+)
+from dimos.robot.unitree.g1.devices.safety import (
+    COMMAND_TIMEOUT_SECONDS,
+    DAMPING_KD,
 )
 
 
@@ -38,7 +38,7 @@ from dimos.robot.unitree.g1.motor_device import (
 def clock(mocker):
     clock = SimpleNamespace(now=10.0)
     mocker.patch(
-        "dimos.robot.unitree.g1.motor_device.time.perf_counter",
+        "dimos.robot.unitree.g1.devices.motors.time.perf_counter",
         side_effect=lambda: clock.now,
     )
     return clock
@@ -288,7 +288,7 @@ def test_missing_first_feedback_is_reported_without_taking_control(connection, m
     connection._sport_mode_released = False
     connection._last_feedback_at = None
     release = mocker.patch.object(connection, "_release_sport_mode")
-    warning = mocker.patch("dimos.robot.unitree.g1.motor_device.logger.warning")
+    warning = mocker.patch("dimos.robot.unitree.g1.devices.motors.logger.warning")
 
     connection.write(_command())
     connection.write(_command())
