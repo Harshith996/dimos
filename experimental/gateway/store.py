@@ -42,6 +42,7 @@ def logs_dir() -> Path:
 
 
 def recordings_dir() -> Path:
+    # Desktop's shared recordings folder (its server_env); dimos's own otherwise
     configured = os.environ.get("DIMOS_RECORDINGS_DIR")
     return Path(configured).expanduser() if configured else RECORDINGS_DIR
 

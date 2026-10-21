@@ -25,7 +25,6 @@ from experimental.gateway.state import ApiError, GatewayState, State
 router = APIRouter(prefix="/catalog")
 # imports dimos in a child process: seconds
 SLOW = {"x-slow": True}
-MAX_ERRORS = 200
 
 
 def check_name(name: str) -> None:
@@ -102,10 +101,10 @@ async def everything(
     blueprint: str | None = None,
     fields: str | None = None,
 ) -> dict[str, Any]:
-    """Every blueprint, module, skill and robot from the last scan, with how stale it is.
+    """Every blueprint, module, RPC and robot from the last scan, with how stale it is.
 
-    ?module= (a name or class) keeps that module, its skills and the blueprints using it; ?blueprint= keeps that
-    blueprint, its modules and their skills.
+    ?module= (a name or class) keeps that module, its RPCs and the blueprints using it; ?blueprint= keeps that
+    blueprint, its modules and their RPCs.
     """
     entries = await listed(state)
     notes = await asyncio.to_thread(
@@ -125,10 +124,10 @@ async def everything(
     answer = {
         "blueprints": blueprints,
         "modules": modules,
-        "skills": [s for s in catalog.skills(cache) if s["module"] in kept],
+        "rpcs": [r for r in catalog.rpcs(cache) if r["module"] in kept],
         "robots": catalog.robot_list(notes),
         "types": notes.get("types", {}),
-        "errors": catalog.errors(cache, MAX_ERRORS),
+        "errors": catalog.errors(cache),
         "scan": await scan(state),
     }
     return picked(answer, fields)
@@ -155,7 +154,7 @@ async def blueprints(state: GatewayState, fields: str | None = None) -> dict[str
 
 @router.get("/blueprints/{name}", response_model=responses.BlueprintDetail, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str, fields: str | None = None) -> dict[str, Any]:
-    """A blueprint, plus its file and line and its modules' streams, RPCs and skills.
+    """A blueprint, plus its file and line and its modules' streams and RPCs.
 
     While it runs from another checkout (a branch started in a terminal), it's read from that one, so the modules,
     streams and remappings are the live ones (and a blueprint only that checkout has is found); `checkout` names it,
@@ -214,10 +213,10 @@ async def modules(state: GatewayState, fields: str | None = None) -> dict[str, A
 
 @router.get("/modules/{name}", response_model=responses.ModuleDetail, openapi_extra=SLOW)
 async def module(state: GatewayState, name: str) -> dict[str, Any]:
-    """A module, the blueprints using it, and its RPCs and skills (`name` is its registry name or class)."""
+    """A module, the blueprints using it, and its RPCs (`name` is its registry name or class)."""
     found = await importable_module(state, name)
     detail = await state.introspected(["module", found["class"]])
-    return {**found, **{k: detail[k] for k in ("rpcs", "skill_methods", "file", "line")}}
+    return {**found, **{k: detail[k] for k in ("rpcs", "file", "line")}}
 
 
 @router.get("/modules/{name}/config", response_model=responses.ModuleSchema, openapi_extra=SLOW)
@@ -227,24 +226,24 @@ async def module_config(state: GatewayState, name: str) -> Any:
     return await state.introspected(["module_config", found["class"]])
 
 
-@router.get("/skills", response_model=responses.CatalogSkills)
-async def skills(
+@router.get("/rpcs", response_model=responses.CatalogRpcs)
+async def rpcs(
     state: GatewayState, namespace: str | None = None, fields: str | None = None
 ) -> dict[str, Any]:
-    """Every skill the last scan found; ?namespace= names them as that namespace would. The running blueprint's are at /runs/skills."""
-    found = catalog.skills(state.scanner.cache(), namespace)
-    return picked({"skills": found, "scan": await scan(state)}, fields)
+    """Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that namespace would. The running blueprint's are at /runs/rpcs."""
+    found = catalog.rpcs(state.scanner.cache(), namespace)
+    return picked({"rpcs": found, "scan": await scan(state)}, fields)
 
 
-@router.get("/skills/{module}/{skill}", response_model=responses.CatalogSkill)
-async def skill(
-    state: GatewayState, module: str, skill: str, namespace: str | None = None
+@router.get("/rpcs/{module}/{name}", response_model=responses.CatalogRpc)
+async def rpc(
+    state: GatewayState, module: str, name: str, namespace: str | None = None
 ) -> dict[str, Any]:
     wanted = f"{namespace}/{module}" if namespace else module
-    for found in catalog.skills(state.scanner.cache(), namespace):
-        if found["name"] == skill and found["module"] in (module, wanted):
+    for found in catalog.rpcs(state.scanner.cache(), namespace):
+        if found["name"] == name and found["module"] in (module, wanted):
             return found
-    raise ApiError(404, f"no skill {module}/{skill} in the last scan")
+    raise ApiError(404, f"no RPC {module}/{name} in the last scan")
 
 
 @router.get("/robots", response_model=responses.Robots)

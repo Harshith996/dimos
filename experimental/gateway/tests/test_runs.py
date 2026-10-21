@@ -52,8 +52,10 @@ def launched(client: TestClient) -> Any:
 def test_launch_runs_dimos_with_saved_and_one_off_config(
     client: TestClient, launched: None
 ) -> None:
-    client.put("/config/global", json={"overrides": {"n_workers": 3, "typesafe_api_key": "k1"}})
-    store.set_blueprint_config("demo", {"n_workers": 5, "viewer": "none"}, {})
+    client.put("/config/global", json={"overrides": {"n_workers": 3}})
+    store.set_blueprint_config(
+        "demo", {"n_workers": 5, "viewer": "none"}, {"agent": {"api_key": "k1"}}
+    )
     started = client.post(
         "/runs", json={"blueprint": "demo", "config": {"global": {"n_workers": 4, "replay": True}}}
     )
@@ -66,7 +68,7 @@ def test_launch_runs_dimos_with_saved_and_one_off_config(
     assert "--viewer=none" in launch["output"]
     assert f"run --run-id {launch['runId']} demo" in launch["output"].splitlines()[0]
     assert "k1" not in launch["output"].splitlines()[0]
-    assert launch["overrides"]["typesafe_api_key"] == ov.HIDDEN
+    assert launch["modules"]["agent"]["api_key"] == ov.HIDDEN
     assert launch["oneOff"]["global"] == {"n_workers": 4, "replay": True}
     again = client.post("/runs", json={"blueprint": "demo"})
     assert again.status_code == 400
@@ -105,6 +107,15 @@ def test_a_module_launches_like_a_blueprint_and_exec_runs_args_as_typed(
     until(output_has(client, "args"))
     again = client.get("/runs").json()["launch"]["output"].splitlines()[0]
     assert again.endswith("demo --n-workers=7") and "--n-workers=3" not in again
+    client.post("/runs/stop", json={"runId": restarted.json()["runId"]})
+    until(lambda: client.get("/runs").json()["launch"]["phase"] == "stopped")
+    bare = client.post("/runs/exec", json={"args": ["demo"]})
+    until(output_has(client, "args"))
+    restarted = client.post("/runs/restart", json={"runId": bare.json()["runId"]})
+    assert restarted.status_code == 200, restarted.text
+    until(output_has(client, "args"))
+    again = client.get("/runs").json()["launch"]["output"].splitlines()[0]
+    assert again.endswith(f"run --run-id {restarted.json()['runId']} demo")
 
 
 def test_a_failed_launch_reports_its_last_output_line(client: TestClient) -> None:
@@ -216,3 +227,25 @@ def test_run_logs_now_and_past(client: TestClient, home: Path) -> None:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
     tail = client.get(f"/runs/logs?after={page['offset']}").json()
     assert [r["event"] for r in tail["records"]] == ["later"]
+
+
+def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.core.global_config import GlobalConfig
+
+    monkeypatch.setenv(launches.DTOP_ENV, "1")
+    assert GlobalConfig().dtop is True
+
+
+def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
+    import os
+
+    launches._save(
+        {
+            "blueprint": "demo",
+            "started_at": "x",
+            "pid": os.getpid(),
+            "pid_started": 0.0,
+            "run_id": "r",
+        }
+    )
+    assert launches.current_launch()["phase"] == "failed"

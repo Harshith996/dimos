@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, JsonValue
 
 from experimental.gateway import overrides as ov, responses, store
 from experimental.gateway.routes.catalog import find_blueprint
-from experimental.gateway.state import ApiError, GatewayState, State
+from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter(prefix="/config")
 
@@ -53,7 +53,7 @@ async def global_config() -> dict[str, Any]:
     shown, _ = ov.redact(store.global_config_overrides(), {}, secrets)
     return {
         "schema": schema,
-        "defaults": {**defaults, **ov.LAUNCH_GLOBAL_DEFAULTS},
+        "defaults": defaults,
         "overrides": shown,
         "secrets": secrets,
     }
@@ -73,23 +73,13 @@ def shown_blueprint(name: str) -> dict[str, Any]:
     return {"name": name, "global": global_, "modules": modules}
 
 
-async def problems(
-    state: State, name: str, global_: dict[str, Any], modules: ov.ModuleValues
-) -> list[dict[str, str]]:
-    """Every key dimos would refuse, as {key, error}."""
-    found = []
+def problems(global_: dict[str, Any]) -> list[dict[str, str]]:
+    """The global values dimos would refuse, as {key, error}; module values are dimos run's to check at launch."""
     try:
         ov.check_global(ov.merge(store.global_config_overrides(), global_))
     except ValueError as error:
-        found.append({"key": "global", "error": str(error)})
-    flags = ov.module_flags(modules)
-    if flags:
-        checked = await state.introspected(["args", name], flags)
-        for arg in checked["args"]:
-            if arg["error"]:
-                key = arg["target"] or " ".join(arg["tokens"])
-                found.append({"key": f"modules.{key.lstrip('-')}", "error": arg["error"]})
-    return found
+        return [{"key": "global", "error": str(error)}]
+    return []
 
 
 @router.get("/global", response_model=responses.GlobalConfig)
@@ -119,7 +109,7 @@ async def get_blueprint(state: GatewayState, name: str) -> dict[str, Any]:
 
 @router.put("/blueprints/{name}", response_model=responses.BlueprintConfigValues)
 async def put_blueprint(state: GatewayState, name: str, update: BlueprintUpdate) -> Any:
-    """Replace the values saved for this blueprint; a 400 lists every key dimos would refuse."""
+    """Replace the values saved for this blueprint; a 400 if a global value isn't one dimos takes (module values are checked by dimos run at launch)."""
     await find_blueprint(state, name)
     check_keys(update.global_)
     saved = store.blueprint_config(name)
@@ -127,7 +117,7 @@ async def put_blueprint(state: GatewayState, name: str, update: BlueprintUpdate)
     modules = {
         m: ov.keep_hidden(dict(f), saved["modules"].get(m, {})) for m, f in update.modules.items()
     }
-    found = await problems(state, name, global_, modules)
+    found = problems(global_)
     if found:
         message = "; ".join(f"{p['key']}: {p['error']}" for p in found)
         return JSONResponse({"error": message, "problems": found}, status_code=400)

@@ -30,10 +30,10 @@ from experimental.gateway import events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.launches import RunSource
 from experimental.gateway.process_stats import ProcessStats
-from experimental.gateway.skills import Skills
+from experimental.gateway.rpcs import Rpcs
 from experimental.gateway.uploads import Uploads
 
-API_VERSION = "5.2.0"
+API_VERSION = "6.0.0"
 INTROSPECT_TTL_S = 600.0
 
 
@@ -50,7 +50,7 @@ class State:
     uploads: Uploads
     scanner: Scanner
     jobs: Jobs = field(default_factory=Jobs)
-    skills: Skills = field(default_factory=Skills)
+    rpcs: Rpcs = field(default_factory=Rpcs)
     process_stats: ProcessStats = field(default_factory=ProcessStats)
     cache: introspect.Cache = field(default_factory=introspect.Cache)
     listed: list[dict[str, Any]] | None = None
