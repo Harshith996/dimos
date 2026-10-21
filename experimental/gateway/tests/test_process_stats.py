@@ -102,10 +102,10 @@ def test_nobody_asking_drops_the_subscriber(monkeypatch: Any) -> None:
 def test_the_route_answers_the_snapshot(client: TestClient, state: State) -> None:
     made: list[FakeTransport] = []
     state.process_stats = ProcessStats(lambda topic: made.append(FakeTransport(topic)) or made[-1])
-    answer = client.get("/runs/stats")
+    answer = client.get("/active/stats")
     assert answer.status_code == 200, answer.text
     assert answer.json()["up"] is False
     made[0].send(stats_message(7.0))
-    shown = client.get("/runs/stats").json()
+    shown = client.get("/active/stats").json()
     assert shown["up"] is True
     assert shown["cpuHistory"]["worker:0"] == [14.0]
