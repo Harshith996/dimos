@@ -215,6 +215,9 @@ struct Shared {
     lost: Notify,
     /// bumped by stop, damp and teardown: a verb started under an older value gives up at its next step
     cancels: AtomicU64,
+    /// held by the verb running and by the start sequence: one thing drives the robot at a time
+    turn: tokio::sync::Mutex<()>,
+    session: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Shared {
@@ -269,6 +272,11 @@ impl Shared {
     async fn shut_down(&self) {
         self.stopping.store(true, Ordering::Relaxed);
         self.cancels.fetch_add(1, Ordering::Relaxed);
+        if let Some(session) = self.session.lock().unwrap().take() {
+            session.abort();
+        }
+        // what was driving the robot gives up at its next step; wait for that before lying down
+        let _turn = self.turn.lock().await;
         let _ = self.stop_movement().await;
         // lie down before the link closes, as GO2Connection.stop does on every backend
         if let Err(err) = self.sport(STAND_DOWN, None).await {
@@ -593,6 +601,8 @@ impl Go2WebRtc {
             stopping: AtomicBool::new(false),
             lost: Notify::new(),
             cancels: AtomicU64::new(0),
+            turn: tokio::sync::Mutex::new(()),
+            session: Mutex::new(None),
         });
         self.shared = Some(shared.clone());
 
@@ -610,7 +620,10 @@ impl Go2WebRtc {
                 }) = queued.recv().await
                 {
                     let shown = format!("{verb:?}");
-                    let result = shared.run(verb, generation).await;
+                    let result = {
+                        let _turn = shared.turn.lock().await;
+                        shared.run(verb, generation).await
+                    };
                     if let Err(err) = &result {
                         warn!(verb = shown, "command failed: {err}");
                     }
@@ -662,7 +675,7 @@ impl Go2WebRtc {
                 Event::Lost => shared.lost.notify_one(),
             })
         };
-        tokio::spawn(session(shared.clone(), on_event));
+        *shared.session.lock().unwrap() = Some(tokio::spawn(session(shared.clone(), on_event)));
         // a parent that dies without stopping us (no parent-death signal on macOS) mustn't leave the robot held
         {
             let shared = shared.clone();
@@ -752,6 +765,9 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
                 if let Err(err) = link_up(&shared, &conn).await {
                     warn!("setting up the Go2 link: {err}");
                 }
+                if shared.stopping.load(Ordering::Relaxed) {
+                    return;
+                }
                 if !started {
                     started = true;
                     start_sequence(&shared).await;
@@ -809,35 +825,51 @@ async fn link_up(shared: &Shared, conn: &Conn) -> Result<(), String> {
 
 /// The start sequence: motion mode, stand, balance, rage, obstacle avoidance.
 async fn start_sequence(shared: &Shared) {
+    let _turn = shared.turn.lock().await;
+    let generation = shared.cancels.load(Ordering::Relaxed);
+    if let Err(err) = start_steps(shared, generation).await {
+        warn!("start sequence: {err}");
+    }
+}
+
+async fn start_steps(shared: &Shared, generation: u64) -> Result<(), String> {
     let config = &shared.config;
+    let warned = |step: &str, result: Result<Value, String>| {
+        if let Err(err) = result {
+            warn!("{step}: {err}");
+        }
+    };
     if !config.motion_mode.is_empty() {
-        if let Err(err) = shared.set_motion_mode(&config.motion_mode, 0).await {
-            warn!("motion mode {}: {err}", config.motion_mode);
-        }
+        warned(
+            "motion mode",
+            shared
+                .set_motion_mode(&config.motion_mode, generation)
+                .await
+                .map(|_| Value::Null),
+        );
     }
-    if let Err(err) = shared.sport(STAND_UP, None).await {
-        warn!("stand up: {err}");
-    }
-    tokio::time::sleep(secs(config.timing.stand_up_settle)).await;
-    if let Err(err) = shared.sport(BALANCE_STAND, None).await {
-        warn!("balance stand: {err}");
-    }
+    shared.cancelled(generation)?;
+    warned("stand up", shared.sport(STAND_UP, None).await);
+    shared
+        .settle(generation, config.timing.stand_up_settle)
+        .await?;
+    warned("balance stand", shared.sport(BALANCE_STAND, None).await);
     if config.mode == "rage" {
-        if let Err(err) = shared.set_rage_mode(true, 0).await {
-            warn!("rage mode: {err}");
-        }
+        shared.cancelled(generation)?;
+        warned("rage mode", shared.set_rage_mode(true, generation).await);
     }
-    let enable = config.obstacle_avoidance as i64;
-    if let Err(err) = shared
-        .request(
-            OBSTACLES_AVOID,
-            OBSTACLES_AVOID_SWITCH_SET,
-            Some(json!({ "enable": enable })),
-        )
-        .await
-    {
-        warn!("obstacle avoidance: {err}");
-    }
+    shared.cancelled(generation)?;
+    warned(
+        "obstacle avoidance",
+        shared
+            .request(
+                OBSTACLES_AVOID,
+                OBSTACLES_AVOID_SWITCH_SET,
+                Some(json!({ "enable": config.obstacle_avoidance as i64 })),
+            )
+            .await,
+    );
+    Ok(())
 }
 
 /// Stops the base once `cmd_vel` has been silent for cmd_vel_timeout (checked ten times per timeout).

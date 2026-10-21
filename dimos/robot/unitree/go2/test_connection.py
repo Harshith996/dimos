@@ -250,6 +250,11 @@ def test_the_rust_module_gets_the_config_its_fixture_holds() -> None:
     assert config == json.loads((_CONTRACT / "config.json").read_text())
 
 
+def test_the_aes_key_stays_off_the_logged_command_line() -> None:
+    config = ConnectionConfig(g=GlobalConfig(), ip="192.168.123.161", aes_128_key="cafe" * 8)
+    assert config.to_cli_args() == []
+
+
 def test_every_verb_the_rpcs_send_is_in_the_rust_fixture() -> None:
     """The Rust `parse_verb` test parses each line of verbs.txt; these are all the verbs the rpcs send."""
     conn = GO2Connection(g=GlobalConfig(robot_ip="192.168.123.161"))

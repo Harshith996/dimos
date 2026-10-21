@@ -22,6 +22,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
@@ -91,6 +92,14 @@ class Go2FleetConnection(GO2Connection):
             for conn in self._extra_connections:
                 conn.standup()
             time.sleep(self.config.timing.stand_up_settle)
+            # the Rust module drives the primary from cmd_vel; the extras follow it here
+            self.register_disposable(
+                Disposable(
+                    self.cmd_vel.subscribe(
+                        lambda twist: self._each_extra("move", lambda c: c.move(twist))
+                    )
+                )
+            )
         for conn in self._extra_connections:
             conn.balance_stand()
             conn.set_obstacle_avoidance(self.config.obstacle_avoidance)
@@ -110,9 +119,8 @@ class Go2FleetConnection(GO2Connection):
         self._extra_connections.clear()
         super().stop()
 
-    def _broadcast(self, what: str, primary: bool, call: Any) -> bool:
-        """The primary's result and every extra robot's, each failure logged and counted as False."""
-        results = [primary]
+    def _each_extra(self, what: str, call: Any) -> bool:
+        results = []
         for conn in self._extra_connections:
             try:
                 results.append(call(conn))
@@ -120,6 +128,11 @@ class Go2FleetConnection(GO2Connection):
                 logger.error(f"Fleet {what} failed: {e}")
                 results.append(False)
         return all(results)
+
+    def _broadcast(self, what: str, primary: bool, call: Any) -> bool:
+        """The primary's result and every extra robot's, each failure logged and counted as False."""
+        extras = self._each_extra(what, call)
+        return primary and extras
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

@@ -140,10 +140,14 @@ class ConnectionConfig(NativeModuleConfig):
 
     @model_validator(mode="after")
     def _shutdown_outlasts_the_lie_down(self) -> "ConnectionConfig":
-        # teardown waits up to answer_timeout for the lie-down before it lets go of the robot
+        # teardown waits for the verb running (one answer) and the lie-down (one more) before it lets go of the robot
         if "shutdown_timeout" not in self.model_fields_set:
-            self.shutdown_timeout = self.timing.answer_timeout + DEFAULT_THREAD_JOIN_TIMEOUT
+            self.shutdown_timeout = 2 * self.timing.answer_timeout + DEFAULT_THREAD_JOIN_TIMEOUT
         return self
+
+    def to_cli_args(self) -> list[str]:
+        """Nothing: the Rust module reads its config from stdin, and the command line is logged (the AES key)."""
+        return []
 
     def to_config_dict(self) -> dict[str, Any]:
         """Exactly the Rust module's Config: it rejects unknown fields and has no defaults."""
@@ -489,10 +493,14 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     @rpc
     def start(self) -> None:
         if self.connection is None:
-            self.register_disposable(Disposable(self.battery.subscribe(self._on_battery)))
-            self.register_disposable(Disposable(self.command_result.subscribe(self._on_result)))
+            # the Rust process publishes straight to the transports, so listen there
             linked = Event()
-            self.register_disposable(Disposable(self.odom.subscribe(lambda _: linked.set())))
+            for unsubscribe in (
+                self.battery.transport.subscribe(self._on_battery, self.battery),
+                self.command_result.transport.subscribe(self._on_result, self.command_result),
+                self.odom.transport.subscribe(lambda _: linked.set(), self.odom),
+            ):
+                self.register_disposable(Disposable(unsubscribe))
             super().start()
             # a bad key or a busy robot fails the run here, as it does on the other backends
             deadline = self.config.timing.connect_deadline()
