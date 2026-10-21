@@ -189,6 +189,11 @@ missed samples; rolling lidar requires complete history and reports dropped
 scans/IMU samples. Pending output is discarded on an epoch change. Pause stops
 acquisition; resume reanchors the clock and invalidates old work.
 
+The publication timestamp is producer-side, not downstream receipt time. The
+measurement envelope stays inside the device/module implementation; public
+streams still carry Image, PointCloud2 and Imu messages. A configured delay is
+an explicit model parameter, not evidence that the hardware delay was measured.
+
 Each sensor definition supplies its required sample rate/history duration.
 Physics sizes the snapshot history from these requirements without recognizing
 particular lidar models. The selected coherent control IMU travels with joint
@@ -205,6 +210,9 @@ CLI runs retain a small JSON record under the existing run log's `sim2/`
 directory. Direct Python users can set `SimulationModule.evidence_dir` or call
 `describe_run()`. It includes resolved device parameters, controller provenance,
 initial MuJoCo integration state, model/source hashes and MuJoCo version.
+Controller provenance contains the values supplied by the robot instance. It
+does not inspect a policy loaded in another process: custom controller weights
+and configuration must be supplied explicitly and checked against that run.
 `WorldConfig.calibration_evidence` records parameter-to-evidence references;
 `sampled_variation` records caller-sampled values, distributions and seeds. These
 are separate: randomizing a parameter does not calibrate it. Unlisted parameters
@@ -214,6 +222,7 @@ preserved in their resolved model arguments.
 No assets or compiled models are duplicated. This record identifies the initial
 conditions; it is not a portable bundle or deterministic replay of asynchronous
 commands. Record those command streams through the existing DimOS recorder.
+The initial record does not include later scene mutations or controller resets.
 
 Motor IO and world snapshots retain private shared memory. Ordinary image,
 point-cloud and scene-truth streams use the configured DimOS transport. Only the
