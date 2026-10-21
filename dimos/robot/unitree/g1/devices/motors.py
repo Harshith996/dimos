@@ -1,0 +1,700 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""G1 internal low-level DDS device: rt/lowstate (sub) + rt/lowcmd (pub), unitree_hg IDL.
+
+Streams: motor_states (Out[JointState]), imu (Out[Imu]),
+motor_command (In[MotorCommandArray]). 29 motors, ordering from
+make_humanoid_joints("g1") (left leg -> right leg -> waist -> left arm -> right arm).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+import math
+import threading
+from threading import Thread
+import time
+from typing import TYPE_CHECKING
+
+from pydantic import Field
+
+if TYPE_CHECKING:
+    from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
+    from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
+    from unitree_sdk2py.utils.crc import CRC
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.components import make_humanoid_joints
+from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.String import String
+from dimos.protocol.service.spec import BaseConfig
+from dimos.robot.unitree.g1.devices.safety import (
+    DAMPING_KD,
+    FEEDBACK_TIMEOUT_SECONDS,
+    JOINT_VELOCITY_LIMIT,
+    G1ControlError,
+    check_joint_velocities,
+)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+_NUM_MOTORS = 29
+_NUM_MOTOR_SLOTS = 35  # G1 hg LowCmd has 35 slots; only 29 are used
+# Default mode_machine for the 29-DOF G1 gear variant. Users can override
+# G1MotorConfig.mode_machine for other firmware/hardware
+# variants.
+_MODE_MACHINE_G1: int = 5
+_FAULT_REPORT_INTERVAL_SECONDS = 0.5
+
+# Joint names sourced from the canonical helper. Order matches the motor index
+# convention above. Single-source-of-truth so any coordinator-side adapter built
+# from make_humanoid_joints("g1") agrees on the wire-level name -> motor-index mapping.
+G1_JOINT_NAMES: list[str] = make_humanoid_joints("g1")
+assert len(G1_JOINT_NAMES) == _NUM_MOTORS
+
+
+def _imu_from_unitree_wxyz(
+    quaternion: tuple[float, float, float, float],
+    gyroscope: tuple[float, float, float],
+    accelerometer: tuple[float, float, float],
+    *,
+    frame_id: str,
+    ts: float,
+) -> Imu:
+    _w, x, y, z = quaternion
+    return Imu(
+        orientation=Quaternion(x, y, z, _w),
+        angular_velocity=Vector3(*gyroscope),
+        linear_acceleration=Vector3(*accelerometer),
+        frame_id=frame_id,
+        ts=ts,
+    )
+
+
+class G1MotorConfig(BaseConfig):
+    network_interface: str = Field(default="")
+    release_sport_mode: bool = True
+    publish_rate_hz: float = Field(default=500.0, gt=0.0, allow_inf_nan=False)
+    frame_id: str = "g1_pelvis"
+    mode_machine: int = _MODE_MACHINE_G1
+    # Stiffness soft-start on taking low-level control: the first commands go
+    # out with full damping (kd) but kp and tau scaled in over this window,
+    # mirroring the remote's damp -> lock-stand feel. Full commanded stiffness
+    # in the very first frame slams the robot from wherever it hangs to the
+    # commanded pose. 0 disables.
+    soft_start_seconds: float = Field(default=3.0, ge=0.0, allow_inf_nan=False)
+    feedback_timeout_seconds: float = Field(
+        default=FEEDBACK_TIMEOUT_SECONDS, gt=0.0, allow_inf_nan=False
+    )
+    # Continuous controllers opt into this watchdog. Other controllers
+    # intentionally stop publishing while idle.
+    command_timeout_seconds: float | None = Field(default=None, gt=0.0, allow_inf_nan=False)
+    joint_velocity_limit: float = Field(default=JOINT_VELOCITY_LIMIT, gt=0.0, allow_inf_nan=False)
+
+
+@dataclass(frozen=True)
+class G1LowStateSnapshot:
+    """Motor and IMU data copied from one G1 LowState frame.
+
+    Attributes:
+        positions: Motor positions for the 29 controllable G1 motors.
+        velocities: Motor velocities for the 29 controllable G1 motors.
+        efforts: Estimated motor torques for the 29 controllable G1 motors.
+        quaternion: IMU orientation in Unitree/MuJoCo w,x,y,z order.
+        gyroscope: IMU angular velocity in rad/s.
+        accelerometer: IMU linear acceleration in m/s^2.
+    """
+
+    positions: list[float]
+    velocities: list[float]
+    efforts: list[float]
+    quaternion: tuple[float, float, float, float]
+    gyroscope: tuple[float, float, float]
+    accelerometer: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class _CachedMotorCommand:
+    q: tuple[float, ...]
+    dq: tuple[float, ...]
+    kp: tuple[float, ...]
+    kd: tuple[float, ...]
+    tau: tuple[float, ...]
+    received_at: float
+
+
+class G1MotorDevice:
+    """DDS motor IO owned by G1Connection, with independent command/feedback watchdogs."""
+
+    def __init__(
+        self,
+        config: G1MotorConfig,
+        *,
+        publish_joints: Callable[[JointState], None],
+        publish_imu: Callable[[Imu], None],
+        publish_fault: Callable[[String], None],
+    ) -> None:
+        self.config = config
+        self._publish_joints = publish_joints
+        self._publish_imu = publish_imu
+        self._publish_fault = publish_fault
+
+        self._publisher: ChannelPublisher | None = None
+        self._subscriber: ChannelSubscriber | None = None
+        self._low_cmd: LowCmd_ | None = None
+        self._low_state: LowState_ | None = None
+        self._crc: CRC | None = None
+        # mode_machine: resolved from config at start(). We log a one-shot
+        # warning if the first LowState disagrees, which is the early signal
+        # that this robot variant needs a different configured value.
+        self._mode_machine: int | None = None
+        self._mode_machine_verified: bool = False
+        # Guards _low_cmd / _low_state / _mode_machine across DDS, publish, and LCM threads.
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._publish_thread: Thread | None = None
+        self._command_thread: Thread | None = None
+        self._latest_command: _CachedMotorCommand | None = None
+        self._command_frames_sent = 0
+        # Soft-start clock, armed by the first motor command after start().
+        self._soft_start_t0: float | None = None
+        self._soft_start_done = False
+        self._handoff_lock = threading.Lock()
+        self._sport_mode_released = False
+        self._fault_reason: str | None = None
+        self._last_feedback_at: float | None = None
+        self._last_feedback_tick: int | None = None
+        self._feedback_wall_time = 0.0
+        self._warned_missing_feedback = False
+
+    def start(self) -> None:
+        with self._lock:
+            if self._fault_reason is not None:
+                raise RuntimeError("G1 damping stop is latched; restart the stack to recover")
+        self._stop_event.clear()
+
+        # Lazy SDK imports - file must import cleanly outside the [unitree-dds] extra.
+        from unitree_sdk2py.core.channel import (
+            ChannelFactoryInitialize,
+            ChannelPublisher,
+            ChannelSubscriber,
+        )
+        from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
+        from unitree_sdk2py.utils.crc import CRC
+
+        nic = self.config.network_interface
+        logger.info(f"Initializing DDS (G1 wholebody) interface={nic!r}...")
+        try:
+            if nic:
+                ChannelFactoryInitialize(0, nic)
+            else:
+                ChannelFactoryInitialize(0)
+        except Exception as e:
+            # Idempotent - already initialised by a sibling participant is fine.
+            logger.debug(f"ChannelFactoryInitialize raised (likely already init'd): {e}")
+
+        self._publisher = ChannelPublisher("rt/lowcmd", LowCmd_)
+        self._publisher.Init()
+
+        # Passive subscriber - Read() per tick from the publish loop.  The
+        # callback variant (Init(self._on_low_state, 10)) doesn't fire
+        # reliably under cyclonedds on macOS, which used to leave us
+        # blocked here forever waiting for a first LowState.
+        self._subscriber = ChannelSubscriber("rt/lowstate", LowState_)
+        self._subscriber.Init(None, 0)
+
+        # POS_STOP/VEL_STOP + zero gains so the robot can't twitch pre-command.
+        self._low_cmd = unitree_hg_msg_dds__LowCmd_()
+        self._low_cmd.mode_pr = 0  # PR (pitch/roll) mode
+        # mode_machine is a static value for a given robot variant.
+        self._mode_machine = int(self.config.mode_machine)
+        self._low_cmd.mode_machine = self._mode_machine
+        for i in range(_NUM_MOTOR_SLOTS):
+            self._low_cmd.motor_cmd[i].mode = 0x01  # enable
+            self._low_cmd.motor_cmd[i].q = POS_STOP
+            self._low_cmd.motor_cmd[i].kp = 0
+            self._low_cmd.motor_cmd[i].dq = VEL_STOP
+            self._low_cmd.motor_cmd[i].kd = 0
+            self._low_cmd.motor_cmd[i].tau = 0
+
+        self._crc = CRC()
+
+        self._sport_mode_released = False
+        logger.info(
+            "G1 DDS initialized; waiting for feedback and first command before sport-mode handoff",
+            mode_machine=self._mode_machine,
+        )
+
+        # Fresh soft-start every time control is (re)acquired.
+        self._soft_start_t0 = None
+        self._soft_start_done = False
+        self._latest_command = None
+        self._command_frames_sent = 0
+
+        self._publish_thread = Thread(
+            target=self._publish_loop, name="g1-wholebody-state-pump", daemon=True
+        )
+        self._publish_thread.start()
+        self._command_thread = Thread(
+            target=self._command_loop, name="g1-wholebody-command-pump", daemon=True
+        )
+        self._command_thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._publish_thread is not None and self._publish_thread.is_alive():
+            self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._publish_thread = None
+        if self._command_thread is not None and self._command_thread.is_alive():
+            self._command_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._command_thread = None
+
+        # Leave a faulted robot in damping; graceful cleanup must not replace
+        # a latched stop with a different actuator mode. Normal shutdown keeps
+        # its existing motor-disable behavior, only after controller handoff.
+        sent_safe_stop = False
+        with self._lock:
+            if (
+                self._sport_mode_released
+                and self._publisher is not None
+                and self._low_cmd is not None
+                and self._crc is not None
+            ):
+                for i in range(_NUM_MOTOR_SLOTS):
+                    self._low_cmd.motor_cmd[i].mode = 0x00  # disable
+                    self._low_cmd.motor_cmd[i].q = POS_STOP
+                    self._low_cmd.motor_cmd[i].dq = VEL_STOP
+                    self._low_cmd.motor_cmd[i].kp = 0
+                    self._low_cmd.motor_cmd[i].kd = 0
+                    self._low_cmd.motor_cmd[i].tau = 0
+                if self._fault_reason is not None:
+                    self._fill_damping_command_locked()
+                self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+                try:
+                    self._publisher.Write(self._low_cmd)
+                    sent_safe_stop = True
+                except (OSError, RuntimeError) as e:
+                    logger.warning("Safe-stop lowcmd failed", error=str(e))
+        if sent_safe_stop:
+            logger.info("Sent final lowcmd", fault=self._fault_reason)
+
+        # Close DDS endpoints explicitly - GC-based cleanup races with in-flight
+        # callbacks and segfaults on process exit (mirrors the Go2 adapter).
+        if self._subscriber is not None:
+            try:
+                self._subscriber.Close()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"ChannelSubscriber Close raised: {e}")
+        if self._publisher is not None:
+            try:
+                self._publisher.Close()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"ChannelPublisher Close raised: {e}")
+
+        self._publisher = None
+        self._subscriber = None
+        self._low_cmd = None
+        self._low_state = None
+        self._mode_machine = None
+        self._crc = None
+
+        logger.info("G1MotorDevice disconnected")
+
+    def _drain_low_state(self) -> None:
+        """Pull the freshest LowState frame off the subscriber and stash it."""
+        sub = self._subscriber
+        if sub is None:
+            return
+        fresh = sub.Read()
+        if fresh is None:
+            return
+        with self._lock:
+            # Firmware ticks distinguish a genuinely new state from a cached
+            # sample returned again by a subscriber. Never refresh its age.
+            if fresh.tick == self._last_feedback_tick:
+                return
+            self._last_feedback_tick = int(fresh.tick)
+            self._last_feedback_at = time.perf_counter()
+            self._feedback_wall_time = time.time()
+            self._low_state = fresh
+            try:
+                check_joint_velocities(
+                    [float(fresh.motor_state[i].dq) for i in range(_NUM_MOTORS)],
+                    self.config.joint_velocity_limit,
+                )
+                values = [float(fresh.motor_state[i].q) for i in range(_NUM_MOTORS)]
+                values.extend(fresh.imu_state.quaternion)
+                values.extend(fresh.imu_state.gyroscope)
+                if not all(math.isfinite(value) for value in values):
+                    raise G1ControlError("non-finite robot feedback")
+            except G1ControlError as exc:
+                self._latch_fault_locked(str(exc))
+        self._verify_mode_machine_once(fresh)
+
+    def _verify_mode_machine_once(self, sample: LowState_) -> None:
+        """Adopt the firmware-reported mode_machine if it differs from config.
+
+        Commands with a wrong mode_machine are silently rejected, and the
+        reported value varies per boot on some G1 units, so the configured
+        value is only a default until the first LowState tells us the truth.
+        """
+        if self._mode_machine_verified:
+            return
+        self._mode_machine_verified = True
+        actual = int(sample.mode_machine)
+        if actual != self._mode_machine:
+            logger.warning(
+                "mode_machine mismatch; adopting the firmware-reported value "
+                "(commands with the configured one would be silently rejected).",
+                configured=self._mode_machine,
+                reported=actual,
+            )
+            with self._lock:
+                self._mode_machine = actual
+                if self._low_cmd is not None:
+                    self._low_cmd.mode_machine = actual
+
+    def _snapshot_motor_imu(self) -> G1LowStateSnapshot | None:
+        """Return the latest real motor/IMU sample, or None before first LowState."""
+        with self._lock:
+            ls = self._low_state
+            if ls is None:
+                return None
+            return G1LowStateSnapshot(
+                positions=[float(ls.motor_state[i].q) for i in range(_NUM_MOTORS)],
+                velocities=[float(ls.motor_state[i].dq) for i in range(_NUM_MOTORS)],
+                efforts=[float(ls.motor_state[i].tau_est) for i in range(_NUM_MOTORS)],
+                quaternion=(
+                    float(ls.imu_state.quaternion[0]),
+                    float(ls.imu_state.quaternion[1]),
+                    float(ls.imu_state.quaternion[2]),
+                    float(ls.imu_state.quaternion[3]),
+                ),
+                gyroscope=(
+                    float(ls.imu_state.gyroscope[0]),
+                    float(ls.imu_state.gyroscope[1]),
+                    float(ls.imu_state.gyroscope[2]),
+                ),
+                accelerometer=(
+                    float(ls.imu_state.accelerometer[0]),
+                    float(ls.imu_state.accelerometer[1]),
+                    float(ls.imu_state.accelerometer[2]),
+                ),
+            )
+
+    def _publish_motor_state_and_imu(
+        self, now: float, frame_id: str, sample: G1LowStateSnapshot
+    ) -> None:
+        self._publish_joints(
+            JointState(
+                ts=now,
+                frame_id=frame_id,
+                name=G1_JOINT_NAMES,
+                position=sample.positions,
+                velocity=sample.velocities,
+                effort=sample.efforts,
+            )
+        )
+        # Unitree reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
+        self._publish_imu(
+            _imu_from_unitree_wxyz(
+                sample.quaternion,
+                sample.gyroscope,
+                sample.accelerometer,
+                frame_id=frame_id,
+                ts=now,
+            )
+        )
+
+    def _publish_loop(self) -> None:
+        period = 1.0 / float(self.config.publish_rate_hz)
+        next_tick = time.perf_counter()
+        frame_id = self.config.frame_id
+
+        while not self._stop_event.is_set():
+            try:
+                self._drain_low_state()
+            except Exception:
+                # This is the hardware IO boundary: a failed feedback pump
+                # must trip the independent writer, not silently disappear.
+                logger.exception("G1 feedback pump failed")
+                with self._lock:
+                    self._latch_fault_locked("feedback pump failed")
+                return
+            sample = self._snapshot_motor_imu()
+            if sample is not None:
+                with self._lock:
+                    captured_at = self._feedback_wall_time
+                self._publish_motor_state_and_imu(now=captured_at, frame_id=frame_id, sample=sample)
+            next_tick += period
+            sleep_for = next_tick - time.perf_counter()
+            if sleep_for > 0:
+                self._stop_event.wait(sleep_for)
+            else:
+                next_tick = time.perf_counter()
+
+    def _command_loop(self) -> None:
+        """Repeat the newest policy target on an independent 500 Hz clock."""
+        period = 1.0 / float(self.config.publish_rate_hz)
+        next_tick = time.perf_counter()
+        last_fault_report = 0.0
+        writer_error_logged = False
+        report_error_logged = False
+        while not self._stop_event.is_set():
+            now = time.perf_counter()
+            try:
+                self._publish_latest_command(now)
+            except Exception:
+                # Keep attempting damping if DDS recovers; never resume the
+                # cached policy target after a publication failure.
+                if not writer_error_logged:
+                    logger.exception("G1 command writer failed")
+                    writer_error_logged = True
+                with self._lock:
+                    self._latch_fault_locked("motor command publication failed")
+            with self._lock:
+                fault = self._fault_reason
+            if fault is not None and now - last_fault_report >= _FAULT_REPORT_INTERVAL_SECONDS:
+                try:
+                    self._publish_fault(String(fault))
+                except Exception:
+                    # A broken status transport must not kill the DDS damping
+                    # writer. This is independent of motor-command delivery.
+                    if not report_error_logged:
+                        logger.exception("G1 fault status publication failed")
+                        report_error_logged = True
+                last_fault_report = now
+            next_tick += period
+            sleep_for = next_tick - time.perf_counter()
+            if sleep_for > 0:
+                self._stop_event.wait(sleep_for)
+            else:
+                next_tick = time.perf_counter()
+
+    def _soft_start_scale(self, now: float) -> float:
+        """Stiffness scale in [0, 1] for this command frame. Caller holds the lock."""
+        duration = self.config.soft_start_seconds
+        if duration <= 0.0:
+            return 1.0
+        if self._soft_start_t0 is None:
+            self._soft_start_t0 = now
+            logger.info(
+                "Soft-start: full damping now, stiffness ramping in",
+                duration_seconds=duration,
+            )
+        scale = min(1.0, (now - self._soft_start_t0) / duration)
+        if scale >= 1.0 and not self._soft_start_done:
+            self._soft_start_done = True
+            logger.info("Soft-start complete - full commanded stiffness")
+        return scale
+
+    def write(self, msg: MotorCommandArray) -> None:
+        if msg.num_joints != _NUM_MOTORS:
+            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
+            return
+        with self._lock:
+            if self._fault_reason is not None:
+                return
+            if not all(
+                math.isfinite(value)
+                for values in (msg.q, msg.dq, msg.kp, msg.kd, msg.tau)
+                for value in values
+            ):
+                self._latch_fault_locked("non-finite motor command")
+                return
+            if self._last_feedback_at is None:
+                if not self._warned_missing_feedback:
+                    logger.warning(
+                        "Motor command ignored: waiting for first robot feedback on rt/lowstate"
+                    )
+                    self._warned_missing_feedback = True
+                return
+            if time.perf_counter() - self._last_feedback_at >= self.config.feedback_timeout_seconds:
+                self._latch_fault_locked("robot feedback timeout")
+                return
+        if not self._ensure_low_level_control():
+            return
+
+        command = _CachedMotorCommand(
+            q=tuple(msg.q),
+            dq=tuple(msg.dq),
+            kp=tuple(msg.kp),
+            kd=tuple(msg.kd),
+            tau=tuple(msg.tau),
+            received_at=time.perf_counter(),
+        )
+        with self._lock:
+            if self._fault_reason is None:
+                self._latest_command = command
+
+    def _publish_latest_command(self, now: float) -> bool:
+        """Publish the newest 50 Hz policy target on the 500 Hz DDS clock."""
+        with self._lock:
+            command = self._latest_command
+            if (
+                self._low_cmd is None
+                or self._crc is None
+                or self._publisher is None
+                or self._mode_machine is None
+            ):
+                return False
+
+            # Only take over after a prepared command. A stop received before
+            # handoff latches locally without releasing the stock controller.
+            if not self._sport_mode_released:
+                return False
+            if self._last_feedback_at is None or (
+                now - self._last_feedback_at >= self.config.feedback_timeout_seconds
+            ):
+                self._latch_fault_locked("robot feedback timeout")
+            if (
+                command is not None
+                and self.config.command_timeout_seconds is not None
+                and now - command.received_at >= self.config.command_timeout_seconds
+            ):
+                self._latch_fault_locked("policy command timeout")
+            self._low_cmd.mode_machine = self._mode_machine
+            if self._fault_reason is not None:
+                self._fill_damping_command_locked()
+            elif command is not None:
+                scale = self._soft_start_scale(now)
+                for i in range(_NUM_MOTORS):
+                    self._low_cmd.motor_cmd[i].q = command.q[i]
+                    self._low_cmd.motor_cmd[i].dq = command.dq[i]
+                    self._low_cmd.motor_cmd[i].kp = command.kp[i] * scale
+                    self._low_cmd.motor_cmd[i].kd = command.kd[i]
+                    self._low_cmd.motor_cmd[i].tau = command.tau[i] * scale
+            else:
+                return False
+
+            self._low_cmd.crc = self._crc.Crc(self._low_cmd)
+            self._publisher.Write(self._low_cmd)
+            self._command_frames_sent += 1
+            return True
+
+    def _fill_damping_command_locked(self) -> None:
+        assert self._low_cmd is not None
+        for i in range(_NUM_MOTORS):
+            motor = self._low_cmd.motor_cmd[i]
+            motor.mode = 1
+            motor.q = motor.dq = motor.kp = motor.tau = 0.0
+            motor.kd = DAMPING_KD
+
+    def _latch_fault_locked(self, reason: str) -> None:
+        if self._fault_reason is None:
+            self._fault_reason = reason[:256]
+            self._latest_command = None
+            logger.error("G1 damping stop latched; restart required", reason=self._fault_reason)
+
+    def set_estop(self, estopped: bool) -> bool:
+        """Latch damping at the DDS writer. A stack restart is required to recover."""
+        with self._lock:
+            if estopped:
+                self._latch_fault_locked("operator stop")
+            elif self._fault_reason is not None:
+                raise RuntimeError("G1 damping stop is latched; restart the stack to recover")
+        return True
+
+    def controller_fault(self, msg: String) -> None:
+        with self._lock:
+            self._latch_fault_locked(msg.data or "controller fault")
+
+    def command_stream_status(self) -> dict[str, float | int | str | None]:
+        """Return DDS command publication telemetry for hardware diagnostics."""
+        with self._lock:
+            age_ms = (
+                None
+                if self._latest_command is None
+                else (time.perf_counter() - self._latest_command.received_at) * 1000.0
+            )
+            return {
+                "configured_rate_hz": float(self.config.publish_rate_hz),
+                "frames_sent": self._command_frames_sent,
+                "latest_command_age_ms": age_ms,
+                "fault_reason": self._fault_reason,
+                "feedback_received": self._last_feedback_at is not None,
+                "feedback_age_ms": (
+                    None
+                    if self._last_feedback_at is None
+                    else (time.perf_counter() - self._last_feedback_at) * 1000.0
+                ),
+            }
+
+    def _ensure_low_level_control(self) -> bool:
+        """Release the native controller exactly once, when commands are ready."""
+        with self._lock:
+            if self._sport_mode_released:
+                return True
+            if self._fault_reason is not None:
+                return False
+        with self._handoff_lock:
+            with self._lock:
+                if self._sport_mode_released:
+                    return True
+                if self._fault_reason is not None:
+                    return False
+            try:
+                logger.info("First prepared command received; releasing sport mode...")
+                if self.config.release_sport_mode:
+                    self._release_sport_mode()
+            except Exception:
+                logger.exception("Failed to release sport mode; dropping motor command")
+                return False
+            with self._lock:
+                self._sport_mode_released = True
+            logger.info("Sport-mode handoff complete")
+            return True
+
+    def _release_sport_mode(self) -> None:
+        """Loop ReleaseMode until MotionSwitcher reports no active controller.
+
+        Bails early if the first CheckMode reports nothing active.  That
+        matters for back-to-back ``dimos run`` invocations: the first run
+        already released sport mode, so on a clean second start there's
+        nothing to release.  Calling ReleaseMode anyway opens a window
+        where motor controllers are mid-handoff while we're already
+        publishing rt/lowcmd, which has been observed to cause horrible
+        mechanical noise from the gearboxes.
+        """
+        from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
+            MotionSwitcherClient,
+        )
+
+        msc = MotionSwitcherClient()
+        msc.SetTimeout(5.0)
+        msc.Init()
+
+        # CheckMode returns (status, None) - or (status, {"name": ""}) on
+        # some firmwares - once nothing is active.  Treat both as "already
+        # released" and return without poking ReleaseMode.
+        _status, result = msc.CheckMode()
+        if not result or not result.get("name"):
+            logger.info("Sport mode already released - skipping ReleaseMode")
+            return
+
+        while result and result.get("name"):
+            msc.ReleaseMode()
+            _status, result = msc.CheckMode()
+            time.sleep(1)
+
+        logger.info("Sport mode released - low-level control active")

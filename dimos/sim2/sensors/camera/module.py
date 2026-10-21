@@ -20,8 +20,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.sensors.camera.device import CameraDevice
+from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
-from dimos.sim2.sensors.spec import Camera
 
 
 class CameraModuleConfig(SensorModuleConfig):

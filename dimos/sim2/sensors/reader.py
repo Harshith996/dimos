@@ -24,7 +24,7 @@ import numpy as np
 
 from dimos.sim2.ipc.abi import ChannelDescriptor
 from dimos.sim2.ipc.channel import ChannelFrame, RobotChannel
-from dimos.sim2.runtime import STATE
+from dimos.sim2.world.runtime import STATE
 
 
 class WorldReader:

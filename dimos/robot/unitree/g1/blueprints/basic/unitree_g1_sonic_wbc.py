@@ -18,10 +18,10 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.g1.blueprints.navigation._g1_navigation import g1_navigation
 from dimos.robot.unitree.g1.connection import G1Connection
-from dimos.robot.unitree.g1.control_safety import COMMAND_TIMEOUT_SECONDS
-from dimos.robot.unitree.g1.g1_rerun import g1_viewer
-from dimos.robot.unitree.g1.motor_device import G1MotorConfig
-from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
+from dimos.robot.unitree.g1.controllers.sonic.module import G1SonicPolicyModule
+from dimos.robot.unitree.g1.devices.motors import G1MotorConfig
+from dimos.robot.unitree.g1.devices.safety import COMMAND_TIMEOUT_SECONDS
+from dimos.robot.unitree.g1.visualization.rerun import g1_viewer
 
 _simulated = global_config.simulation == "mujoco"
 
