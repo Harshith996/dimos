@@ -17,6 +17,8 @@
 from contextlib import ExitStack
 from pathlib import Path
 import runpy
+import sys
+from threading import Event
 import time
 
 import numpy as np
@@ -25,15 +27,154 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
 from dimos.robot.unitree.g1.groot_coordinator import G1GrootCoordinator
 from dimos.robot.unitree.g1.sim2 import G1
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
+from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.scene import scene_path
+from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
+from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.spec.utils import spec_annotation_compliance
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+
+@pytest.fixture
+def load_g1_blueprint(monkeypatch, mocker):
+    mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
+
+    def load(name, *, simulation="mujoco", viewer="none"):
+        for key, value in {
+            "simulation": simulation,
+            "viewer": viewer,
+            "transport": "zenoh",
+            "scene_package": None,
+        }.items():
+            monkeypatch.setattr(global_config, key, value)
+        path = Path(__file__).parent / "blueprints/basic" / f"{name}.py"
+        return runpy.run_path(str(path))[name]
+
+    return load
+
+
+def _stream_key(blueprint, module, port):
+    atom = next(a for a in blueprint.active_blueprints if a.module is module)
+    stream = next(s for s in atom.streams if s.name == port)
+    return blueprint.remapping_map.get((atom.name, port), port), stream.type
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["unitree_g1_groot_wbc", "unitree_g1_sonic_wbc", "unitree_g1_basic_sim"],
+)
+def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
+    load_g1_blueprint, tmp_path, name
+):
+    blueprint = load_g1_blueprint(name)
+    scene = tmp_path / "floor.xml"
+    scene.write_text("<mujoco/>")
+    expanded, _ = collect_simulation(
+        blueprint, {}, GlobalConfig(simulation="mujoco", scene_package=str(scene))
+    )
+
+    assert _stream_key(expanded, LidarModule, "pointcloud") == _stream_key(
+        expanded, VoxelGridMapper, "lidar"
+    )
+    assert _stream_key(expanded, VoxelGridMapper, "global_map") == _stream_key(
+        expanded, CostMapper, "global_map"
+    )
+    assert _stream_key(expanded, CostMapper, "global_costmap") == _stream_key(
+        expanded, ReplanningAStarPlanner, "global_costmap"
+    )
+    assert _stream_key(expanded, ReplanningAStarPlanner, "nav_cmd_vel") == _stream_key(
+        expanded, MovementManager, "nav_cmd_vel"
+    )
+    assert _stream_key(expanded, MovementManager, "cmd_vel") == _stream_key(
+        expanded, G1Connection, "cmd_vel"
+    )
+    assert _stream_key(expanded, SimRGBDCameraModule, "color_image")[0] == "color_image"
+    assert blueprint.transport_map == {}
+    assert sum(a.module is SimulationModule for a in expanded.active_blueprints) == 1
+
+
+@pytest.mark.parametrize("name", ["unitree_g1_groot_wbc", "unitree_g1_sonic_wbc"])
+def test_hardware_blueprints_keep_pointlio_navigation(load_g1_blueprint, name):
+    blueprint = load_g1_blueprint(name, simulation="")
+
+    assert _stream_key(blueprint, PointLio, "lidar") == _stream_key(
+        blueprint, RayTracingVoxelMap, "lidar"
+    )
+    assert _stream_key(blueprint, RayTracingVoxelMap, "global_map") == _stream_key(
+        blueprint, CostMapper, "global_map"
+    )
+    assert _stream_key(blueprint, PointLio, "odometry") == _stream_key(
+        blueprint, ReplanningAStarPlanner, "odometry"
+    )
+    assert VoxelGridMapper not in {a.module for a in blueprint.active_blueprints}
+
+
+@pytest.mark.parametrize("simulation", ["", "mujoco"])
+@pytest.mark.parametrize(
+    "name, joint_topic",
+    [
+        ("unitree_g1_groot_wbc", "g1_joints"),
+        ("unitree_g1_sonic_wbc", "joint_state"),
+        ("unitree_g1_basic_sim", "g1_joints"),
+    ],
+)
+def test_viewer_uses_a_joint_stream_published_by_its_stack(
+    load_g1_blueprint, name, joint_topic, simulation
+):
+    blueprint = load_g1_blueprint(name, simulation=simulation, viewer="rerun")
+    viewer = next(a for a in blueprint.active_blueprints if a.module is RerunBridgeModule)
+    outputs = {
+        blueprint.remapping_map.get((a.name, s.name), s.name)
+        for a in blueprint.active_blueprints
+        for s in a.streams
+        if s.direction == "out"
+    }
+
+    assert joint_topic in outputs
+    assert f"world/{joint_topic}" in viewer.kwargs["visual_override"]
+    assert "world/g1/joints" not in viewer.kwargs["visual_override"]
+
+
+@pytest.mark.parametrize("name", ["unitree_g1_sonic_wbc", "unitree_g1_basic_sim"])
+def test_composition_does_not_import_the_groot_application(load_g1_blueprint, monkeypatch, name):
+    monkeypatch.setitem(
+        sys.modules,
+        "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc",
+        None,
+    )
+    blueprint = load_g1_blueprint(name)
+    connections = [a for a in blueprint.active_blueprints if a.module is G1Connection]
+
+    assert len(connections) == 1
+    assert connections[0].kwargs["controller"] == (
+        "sonic" if name == "unitree_g1_sonic_wbc" else "groot"
+    )
+
+
+@pytest.mark.parametrize("simulation", ["", "mujoco"])
+def test_groot_composition_preserves_hardware_activation_safety(load_g1_blueprint, simulation):
+    blueprint = load_g1_blueprint("unitree_g1_groot_wbc", simulation=simulation)
+    coordinator = next(a for a in blueprint.active_blueprints if a.module is G1GrootCoordinator)
+    task = next(t for t in coordinator.kwargs["tasks"] if t.name == "groot_wbc")
+
+    assert task.params["auto_arm"] is bool(simulation)
+    assert task.params["auto_dry_run"] is not bool(simulation)
+    assert task.params["default_ramp_seconds"] == (0.0 if simulation else 10.0)
+    assert coordinator.kwargs["tick_rate"] / task.params["decimation"] == 50.0
 
 
 @pytest.fixture
@@ -129,7 +270,7 @@ def walking_stack(request, monkeypatch):
     monkeypatch.setattr(global_config, "viewer", "none")
     monkeypatch.setattr(global_config, "scene_package", None)
     module = Path(__file__).parent / "blueprints/basic" / f"unitree_g1_{controller}_wbc.py"
-    blueprint = runpy.run_path(str(module))[f"_unitree_g1_{controller}_wbc_core"]
+    blueprint = runpy.run_path(str(module))[f"unitree_g1_{controller}_wbc"]
     parsed = BlueprintConfigParser(blueprint).parse(
         [],
         environ={},
@@ -153,14 +294,23 @@ def test_real_policy_moves_robot_through_public_connection(walking_stack):
     app = walking_stack
     world = app.get_instance(SimulationModule)
     robot = app.get_instance(G1Connection)
-    start = world.status()
-    positions = []
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        robot.move(Twist(Vector3(0.35, 0, 0)))
-        positions.append(world.status()["robots"][G1Connection.name])
-        time.sleep(0.1)  # The commanded input rate, not a readiness wait.
-    robot.move(Twist())
+    mapped = Event()
+
+    def on_costmap(grid):
+        if grid.info.width > 0 and grid.info.height > 0:
+            mapped.set()
+
+    with ExitStack() as stack:
+        stack.callback(app.transports[("global_costmap", OccupancyGrid)].subscribe(on_costmap))
+        stack.callback(robot.move, Twist())
+        assert mapped.wait(15), "simulated lidar never produced a navigation costmap"
+        start = world.status()
+        positions = []
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            robot.move(Twist(Vector3(0.35, 0, 0)))
+            positions.append(world.status()["robots"][G1Connection.name])
+            time.sleep(0.1)  # The commanded input rate, not a readiness wait.
     end = world.status()
     samples = np.array(positions)
     assert end["error"] is None
