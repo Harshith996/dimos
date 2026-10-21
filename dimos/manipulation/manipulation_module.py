@@ -442,7 +442,7 @@ class ManipulationModule(Module):
                 groups[group.id] = PlanningGroupState(
                     joints=joints,
                     end_effector_pose=pose,
-                    gripper_position=self._get_group_gripper_position(),
+                    gripper_position=self._get_group_gripper_position(group),
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
@@ -1011,14 +1011,13 @@ class ManipulationModule(Module):
         """Return public planning-group capabilities."""
         if self._world_monitor is None:
             return ()
-        has_gripper = self.config.model.gripper_hardware_id is not None
         return tuple(
             PlanningGroupInfo(
                 id=group.id,
                 joint_names=group.joint_names,
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
-                has_gripper=has_gripper,
+                has_gripper=self._group_gripper_id(group) is not None,
             )
             for group in self._world_monitor.planning_groups.list()
         )
@@ -1042,8 +1041,13 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _get_group_gripper_position(self) -> float | None:
-        hardware_id = self.config.model.gripper_hardware_id
+    def _group_gripper_id(self, group: PlanningGroup) -> str | None:
+        if group.gripper_hardware_id is not None:
+            return group.gripper_hardware_id
+        return self.config.model.gripper_hardware_id
+
+    def _get_group_gripper_position(self, group: PlanningGroup) -> float | None:
+        hardware_id = self._group_gripper_id(group)
         if hardware_id is None:
             return None
         values = self._control_coordinator.task_invoke(
@@ -1370,7 +1374,7 @@ class ManipulationModule(Module):
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
-        hardware_id = self.config.model.gripper_hardware_id
+        hardware_id = self._group_gripper_id(group)
         assert hardware_id is not None
         if self._control_coordinator.task_invoke(
             f"{hardware_id}_gripper",
@@ -1402,7 +1406,7 @@ class ManipulationModule(Module):
         def is_capable(group: PlanningGroup) -> bool:
             if capability == "pose":
                 return group.has_pose_target
-            return self.config.model.gripper_hardware_id is not None
+            return self._group_gripper_id(group) is not None
 
         if planning_group is not None:
             try:

@@ -19,10 +19,37 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedWholeBody
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
+    DualOpenYamCoordinator,
+    DualOpenYamCoordinatorConfig,
+    dual_openyam_planner_coordinator,
+)
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+
+
+def test_planner_groups_route_to_their_own_registered_gripper_tasks():
+    parsed = BlueprintConfigParser(dual_openyam_planner_coordinator).parse(environ={})
+    model = ManipulationModuleConfig.model_validate(
+        parsed.module_kwargs(ManipulationModule.name)
+    ).model
+    coordinator = DualOpenYamCoordinatorConfig.model_validate(
+        parsed.module_kwargs(DualOpenYamCoordinator.name)
+    )
+    tasks = {task.name: task for task in coordinator.tasks if task.type == "gripper"}
+
+    assert {
+        group.name: tasks[f"{group.gripper_hardware_id}_gripper"].joint_names
+        for group in model.planning_groups
+    } == {
+        "left_manipulator": ["left_arm/gripper"],
+        "right_manipulator": ["right_arm/gripper"],
+    }
+    trajectory = next(task for task in coordinator.tasks if task.type == "trajectory")
+    assert not set(trajectory.joint_names) & {"left_arm/gripper", "right_arm/gripper"}
 
 
 @pytest.mark.parametrize("ports", [{}, {"left_can_port": "left", "right_can_port": "right"}])
