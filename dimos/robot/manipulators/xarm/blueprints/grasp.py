@@ -126,7 +126,6 @@ if SIMULATED:
 else:
     _model = make_xarm7_model_config(
         add_gripper=True,
-        gripper_hardware_id="arm",
         base_pose=PoseStamped(frame_id="world"),
         tf_extra_links=["link7"],
     )

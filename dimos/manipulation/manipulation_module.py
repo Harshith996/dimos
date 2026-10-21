@@ -1042,14 +1042,7 @@ class ManipulationModule(Module):
         return presets
 
     def _group_gripper_tasks(self, group: PlanningGroup) -> tuple[str, ...]:
-        """Match registered scalar grippers by exact joint namespace or YAM arm names."""
-        legacy_id = self.config.model.gripper_hardware_id
-        if (
-            legacy_id is not None
-            and self._world_monitor is not None
-            and self._world_monitor.planning_groups.default_group_id() == group.id
-        ):
-            return (f"{legacy_id}_gripper",)
+        """Match scalar grippers by hardware ownership, then namespace on shared hardware."""
         arm_joints = set(group.joint_names)
         if not arm_joints:
             return ()
@@ -1063,8 +1056,14 @@ class ManipulationModule(Module):
             joints = description["joint_names"]
             if len(joints) != 1:
                 continue
+            hardware_joints = set(description["hardware_joint_names"])
+            if not arm_joints <= hardware_joints or joints[0] not in hardware_joints:
+                continue
             namespace, separator, leaf = joints[0].rpartition("/")
             if not separator or not namespace or leaf != "gripper":
+                continue
+            if sum(name.endswith("/gripper") for name in hardware_joints) == 1:
+                matches.append(task_name)
                 continue
             if all(name.rpartition("/")[0] == namespace for name in arm_joints):
                 matches.append(task_name)

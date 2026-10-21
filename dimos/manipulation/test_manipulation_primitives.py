@@ -51,7 +51,6 @@ def _model(
     groups: tuple[PlanningGroupDefinition, ...] = (
         PlanningGroupDefinition("tool", ("j0",), "base", "tcp"),
     ),
-    gripper: bool = False,
     home: list[float] | None = None,
 ) -> RobotModelConfig:
     joint_names = list(dict.fromkeys(name for group in groups for name in group.joint_names))
@@ -60,7 +59,6 @@ def _model(
         joint_names=joint_names,
         base_link="base",
         home_joints=home,
-        gripper_hardware_id="arm" if gripper else None,
         planning_groups=list(groups),
     )
 
@@ -116,7 +114,8 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True, home=[0.3]))
+    _set_groups(module, _model(home=[0.3]))
+    _register_grippers(module, {"arm_gripper": ["arm/gripper"]}, ["j0", "arm/gripper"])
     module._init_joints = JointState(name=["j0"], position=[-0.2])
     module._world_monitor.current_group_joint_state.return_value = JointState(
         name=["j0"], position=[0.1]
@@ -138,7 +137,7 @@ def test_get_state_returns_every_group_with_presets(module_factory) -> None:
 
 def test_get_state_skips_gripper_telemetry_without_control_hardware(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=False))
+    _set_groups(module, _model())
     module._world_monitor.current_group_joint_state.return_value = JointState(
         name=["j0"], position=[0.1]
     )
@@ -152,7 +151,8 @@ def test_get_state_skips_gripper_telemetry_without_control_hardware(module_facto
 
 def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True))
+    _set_groups(module, _model())
+    _register_grippers(module, {"arm_gripper": ["arm/gripper"]}, ["j0", "arm/gripper"])
     module._control_coordinator.task_invoke.return_value = True
 
     result = module.set_gripper_position(0.4, "tool")
@@ -165,7 +165,11 @@ def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
 
 def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, make_openyam_model_config())
+    model = make_openyam_model_config()
+    _set_groups(module, model)
+    _register_grippers(
+        module, {"openyam_gripper": ["arm/gripper"]}, [*model.joint_names, "arm/gripper"]
+    )
     coordinator = module._control_coordinator
     coordinator.task_invoke.return_value = True
 
@@ -184,9 +188,13 @@ def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factor
     coordinator.task_invoke.assert_called_once_with("openyam_gripper", "get_normalized", {})
 
 
-def _register_grippers(module, joints_by_task):
+def _register_grippers(module, joints_by_task, hardware_joints):
     descriptions = {
-        task: {"joint_names": joints, "commands": {"set_normalized": {}, "get_normalized": {}}}
+        task: {
+            "joint_names": joints,
+            "hardware_joint_names": hardware_joints,
+            "commands": {"set_normalized": {}, "get_normalized": {}},
+        }
         for task, joints in joints_by_task.items()
     }
     module._control_coordinator.list_tasks.return_value = list(descriptions)
@@ -201,6 +209,7 @@ def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) 
     _register_grippers(
         module,
         {"clamp_a": ["left_arm/gripper"], "clamp_b": ["right_arm/gripper"]},
+        [*model.joint_names, "left_arm/gripper", "right_arm/gripper"],
     )
     invoke = module._control_coordinator.task_invoke
     invoke.return_value = True
@@ -234,13 +243,22 @@ def test_multiple_grippers_route_commands_and_feedback_by_group(module_factory) 
         call("clamp_a", "get_normalized", {}),
         call("clamp_b", "get_normalized", {}),
     ]
+    invoke.reset_mock()
+    _register_grippers(
+        module,
+        {"clamp_a": ["left_arm/gripper"]},
+        [*model.joint_names, "left_arm/gripper", "right_arm/gripper"],
+    )
+
+    assert module.set_gripper_position(0.4, "right_manipulator").status is CommandStatus.REJECTED
+    invoke.assert_not_called()
 
 
 @pytest.mark.parametrize(
     ("joint_names", "grippers", "expected_message"),
     [
         (("left/j1",), {"a": ["left/gripper"], "b": ["left/gripper"]}, "Ambiguous"),
-        (("left/j1",), {"a": ["leftover/gripper"]}, "not gripper-capable"),
+        (("unknown/j1",), {"a": ["left/gripper"]}, "not gripper-capable"),
         (("left_joint10",), {"a": ["left_arm/gripper"]}, "not gripper-capable"),
         (("left/j1",), {}, "not gripper-capable"),
     ],
@@ -250,7 +268,9 @@ def test_gripper_matching_rejects_ambiguous_or_absent_match(
 ) -> None:
     module = module_factory()
     _set_groups(module, _model(groups=(PlanningGroupDefinition("tool", joint_names, "base"),)))
-    _register_grippers(module, grippers)
+    _register_grippers(
+        module, grippers, ["left/j1", "left/gripper", "left_joint1", "left_arm/gripper"]
+    )
     module._world_monitor.current_group_joint_state.return_value = None
 
     result = module.set_gripper_position(0.4, "tool")
@@ -267,7 +287,11 @@ def test_gripper_matching_uses_exact_joint_namespace(module_factory) -> None:
     _set_groups(
         module, _model(groups=(PlanningGroupDefinition("tool", ("left/j1", "left/j2"), "base"),))
     )
-    _register_grippers(module, {"arbitrary_name": ["left/gripper"]})
+    _register_grippers(
+        module,
+        {"arbitrary_name": ["left/gripper"]},
+        ["left/j1", "left/j2", "left/gripper", "right/gripper"],
+    )
     module._control_coordinator.task_invoke.return_value = True
 
     assert module.set_gripper_position(0.4).succeeded
@@ -312,7 +336,8 @@ def test_explicit_group_must_support_requested_capability(module_factory) -> Non
 
 def test_omitted_group_selects_unique_capable_group(module_factory) -> None:
     module = module_factory()
-    _set_groups(module, _model(gripper=True))
+    _set_groups(module, _model())
+    _register_grippers(module, {"arm_gripper": ["arm/gripper"]}, ["j0", "arm/gripper"])
 
     result = module._resolve_gripper_group(None)
 

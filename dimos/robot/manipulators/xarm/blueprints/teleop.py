@@ -73,7 +73,6 @@ keyboard_teleop_xarm6 = autoconnect(
     ManipulationModule.blueprint(
         model=make_xarm6_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         ),
         visualization={"backend": "viser"},
     ),
@@ -105,7 +104,6 @@ keyboard_teleop_xarm7 = autoconnect(
     ManipulationModule.blueprint(
         model=make_xarm7_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         ),
         visualization={"backend": "viser"},
     ),
@@ -139,7 +137,6 @@ keyboard_teleop_lite6 = autoconnect(
     ManipulationModule.blueprint(
         model=make_lite6_model_config(
             add_gripper=True,
-            gripper_hardware_id="arm",
         ),
         visualization={"backend": "viser"},
     ),
@@ -196,11 +193,9 @@ _xarm6_teleop_hw = xarm6_hardware(
 )
 _xarm6_teleop_model = make_xarm6_model_config(
     add_gripper=True,
-    gripper_hardware_id="arm",
 )
 _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
-    gripper_hardware_id="arm",
 )
 
 # Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
