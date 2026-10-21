@@ -25,7 +25,7 @@ _HEADER = struct.Struct("<dI")
 
 
 class MeshFile(Timestamped):
-    msg_name = "shape_msgs.MeshFile"
+    msg_name = "files.MeshFile"
 
     def __init__(self, uri: str, data: bytes, ts: float | None = None) -> None:
         self.uri = uri
