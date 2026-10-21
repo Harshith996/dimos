@@ -26,9 +26,9 @@ from dimos.control.contract.ports import JointPort
 from dimos.control.contract.presets import GripperSpec
 from dimos.robot.manipulators.common.connection import ArmConnection, ArmConnectionConfig
 from dimos.robot.manipulators.xarm.config import make_xarm_model_config
-from dimos.robot.manipulators.xarm.sim2 import XARM6_HOME, XARM7_HOME, xarm_definition
-from dimos.sim2.scene import scene_robot
+from dimos.robot.manipulators.xarm.simulation import XARM6_HOME, XARM7_HOME, xarm_definition
 from dimos.sim2.spec import RobotInstance
+from dimos.sim2.world.scene import scene_robot
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.xarm.adapter import XArmAdapter

@@ -43,7 +43,7 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.unitree.g1.control_config import G1_GROOT_HOME
+from dimos.robot.unitree.g1.controllers.groot.config import G1_GROOT_HOME
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

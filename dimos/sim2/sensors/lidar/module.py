@@ -19,8 +19,8 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.sensors.lidar.device import LidarDevice
+from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.module import SensorModule, SensorModuleConfig
-from dimos.sim2.sensors.spec import Lidar
 
 
 class LidarModuleConfig(SensorModuleConfig):

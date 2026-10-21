@@ -21,8 +21,8 @@ import threading
 import time
 from typing import Any, Generic, TypeVar
 
+from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.reader import WorldReader
-from dimos.sim2.sensors.spec import Sensor
 
 SensorT = TypeVar("SensorT", bound=Sensor)
 

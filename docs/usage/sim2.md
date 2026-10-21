@@ -10,6 +10,59 @@ switched by this core change.
 
 ## Ownership
 
+### Source layout
+
+```text
+dimos/sim2/
+  spec.py                RobotConfig, RobotInstance, WorldConfig
+  blueprint.py           World/device blueprint composition
+  discovery.py           Collect robot descriptions before deployment
+  module.py              SimulationModule and scene RPCs
+  client.py              Robot-side command/feedback client
+  world/                 MuJoCo assembly, stepping, scene state, viewer, run evidence
+  ipc/                   Private shared-memory layout and channel implementation
+  sensors/
+    spec.py              Shared mounts and acquisition requirements
+    composition.py       Supported sensor families and integrated attachments
+    device.py            Acquisition clock and delivery envelope
+    reader.py            Read-only world snapshots/history
+    module.py            Shared worker lifecycle and publication
+    camera/              spec.py, device.py, module.py, renderers/
+    lidar/               spec.py, device.py, module.py, raycast.py, models/
+    imu/                 spec.py, device.py, module.py
+```
+
+Put a sensor's configuration beside its measurement implementation and publisher.
+Ray patterns belong to `lidar/models/`; image renderers belong to
+`camera/renderers/`. Neither belongs in a robot package. A robot package owns
+the choice of devices, their mounts and its actuator bindings. Tests live with
+their owner; cross-sensor acquisition tests stay in `sensors/test_sensors.py`.
+
+### Robot-owned code
+
+G1's package keeps the public entry at `connection.py`. The implementation is
+organized by responsibility, not by which blueprint first needed a file:
+
+```text
+dimos/robot/unitree/g1/
+  connection.py, connection_spec.py   Public robot interface
+  model/                             Joint groups, physical metadata, sim bindings
+  assets/                            Robot MJCF and URDF
+  devices/                           DDS motors, fault checks, stock SDK/WebRTC
+  controllers/groot/                 Gains, coordinator host, control composition
+  controllers/sonic/                 Inference, runtime, policy Module, model setup
+  manipulation/                      Planning groups, arm IK, ready pose
+  sensors/                           Real sensor transforms and recording
+  visualization/                     G1 Rerun configuration
+  skills/                            Robot skills and agent prompt
+  blueprints/                        Runnable stacks and navigation composition
+```
+
+The GR00T coordinator task remains in `control/tasks/g1_groot_wbc_task/`, where
+the coordinator discovers tasks. SONIC does not use that task mechanism: its
+G1-specific runtime and inference live together under `controllers/sonic/`.
+Changing a policy does not require moving or duplicating the robot description.
+
 | Component | Owns |
 | --- | --- |
 | `SimulationModule` | World lifecycle, paced physics thread, privileged scene RPCs |
@@ -63,7 +116,8 @@ body in the scene; `world` is a fixed frame. A named MJCF camera keeps its
 authored intrinsics. No robot is required for a sensor-only world.
 
 ```python skip
-from dimos.sim2.sensors.spec import Camera, Mount
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import WorldConfig
 
 world = WorldConfig(
