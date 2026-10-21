@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import hashlib
-import importlib
 from pathlib import Path
 from threading import RLock
 import time
+from typing import Protocol
 from urllib.parse import parse_qs
 import xml.etree.ElementTree as ET
 
@@ -41,7 +42,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose
 
 logger = setup_logger()
 
@@ -84,13 +84,13 @@ class UrdfManager(Module):
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     filtered_pointcloud: Out[PointCloud2]
-    # The URDF XML (ROS's robot_description), its meshes named package://<package>/<path>?hash=<sha256>; a mesh_request
-    # for one of those names gets the file on mesh_info, unless it carries &have=<sha256> of the current file (a client's
-    # cached copy is fresh). An empty mesh_request asks for robot_description now, so a client that just connected
-    # doesn't wait out robot_description_period_s.
+    # The URDF XML (ROS's robot_description), the files it names (meshes, textures) named
+    # package://<package>/<path>?hash=<sha256>; a file_request for one of those names gets the file on file_info, unless it
+    # carries &have=<sha256> of the current file (a client's cached copy is fresh). An empty file_request asks for
+    # robot_description now, so a client that just connected doesn't wait out robot_description_period_s.
     robot_description: Out[String]
-    mesh_request: In[String]
-    mesh_info: Out[MeshFile]
+    file_request: In[String]
+    file_info: Out[MeshFile]
 
     _running: bool = False
 
@@ -124,7 +124,7 @@ class UrdfManager(Module):
             self.robot_description.publish(String(self._urdf_xml))
             await asyncio.sleep(self.config.robot_description_period_s)
 
-    async def handle_mesh_request(self, request: String) -> None:
+    async def handle_file_request(self, request: String) -> None:
         if not request.data:
             # at most every 0.2 s however many clients connect
             if time.monotonic() - self._last_urdf_on_request_t >= 0.2:
@@ -132,18 +132,18 @@ class UrdfManager(Module):
                 self.robot_description.publish(String(self._urdf_xml))
             return
         name, _, query = request.data.partition("?")
-        # Only meshes the URDF names: a request is never a path into the filesystem.
-        mesh = self._mesh_paths.get(name)
-        if mesh is None:
+        # Only files the URDF names: a request is never a path into the filesystem.
+        file = self._file_paths.get(name)
+        if file is None:
             logger.warning(
-                f"mesh_request for {request.data!r}, which is not a mesh in robot_description"
+                f"file_request for {request.data!r}, which is not a file in robot_description"
             )
             return
-        path, digest = mesh
+        path, digest = file
         if parse_qs(query).get("have", [""])[0] == digest:
             return
         data = await asyncio.to_thread(path.read_bytes)
-        self.mesh_info.publish(MeshFile(f"{name}?hash={digest}", data))
+        self.file_info.publish(MeshFile(f"{name}?hash={digest}", data))
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
@@ -165,7 +165,6 @@ class UrdfManager(Module):
         if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
             return
         self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
-        # The scene's FK state is shared with the cloud filter's thread.
         with self._filter_lock:
             transforms = self._edges_to_send(self.joint_transforms(state))
         if transforms:
@@ -235,17 +234,14 @@ class UrdfManager(Module):
     def joint_transforms(self, state: JointState) -> list[Transform]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
         positions = dict(zip(state.name, state.position, strict=False))
-        q = self._neutral_q.copy()
-        for name in self._scene.getJointNames():
-            info = self._scene.getJointInfo(name)
-            if info.num_velocity_dofs == 1 and name in positions:
-                value = positions[name]
-                values = [np.cos(value), np.sin(value)] if info.num_position_dofs == 2 else [value]
-                q[self._scene.getJointPositionIndices([name])] = values
+        for joint in self._joints.values():
+            if joint.mimic is not None and joint.mimic[0] in positions:
+                leader, multiplier, offset = joint.mimic
+                positions[joint.name] = multiplier * positions[leader] + offset
         # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as its stalest edge.
         return [
             Transform.from_matrix(
-                np.asarray(self._context.forwardKinematics(q, joint.child_link, joint.parent_link)),
+                joint.parent_from_child(positions.get(joint.name, 0.0)),
                 frame_id=joint.parent_link,
                 child_frame_id=joint.child_link,
                 ts=state.ts,
@@ -258,121 +254,96 @@ class UrdfManager(Module):
         self, cloud: PointCloud2, points: NDArray[np.float32]
     ) -> NDArray[np.bool_] | None:
         """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
-        base_from_sensor = self.tfbuffer.get(
-            self._base_link,
-            cloud.frame_id,
-            time_point=cloud.ts,
+        assert self._body_filter is not None, "self_filter is off"
+        base_from_sensor = self._tf_at(self._base_link, cloud.frame_id, cloud.ts)
+        state = self._capture_state(cloud.ts)
+        motions = self._multi_dof_motions(cloud.ts)
+        keep = None
+        if base_from_sensor is not None and state is not None and motions is not None:
+            transform = base_from_sensor.to_matrix()
+            base_points = np.asarray(
+                points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64
+            )
+            keep = self._body_filter.keep_mask(base_points, state, motions)
+        if keep is None:
+            logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
+        return keep
+
+    def _capture_state(self, stamp: float) -> dict[str, float] | None:
+        """Joint positions at capture time (empty when none is close enough), or None when that state is malformed."""
+        state = self._states.find_closest(stamp, self.config.state_tolerance_s)
+        if state is None:
+            return {}
+        if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
+            return None
+        positions = dict(zip(state.name, state.position, strict=True))
+        if not np.isfinite(list(positions.values())).all():
+            return None
+        return positions
+
+    def _multi_dof_motions(self, stamp: float) -> dict[str, NDArray[np.float64]] | None:
+        """Each floating/planar joint's motion past its URDF origin, from capture-time tf (they have no scalar
+        JointState); None when one is missing."""
+        motions = {}
+        for joint in self._joints.values():
+            if joint.type in _MULTI_DOF_JOINT_TYPES:
+                parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
+                if parent_from_child is None:
+                    return None
+                motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
+        return motions
+
+    def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
+        return self.tfbuffer.get(
+            parent,
+            child,
+            time_point=stamp,
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_forward_tolerance_s,
         )
-        q = self._capture_configuration(cloud.ts)
-        if base_from_sensor is None or q is None:
-            logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
-            return None
-        # This Scene is rooted at the URDF base, so its world is the base frame.
-        transform = base_from_sensor.to_matrix()
-        base_points = np.asarray(points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64)
-        return ~np.asarray(self._body_filter.computeMask(q, base_points), dtype=bool)
-
-    def _capture_configuration(self, stamp: float) -> NDArray[np.float64] | None:
-        state = self._states.find_closest(stamp, self.config.state_tolerance_s)
-        positions: dict[str, float] = {}
-        if state is not None:
-            if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
-                return None
-            positions = dict(zip(state.name, state.position, strict=True))
-            if not np.isfinite(list(positions.values())).all():
-                return None
-        # Start from the model's neutral configuration, never its latest state.
-        q = self._neutral_q.copy()
-        for name in self._scene.getJointNames():
-            info = self._scene.getJointInfo(name)
-            if info.num_velocity_dofs == 1:
-                if name not in positions:
-                    return None
-                value = positions[name]
-                values = [np.cos(value), np.sin(value)] if info.num_position_dofs == 2 else [value]
-            else:
-                # Multi-DOF joints have no scalar JointState representation.
-                # Recover their configuration from capture-time relative TF.
-                joint = self._joints[name]
-                parent_from_child = self.tfbuffer.get(
-                    joint.parent_link,
-                    joint.child_link,
-                    time_point=stamp,
-                    time_tolerance=self.config.tf_tolerance_s,
-                    forward_tolerance=self.config.tf_forward_tolerance_s,
-                )
-                if parent_from_child is None:
-                    return None
-                origin = np.asarray(
-                    self._context.forwardKinematics(
-                        self._neutral_q, joint.child_link, joint.parent_link
-                    )
-                )
-                motion = np.linalg.inv(origin) @ parent_from_child.to_matrix()
-                pose = matrix_to_pose(motion)
-                if info.num_position_dofs == 4:
-                    if not np.allclose(motion[2], [0, 0, 1, 0], atol=1e-6):
-                        return None
-                    angle = np.arctan2(motion[1, 0], motion[0, 0])
-                    values = [motion[0, 3], motion[1, 3], np.cos(angle), np.sin(angle)]
-                elif info.num_position_dofs == 7:
-                    values = [
-                        *motion[:3, 3],
-                        pose.orientation.x,
-                        pose.orientation.y,
-                        pose.orientation.z,
-                        pose.orientation.w,
-                    ]
-                else:
-                    raise ValueError(f"Unsupported robot joint layout: {name}")
-            q[self._scene.getJointPositionIndices([name])] = values
-        return q
 
     def _load_scene(self) -> None:
-        # RoboPlan is optional for stacks that do not use this module.
-        native = importlib.import_module("roboplan.core")
-
         description = self.config.model.load()
-        root = ET.fromstring(description.xml)
-        root.set("version", "1.0")
-        self._scene = native.Scene(
-            "dimos_self_filter",
-            native.loadUrdfSceneDescriptionFromXml(
-                ET.tostring(root, encoding="unicode"),
-                [str(path) for path in description.package_paths.values()],
-            ),
-        )
-        self._neutral_q = np.asarray(self._scene.getCurrentJointPositions()).copy()
-        self._context = native.SceneContext(self._scene)
-        self._body_filter = native.RobotBodyFilter(
-            self._scene,
-            native.RobotBodyFilterOptions(
-                padding=self.config.padding_m,
-                method=native.RobotBodyFilterMethod.Narrowphase,
-                num_threads=1,
-            ),
-        )
-        self._urdf_xml, self._mesh_paths = _shareable_urdf(description)
-        # Reuse the asset loader's topology for multi-DOF TF lookup, not geometry parsing.
+        self._body_filter: RobotBodyFilter | None = None
+        if self.config.self_filter:
+            # RoboPlan is the one backend today, imported only when filtering so the rest runs without it.
+            from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+
+            self._body_filter = RoboPlanBodyFilter(description, self.config.padding_m)
+        self._urdf_xml, self._file_paths = _shareable_urdf(description)
         self._base_link = description.root_link
         self._joints = {joint.name: joint for joint in description.joints}
 
 
+class RobotBodyFilter(Protocol):
+    """A self-filter backend: which points lie on the robot at a given joint state."""
+
+    def keep_mask(
+        self,
+        root_points: NDArray[np.float64],
+        joint_positions: Mapping[str, float],
+        joint_motions: Mapping[str, NDArray[np.float64]],
+    ) -> NDArray[np.bool_] | None:
+        """One keep flag per point (points in the URDF root frame, input order), or None when the state lacks a
+        joint the backend needs. joint_motions holds each floating/planar joint's 4x4 motion past its URDF origin."""
+        ...
+
+
 def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, tuple[Path, str]]]:
-    """The URDF with each mesh's local path swapped for package://<package>/<path>?hash=<sha256>, and per name (without
-    the query) its file and hash."""
+    """The URDF with each mesh's and texture's local path swapped for package://<package>/<path>?hash=<sha256>, and per
+    name (without the query) its file and hash."""
     root = ET.fromstring(description.xml)
-    mesh_paths: dict[str, tuple[Path, str]] = {}
-    for mesh in root.iter("mesh"):
-        path = Path(mesh.attrib["filename"])
+    file_paths: dict[str, tuple[Path, str]] = {}
+    for element in root.iter():
+        if element.tag not in ("mesh", "texture") or "filename" not in element.attrib:
+            continue
+        path = Path(element.attrib["filename"])
         uri = str(path)
         for package, package_root in description.package_paths.items():
             if path.is_relative_to(package_root):
                 uri = f"package://{package}/{path.relative_to(package_root).as_posix()}"
                 break
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        mesh.set("filename", f"{uri}?hash={digest}")
-        mesh_paths[uri] = (path, digest)
-    return ET.tostring(root, encoding="unicode"), mesh_paths
+        element.set("filename", f"{uri}?hash={digest}")
+        file_paths[uri] = (path, digest)
+    return ET.tostring(root, encoding="unicode"), file_paths
