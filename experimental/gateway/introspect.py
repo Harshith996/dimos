@@ -482,7 +482,7 @@ def blueprint_list() -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_blueprints
     from dimos.robot.external_blueprints import list_external_blueprint_names
 
-    builtin = sorted(name for name in all_blueprints if not name.startswith("demo-"))
+    builtin = sorted(all_blueprints)
     return {
         "blueprints": [{"name": name, "kind": "builtin"} for name in builtin]
         + [{"name": name, "kind": "external"} for name in list_external_blueprint_names()]

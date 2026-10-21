@@ -60,6 +60,8 @@ class LaunchConfig:
     modules: ModuleValues = field(default_factory=dict)
     one_off: LaunchOverrides = field(default_factory=LaunchOverrides)
     args: list[str] = field(default_factory=list)
+    # a /runs/exec launch: exactly these args, no saved config (a restart keeps it that way)
+    exact: bool = False
 
     def secrets(self) -> list[str]:
         return ov.secret_paths(self.global_, self.modules, self.one_off.secrets)
@@ -116,6 +118,20 @@ def run_source(run_id: str) -> RunSource | None:
     return None
 
 
+def started_time(pid: int) -> float | None:
+    """When `pid` started: with the pid, names one process even after the OS reuses the number."""
+    try:
+        return float(psutil.Process(pid).create_time())
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def is_launched_process(record: dict[str, Any]) -> bool:
+    """The recorded launch is still the process at its pid (not a later one the pid was reused for)."""
+    pid = int(record["pid"])
+    return alive(pid) and started_time(pid) == record.get("pid_started")
+
+
 def alive(pid: int, group: bool = True) -> bool:
     try:
         (os.killpg if group else os.kill)(pid, 0)
@@ -161,7 +177,7 @@ def current_launch() -> dict[str, Any] | None:
     if entry and not record.get("ever_ran"):
         record.update(ever_ran=True)
         _save(record)
-    running = alive(pid)
+    running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
     if running and (stopping or (record.get("ever_ran") and not entry)):
         phase = "stopping"
@@ -219,6 +235,7 @@ def last_launch_args() -> tuple[str, LaunchConfig] | None:
             one_off.secrets,
         ),
         [str(arg) for arg in args],
+        bool(record.get("exact")),
     )
 
 
@@ -312,12 +329,14 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "blueprint": blueprint,
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "pid": child.pid,
+            "pid_started": started_time(child.pid),
             "run_id": run_id,
             "ever_ran": False,
             "overrides": global_,
             "modules": modules,
             "one_off": LaunchOverrides(one_off_global, one_off_modules, one_off.secrets).to_json(),
             **({"args": ov.shown_args(launch.args)} if launch.args else {}),
+            **({"exact": True} if launch.exact else {}),
         }
         _save(record)
         started = current_launch()
@@ -387,6 +406,7 @@ def relaunch(blueprint: str, command: list[str], cwd: str, env: dict[str, str]) 
                 "blueprint": blueprint,
                 "started_at": started_at,
                 "pid": child.pid,
+                "pid_started": started_time(child.pid),
                 "run_id": run_id,
                 "ever_ran": False,
                 "relaunched": True,

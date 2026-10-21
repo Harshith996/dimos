@@ -130,7 +130,7 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
     if not request.args or request.args[0].startswith("-"):
         raise ApiError(400, "args must start with a blueprint or module name")
     name, *rest = request.args
-    return await started(state, name, LaunchConfig(args=rest))
+    return await started(state, name, LaunchConfig(args=rest, exact=True))
 
 
 @router.get("/runs/skills", response_model=responses.Skills)
@@ -186,10 +186,10 @@ async def restart(state: GatewayState, request: RunRequest) -> dict[str, Any]:
     if last is None:
         raise ApiError(400, "the dimos gateway hasn't launched anything yet")
     blueprint, previous = last
-    # a /runs/exec launch (the only kind with args) restarts exactly as typed
+    # a /runs/exec launch restarts exactly as typed
     config = (
-        LaunchConfig(args=previous.args)
-        if previous.args
+        LaunchConfig(args=previous.args, exact=True)
+        if previous.exact
         else with_saved(blueprint, previous.one_off, [])
     )
     try:
