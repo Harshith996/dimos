@@ -62,11 +62,10 @@ pub fn parse_aes_key(hex: &str) -> Result<[u8; 16], String> {
     if clean.len() != 32 || !clean.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("aes_128_key must be 32 hex characters (16 bytes)".into());
     }
-    let mut key = [0u8; 16];
-    for (i, byte) in key.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).map_err(|e| e.to_string())?;
-    }
-    Ok(key)
+    let bytes = (0..16)
+        .map(|i| u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<u8>, String>>()?;
+    Ok(bytes.try_into().expect("32 hex characters are 16 bytes"))
 }
 
 fn decrypt_data1(data1: &str, data2: i64, aes_key: &str) -> Result<String, String> {
@@ -215,16 +214,17 @@ mod tests {
 
     #[test]
     fn data2_3_needs_the_key_the_robot_sealed_with() {
-        let right = "00112233445566778899aabbccddeeff";
-        let nonce = [7u8; 12];
-        let sealed = Aes128Gcm::new_from_slice(&parse_aes_key(right).unwrap())
+        let hex = |bytes: [u8; 16]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let right = hex(rand::random());
+        let nonce: [u8; 12] = rand::random();
+        let sealed = Aes128Gcm::new_from_slice(&parse_aes_key(&right).unwrap())
             .unwrap()
             .encrypt(Nonce::from_slice(&nonce), b"secret data1".as_slice())
             .unwrap();
         let (ciphertext, tag) = sealed.split_at(sealed.len() - 16);
         let data1 = B64.encode([ciphertext, &nonce, tag].concat());
-        assert_eq!(decrypt_data1(&data1, 3, right).unwrap(), "secret data1");
-        assert!(decrypt_data1(&data1, 3, "ffeeddccbbaa99887766554433221100")
+        assert_eq!(decrypt_data1(&data1, 3, &right).unwrap(), "secret data1");
+        assert!(decrypt_data1(&data1, 3, &hex(rand::random()))
             .unwrap_err()
             .contains("AES"));
         assert!(decrypt_data1(&data1, 3, "")

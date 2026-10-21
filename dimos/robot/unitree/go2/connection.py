@@ -530,7 +530,8 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
     def _call(self, verb: str, timeout: float = 10.0, **args: Any) -> Any:
         """One RPC on the Rust module: the request on go2_request, its answer back on go2_response."""
         request_id = uuid.uuid4().hex
-        done, answer = Event(), {}
+        done = Event()
+        answer: dict[str, Any] = {}
         with self._answers_lock:
             self._answers[request_id] = (done, answer)
         try:
