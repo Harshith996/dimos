@@ -73,7 +73,8 @@ r1pro_nav = autoconnect(
             (UrdfManager, "filtered_pointcloud", "lidar"),
         ]
     ),
-    r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S).remappings(
+    # Head depth within a voxel of the floor lands in the floor's layer, so it is anchored as floor.
+    r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S, floor_tolerance_m=VOXEL_SIZE_M).remappings(
         [(HeadFloorPrior, "head_cloud", "lidar_with_robot")]
     ),
     RayTracingVoxelMap.blueprint(
