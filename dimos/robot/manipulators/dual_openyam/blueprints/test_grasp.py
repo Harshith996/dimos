@@ -107,11 +107,8 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
         for atom in dual_openyam_grasp.active_blueprints
         if atom.module is RealSenseCamera and atom.kwargs.get("enable_pointcloud")
     )
-    assert (overhead.kwargs["width"], overhead.kwargs["height"], overhead.kwargs["fps"]) == (
-        640,
-        480,
-        30,
-    )
+    assert (overhead.kwargs["width"], overhead.kwargs["fps"]) == (640, 30)
+    assert "height" not in overhead.kwargs
     assert dual_openyam_grasp.global_config_overrides["record"] == "sqlite"
     bridge = _atom(dual_openyam_grasp, RerunBridgeModule).kwargs
     assert bridge["topics"] == DUAL_OPENYAM_VIEW_TOPICS
