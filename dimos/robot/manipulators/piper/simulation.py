@@ -14,7 +14,7 @@
 
 """Piper position servos and a gripper measured as metres between fingers."""
 
-from dimos.sim2.sensors.spec import Camera
+from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.spec import Joint, RobotConfig
 from dimos.utils.data import LfsPath
 

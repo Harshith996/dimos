@@ -23,8 +23,8 @@ from dimos.core.global_config import global_config
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.sim2.module import SimulationModule
-from dimos.sim2.scene import describe_scene, scene_path
 from dimos.sim2.spec import WorldConfig
+from dimos.sim2.world.scene import describe_scene, scene_path
 
 
 def arm_scene(default: str | Path = "workbench.xml") -> Path:
