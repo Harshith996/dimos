@@ -86,6 +86,12 @@ class WebRtcTiming(BaseConfig):
     ice_gather_timeout: float = 4.0
     validation_timeout: float = 8.0
     heartbeat_period: float = 2.0
+    ice_keepalive_period: float = 2.0
+    # Wi-Fi blips of several seconds are common (~4/h on the decks): only a silence of
+    # link_lost_timeout ends the link, like aiortc's ~30 s consent expiry
+    link_quiet_timeout: float = 5.0
+    link_lost_timeout: float = 30.0
+    keyframe_retry_period: float = 1.0
     clock_window: float = 30.0
     clock_reset: float = 1.0
     video_queue_packets: int = 2048

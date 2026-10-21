@@ -43,6 +43,14 @@ pub struct Timing {
     pub validation_timeout: f64,
     /// data channel heartbeat period
     pub heartbeat_period: f64,
+    /// ICE keepalive period
+    pub ice_keepalive_period: f64,
+    /// silence this long marks the link disconnected (logged only; it may come back)
+    pub link_quiet_timeout: f64,
+    /// silence this long means the link is gone: reconnect, or exit without auto_reconnect
+    pub link_lost_timeout: f64,
+    /// while the video waits for a keyframe, ask the Go2 for one this often
+    pub keyframe_retry_period: f64,
     /// window the Go2-to-host clock offset is the minimum over
     pub clock_window: f64,
     /// an offset this far from the estimate is a clock reset, not jitter
@@ -55,4 +63,33 @@ pub struct Timing {
 
 pub fn secs(seconds: f64) -> Duration {
     Duration::from_secs_f64(seconds.max(0.0))
+}
+
+#[cfg(test)]
+impl Timing {
+    /// Any valid timing, for tests that need one (the real values come from GO2Connection's config).
+    pub fn for_tests() -> Self {
+        Self {
+            answer_timeout: 5.0,
+            cmd_vel_timeout: 0.2,
+            move_period: 0.01,
+            stand_up_settle: 3.0,
+            rage_balance_settle: 0.3,
+            rage_switch_settle: 2.0,
+            motion_mode_settle: 5.0,
+            reconnect_pause: 2.0,
+            signaling_timeout: 4.0,
+            ice_gather_timeout: 4.0,
+            validation_timeout: 8.0,
+            heartbeat_period: 2.0,
+            ice_keepalive_period: 2.0,
+            link_quiet_timeout: 5.0,
+            link_lost_timeout: 30.0,
+            keyframe_retry_period: 1.0,
+            clock_window: 30.0,
+            clock_reset: 1.0,
+            video_queue_packets: 2048,
+            capture_max_waiting: 16,
+        }
+    }
 }

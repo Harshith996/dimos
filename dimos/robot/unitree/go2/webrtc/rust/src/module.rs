@@ -840,11 +840,21 @@ impl VideoLoop {
         let mut first_arrival: VecDeque<(u32, u64)> = VecDeque::new();
         let mut rgb = Vec::new();
         let mut last_info_ns = 0u64;
+        let mut last_keyframe_ask_ns = 0u64;
+        let keyframe_retry_ns =
+            secs(self.shared.config.timing.keyframe_retry_period).as_nanos() as u64;
         let mut stats = Stats::default();
         while let Ok(event) = rx.recv() {
             let Event::Rtp { packet, arrived_ns } = event else {
                 continue;
             };
+            // a lost keyframe request (or one the Go2 ignored) would leave the camera dark until its next keyframe
+            if !depacketizer.synced()
+                && arrived_ns.saturating_sub(last_keyframe_ask_ns) > keyframe_retry_ns
+            {
+                last_keyframe_ask_ns = arrived_ns;
+                self.want_keyframe();
+            }
             if self.dropped.swap(false, Ordering::Relaxed) {
                 // packets were dropped before this one: the frame in progress is broken
                 depacketizer = Depacketizer::default();

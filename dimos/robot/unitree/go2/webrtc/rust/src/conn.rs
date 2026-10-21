@@ -27,6 +27,7 @@ use tokio::sync::oneshot;
 use tracing::{debug, info, warn};
 use webrtc::api::interceptor_registry::{configure_nack, configure_rtcp_reports};
 use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
@@ -93,14 +94,22 @@ async fn send(
         .map_err(|e| format!("data channel send: {e}"))
 }
 
-fn robot_api() -> Result<webrtc::api::API, String> {
+fn robot_api(timing: &Timing) -> Result<webrtc::api::API, String> {
     let mut media = MediaEngine::default();
     media.register_default_codecs().map_err(|e| e.to_string())?;
     // no transport-cc: the robot rejects offers that ask for it
     let mut registry = Registry::new();
     registry = configure_nack(registry, &mut media);
     registry = configure_rtcp_reports(registry);
+    // ride out a Wi-Fi blip: the link only counts as lost after link_lost_timeout of silence
+    let mut settings = SettingEngine::default();
+    settings.set_ice_timeouts(
+        Some(secs(timing.link_quiet_timeout)),
+        Some(secs(timing.link_lost_timeout)),
+        Some(secs(timing.ice_keepalive_period)),
+    );
     Ok(APIBuilder::new()
+        .with_setting_engine(settings)
         .with_media_engine(media)
         .with_interceptor_registry(registry)
         .build())
@@ -120,7 +129,7 @@ impl Conn {
         on_event: OnEvent,
     ) -> Result<Arc<Conn>, String> {
         let pc = Arc::new(
-            robot_api()?
+            robot_api(timing)?
                 .new_peer_connection(RTCConfiguration::default())
                 .await
                 .map_err(|e| e.to_string())?,
@@ -291,11 +300,10 @@ impl Conn {
             let closed = closed.clone();
             pc.on_peer_connection_state_change(Box::new(move |state| {
                 info!(%state, "Go2 peer connection");
+                // Disconnected is a blip that may recover; Failed is link_lost_timeout of silence
                 if matches!(
                     state,
-                    RTCPeerConnectionState::Failed
-                        | RTCPeerConnectionState::Disconnected
-                        | RTCPeerConnectionState::Closed
+                    RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed
                 ) && !closed.swap(true, Ordering::Relaxed)
                 {
                     on_event(Event::Lost);
@@ -465,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn robot_offer_has_no_transport_cc() {
-        let pc = robot_api()
+        let pc = robot_api(&Timing::for_tests())
             .unwrap()
             .new_peer_connection(RTCConfiguration::default())
             .await
