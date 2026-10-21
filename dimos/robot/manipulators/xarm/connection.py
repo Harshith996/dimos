@@ -14,6 +14,7 @@
 
 """One xArm connection for the SDK and sim2, with identical typed joint ports."""
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -25,7 +26,7 @@ from dimos.control.contract.ports import JointPort
 from dimos.control.contract.presets import GripperSpec
 from dimos.robot.manipulators.common.connection import ArmConnection, ArmConnectionConfig
 from dimos.robot.manipulators.xarm.config import make_xarm_model_config
-from dimos.robot.manipulators.xarm.sim2 import xarm_definition
+from dimos.robot.manipulators.xarm.sim2 import XARM6_HOME, XARM7_HOME, xarm_definition
 from dimos.sim2.scene import scene_robot
 from dimos.sim2.spec import RobotInstance
 
@@ -71,18 +72,29 @@ class XArmConnection(ArmConnection):
             config.dof,
             source=config.source,
             gripper=config.gripper,
-            home=config.initial_positions,
             camera_pointcloud=config.camera_pointcloud,
         )
+        home = config.initial_positions
+        if home is None:
+            home = list(XARM7_HOME if config.dof == 7 else XARM6_HOME)
+        if len(home) != config.dof:
+            raise ValueError("xArm initial_positions must contain one value per arm joint")
+        initial = {f"{config.source}/joint{i}": q for i, q in enumerate(home, 1)}
+        if config.gripper:
+            initial[f"{config.source}/gripper"] = 850.0
         if config.base_pose is not None:
-            return RobotInstance(
+            instance = RobotInstance(
                 definition,
                 xyz=config.base_pose.position.to_tuple(),
                 rpy=config.base_pose.orientation.to_euler().to_tuple(),
             )
-        return scene_robot(
-            scene,
-            definition,
-            config.spawn,
-            default=(0.0, 0.0, 0.12),
+        else:
+            instance = scene_robot(scene, definition, config.spawn, default=(0.0, 0.0, 0.12))
+        return replace(
+            instance,
+            initial_positions=initial,
+            controller={
+                "interface": "position",
+                "startup_configuration": XArmConnection.describe_simulated_robot,
+            },
         )

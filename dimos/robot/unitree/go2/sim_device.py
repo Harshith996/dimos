@@ -62,6 +62,11 @@ class Go2SimDevice:
         if self._client is None:
             raise RuntimeError("Go2 requires a collected sim2 world before starting")
         self._policy = load_policy(self._policy_path)
+        names = self._client.descriptor.joint_names
+        if set(names) != set(self._policy.joint_names):
+            raise ValueError("Go2 policy joints do not match the physical robot")
+        self._policy_order = np.array([names.index(name) for name in self._policy.joint_names])
+        self._motor_order = np.argsort(self._policy_order)
         self._error = None
         self._stop.clear()
         self._thread = Thread(target=self._run, name="go2-locomotion", daemon=True)
@@ -101,16 +106,16 @@ class Go2SimDevice:
                     Proprioception(
                         angular_velocity=v["imu_gyroscope"],
                         gravity=projected_gravity(v["imu_quaternion"]),
-                        joint_position=v["position"],
-                        joint_velocity=v["velocity"],
+                        joint_position=v["position"][self._policy_order],
+                        joint_velocity=v["velocity"][self._policy_order],
                     ),
                     command,
                 )
                 self._client.write_motors(
                     MotorCommandArray(
-                        q=target.tolist(),
-                        kp=policy.kp.tolist(),
-                        kd=policy.kd.tolist(),
+                        q=target[self._motor_order].tolist(),
+                        kp=policy.kp[self._motor_order].tolist(),
+                        kd=policy.kd[self._motor_order].tolist(),
                     ),
                     observed=frame,
                 )

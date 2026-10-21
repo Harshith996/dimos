@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -30,6 +31,7 @@ import mujoco
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.sim2.evidence import run_record, write_record
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene_types import SceneDescription, SceneState, SceneUpdate
 from dimos.sim2.spec import WorldConfig
@@ -47,6 +49,7 @@ class SimulationModuleConfig(ModuleConfig):
     world: WorldConfig
     sim_id: str = "sim"
     viewer: bool = False
+    evidence_dir: Path | None = None
 
 
 class SimulationModule(Module):
@@ -65,6 +68,8 @@ class SimulationModule(Module):
         self._failure: str | None = None
         self._truth_enabled = False
         self._truth_thread: threading.Thread | None = None
+        self._run_record: dict[str, Any] | None = None
+        self._record_path: Path | None = None
 
     @rpc
     def build(self) -> None:
@@ -74,7 +79,15 @@ class SimulationModule(Module):
             runtime = SimulationRuntime(self.config.world, self.config.sim_id)
             directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
             try:
-                mujoco.mj_saveModel(runtime.model, str(Path(directory.name) / "world.mjb"), None)
+                model = Path(directory.name) / "world.mjb"
+                mujoco.mj_saveModel(runtime.model, str(model), None)
+                self._run_record = run_record(runtime, model)
+                evidence_dir = self.config.evidence_dir
+                if evidence_dir is None and (log_dir := os.environ.get("DIMOS_RUN_LOG_DIR")):
+                    evidence_dir = Path(log_dir) / "sim2"
+                if evidence_dir is not None:
+                    self._record_path = evidence_dir / f"{runtime.world_id}.json"
+                    write_record(self._record_path, self._run_record)
             except BaseException:
                 runtime.close()
                 directory.cleanup()
@@ -97,7 +110,16 @@ class SimulationModule(Module):
                     name: binding.channel.descriptor.to_dict()
                     for name, binding in self._runtime.robots.items()
                 },
+                "run_record": str(self._record_path) if self._record_path else None,
             }
+
+    @rpc
+    def describe_run(self) -> dict[str, Any]:
+        """Resolved parameters/provenance and initial state, not agent-visible observations."""
+        with self._lifecycle_lock:
+            if self._run_record is None:
+                raise RuntimeError("SimulationModule.build() has not completed")
+            return self._run_record
 
     @rpc
     def start(self) -> None:

@@ -39,11 +39,12 @@ from dimos.sim2.ipc.abi import ChannelDescriptor, FrameField, FrameLayout, make_
 from dimos.sim2.ipc.channel import FrameMetadata, RobotChannel
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.runtime import STATE
+from dimos.sim2.sensors.lidar.device import LidarDevice
 from dimos.sim2.sensors.lidar.models.mid360 import Mid360
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Camera, Imu, Lidar
-from dimos.sim2.spec import ControlInterface, Joint, RobotConfig, RobotInstance
+from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
 from dimos.simulation.sensors.mid360.pattern import Mid360Pattern
 
 
@@ -177,7 +178,8 @@ def history(tmp_path, request):
             robot_id="world",
             generation="test",
             shm_name=f"mid360-{uuid4().hex[:16]}",
-            control_interface=ControlInterface.WHOLE_BODY,
+            actuator_modes=(),
+            position_gains=(),
             joint_names=(),
             dof=0,
             physics_dt=timestep,
@@ -272,7 +274,7 @@ def test_lidar_imu_preserves_acquisition_clock_units_and_backlog(history, scanne
     assert reader.update()
     module.capture()
     for tick in range(1, 21):
-        publish(tick * 0.005, omega=0.2, quat=(0, 1, 0, 0), wall_jitter=0.02)
+        publish(tick * 0.005, omega=0.2, quat=(0, 1, 0, 0))
     assert reader.update()
     module.capture()
     samples = [call.args[0] for call in imu_output.call_args_list]
@@ -290,6 +292,7 @@ def test_estimator_device_does_not_publish_corrected_cloud_or_truth_tf(history, 
     reader, _, publish = history
     module, raw, corrected = scanner
     module.config.sensor = replace(module.config.sensor, truth_outputs=False)
+    module.open()
     truth_tf = mocker.patch.object(module.tf, "publish")
     for tick in range(21):
         publish(tick * 0.005)
@@ -331,6 +334,27 @@ def test_rolling_scan_keeps_motion_in_raw_cloud_and_deskews_mapping_cloud(histor
     np.testing.assert_array_equal(decoded.lines_u8(), np.tile(np.arange(4), 5))
     assert decoded.offset_times_u32()[-1] == 80_015_000
     assert module.sensor_status()["scans"] == 1
+
+
+def test_rolling_device_returns_intervals_and_delay_without_a_module(history, scanner):
+    reader, _, publish = history
+    module, _, _ = scanner
+    device = LidarDevice(reader, replace(module.config.sensor, latency=0.025), "g1", "pelvis")
+    try:
+        for tick in range(21):
+            publish(tick * 0.005)
+        assert device.poll() == []
+        for tick in range(21, 26):
+            publish(tick * 0.005)
+        results = device.poll()
+        raw = next(value for value in results if value.port == "raw_pointcloud")
+        assert (raw.acquisition_start, raw.acquisition_end, raw.available_at) == pytest.approx(
+            (0, 0.1, 0.125)
+        )
+        assert raw.value.ts == pytest.approx(1000)
+        assert raw.value.offset_times_u32()[-1] == 80_015_000
+    finally:
+        device.close()
 
 
 def test_moving_geometry_is_raycast_at_capture_time(history, scanner):
@@ -555,7 +579,6 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
     robot = RobotConfig(
         model=model,
         root_body="base",
-        control=ControlInterface.MANIPULATOR,
         joints=(Joint("travel", "travel", "drive", kp=500, kd=40),),
         sensors=(
             Lidar(
@@ -596,7 +619,7 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
             stack.callback(transport.subscribe(callback))
             transports[topic, message] = transport
         blueprint = autoconnect(
-            simulation(scene=scene, robots={"stage": RobotInstance(robot, xyz=(0, 0, 1))}),
+            simulation(world=WorldConfig(scene, {"stage": RobotInstance(robot, xyz=(0, 0, 1))})),
             PointLio.blueprint(
                 source_dir=None,
                 build_command=None,
@@ -605,7 +628,13 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
                 extrinsic_t=[0.0, 0.0, 0.0],
                 extrinsic_r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             ),
-        ).remappings([("stage_lidar", "raw_pointcloud", "lidar_raw")])
+        ).remappings(
+            [
+                ("stage_lidar", "raw_pointcloud", "lidar_raw"),
+                ("stage_lidar", "imu_raw", "imu_raw"),
+                ("stage_camera", "color_image", "color_image"),
+            ]
+        )
         started = time.monotonic()
         coordinator = ModuleCoordinator.build(
             blueprint.transports(transports).global_config(

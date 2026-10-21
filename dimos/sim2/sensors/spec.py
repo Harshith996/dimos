@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import math
 from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 import numpy as np
@@ -72,6 +73,27 @@ class RangeResponse(Protocol):
 
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
+class AcquisitionRequirements:
+    """World samples needed by a device, independent of its output message rate."""
+
+    sample_hz: float
+    history_seconds: float
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.sample_hz) or self.sample_hz <= 0:
+            raise ValueError("acquisition sample rate must be finite and positive")
+        if not math.isfinite(self.history_seconds) or self.history_seconds < 0:
+            raise ValueError("acquisition history must be finite and nonnegative")
+
+
+def _validate_timing(rate_hz: float, latency: float) -> None:
+    if not math.isfinite(rate_hz) or rate_hz <= 0:
+        raise ValueError("sensor rate must be finite and positive")
+    if not math.isfinite(latency) or latency < 0:
+        raise ValueError("sensor latency must be finite and nonnegative")
+
+
+@dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Camera:
     name: str
     camera: str | Mount
@@ -83,8 +105,10 @@ class Camera:
     depth: bool = True
     pointcloud: bool = False
     shadows: bool = True
+    latency: float = 0.0
 
     def __post_init__(self) -> None:
+        _validate_timing(self.rate_hz, self.latency)
         if self.pointcloud and not self.depth:
             raise ValueError("camera point clouds require depth")
         if isinstance(self.camera, str) and self.fovy is not None:
@@ -94,16 +118,28 @@ class Camera:
     def model_name(self) -> str:
         return self.camera if isinstance(self.camera, str) else f"sensor/{self.name}"
 
+    @property
+    def acquisition(self) -> AcquisitionRequirements:
+        return AcquisitionRequirements(self.rate_hz, 2 / self.rate_hz)
+
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Imu:
     name: str
     site: str | Mount
     rate_hz: float = 200.0
+    latency: float = 0.0
+
+    def __post_init__(self) -> None:
+        _validate_timing(self.rate_hz, self.latency)
 
     @property
     def model_name(self) -> str:
         return self.site if isinstance(self.site, str) else f"sensor/{self.name}"
+
+    @property
+    def acquisition(self) -> AcquisitionRequirements:
+        return AcquisitionRequirements(self.rate_hz, 2 / self.rate_hz)
 
 
 @dataclass(frozen=True, config=ConfigDict(extra="forbid"))
@@ -124,8 +160,10 @@ class Lidar:
     imu: Imu | None = None
     # Disable both corrected cloud and truth TF when testing an estimator.
     truth_outputs: bool = True
+    latency: float = 0.0
 
     def __post_init__(self) -> None:
+        _validate_timing(self.rate_hz, self.latency)
         if self.imu is not None and not isinstance(
             self.model(**self.model_kwargs), TimedRayPattern
         ):
@@ -134,6 +172,18 @@ class Lidar:
     @property
     def model_name(self) -> str:
         return self.site if isinstance(self.site, str) else f"sensor/{self.name}"
+
+    @property
+    def acquisition(self) -> AcquisitionRequirements:
+        model = self.model(**self.model_kwargs)
+        rate = self.rate_hz
+        if isinstance(model, TimedRayPattern):
+            if model.motion_sample_rate_hz < self.rate_hz:
+                raise ValueError("motion sampling cannot be slower than scan acquisition")
+            rate = max(rate, model.motion_sample_rate_hz)
+        if self.imu is not None:
+            rate = max(rate, self.imu.rate_hz)
+        return AcquisitionRequirements(rate, 2 / self.rate_hz)
 
 
 Sensor: TypeAlias = Camera | Lidar | Imu

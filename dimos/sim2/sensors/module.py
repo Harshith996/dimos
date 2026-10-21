@@ -16,16 +16,19 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import queue
 import threading
 import time
 from typing import Any
 
+from pydantic import Field
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.sim2.module import SimulationSpec
+from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.reader import WorldReader
+from dimos.sim2.sensors.spec import Sensor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -33,7 +36,9 @@ logger = setup_logger()
 
 class SensorModuleConfig(ModuleConfig):
     robot_id: str | None = None
-    rate_hz: float = 10.0
+    sensor: Sensor
+    # Worker polling is a deployment setting, not the sensor acquisition clock.
+    rate_hz: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @property
     def model_prefix(self) -> str:
@@ -44,7 +49,7 @@ class SensorModuleConfig(ModuleConfig):
         return f"{self.robot_id or 'world'}/"
 
 
-class SensorModule(Module, ABC):
+class SensorModule(Module):
     config: SensorModuleConfig
     _simulation: SimulationSpec
     dedicated_worker = True
@@ -57,6 +62,7 @@ class SensorModule(Module, ABC):
         self._error: str | None = None
         self._error_lock = threading.Lock()
         self.reader: WorldReader
+        self.device: SensorDevice[Any]
 
     @rpc
     def start(self) -> None:
@@ -78,11 +84,11 @@ class SensorModule(Module, ABC):
             self.open()
             opened = True
             self._ready.put(None)
+            rate = self.config.rate_hz or self.config.sensor.acquisition.sample_hz
             while not self._stop.is_set():
                 before = time.monotonic()
-                if self.reader.update():
-                    self.capture()
-                self._stop.wait(max(0.0, 1.0 / self.config.rate_hz - (time.monotonic() - before)))
+                self.capture()
+                self._stop.wait(max(0.0, 1.0 / rate - (time.monotonic() - before)))
         except Exception as error:
             with self._error_lock:
                 self._error = str(error)
@@ -95,19 +101,25 @@ class SensorModule(Module, ABC):
                 self.reader.close()
 
     def open(self) -> None:
-        pass
+        raise NotImplementedError("sensor modules construct their measurement device")
 
-    @abstractmethod
     def capture(self) -> None:
-        raise NotImplementedError
+        for measurement in self.device.poll():
+            if self.reader.channel.episode_id != measurement.episode:
+                break
+            getattr(self, measurement.port).publish(measurement.value)
+            self.device.published(measurement)
 
     def close_sensor(self) -> None:
-        pass
+        device = getattr(self, "device", None)
+        if device is not None:
+            device.close()
 
     @rpc
     def sensor_status(self) -> dict[str, Any]:
         with self._error_lock:
-            return {"error": self._error}
+            device = getattr(self, "device", None)
+            return {"error": self._error, **(device.status() if device is not None else {})}
 
     @rpc
     def stop(self) -> None:
@@ -116,4 +128,6 @@ class SensorModule(Module, ABC):
             self._thread.join(timeout=5)
             if self._thread.is_alive():
                 raise RuntimeError("sensor worker did not stop")
+        else:
+            self.close_sensor()
         super().stop()
