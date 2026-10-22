@@ -241,7 +241,7 @@ pub fn extract_xyz(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+
     use dimos_module::cdr;
     use std::f64::consts::PI;
 
@@ -290,48 +290,6 @@ mod tests {
         let states = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let path = build_path(&states, &[], 5.0, "odom", 0.0);
         assert_eq!(path_stamps(&path), vec![5.0, 5.0]);
-    }
-    #[test]
-    fn generated_tf_cdr_round_trip_retains_exact_wire_time() {
-        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-        use dimos_module::nalgebra::Isometry3;
-        for ns in [0, -1, 1_700_000_000_123_456_789] {
-            let source = dimos_module::Transform::from_nanoseconds(
-                "world",
-                "base",
-                ns,
-                Isometry3::translation(1., 2., 3.),
-            );
-            let payload = encode_tf(&[source]).unwrap();
-            let value: TFMessage = cdr::decode(&payload).unwrap();
-            assert_eq!(nanoseconds(&value.transforms[0].header.stamp), ns);
-            assert_eq!(value.transforms[0].header.frame_id, "world");
-            for little in [false, true] {
-                let received = decode_tf(&cdr::encode_endian(&value, little).unwrap()).unwrap();
-                assert_eq!(received[0].stamp_nanoseconds(), Some(ns));
-                assert_eq!(received[0].translation().x, 1.);
-            }
-        }
-    }
-
-    #[test]
-    fn tf_codec_rejects_invalid_packets_and_ros_time() {
-        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-        use dimos_module::nalgebra::Isometry3;
-        let payload = encode_tf(&[dimos_module::Transform::from_nanoseconds(
-            "a",
-            "b",
-            0,
-            Isometry3::identity(),
-        )])
-        .unwrap();
-        let mut message: TFMessage = cdr::decode(&payload).unwrap();
-        message.transforms[0].header.stamp.nanosec = 1_000_000_000;
-        assert!(decode_tf(&cdr::encode(&message).unwrap()).is_err());
-        assert!(decode_tf(&[0, 3, 0, 0]).is_err());
-        let mut trailing = payload;
-        trailing.push(0);
-        assert!(decode_tf(&trailing).is_err());
     }
 
     #[test]

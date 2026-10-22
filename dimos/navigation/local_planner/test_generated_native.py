@@ -103,7 +103,7 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
             session=session,
         )
         wires = {}
-        for name in ["local_map", "planner_path", "tf", "path", "ground_support"]:
+        for name in ["local_map", "planner_path", "tf", "tf_static", "path", "ground_support"]:
             port = getattr(module, name)
             wire = ZenohTransport(
                 ZenohTopic("native/planner/" + name, port.type), **session.model_dump()

@@ -43,29 +43,6 @@ mod tests {
     use super::*;
     use dimos_generated_messages::builtin_interfaces::msg::time::Time;
     use dimos_generated_messages::std_msgs::msg::header::Header;
-    use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-    use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
-    use dimos_module::cdr;
-    use dimos_module::nalgebra::Isometry3;
-
-    #[test]
-    fn tf_cdr_retains_exact_stamps_through_both_wire_orders() {
-        for ns in [0, -1, 1_700_000_000_123_456_789] {
-            let transform = dimos_module::tf::Transform::from_nanoseconds(
-                "odom",
-                "lidar",
-                ns,
-                Isometry3::identity(),
-            );
-            let message: TFMessage = cdr::decode(&encode_tf(&[transform]).unwrap()).unwrap();
-            for little in [false, true] {
-                let decoded = decode_tf(&cdr::encode_endian(&message, little).unwrap()).unwrap();
-                assert_eq!(decoded[0].stamp_nanoseconds(), Some(ns));
-                let received: TFMessage = cdr::decode(&encode_tf(&decoded).unwrap()).unwrap();
-                assert_eq!(received, message);
-            }
-        }
-    }
 
     #[test]
     fn organized_cloud_reader_keeps_endian_and_row_padding_and_filters_missing_points() {

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, InstanceOf
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import ImuInfo
@@ -111,6 +111,7 @@ class RealSenseCamera(NativeModule, perception.DepthCamera):
     infrared_left_camera_info: Out[CameraInfo]
     infrared_right_camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
+    tf_static: In[TFMessage]
 
 
 if TYPE_CHECKING:
