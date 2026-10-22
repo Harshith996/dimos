@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Robot-boundary contracts, plus actual GR00T/SONIC sim2 control loops."""
+"""Robot-boundary contracts, plus the actual GR00T sim2 control loop."""
 
 from contextlib import ExitStack
 import json
@@ -42,7 +42,6 @@ from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
 from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
-from dimos.robot.unitree.g1.controllers.sonic.module import G1SonicPolicyModule
 from dimos.robot.unitree.g1.model.simulation import G1
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
@@ -100,7 +99,7 @@ def _stream_key(blueprint, module, port):
 
 @pytest.mark.parametrize(
     "name",
-    ["unitree_g1_groot_wbc", "unitree_g1_sonic_wbc", "unitree_g1_basic_sim"],
+    ["unitree_g1_groot_wbc", "unitree_g1_basic_sim"],
 )
 def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
     load_g1_blueprint, tmp_path, name
@@ -138,9 +137,8 @@ def test_sim_blueprints_wire_lidar_through_mapping_and_navigation(
     assert sum(a.module is SimulationModule for a in expanded.active_blueprints) == 1
 
 
-@pytest.mark.parametrize("name", ["unitree_g1_groot_wbc", "unitree_g1_sonic_wbc"])
-def test_hardware_blueprints_keep_pointlio_navigation(load_g1_blueprint, name):
-    blueprint = load_g1_blueprint(name, simulation="")
+def test_hardware_blueprint_keeps_pointlio_navigation(load_g1_blueprint):
+    blueprint = load_g1_blueprint("unitree_g1_groot_wbc", simulation="")
     parsed = BlueprintConfigParser(blueprint).parse([], environ={})
     assert CostMapperConfig(**parsed.module_kwargs(CostMapper.name)).initial_safe_radius_meters > 0
 
@@ -161,7 +159,6 @@ def test_hardware_blueprints_keep_pointlio_navigation(load_g1_blueprint, name):
     "name, joint_topic",
     [
         ("unitree_g1_groot_wbc", "g1_joints"),
-        ("unitree_g1_sonic_wbc", "joint_state"),
         ("unitree_g1_basic_sim", "g1_joints"),
     ],
 )
@@ -182,20 +179,17 @@ def test_viewer_uses_a_joint_stream_published_by_its_stack(
     assert "world/g1/joints" not in viewer.kwargs["visual_override"]
 
 
-@pytest.mark.parametrize("name", ["unitree_g1_sonic_wbc", "unitree_g1_basic_sim"])
-def test_composition_does_not_import_the_groot_application(load_g1_blueprint, monkeypatch, name):
+def test_basic_sim_does_not_import_the_groot_application(load_g1_blueprint, monkeypatch):
     monkeypatch.setitem(
         sys.modules,
         "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc",
         None,
     )
-    blueprint = load_g1_blueprint(name)
+    blueprint = load_g1_blueprint("unitree_g1_basic_sim")
     connections = [a for a in blueprint.active_blueprints if a.module is G1Connection]
 
     assert len(connections) == 1
-    assert connections[0].kwargs["controller"] == (
-        "sonic" if name == "unitree_g1_sonic_wbc" else "groot"
-    )
+    assert connections[0].kwargs["controller"] == "groot"
 
 
 @pytest.mark.parametrize("simulation", ["", "mujoco"])
@@ -255,14 +249,6 @@ def test_policy_pd_targets_are_not_kinematic_position_limits(robot):
     assert robot.describe_control().description.limits["g1/left_ankle_pitch/effort"].hi > 0
 
 
-def test_cpu_sonic_cannot_drive_hardware():
-    with ExitStack() as stack:
-        policy = G1SonicPolicyModule(cpu_simulation=True, g=GlobalConfig(simulation=""))
-        stack.callback(policy.stop)
-        with pytest.raises(ValueError, match="not hardware"):
-            policy.start()
-
-
 def test_estop_is_latched_at_robot_boundary(robot):
     robot.set_estop(True)
     with pytest.raises(RuntimeError, match="latched"):
@@ -272,9 +258,8 @@ def test_estop_is_latched_at_robot_boundary(robot):
     robot._locomotion.set_estop.assert_called_once_with(True)
 
 
-@pytest.mark.parametrize("host", [G1GrootCoordinator, G1SonicPolicyModule])
-def test_policy_hosts_have_same_intent_contract(host):
-    assert spec_annotation_compliance(host, G1LocomotionSpec)
+def test_groot_host_implements_intent_contract():
+    assert spec_annotation_compliance(G1GrootCoordinator, G1LocomotionSpec)
 
 
 def test_spawn_support_is_not_applied_twice(tmp_path):
@@ -285,25 +270,23 @@ def test_spawn_support_is_not_applied_twice(tmp_path):
     assert instance.xyz == (0.0, 0.0, 0.793)
 
 
-def test_policy_selection_does_not_change_physical_robot(tmp_path):
+def test_groot_startup_settings_do_not_change_physical_robot(tmp_path):
     scene = tmp_path / "floor.xml"
     scene.write_text("<mujoco/>")
     groot = G1Connection.describe_simulated_robot(G1Config(controller="groot"), scene)
-    sonic = G1Connection.describe_simulated_robot(G1Config(controller="sonic"), scene)
-    assert groot.config == sonic.config
-    assert groot.hold_gains != sonic.hold_gains
-    assert groot.control_imu == sonic.control_imu == "imu"
+    assert groot.config == G1
+    assert groot.hold_gains
+    assert groot.control_imu == "imu"
     assert all(j.kp == j.kd == 0 for j in groot.config.joints)
 
 
 @pytest.fixture
-def walking_stack(request, monkeypatch):
-    controller = request.param
+def walking_stack(monkeypatch):
     monkeypatch.setattr(global_config, "simulation", "mujoco")
     monkeypatch.setattr(global_config, "viewer", "none")
     monkeypatch.setattr(global_config, "scene_package", None)
-    module = Path(__file__).parent / "blueprints/basic" / f"unitree_g1_{controller}_wbc.py"
-    blueprint = runpy.run_path(str(module))[f"unitree_g1_{controller}_wbc"]
+    module = Path(__file__).parent / "blueprints/basic/unitree_g1_groot_wbc.py"
+    blueprint = runpy.run_path(str(module))["unitree_g1_groot_wbc"]
     parsed = BlueprintConfigParser(blueprint).parse(
         [],
         environ={},
@@ -322,7 +305,6 @@ def walking_stack(request, monkeypatch):
 
 
 @pytest.mark.self_hosted
-@pytest.mark.parametrize("walking_stack", ["groot", "sonic"], indirect=True)
 def test_real_policy_moves_robot_through_public_connection(walking_stack, record_property):
     app = walking_stack
     world = app.get_instance(SimulationModule)
