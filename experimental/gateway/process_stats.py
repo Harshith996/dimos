@@ -30,11 +30,7 @@ def _default(function: Any, name: str) -> Any:
     return inspect.signature(function).parameters[name].default
 
 
-TOPIC: str = _default(LCMResourceLogger, "topic")
 SAMPLE_S: float = _default(StatsMonitor, "interval")
-HISTORY_S = 60.0  # the API's "a minute of cpu history"
-HISTORY = round(HISTORY_S / SAMPLE_S)  # cpu samples kept per process
-STALE_S = 3 * SAMPLE_S  # three samples missed
 IDLE_S = 30.0  # nobody asked this long: unsubscribe
 
 
@@ -48,12 +44,13 @@ class ProcessStats:
         self._asked = 0.0
         self._cpu: dict[str, deque[float]] = {}
 
-    def _on_msg(self, msg: dict[str, Any]) -> None:
+    def _on_message(self, message: dict[str, Any]) -> None:
         with self._lock:
-            self._latest = msg
+            self._latest = message
             self._heard = time.monotonic()
-            for key, cpu in cpu_samples(msg).items():
-                self._cpu.setdefault(key, deque(maxlen=HISTORY)).append(cpu)
+            for key, cpu in cpu_samples(message).items():
+                # the API's "a minute of cpu history"
+                self._cpu.setdefault(key, deque(maxlen=round(60.0 / SAMPLE_S))).append(cpu)
 
     def _ensure_subscribed(self) -> None:
         if self._transport is not None:
@@ -62,8 +59,8 @@ class ProcessStats:
             from dimos.core.transport_factory import make_transport
 
             self._factory = make_transport
-        transport = self._factory(TOPIC)
-        transport.subscribe(self._on_msg)
+        transport = self._factory(_default(LCMResourceLogger, "topic"))
+        transport.subscribe(self._on_message)
         transport.start()
         self._transport = transport
 
@@ -95,20 +92,20 @@ class ProcessStats:
             return {
                 "up": True,
                 "age": round(age, 2),
-                "stale": age > STALE_S,
+                "stale": age > 3 * SAMPLE_S,  # three samples missed
                 "coordinator": self._latest.get("coordinator"),
                 "workers": self._latest.get("workers") or [],
                 "cpuHistory": {key: list(values) for key, values in self._cpu.items()},
             }
 
 
-def cpu_samples(msg: dict[str, Any]) -> dict[str, float]:
+def cpu_samples(message: dict[str, Any]) -> dict[str, float]:
     """cpu% per process: `coordinator`, `worker:<id>`, and `child:<pid>` for a worker's children."""
     out: dict[str, float] = {}
-    coordinator = msg.get("coordinator") or {}
+    coordinator = message.get("coordinator") or {}
     if coordinator:
         out["coordinator"] = float(coordinator.get("cpu_percent") or 0.0)
-    for worker in msg.get("workers") or []:
+    for worker in message.get("workers") or []:
         out[f"worker:{worker.get('worker_id')}"] = float(worker.get("cpu_percent") or 0.0)
         for child in worker.get("children") or []:
             out[f"child:{child.get('pid')}"] = float(child.get("cpu_percent") or 0.0)

@@ -22,8 +22,6 @@ from typing import Any
 from experimental.gateway import annotations as annotation_file
 from experimental.gateway.errors import StatusError
 
-SCAN_FIELDS = ("importable", "import_error", "missing_module", "optional_dependency")
-
 
 def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     """annotations.yaml (the checkout's own when it has one), resolved against `names`."""
@@ -62,7 +60,10 @@ def blueprints(
                 "hidden": note.get("hidden", annotation_file.HIDDEN_NAME.search(name) is not None),
                 "recommended_config": note.get("recommended_config", []),
                 "modules": [module["module"] for module in record.get("modules") or []],
-                **{key: record.get(key) for key in SCAN_FIELDS},
+                "importable": record.get("importable"),
+                "import_error": record.get("import_error"),
+                "missing_module": record.get("missing_module"),
+                "optional_dependency": record.get("optional_dependency"),
                 "suggested_extras": record.get("suggested_extras") or [],
                 "scanned_at": record.get("scanned_at"),
             }

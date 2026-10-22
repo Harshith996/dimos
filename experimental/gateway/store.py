@@ -90,7 +90,11 @@ def checkout_version(dimos_dir: Path) -> tuple[bool, str | None]:
 def git(dimos_dir: Path, *args: str) -> str | None:
     try:
         done = subprocess.run(
-            ["git", "-C", str(dimos_dir), *args], capture_output=True, text=True, timeout=5
+            # local read-only git queries; 5 s only bounds a locked or network-mounted repo
+            ["git", "-C", str(dimos_dir), *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

@@ -69,6 +69,7 @@ async def run_child(
     dimos_dir: Path,
     args: list[str],
     stdin: Any = None,
+    # a cold import of a heavy blueprint's dependencies (torch, open3d) can take minutes
     timeout: float = 180,
     python: str | None = None,
 ) -> dict[str, Any]:
@@ -114,7 +115,7 @@ def foreign_command(python: str) -> list[str]:
         "sys.argv.pop(0)\n"
         "sys.path.append(sys.argv.pop(0))\n"
         # a startup hook (a sitecustomize, a venv .pth) may have imported another checkout's dimos already
-        "for name in [n for n in sys.modules if n == 'dimos' or n.startswith('dimos.')]:\n"
+        "for name in [loaded for loaded in sys.modules if loaded == 'dimos' or loaded.startswith('dimos.')]:\n"
         "    del sys.modules[name]\n"
         "runpy.run_path(sys.argv[0], run_name='__main__')\n"
     )
@@ -139,10 +140,10 @@ def type_name(kind: Any) -> str:
 
 
 def jsonable(value: Any) -> Any:
-    def text(obj: Any) -> Any:
-        if isinstance(obj, enum.Enum):
-            return obj.value
-        return re.sub(r" at 0x[0-9a-fA-F]+", "", str(obj))
+    def text(unencodable: Any) -> Any:
+        if isinstance(unencodable, enum.Enum):
+            return unencodable.value
+        return re.sub(r" at 0x[0-9a-fA-F]+", "", str(unencodable))
 
     try:
         return json.loads(json.dumps(value, default=text))
@@ -150,8 +151,8 @@ def jsonable(value: Any) -> Any:
         return text(repr(value))
 
 
-def first_line(obj: Any) -> str:
-    doc = inspect.getdoc(obj) or ""
+def first_line(target: Any) -> str:
+    doc = inspect.getdoc(target) or ""
     return doc.strip().split("\n\n")[0].replace("\n", " ")[:300]
 
 
@@ -173,10 +174,10 @@ def relative_to_checkout(file: str) -> str:
     return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
 
 
-def source_of(obj: Any) -> dict[str, Any]:
+def source_of(target: Any) -> dict[str, Any]:
     try:
-        file = inspect.getsourcefile(obj)
-        line = inspect.getsourcelines(obj)[1]
+        file = inspect.getsourcefile(target)
+        line = inspect.getsourcelines(target)[1]
     except (TypeError, OSError):
         return {"file": None, "line": None}
     return {"file": relative_to_checkout(file) if file else None, "line": line if file else None}
@@ -187,21 +188,21 @@ def blueprint_source(name: str) -> dict[str, Any]:
 
     try:
         if name in all_modules:
-            path, _, attr = all_modules[name].rpartition(".")
-            return source_of(getattr(importlib.import_module(path), attr))
-        path, _, attr = all_blueprints[name].partition(":")
+            path, _, attribute = all_modules[name].rpartition(".")
+            return source_of(getattr(importlib.import_module(path), attribute))
+        path, _, attribute = all_blueprints[name].partition(":")
         module = importlib.import_module(path)
         lines = inspect.getsource(module).splitlines()
     except Exception:  # importing a blueprint runs its code, which can raise anything
         return {"file": None, "line": None}
-    assignment = re.compile(rf"{re.escape(attr)}\s*(:|=(?!=))")
+    assignment = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
     line = next((number for number, text in enumerate(lines, 1) if assignment.match(text)), 1)
     return {"file": relative_to_checkout(inspect.getfile(module)), "line": line}
 
 
-def params(fn: Any) -> list[dict[str, Any]]:
+def params(function: Any) -> list[dict[str, Any]]:
     try:
-        signature = inspect.signature(fn)
+        signature = inspect.signature(function)
     except (TypeError, ValueError):
         return []
     return [
@@ -219,9 +220,9 @@ def params(fn: Any) -> list[dict[str, Any]]:
     ]
 
 
-def return_type(fn: Any) -> str | None:
+def return_type(function: Any) -> str | None:
     try:
-        annotation = inspect.signature(fn).return_annotation
+        annotation = inspect.signature(function).return_annotation
     except (TypeError, ValueError):
         return None
     if annotation is inspect.Signature.empty:
@@ -239,15 +240,15 @@ def base_rpcs() -> frozenset[str]:
 def rpcs(cls: Any) -> list[dict[str, Any]]:
     """The module's own RPCs (not every Module's), each saying whether it's also a skill."""
     found = []
-    for name, fn in sorted(dict(getattr(cls, "rpcs", {}) or {}).items()):
-        skill = bool(getattr(fn, "__skill__", False))
+    for name, function in sorted(dict(getattr(cls, "rpcs", {}) or {}).items()):
+        skill = bool(getattr(function, "__skill__", False))
         if skill or name not in base_rpcs():
             found.append(
                 {
                     "name": name,
-                    "params": params(fn),
-                    "return_type": return_type(fn),
-                    "doc": inspect.getdoc(fn) or "",
+                    "params": params(function),
+                    "return_type": return_type(function),
+                    "doc": inspect.getdoc(function) or "",
                     "skill": skill,
                 }
             )
@@ -267,10 +268,10 @@ def spec_topic(spec: Any) -> str | None:
     return "/" + topic.removeprefix("dimos/").lstrip("/")
 
 
-def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
-    remap, pinned = dict(bp.remapping_map), dict(bp.transport_map)
+def blueprint_modules(blueprint: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
+    remap, pinned = dict(blueprint.remapping_map), dict(blueprint.transport_map)
     wired: dict[str, set[Any]] = defaultdict(set)
-    for atom in bp.active_blueprints:
+    for atom in blueprint.active_blueprints:
         for stream in atom.streams:
             effective = remap.get((atom.name, stream.name), stream.name)
             if isinstance(effective, str):
@@ -306,16 +307,18 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
                 for stream in atom.streams
             ],
         }
-        for atom in bp.active_blueprints
+        for atom in blueprint.active_blueprints
     ]
 
 
-def blueprint(name: str) -> dict[str, Any]:
+def blueprint_detail(name: str) -> dict[str, Any]:
     from dimos.robot.get_all_blueprints import get_by_name
 
-    bp = get_by_name(name)
+    blueprint = get_by_name(name)
     modules = []
-    for atom, entry in zip(bp.active_blueprints, blueprint_modules(bp, {}), strict=True):
+    for atom, entry in zip(
+        blueprint.active_blueprints, blueprint_modules(blueprint, {}), strict=True
+    ):
         doc = own_doc(atom.module)
         modules.append(
             {
@@ -401,11 +404,11 @@ def field_args(
     return args
 
 
-def parser_schema(bp: Any) -> Any:
+def parser_schema(blueprint: Any) -> Any:
     """dimos run's own view of a blueprint's settings (a private method: dimos has no public one)."""
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 
-    return BlueprintConfigParser(bp)._get_schema()
+    return BlueprintConfigParser(blueprint)._get_schema()
 
 
 def settable(schema: Any, root: str) -> set[str]:
@@ -463,13 +466,13 @@ def module_class(name: str) -> tuple[str, Any]:
     from dimos.robot.all_blueprints import all_modules
 
     path = all_modules.get(name, name)
-    module_path, _, attr = path.rpartition(".")
+    module_path, _, attribute = path.rpartition(".")
     if not module_path:
         raise KeyError(f"no module {name}")
-    cls = getattr(importlib.import_module(module_path), attr)
+    cls = getattr(importlib.import_module(module_path), attribute)
     return next(
         (registry_name for registry_name, class_path in all_modules.items() if class_path == path),
-        attr,
+        attribute,
     ), cls
 
 
@@ -563,10 +566,10 @@ def scan(request: Any) -> dict[str, Any]:
             "builtin": ref is not None,
         }
         try:
-            bp = load_blueprint(name) if ref is not None else get_by_name(name)
+            blueprint = load_blueprint(name) if ref is not None else get_by_name(name)
             file = ref.split(":")[0] if ref else None
             doc = first_line(importlib.import_module(file)) if file and per_file[file] == 1 else ""
-            modules = blueprint_modules(bp, registry_names)
+            modules = blueprint_modules(blueprint, registry_names)
             emit(
                 {
                     **record,
@@ -578,7 +581,7 @@ def scan(request: Any) -> dict[str, Any]:
                     "doc": doc,
                 }
             )
-            for atom in bp.active_blueprints:
+            for atom in blueprint.active_blueprints:
                 seen(registry_names.get(type_name(atom.module), atom.module.__name__), atom.module)
         except BaseException as error:
             emit(
@@ -597,8 +600,8 @@ def scan(request: Any) -> dict[str, Any]:
             continue
         emit({"kind": "start", "name": f"module:{name}"})
         try:
-            path, _, attr = all_modules[name].rpartition(".")
-            seen(name, getattr(importlib.import_module(path), attr))
+            path, _, attribute = all_modules[name].rpartition(".")
+            seen(name, getattr(importlib.import_module(path), attribute))
         except BaseException as error:
             emit({"kind": "error", "error": f"module {name}: {type(error).__name__}: {error}"})
     return {"kind": "end"}
@@ -631,21 +634,19 @@ def packages() -> dict[str, Any]:
     }
 
 
-COMMANDS: dict[str, Callable[..., dict[str, Any]]] = {
-    "blueprint": blueprint,
-    "config": config,
-    "module": module,
-    "module_config": module_config,
-    "list": blueprint_list,
-    "packages": packages,
-    "scan": scan,
-}
-
-
 def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
+    commands: dict[str, Callable[..., dict[str, Any]]] = {
+        "blueprint": blueprint_detail,
+        "config": config,
+        "module": module,
+        "module_config": module_config,
+        "list": blueprint_list,
+        "packages": packages,
+        "scan": scan,
+    }
     try:
-        command = COMMANDS[argv[0]]
+        command = commands[argv[0]]
         result = command(*argv[1:], request) if argv[0] == "scan" else command(*argv[1:])
     except Exception as error:
         result = {"error": f"{type(error).__name__}: {error}"}

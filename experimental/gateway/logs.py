@@ -21,8 +21,6 @@ from typing import Any
 
 from dimos.constants import LOG_DIR
 
-MAX_READ = 4 * 1024 * 1024
-RUN_ID = re.compile(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)")
 LEVEL_RANK = {"debug": 10, "warning": 30, "warn": 30, "error": 40, "critical": 50}
 
 
@@ -122,7 +120,7 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
 
 def blueprint_of(run_id: str) -> str | None:
     """The blueprint in a run id: `<YYYYMMDD-HHMMSS>[-<4 hex>]-<blueprint>`."""
-    found = RUN_ID.fullmatch(run_id)
+    found = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
     return found.group(1) if found else None
 
 
@@ -176,7 +174,7 @@ def read(
         with file.open("rb") as handle:
             size = handle.seek(0, 2)
             start = after if after is not None and after <= size else 0
-            start = max(start, size - MAX_READ)
+            start = max(start, size - 4 * 1024 * 1024)  # at most the last 4 MB per read
             handle.seek(start)
             buffer = handle.read(size - start)
     except OSError:
