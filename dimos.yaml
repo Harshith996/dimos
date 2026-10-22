@@ -333,5 +333,3 @@ provides:
         summary: The cloud login page apps embed
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
-socket: |
-  echo "$DIMOS_SERVER_SOCKET"
