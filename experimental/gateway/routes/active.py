@@ -183,9 +183,9 @@ async def streams(state: GatewayState) -> dict[str, Any]:
     return {"streams": await asyncio.to_thread(state.live.streams)}
 
 
-# 1 s, as Dimos.peek_stream's own default
+# no timeout given: Dimos.peek_stream's own default
 @router.get("/streams/{name}/peek", response_model=responses.Peeked)
-async def peek(state: GatewayState, name: str, timeout: float = 1.0) -> dict[str, Any]:
+async def peek(state: GatewayState, name: str, timeout: float | None = None) -> dict[str, Any]:
     return await asyncio.to_thread(state.live.peek, name, timeout)
 
 

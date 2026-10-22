@@ -662,11 +662,16 @@ class Jobs:
         self.ids = itertools.count(1)
 
     def prune(self) -> None:
-        cutoff = time.monotonic() - 30 * 60  # a finished job's log stays readable half an hour
+        """Keeps every running job and the latest finished job of each kind."""
+        latest: dict[str, Job] = {}
+        for job in self.jobs.values():
+            kept = latest.get(job.kind)
+            if job.ended is not None and (kept is None or job.ended >= (kept.ended or 0.0)):
+                latest[job.kind] = job
         self.jobs = {
             job_id: job
             for job_id, job in self.jobs.items()
-            if job.ended is None or job.ended >= cutoff
+            if job.ended is None or latest.get(job.kind) is job
         }
 
     def get(self, job_id: str) -> Job | None:

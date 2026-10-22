@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""dtop's numbers for the blueprint view: the run's /resource_stats (published under `dtop`), heard only while asked for."""
+"""dtop's numbers for the blueprint view: the run's /resource_stats (published under `dtop`), heard from the first ask while a run lives."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ def _default(function: Any, name: str) -> Any:
 
 
 SAMPLE_S: float = _default(StatsMonitor, "interval")
-IDLE_S = 30.0  # nobody asked this long: unsubscribe
 
 
 class ProcessStats:
@@ -41,7 +40,6 @@ class ProcessStats:
         self._transport: Any = None
         self._latest: dict[str, Any] | None = None
         self._heard = 0.0
-        self._asked = 0.0
         self._cpu: dict[str, deque[float]] = {}
 
     def _on_message(self, message: dict[str, Any]) -> None:
@@ -64,10 +62,14 @@ class ProcessStats:
         transport.start()
         self._transport = transport
 
-    def stop_if_idle(self) -> None:
+    def stop_if_nothing_runs(self) -> None:
+        from dimos.core.run_registry import get_most_recent
+
+        if self._transport is None or get_most_recent(alive_only=True) is not None:
+            return
         with self._lock:
             transport = self._transport
-            if transport is None or time.monotonic() - self._asked < IDLE_S:
+            if transport is None:
                 return
             self._transport = None
             self._latest = None
@@ -77,7 +79,6 @@ class ProcessStats:
     def snapshot(self) -> dict[str, Any]:
         """The newest stats with each process's cpu history; `up` false until the first message."""
         with self._lock:
-            self._asked = time.monotonic()
             self._ensure_subscribed()
             if self._latest is None:
                 return {

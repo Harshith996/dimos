@@ -20,10 +20,13 @@ import json
 import os
 from pathlib import Path
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import launches, store
+
+if TYPE_CHECKING:
+    from experimental.gateway.process_stats import ProcessStats
 
 logger = setup_logger()
 
@@ -81,13 +84,15 @@ class Bus:
             self.send({"type": "launch", "launch": launch})
 
 
-# a launch's phase reaches Desktop within a second
-async def watch_launch(bus: Bus, interval: float = 1.0) -> None:
+# a launch's phase reaches Desktop within a second; the stats subscription ends with the run
+async def watch_launch(bus: Bus, stats: ProcessStats | None = None, interval: float = 1.0) -> None:
     failure = ""
     while True:
         await asyncio.sleep(interval)
         try:
             bus.launch(await asyncio.to_thread(launches.current_launch))
+            if stats is not None:
+                await asyncio.to_thread(stats.stop_if_nothing_runs)
             failure = ""
         except Exception as error:
             if repr(error) != failure:
