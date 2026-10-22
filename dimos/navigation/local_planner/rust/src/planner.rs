@@ -1914,28 +1914,34 @@ pub struct Refine {
     pub detour_m: f64,
 }
 
+/// Distance from `p` to the `approach` polyline, and the arc length to its nearest point.
+fn nearest(approach: &[[f64; 2]], p: (f64, f64)) -> (f64, f64) {
+    let mut best = ((p.0 - approach[0][0]).hypot(p.1 - approach[0][1]), 0.0);
+    let mut s = 0.0;
+    for w in approach.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
+        let l2 = vx * vx + vy * vy;
+        let t = if l2 > 1e-12 {
+            (((p.0 - a[0]) * vx + (p.1 - a[1]) * vy) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let d = (p.0 - a[0] - t * vx).hypot(p.1 - a[1] - t * vy);
+        if d < best.0 {
+            best = (d, s + t * l2.sqrt());
+        }
+        s += l2.sqrt();
+    }
+    best
+}
+
 /// Farthest any state of `states` sits from the `approach` polyline.
 fn stray(states: &[[f64; 3]], approach: &[[f64; 2]]) -> f64 {
-    let off = |x: f64, y: f64| -> f64 {
-        if approach.len() == 1 {
-            return (x - approach[0][0]).hypot(y - approach[0][1]);
-        }
-        approach
-            .windows(2)
-            .map(|p| {
-                let (a, b) = (p[0], p[1]);
-                let (vx, vy) = (b[0] - a[0], b[1] - a[1]);
-                let l2 = vx * vx + vy * vy;
-                let t = if l2 > 1e-12 {
-                    (((x - a[0]) * vx + (y - a[1]) * vy) / l2).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                (x - a[0] - t * vx).hypot(y - a[1] - t * vy)
-            })
-            .fold(f64::INFINITY, f64::min)
-    };
-    states.iter().map(|s| off(s[0], s[1])).fold(0.0, f64::max)
+    states
+        .iter()
+        .map(|s| nearest(approach, (s[0], s[1])).0)
+        .fold(0.0, f64::max)
 }
 
 /// `approach` sampled every `step` of arc, each sample with its arc length.
@@ -2218,9 +2224,13 @@ pub fn plan_explored(
             if let Some(Splice { route, end }) = refined(
                 &mut cl, &fps, emb, points, terrain, pose, approach, cap, margin, refine,
             ) {
-                // A detour alone is replaced only by a shorter way through.
-                let shorter = fresh.as_ref().is_none_or(|f| arc(&route) < arc(f));
-                if fresh.is_none() || short || shorter {
+                // A refined route that stops before the coarse one is never taken. One that
+                // gets as far replaces a detour only by being shorter.
+                let (got, was) = (nearest(approach, end).1, nearest(approach, goal).1);
+                let take = fresh.as_ref().is_none_or(|f| {
+                    got > was + SHORT_M || (got >= was - SHORT_M && (short || arc(&route) < arc(f)))
+                });
+                if take {
                     fresh = Some(route);
                     goal = end;
                 }
@@ -3031,6 +3041,62 @@ mod tests {
             }
         }
         assert!(noff > 0);
+    }
+
+    #[test]
+    fn a_refined_dead_end_never_replaces_a_complete_detour() {
+        let emb = Emb {
+            length: 0.542,
+            width: 0.534,
+            center_off: 0.0,
+            envelope: Vec::new(),
+            arc_inflate: 0.0,
+            ..Emb::fixture()
+        };
+        let refine = Refine {
+            window_m: 0.75,
+            detour_m: 1.5,
+        };
+        for (off, door) in [(0.03, 0.68), (0.06, 0.68), (0.06, 0.70), (0.06, 0.72)] {
+            let mut pts = Vec::new();
+            let mut y: f64 = -3.0;
+            while y <= 3.0 {
+                if (y - off).abs() > door / 2.0 {
+                    for x in [2.0, 2.05, 2.1] {
+                        pts.push([x, y]);
+                    }
+                }
+                y += 0.02;
+            }
+            let mut x: f64 = 2.1;
+            while x <= 4.0 {
+                pts.push([x, off + 0.8]);
+                pts.push([x, off - 0.8]);
+                x += 0.02;
+            }
+            let mut y = off - 0.8;
+            while y <= off + 0.8 {
+                pts.push([4.0, y]);
+                y += 0.02;
+            }
+            let path = plan_explored(
+                &pts,
+                &Terrain::default(),
+                (0.0, off, 0.0),
+                &[[0.0, off], [6.0, off]],
+                &emb,
+                0.1,
+                None,
+                COMMIT_MARGIN,
+                &refine,
+            )
+            .expect("a route around the wall");
+            let end = path.last().unwrap();
+            assert!(
+                (end[0] - 6.0).hypot(end[1] - off) < 0.3,
+                "the route stopped at {end:?} behind a {door} m door"
+            );
+        }
     }
 
     /// Doors the body fits but the coarse lattice lands no pose in are passed when refining.
