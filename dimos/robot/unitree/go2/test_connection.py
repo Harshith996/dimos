@@ -18,6 +18,7 @@ The leaf (UnitreeWebRTCConnection.__init__) is covered in
 dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 """
 
+import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -278,6 +279,23 @@ def test_queued_sim_velocity_does_not_get_a_new_lifetime(mocker):
         with pytest.raises(TimeoutError, match="stale"):
             connection.write(values, source_ts=100.0 - CMD_VEL_TIMEOUT * 2)
         assert move.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_velocity_deadman_preserves_go2_timeout_and_halts(mocker):
+    with ExitStack() as stack:
+        connection = GO2Connection(g=GlobalConfig(simulation="mujoco"))
+        stack.callback(connection.stop)
+        mocker.patch.object(connection, "_connected", True)
+        mocker.patch.object(connection.connection, "move")
+        halt = mocker.patch.object(connection.connection, "stop_movement")
+        timer = mocker.patch.object(asyncio.get_running_loop(), "call_later")
+        connection._apply({"go2/base/vx": 0.2, "go2/base/vy": 0.0, "go2/base/wz": 0.0})
+        assert timer.call_args.args[0] == CMD_VEL_TIMEOUT
+        halt.assert_not_called()
+        timer.call_args.args[1]()
+        halt.assert_called_once()
+        assert connection.status().deadman_fired
 
 
 def test_policy_joint_order_is_bound_to_the_physical_device(mocker):

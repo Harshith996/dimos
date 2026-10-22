@@ -82,6 +82,8 @@ class Go2Mode(str, Enum):
 
 class ConnectionConfig(ControlConnectionConfig):
     source: str = "go2"
+    # Navigation publishes at 10 Hz; retain Go2's existing velocity watchdog.
+    deadman_timeout_s: float = CMD_VEL_TIMEOUT
     cmd_vel: TwistPort = Field(
         default_factory=lambda: TwistPort(range=Twist(Vector3(3, 1, 0), Vector3(0, 0, 3)))
     )
