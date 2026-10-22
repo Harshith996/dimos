@@ -61,13 +61,11 @@ async def running_id() -> str:
 
 @router.get("", response_model=responses.Active)
 async def active() -> dict[str, Any]:
-    """The running blueprint, however it was started; `running` false (not a 409) when nothing runs."""
     return await asyncio.to_thread(launches.active)
 
 
 @router.get("/id", response_model=responses.ActiveId)
 async def active_id() -> dict[str, Any]:
-    """The running run's id, for /history/{runId}."""
     return {"runId": await running_id()}
 
 
@@ -79,13 +77,11 @@ async def active_log(
     q: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    """The running run's log (the same as /history/{runId}/logs for it)."""
     return await read_log(state, await running_id(), after, level, q, limit)
 
 
 @router.post("/launch", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
-    """Launch a blueprint or a module with this `config` (the gateway saves none); 409 if something runs."""
     if (request.blueprint is None) == (request.module is None):
         raise ApiError(400, "give exactly one of blueprint or module")
     name = str(request.blueprint or request.module)
@@ -98,7 +94,6 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
 
 @router.post("/exec", response_model=responses.Launch)
 async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
-    """Run exactly `dimos run <args>` (args[0] is the blueprint or module)."""
     if not request.args or request.args[0].startswith("-"):
         raise ApiError(400, "args must start with a blueprint or module name")
     name, *rest = request.args
@@ -107,8 +102,6 @@ async def exec_run(state: GatewayState, request: ExecRequest) -> dict[str, Any]:
 
 @router.post("/relaunch", response_model=responses.Launch)
 async def relaunch(state: GatewayState) -> dict[str, Any]:
-    """Stop the running blueprint and start it again: the gateway's own launch as it was POSTed (or exec'd), one
-    started elsewhere as a copy of its command line, directory and environment."""
     launch = await asyncio.to_thread(launches.relaunch, state.dimos_dir)
     state.bus.launch(launch)
     return launch
@@ -116,7 +109,6 @@ async def relaunch(state: GatewayState) -> dict[str, Any]:
 
 @router.post("/stop", response_model=responses.Stopped)
 async def stop(state: GatewayState) -> dict[str, Any]:
-    """Exactly `dimos stop`."""
     try:
         return {"output": await asyncio.to_thread(launches.stop)}
     finally:
@@ -125,7 +117,6 @@ async def stop(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/blueprint", response_model=responses.ActiveBlueprint)
 async def blueprint(state: GatewayState) -> dict[str, Any]:
-    """What was launched, the config it got (secrets shown as •••; empty for a run started elsewhere) and its instances."""
     now = await asyncio.to_thread(launches.active)
     if not now["running"]:
         raise NothingRunningError()
@@ -141,7 +132,6 @@ async def blueprint(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/modules", response_model=responses.Instances)
 async def modules(state: GatewayState) -> dict[str, Any]:
-    """The running module instances, with their RPCs (doc, params and skill flag from the last scan) and streams."""
     return {"modules": await asyncio.to_thread(state.live.modules, state.scanner.cache())}
 
 
@@ -152,13 +142,11 @@ async def module(state: GatewayState, id: str) -> dict[str, Any]:
 
 @router.post("/modules/{id}/restart", response_model=responses.ModuleAction)
 async def restart_module(state: GatewayState, id: str) -> dict[str, Any]:
-    """Restart that one instance, reloading its source."""
     return await asyncio.to_thread(state.live.restart, id)
 
 
 @router.post("/modules/{id}/stop", response_model=responses.ModuleAction)
 async def stop_module(state: GatewayState, id: str) -> dict[str, Any]:
-    """Unload that one instance (it stops and is removed); the rest keep running."""
     return await asyncio.to_thread(state.live.unload, id)
 
 
@@ -172,7 +160,6 @@ async def module_rpcs(state: GatewayState, id: str) -> dict[str, Any]:
 async def call(
     state: GatewayState, id: str, name: str, request: CallRequest | None = None
 ) -> dict[str, Any]:
-    """Call the RPC directly, not through MCP: this API is for buttons, agents use the python API."""
     request = request or CallRequest()
     return await asyncio.to_thread(
         state.live.call, state.scanner.cache(), id, name, request.args, request.kwargs
@@ -187,7 +174,6 @@ async def module_streams(state: GatewayState, id: str) -> dict[str, Any]:
 
 @router.get("/skills", response_model=responses.Skills)
 async def skills(state: GatewayState) -> dict[str, Any]:
-    """Every `skill: true` RPC across the running instances."""
     found = await asyncio.to_thread(state.live.modules, state.scanner.cache())
     return {"skills": [r for m in found for r in m["rpcs"] if r["skill"]]}
 
@@ -199,11 +185,9 @@ async def streams(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/streams/{name}/peek", response_model=responses.Peeked)
 async def peek(state: GatewayState, name: str, timeout: float = 1.0) -> dict[str, Any]:
-    """One message from the stream; 504 if none comes within `timeout` s."""
     return await asyncio.to_thread(state.live.peek, name, timeout)
 
 
 @router.get("/stats", response_model=responses.ProcessStats)
 async def process_stats(state: GatewayState) -> dict[str, Any]:
-    """dtop for the running blueprint: cpu, memory, threads, fds and io per process, with a minute of cpu history."""
     return await asyncio.to_thread(state.process_stats.snapshot)
