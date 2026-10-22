@@ -149,6 +149,18 @@ def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) ->
     assert client.get("/active").json()["runId"] not in (first, second)
 
 
+def test_relaunch_restarts_a_launch_stuck_starting(client: TestClient) -> None:
+    started = client.post("/active/launch", json={"blueprint": "slow"})
+    assert started.status_code == 200, started.text
+    stuck_pid = started.json()["pid"]
+    until(output_has(client, "args"))
+    assert launch_of(client)["phase"] == "starting"
+    relaunched = client.post("/active/relaunch")
+    assert relaunched.status_code == 200, relaunched.text
+    assert relaunched.json()["phase"] == "starting" and relaunched.json()["pid"] != stuck_pid
+    assert not launches.alive(stuck_pid)
+
+
 def test_relaunch_copies_a_run_the_gateway_did_not_launch(
     client: TestClient, tmp_path: Path
 ) -> None:
