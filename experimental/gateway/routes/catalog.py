@@ -24,8 +24,6 @@ from experimental.gateway import catalog, introspect, launches, overrides as ov,
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
-# imports dimos in a child process: seconds
-SLOW = {"x-slow": True}
 
 
 def check_name(name: str) -> None:
@@ -144,7 +142,9 @@ async def blueprints(state: GatewayState, fields: str | None = None) -> dict[str
     return picked({"blueprints": await blueprint_list(state), "scan": await scan(state)}, fields)
 
 
-@router.get("/blueprints/{name}", response_model=responses.BlueprintDetail, openapi_extra=SLOW)
+@router.get(
+    "/blueprints/{name}", response_model=responses.BlueprintDetail, openapi_extra={"x-slow": True}
+)
 async def blueprint(state: GatewayState, name: str, fields: str | None = None) -> dict[str, Any]:
     found = await find_blueprint(state, name)
     wanted = {field.strip().split(".")[0] for field in fields.split(",")} if fields else None
@@ -157,7 +157,9 @@ async def blueprint(state: GatewayState, name: str, fields: str | None = None) -
 
 
 @router.get(
-    "/blueprints/{name}/config", response_model=responses.BlueprintSchema, openapi_extra=SLOW
+    "/blueprints/{name}/config",
+    response_model=responses.BlueprintSchema,
+    openapi_extra={"x-slow": True},
 )
 async def blueprint_config(state: GatewayState, name: str) -> Any:
     await find_blueprint(state, name)
@@ -216,14 +218,18 @@ async def modules(state: GatewayState, fields: str | None = None) -> dict[str, A
     )
 
 
-@router.get("/modules/{name}", response_model=responses.ModuleDetail, openapi_extra=SLOW)
+@router.get(
+    "/modules/{name}", response_model=responses.ModuleDetail, openapi_extra={"x-slow": True}
+)
 async def module(state: GatewayState, name: str) -> dict[str, Any]:
     found = await importable_module(state, name)
     detail = await state.introspected(["module", found["class"]])
     return {**found, **{key: detail[key] for key in ("rpcs", "file", "line")}}
 
 
-@router.get("/modules/{name}/config", response_model=responses.ModuleSchema, openapi_extra=SLOW)
+@router.get(
+    "/modules/{name}/config", response_model=responses.ModuleSchema, openapi_extra={"x-slow": True}
+)
 async def module_config(state: GatewayState, name: str) -> Any:
     found = await importable_module(state, name)
     return await state.introspected(["module_config", found["class"]])

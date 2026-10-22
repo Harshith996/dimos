@@ -34,7 +34,7 @@ SPEAK = {
 @dataclass
 class Reading:
     ts: float
-    x: float
+    speed: float
 
 
 @dataclass
@@ -212,7 +212,7 @@ def test_peek_returns_one_message(client: TestClient, dimos: dict[str, Any]) -> 
     assert client.get("/active/streams/image/peek").json() == {
         "name": "image",
         "type": "Image",
-        "value": {"ts": 12.5, "x": 1.0},
+        "value": {"ts": 12.5, "speed": 1.0},
         "ts": 12.5,
     }
     assert client.get("/active/streams/odom/peek?timeout=0.1").status_code == 504
