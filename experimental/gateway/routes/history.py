@@ -19,7 +19,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Path as PathParam
 
-from experimental.gateway import logs, responses, store
+from experimental.gateway import constants, logs, responses, store
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/history")
@@ -41,7 +41,13 @@ async def read_log(
             404, "no run has a log yet" if run_id == "latest" else f"no log for run {run_id}"
         )
     return await asyncio.to_thread(
-        logs.read, file, run_id, after, limit or 1000, query or None, level or None
+        logs.read,
+        file,
+        run_id,
+        after,
+        limit or constants.DEFAULT_LOG_LIMIT,
+        query or None,
+        level or None,
     )
 
 

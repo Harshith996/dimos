@@ -69,11 +69,15 @@ async def run_child(
     dimos_dir: Path,
     args: list[str],
     stdin: Any = None,
-    # a cold import of a heavy blueprint's dependencies (torch, open3d) can take minutes
-    timeout: float = 180,
+    timeout: float | None = None,
     python: str | None = None,
 ) -> dict[str, Any]:
     """Introspect in dimos_dir's python, or (python given: another checkout, a run's) with this file in that one."""
+    # imported here: this file also runs alone in checkouts whose gateway may have no constants.py
+    from experimental.gateway import constants
+
+    if timeout is None:
+        timeout = constants.INTROSPECT_TIMEOUT_S
     child = await asyncio.create_subprocess_exec(
         *(child_command(dimos_dir) if python is None else foreign_command(python)),
         *args,

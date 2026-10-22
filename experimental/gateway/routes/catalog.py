@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from experimental.gateway import catalog, introspect, launches, overrides, responses
+from experimental.gateway import catalog, constants, introspect, launches, overrides, responses
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
@@ -127,14 +127,18 @@ async def everything(
 
 
 @router.post("/scan", status_code=202, response_model=responses.ScanStarted)
-async def scan_all(state: GatewayState) -> dict[str, Any]:
-    return {"job": state.scanner.start("requested").id}
+async def scan_all(
+    state: GatewayState, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
+) -> dict[str, Any]:
+    return {"job": state.scanner.start("requested", timeout).id}
 
 
 @router.post("/scan/blueprints/{name}", status_code=202, response_model=responses.ScanStarted)
-async def scan_blueprint(state: GatewayState, name: str) -> dict[str, Any]:
+async def scan_blueprint(
+    state: GatewayState, name: str, timeout: float = constants.SCAN_ITEM_TIMEOUT_S
+) -> dict[str, Any]:
     await find_blueprint(state, name)
-    return {"job": state.scanner.start_one(name).id}
+    return {"job": state.scanner.start_one(name, timeout).id}
 
 
 @router.get("/blueprints", response_model=responses.BlueprintList)

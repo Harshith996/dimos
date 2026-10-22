@@ -30,7 +30,7 @@ import psutil
 
 from dimos.constants import LOG_DIR
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import overrides, store
+from experimental.gateway import constants, overrides, store
 from experimental.gateway.errors import ApiError, StatusError
 from experimental.gateway.overrides import ModuleValues
 
@@ -211,7 +211,7 @@ def current_launch() -> dict[str, Any] | None:
         phase = "failed"
     run_id = record.get("run_id")
     log_dir = LOG_DIR / run_id if run_id else None
-    output = _tail(launch_log(), 200_000)  # the last ~200 KB of the launch's output
+    output = _tail(launch_log(), constants.LAUNCH_OUTPUT_TAIL_BYTES)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
         "phase": phase,

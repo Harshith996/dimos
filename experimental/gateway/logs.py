@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 from dimos.constants import LOG_DIR
+from experimental.gateway import constants
 
 LEVEL_RANK = {"debug": 10, "warning": 30, "warn": 30, "error": 40, "critical": 50}
 
@@ -130,7 +131,11 @@ def first_time(file: Path | None) -> str | None:
         return None
     try:
         with file.open("rb") as handle:
-            lines = handle.read(8192).decode("utf-8", "replace").splitlines()
+            lines = (
+                handle.read(constants.LOG_TIMESTAMP_PROBE_BYTES)
+                .decode("utf-8", "replace")
+                .splitlines()
+            )
     except OSError:
         return None
     for line in lines:
@@ -146,7 +151,7 @@ def last_time(file: Path | None) -> str | None:
         return None
     try:
         with file.open("rb") as handle:
-            handle.seek(max(0, handle.seek(0, 2) - 8192))
+            handle.seek(max(0, handle.seek(0, 2) - constants.LOG_TIMESTAMP_PROBE_BYTES))
             lines = handle.read().decode("utf-8", "replace").splitlines()
     except OSError:
         return None
@@ -174,7 +179,7 @@ def read(
         with file.open("rb") as handle:
             size = handle.seek(0, 2)
             start = after if after is not None and after <= size else 0
-            start = max(start, size - 4 * 1024 * 1024)  # at most the last 4 MB per read
+            start = max(start, size - constants.LOG_MAX_READ_BYTES)
             handle.seek(start)
             buffer = handle.read(size - start)
     except OSError:

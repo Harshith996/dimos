@@ -23,7 +23,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import launches, store
+from experimental.gateway import constants, launches, store
 
 if TYPE_CHECKING:
     from experimental.gateway.process_stats import ProcessStats
@@ -84,8 +84,12 @@ class Bus:
             self.send({"type": "launch", "launch": launch})
 
 
-# a launch's phase reaches Desktop within a second; the stats subscription ends with the run
-async def watch_launch(bus: Bus, stats: ProcessStats | None = None, interval: float = 1.0) -> None:
+# the stats subscription ends with the run
+async def watch_launch(
+    bus: Bus,
+    stats: ProcessStats | None = None,
+    interval: float = constants.LAUNCH_WATCH_INTERVAL_S,
+) -> None:
     failure = ""
     while True:
         await asyncio.sleep(interval)
@@ -128,8 +132,8 @@ async def watch_blueprints(
     site_dirs: list[Path],
     relist: Callable[[], Awaitable[list[str]]],
     changed: Callable[[list[str], list[str]], None],
-    poll: float = 2.0,  # how often dimos/robot and site-packages are re-walked
-    settle: float = 3.0,  # re-list once the files stop changing for 3 s (a git checkout, a uv sync)
+    poll: float = constants.BLUEPRINT_POLL_S,
+    settle: float = constants.BLUEPRINT_SETTLE_S,
 ) -> None:
     names = await relist()
     seen = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)

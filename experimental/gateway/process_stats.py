@@ -24,6 +24,7 @@ from typing import Any
 
 from dimos.core.resource_monitor.logger import LCMResourceLogger
 from dimos.core.resource_monitor.monitor import StatsMonitor
+from experimental.gateway import constants
 
 
 def _default(function: Any, name: str) -> Any:
@@ -47,8 +48,8 @@ class ProcessStats:
             self._latest = message
             self._heard = time.monotonic()
             for key, cpu in cpu_samples(message).items():
-                # the API's "a minute of cpu history"
-                self._cpu.setdefault(key, deque(maxlen=round(60.0 / SAMPLE_S))).append(cpu)
+                history = round(constants.CPU_HISTORY_S / SAMPLE_S)
+                self._cpu.setdefault(key, deque(maxlen=history)).append(cpu)
 
     def _ensure_subscribed(self) -> None:
         if self._transport is not None:
@@ -93,7 +94,7 @@ class ProcessStats:
             return {
                 "up": True,
                 "age": round(age, 2),
-                "stale": age > 3 * SAMPLE_S,  # three samples missed
+                "stale": age > constants.STALE_AFTER_SAMPLES * SAMPLE_S,
                 "coordinator": self._latest.get("coordinator"),
                 "workers": self._latest.get("workers") or [],
                 "cpuHistory": {key: list(values) for key, values in self._cpu.items()},
