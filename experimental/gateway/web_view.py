@@ -33,10 +33,10 @@ from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge import relay_process
 from dimos.web.relay_bridge.locate import find_web_dir
+from experimental.gateway import constants
 
 logger = setup_logger()
 
-BUILD_TIMEOUT_S = 300.0
 _lock = asyncio.Lock()
 
 
@@ -71,7 +71,7 @@ def ensure_built(app: Path) -> Path | None:
     if (app / "src").is_dir():
         web_dir = app.parent
         cancel = threading.Event()
-        deadline = time.monotonic() + BUILD_TIMEOUT_S
+        deadline = time.monotonic() + constants.VIEW_BUILD_TIMEOUT_S
         with relay_process._build_lock(web_dir, deadline, cancel) as locked:
             wanted = stamp(web_dir, app)
             if locked and relay_process._read_stamp(dist) != wanted:

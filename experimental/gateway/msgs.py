@@ -27,11 +27,11 @@ import sys
 import tempfile
 from typing import Any
 
+from experimental.gateway import constants
 from experimental.gateway.errors import ApiError
 
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
 RUNTIME_FILE = Path(__file__).parent / "assets" / "msgs" / "runtime.ts"
-BUILD_TIMEOUT_S = 120
 
 
 def message_classes() -> list[tuple[str, type[Any]]]:
@@ -177,10 +177,12 @@ async def built_js(cache_dir: Path) -> Path:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            _, err = await asyncio.wait_for(child.communicate(), BUILD_TIMEOUT_S)
+            _, err = await asyncio.wait_for(child.communicate(), constants.MSGS_BUILD_TIMEOUT_S)
         except asyncio.TimeoutError:
             child.kill()
-            raise ApiError(503, f"building msgs.js took over {BUILD_TIMEOUT_S} s") from None
+            raise ApiError(
+                503, f"building msgs.js took over {constants.MSGS_BUILD_TIMEOUT_S:g} s"
+            ) from None
         if child.returncode != 0:
             last = err.decode(errors="replace").strip().splitlines()[-1:] or ["no output"]
             raise ApiError(503, f"building msgs.js failed: {last[0]}")
