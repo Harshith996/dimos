@@ -40,7 +40,7 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.transport import ZenohTransport
@@ -220,20 +220,6 @@ else:
     _nav_remap = []
 
 
-_policy = G1SonicPolicyModule.blueprint(
-    encoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx",
-    decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
-    planner_onnx=_SONIC_PLANNER_PATH,
-    simulation_address=_simulation_address,
-    joint_names=g1_joints,
-    tick_rate=_tick_rate,
-    auto_arm=_auto_arm,
-    auto_dry_run=_auto_dry_run,
-    default_ramp_seconds=_default_ramp_seconds,
-    decimation=_decimation,
-)
-
-
 def _require_zenoh() -> str | None:
     if global_config.transport == "zenoh":
         return None
@@ -273,44 +259,67 @@ _remappings = [
     (G1SonicPolicyModule, "joint_state", "g1_joints"),
 ]
 
-unitree_g1_sonic_wbc = (
-    autoconnect(
-        _backend,
-        _policy,
-        _nav_stack,
-        vis_module(
-            viewer_backend=global_config.viewer,
-            rerun_config={
-                "tf_axes": 0.5,
-                "static": scene_package_static_entities(
-                    global_config.scene_package if global_config.simulation == "mujoco" else None
-                ),
-                "visual_override": {
-                    "world/global_costmap": _costmap_renderer,
-                    "world/navigation_costmap": _costmap_renderer,
-                    "world/lidar": None,
-                    "world/pointcloud": None,
-                    "world/local_map": None,
-                    "world/local_map_fine": None,
+
+def sonic_wbc_blueprint(*, webxr_enabled: bool = False) -> Blueprint:
+    """Compose the same SONIC stack with optional browser body-reference input."""
+    policy = G1SonicPolicyModule.blueprint(
+        encoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx",
+        decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
+        planner_onnx=_SONIC_PLANNER_PATH,
+        simulation_address=_simulation_address,
+        joint_names=g1_joints,
+        tick_rate=_tick_rate,
+        auto_arm=_auto_arm,
+        auto_dry_run=_auto_dry_run,
+        default_ramp_seconds=_default_ramp_seconds,
+        decimation=_decimation,
+        webxr_enabled=webxr_enabled,
+    )
+    return (
+        autoconnect(
+            _backend,
+            policy,
+            _nav_stack,
+            vis_module(
+                viewer_backend=global_config.viewer,
+                rerun_config={
+                    "tf_axes": 0.5,
+                    "static": scene_package_static_entities(
+                        global_config.scene_package
+                        if global_config.simulation == "mujoco"
+                        else None
+                    ),
+                    "visual_override": {
+                        "world/global_costmap": _costmap_renderer,
+                        "world/navigation_costmap": _costmap_renderer,
+                        "world/lidar": None,
+                        "world/pointcloud": None,
+                        "world/local_map": None,
+                        "world/local_map_fine": None,
+                    },
                 },
-            },
-        ),
-    )
-    .remappings(cast("Any", _remappings))
-    .transports(
-        {
-            ("cmd_vel", Twist): _zenoh_latest_transport("cmd_vel", Twist),
-            ("position_command", JointState): _zenoh_latest_transport(
-                "/g1/position_command", JointState
             ),
-            ("g1_joints", JointState): _zenoh_latest_transport("/g1/joints", JointState),
-            ("motor_states", JointState): _zenoh_latest_transport("/g1/motor_states", JointState),
-            ("low_level_imu", Imu): _zenoh_latest_transport("/g1/imu", Imu),
-            ("motor_command", MotorCommandArray): _zenoh_latest_transport(
-                "/g1/motor_command", MotorCommandArray
-            ),
-        }
+        )
+        .remappings(cast("Any", _remappings))
+        .transports(
+            {
+                ("cmd_vel", Twist): _zenoh_latest_transport("cmd_vel", Twist),
+                ("position_command", JointState): _zenoh_latest_transport(
+                    "/g1/position_command", JointState
+                ),
+                ("g1_joints", JointState): _zenoh_latest_transport("/g1/joints", JointState),
+                ("motor_states", JointState): _zenoh_latest_transport(
+                    "/g1/motor_states", JointState
+                ),
+                ("low_level_imu", Imu): _zenoh_latest_transport("/g1/imu", Imu),
+                ("motor_command", MotorCommandArray): _zenoh_latest_transport(
+                    "/g1/motor_command", MotorCommandArray
+                ),
+            }
+        )
+        .requirements(_require_zenoh)
+        .global_config(robot_model="unitree_g1", n_workers=_n_workers)
     )
-    .requirements(_require_zenoh)
-    .global_config(robot_model="unitree_g1", n_workers=_n_workers)
-)
+
+
+unitree_g1_sonic_wbc = autoconnect(sonic_wbc_blueprint())
