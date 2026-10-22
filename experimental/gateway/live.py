@@ -46,6 +46,7 @@ def connect_dimos() -> Any:
 
     launch = current_launch() or {}
     transport = launch.get("config", {}).get("global", {}).get("transport")
+    # TODO(core): Dimos.connect could take a transport= instead of reading the process-wide GlobalConfig
     global_config.update(transport=transport or GlobalConfig().transport)
     return Dimos.connect()
 

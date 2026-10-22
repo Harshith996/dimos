@@ -31,7 +31,9 @@ import time
 from typing import Any
 
 from packaging.requirements import InvalidRequirement, Requirement
-from packaging.utils import canonicalize_name
+from packaging.tags import compatible_tags, cpython_tags, platform_tags
+from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
+from packaging.version import InvalidVersion
 import yaml
 
 from dimos.utils.logging_config import setup_logger
@@ -749,24 +751,22 @@ class Jobs:
 
 
 def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
-    system = {"Darwin": "macosx", "Linux": "linux"}.get(
-        environment.get("platform_system", ""), "win"
+    """Whether the lock has a wheel for the checkout's python on this machine (the checkout runs here)."""
+    version = environment.get("python_version", "")
+    python = (
+        tuple(int(part) for part in version.split(".")[:2]) if version else sys.version_info[:2]
     )
-    machine = environment.get("platform_machine", "").lower()
-    cpus = {"arm64": ("arm64", "universal2"), "aarch64": ("aarch64",)}.get(machine, (machine,))
-    python = "cp" + "".join(environment.get("python_version", "3.12").split(".")[:2])
+    platforms = list(platform_tags())
+    supported = {
+        *cpython_tags(python, platforms=platforms),
+        *compatible_tags(python, platforms=platforms),
+    }
     for wheel in entry.get("wheels", []):
-        file = str(wheel.get("url", "")).rsplit("/", 1)[-1]
-        tags = file.removesuffix(".whl").split("-")[-3:] if file.endswith(".whl") else []
-        if len(tags) != 3:
+        try:
+            _, _, _, tags = parse_wheel_filename(str(wheel.get("url", "")).rsplit("/", 1)[-1])
+        except (InvalidWheelFilename, InvalidVersion):
             continue
-        python_fits = (
-            tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
-        )
-        platform_fits = tags[2] == "any" or (
-            system in tags[2] and any(cpu in tags[2] for cpu in cpus)
-        )
-        if python_fits and platform_fits:
+        if tags & supported:
             return True
     return False
 
