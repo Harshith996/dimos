@@ -491,7 +491,6 @@ impl Worker {
                     // and the incumbent, a route held across a dead link is unvalidated.
                     planned = None;
                     incumbent = None;
-                    memory = Memory::default();
                     short = SpellGate::default();
                     let pose = pose.expect("Hold implies a pose");
                     let held = hold_stub(
@@ -507,7 +506,6 @@ impl Worker {
                     info!("planner_path is empty, clearing the local plan");
                     planned = None;
                     incumbent = None;
-                    memory = Memory::default();
                     short = SpellGate::default();
                     published = false;
                     let empty =
