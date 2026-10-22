@@ -15,7 +15,7 @@ python scripts/audit_cdr_boundaries.py --check
 ```
 
 `--check` returns nonzero while candidates remain. This snapshot has **312 legacy
-In/Out declarations** and **997 legacy imports**. These are syntax matches, not
+In/Out declarations** and **998 legacy imports**. These are syntax matches, not
 validated runtime failures. Internal driver values can be valid conversion
 boundaries. Inspect complete blueprint port pairs before changing them.
 
