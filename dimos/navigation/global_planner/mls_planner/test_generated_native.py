@@ -66,13 +66,13 @@ def test_mls_native_ports_reuse_canonical_region_and_geometry_types():
         module.stop()
 
 
+@pytest.mark.native_e2e
 def test_actual_native_mapper_to_mls_cdr_route_and_weighted_viewer_regions(monkeypatch):
     paths = [
         os.environ.get("DIMOS_NATIVE_RAY_TRACING_BINARY"),
         os.environ.get("DIMOS_NATIVE_MLS_BINARY"),
     ]
-    if not all(paths):
-        pytest.skip("Set both DIMOS_NATIVE_RAY_TRACING_BINARY and DIMOS_NATIVE_MLS_BINARY")
+    assert all(paths), "Set both DIMOS_NATIVE_RAY_TRACING_BINARY and DIMOS_NATIVE_MLS_BINARY"
     mapper_binary, planner_binary = [str(FilePath(path).resolve()) for path in paths]
     assert all(FilePath(path).is_file() for path in [mapper_binary, planner_binary])
     monkeypatch.setattr(global_config, "transport", "zenoh")

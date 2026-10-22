@@ -37,6 +37,7 @@ use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImag
 use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
 use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
 use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
 use dimos_module::cdr;
 use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
@@ -46,10 +47,6 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::undistort::{Lens, UndistortMap};
-
-fn encode_cloud(cloud: &PointCloud2) -> Vec<u8> {
-    cdr::encode(cloud).expect("serialize a valid generated PointCloud2")
-}
 
 fn extract_xyz(cloud: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
     let offset = |name: &str| {
@@ -69,98 +66,6 @@ fn extract_xyz(cloud: &PointCloud2) -> Result<Vec<[f32; 3]>, ExtractError> {
         [offset("x")?, offset("y")?, offset("z")?],
         cloud.is_bigendian,
     )
-}
-
-fn decode_tf(bytes: &[u8]) -> std::io::Result<Vec<dimos_module::tf::Transform>> {
-    use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-    use nalgebra::{Quaternion, Translation3, UnitQuaternion};
-    let message: TFMessage = cdr::decode(bytes)?;
-    message
-        .transforms
-        .into_iter()
-        .map(|edge| {
-            let p = edge.transform.translation;
-            let q = edge.transform.rotation;
-            if ![p.x, p.y, p.z, q.x, q.y, q.z, q.w]
-                .iter()
-                .all(|v| v.is_finite())
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "nonfinite TF components",
-                ));
-            }
-            let rotation = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "zero TF quaternion")
-                })?;
-            if edge.header.stamp.nanosec >= 1_000_000_000 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "unnormalized TF stamp",
-                ));
-            }
-            Ok(dimos_module::tf::Transform::from_nanoseconds(
-                edge.header.frame_id,
-                edge.child_frame_id,
-                edge.header.stamp.sec as i64 * 1_000_000_000 + edge.header.stamp.nanosec as i64,
-                Isometry3::from_parts(Translation3::new(p.x, p.y, p.z), rotation),
-            ))
-        })
-        .collect()
-}
-
-fn encode_tf(transforms: &[dimos_module::tf::Transform]) -> std::io::Result<Vec<u8>> {
-    use dimos_generated_messages::{
-        geometry_msgs::msg::{
-            quaternion::Quaternion, transform::Transform, transform_stamped::TransformStamped,
-            vector3::Vector3,
-        },
-        tf2_msgs::msg::tf_message::TFMessage,
-    };
-    let transforms = transforms
-        .iter()
-        .map(|value| {
-            let ns = value.stamp_nanoseconds().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "TF timestamp is outside range",
-                )
-            })?;
-            let sec = i32::try_from(ns.div_euclid(1_000_000_000)).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "TF seconds exceed ROS int32",
-                )
-            })?;
-            let p = value.translation();
-            let q = value.rotation();
-            Ok(TransformStamped {
-                header: Header {
-                    stamp: Time {
-                        sec,
-                        nanosec: ns.rem_euclid(1_000_000_000) as u32,
-                    },
-                    frame_id: value.parent.clone(),
-                },
-                child_frame_id: value.child.clone(),
-                transform: Transform {
-                    translation: Vector3 {
-                        x: p.x,
-                        y: p.y,
-                        z: p.z,
-                    },
-                    rotation: Quaternion {
-                        x: q.i,
-                        y: q.j,
-                        z: q.k,
-                        w: q.w,
-                    },
-                },
-            })
-        })
-        .collect::<std::io::Result<Vec<_>>>()?;
-    cdr::encode(&TFMessage { transforms })
 }
 
 const TIMING_REPORT_EVERY: Duration = Duration::from_secs(5);
@@ -255,7 +160,7 @@ pub struct Depth2DepthCloud {
     #[tf(decode = decode_tf, encode = encode_tf)]
     tf: Tf,
 
-    #[output(encode = encode_cloud)]
+    #[output(encode = cdr::encode)]
     depth_cloud: Output<PointCloud2>,
 
     #[config]
@@ -961,7 +866,7 @@ mod tests {
                 frame_id: "camera".into(),
             };
             let cloud = make_cloud(&[[1., 2., 3.]], &header, "optical".into());
-            let received: PointCloud2 = cdr::decode(&encode_cloud(&cloud)).unwrap();
+            let received: PointCloud2 = cdr::decode(&cdr::encode(&cloud).unwrap()).unwrap();
             assert_eq!(received.header.stamp.sec, stamp.sec);
             assert_eq!(received.header.stamp.nanosec, stamp.nanosec);
             assert_eq!(received.header.frame_id, "optical");

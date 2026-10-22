@@ -29,15 +29,13 @@ use dimos_generated_messages::dimos_msgs::msg::imu_info::ImuInfo;
 use dimos_generated_messages::geometry_msgs::msg::{
     quaternion::Quaternion as QuaternionMsg, vector3::Vector3 as Vector3Msg,
 };
-use dimos_generated_messages::geometry_msgs::msg::{
-    transform::Transform as TransformMsg, transform_stamped::TransformStamped,
-};
 use dimos_generated_messages::sensor_msgs::msg::{
     camera_info::CameraInfo, image::Image, imu::Imu, point_cloud2::PointCloud2,
     point_field::PointField, region_of_interest::RegionOfInterest,
 };
 use dimos_generated_messages::std_msgs::msg::header::Header;
 use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
+use dimos_message_adapters::tf::{decode as decode_cdr_tf, encode as encode_cdr_tf};
 use dimos_module::cdr;
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,
@@ -67,64 +65,6 @@ const IMU_CLOCK_WINDOW_SECONDS: i64 = 30;
 const FRAME_TIMEOUT: Duration = Duration::from_secs(1);
 // Body (REP-103) from optical axes, x y z w.
 const OPTICAL_ROTATION: [f64; 4] = [-0.5, 0.5, -0.5, 0.5];
-fn encode_cdr<T: serde::Serialize>(value: &T) -> Vec<u8> {
-    cdr::encode(value).expect("serialize a valid camera value")
-}
-
-fn encode_cdr_tf(values: &[Transform]) -> std::io::Result<Vec<u8>> {
-    let message = TFMessage {
-        transforms: values
-            .iter()
-            .map(|value| {
-                let t = value.translation();
-                let q = value.rotation();
-                TransformStamped {
-                    header: header(&value.parent, value.ts),
-                    child_frame_id: value.child.clone(),
-                    transform: TransformMsg {
-                        translation: Vector3Msg {
-                            x: t.x,
-                            y: t.y,
-                            z: t.z,
-                        },
-                        rotation: QuaternionMsg {
-                            x: q.i,
-                            y: q.j,
-                            z: q.k,
-                            w: q.w,
-                        },
-                    },
-                }
-            })
-            .collect(),
-    };
-    cdr::encode(&message)
-}
-
-fn decode_cdr_tf(bytes: &[u8]) -> std::io::Result<Vec<Transform>> {
-    let message: TFMessage = cdr::decode(bytes)?;
-    let mut values = Vec::with_capacity(message.transforms.len());
-    for value in message.transforms {
-        let t = value.transform.translation;
-        let q = value.transform.rotation;
-        let Some(rotation) = UnitQuaternion::try_new(Quaternion::new(q.w, q.x, q.y, q.z), 1e-9)
-        else {
-            dimos_module::error_throttled!(
-                Duration::from_secs(1), parent = %value.header.frame_id,
-                child = %value.child_frame_id, "tf rotation is not a valid quaternion"
-            );
-            continue;
-        };
-        values.push(Transform::new(
-            value.header.frame_id,
-            value.child_frame_id,
-            value.header.stamp.sec as f64 + value.header.stamp.nanosec as f64 * 1e-9,
-            Isometry3::from_parts(Translation3::new(t.x, t.y, t.z), rotation),
-        ));
-    }
-    Ok(values)
-}
-
 // ---- config, field for field with RealSenseCameraConfig ----
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -286,27 +226,27 @@ struct Outs {
 #[derive(Module)]
 #[module(name = "realsense", setup = start, teardown = stop)]
 struct RealSense {
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     color_image: Output<Image>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     depth_image: Output<Image>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     infrared_left: Output<Image>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     infrared_right: Output<Image>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     imu: Output<Imu>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     imu_info: Output<ImuInfo>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     pointcloud: Output<PointCloud2>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     camera_info: Output<CameraInfo>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     depth_camera_info: Output<CameraInfo>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     infrared_left_camera_info: Output<CameraInfo>,
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     infrared_right_camera_info: Output<CameraInfo>,
     #[tf(decode = decode_cdr_tf, encode = encode_cdr_tf)]
     tf: Tf,
@@ -1453,7 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_tf_keeps_valid_edges_when_one_quaternion_is_invalid() {
+    fn canonical_tf_rejects_message_when_one_quaternion_is_invalid() {
         let bytes =
             encode_cdr_tf(&[Transform::new("map", "camera", 3.25, Isometry3::identity())]).unwrap();
         let mut message: TFMessage = cdr::decode(&bytes).unwrap();
@@ -1466,9 +1406,12 @@ mod tests {
             w: 0.0,
         };
         message.transforms.push(invalid);
-        let decoded = decode_cdr_tf(&cdr::encode(&message).unwrap()).unwrap();
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].child, "camera");
+        assert_eq!(
+            decode_cdr_tf(&cdr::encode(&message).unwrap())
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
@@ -1507,7 +1450,7 @@ mod tests {
             },
         };
         let cloud = rgbd_to_cloud(&rgbd, &info, 0.001, 1, 3.0);
-        let decoded: PointCloud2 = cdr::decode(&encode_cdr(&cloud)).unwrap();
+        let decoded: PointCloud2 = cdr::decode(&cdr::encode(&cloud).unwrap()).unwrap();
         assert_eq!(decoded.header, source);
         assert_eq!(
             (
