@@ -42,7 +42,7 @@ export function rateRows(heardRows: TopicRate[], modules: Module[] | null): Topi
       }
     }
   }
-  return [...heardRows, ...unheard.sort((a, b) => a.topic.localeCompare(b.topic))];
+  return [...heardRows, ...unheard.sort((left, right) => left.topic.localeCompare(right.topic))];
 }
 
 function StreamPills({ label, list }: { label: string; list: Stream[] }) {
@@ -186,12 +186,17 @@ function Ends(
     <div className="end">
       <span className="k">{label}</span>
       {list.length === 0 && <span className="note">nothing</span>}
-      {list.map((m) =>
-        m.name === self
-          ? <span key={m.name} className="self">{className(m)}</span>
+      {list.map((module) =>
+        module.name === self
+          ? <span key={module.name} className="self">{className(module)}</span>
           : (
-            <button key={m.name} type="button" data-bp-jump={m.name} onClick={() => onOpen(m.name)}>
-              {className(m)}
+            <button
+              key={module.name}
+              type="button"
+              data-bp-jump={module.name}
+              onClick={() => onOpen(module.name)}
+            >
+              {className(module)}
             </button>
           )
       )}
@@ -212,10 +217,12 @@ function StreamRow(
   const topic = topicOf(stream);
   const topicKey = `topic:${topic}`;
   const typeKey = `type:${stream.type}`;
-  const on = (test: (s: Stream) => boolean, match: (s: Stream) => boolean) =>
-    modules.filter((m) => m.streams.some((s) => match(s) && test(s)));
-  const sameTopic = (s: Stream) => topicOf(s) === topic;
-  const sameType = (s: Stream) => s.type === stream.type;
+  const on = (test: (candidate: Stream) => boolean, match: (candidate: Stream) => boolean) =>
+    modules.filter((module) =>
+      module.streams.some((candidate) => match(candidate) && test(candidate))
+    );
+  const sameTopic = (other: Stream) => topicOf(other) === topic;
+  const sameType = (other: Stream) => other.type === stream.type;
   return (
     <div className="stream" style={typeStyle(stream.type)}>
       <div className="row">
@@ -262,9 +269,9 @@ function MethodCard(
   const doc = (method.doc ?? "").trim();
   const returns = method.return_type ?? "None";
   const params = method.params.length
-    ? method.params.map((p) =>
-      `${p.name}${p.type ? `: ${p.type}` : ""}${
-        open && p.default !== null ? ` = ${p.default}` : ""
+    ? method.params.map((param) =>
+      `${param.name}${param.type ? `: ${param.type}` : ""}${
+        open && param.default !== null ? ` = ${param.default}` : ""
       }`
     ).join(", ")
     : "no params";

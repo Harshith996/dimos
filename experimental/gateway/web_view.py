@@ -48,7 +48,9 @@ def _sources(web_dir: Path, app: Path) -> list[Path]:
     files = [path for path in (web_dir / "deno.json", web_dir / "deno.lock") if path.is_file()]
     for path in sorted(app.rglob("*")):
         parts = path.relative_to(app).parts
-        skipped = {"dist", "node_modules"} & set(parts) or any(p.startswith(".") for p in parts)
+        skipped = {"dist", "node_modules"} & set(parts) or any(
+            part.startswith(".") for part in parts
+        )
         if path.is_file() and not skipped and ".test." not in path.name:
             files.append(path)
     return files

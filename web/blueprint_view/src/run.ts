@@ -71,13 +71,13 @@ export function launchedWithOther(launch: Launch | null, saved: Saved | null): b
   }
   const masked = (value: unknown) => typeof value === "string" && /^•+$/.test(value);
   const differs = (
-    a: Record<string, unknown>,
-    b: Record<string, unknown>,
+    left: Record<string, unknown>,
+    right: Record<string, unknown>,
     base: Record<string, unknown> = {},
   ) =>
-    [...new Set([...Object.keys(a), ...Object.keys(b)])].some((key) =>
-      !masked(a[key]) && !masked(b[key]) &&
-      !sameValue(key in a ? a[key] : base[key], key in b ? b[key] : base[key])
+    [...new Set([...Object.keys(left), ...Object.keys(right)])].some((key) =>
+      !masked(left[key]) && !masked(right[key]) &&
+      !sameValue(key in left ? left[key] : base[key], key in right ? right[key] : base[key])
     );
   if (differs(saved.global, launch.config.global ?? {}, saved.defaults)) {
     return true;

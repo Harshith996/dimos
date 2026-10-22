@@ -15,7 +15,7 @@ describe("config fields", () => {
       defaults: { viewer: "rerun" },
       secrets: [],
     });
-    expect(fields.map((f) => [f.id, f.kind, f.group, f.nullable])).toEqual([
+    expect(fields.map((field) => [field.id, field.kind, field.group, field.nullable])).toEqual([
       ["robot_ip", "string", "robot", true],
       ["robot_name", "string", "robot", false],
       ["viewer", "enum", "general", false],

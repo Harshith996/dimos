@@ -95,12 +95,12 @@ export function ConfigModal(
       getJson<BlueprintSchema>(`catalog/blueprints/${at}/config`),
       getJson<SavedBlueprint>(`../api/dimos/config/blueprints/${at}`),
       recommendedOf(name),
-    ]).then(([g, s, b, r]) => {
-      setGlobal(g);
-      setSchema(s);
-      setBlueprintGlobal(b.global ?? {});
-      setModules(blueprintConfig(s, b));
-      setRecommended(r);
+    ]).then(([loadedGlobal, loadedSchema, savedBlueprint, loadedRecommended]) => {
+      setGlobal(loadedGlobal);
+      setSchema(loadedSchema);
+      setBlueprintGlobal(savedBlueprint.global ?? {});
+      setModules(blueprintConfig(loadedSchema, savedBlueprint));
+      setRecommended(loadedRecommended);
     }, (caught) => setProblem(errorText(caught)));
   }, [name]);
 
@@ -217,7 +217,13 @@ export function ConfigModal(
       onReset={() => resetField(spec)}
     >
       {control ??
-        <SettingInput field={spec} value={valueOf(spec)} onChange={(v) => setField(spec, v)} />}
+        (
+          <SettingInput
+            field={spec}
+            value={valueOf(spec)}
+            onChange={(value) => setField(spec, value)}
+          />
+        )}
     </SettingRow>
   );
 

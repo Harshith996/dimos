@@ -100,7 +100,7 @@ export function globalFields(config: GlobalConfig): FieldSpec[] {
   const groups = globalGroups(keys);
   const order = (key: string) =>
     `${groups.get(key) === "general" ? "" : groups.get(key)}\u0000${key.toLowerCase()}`;
-  keys.sort((a, b) => order(a).localeCompare(order(b)));
+  keys.sort((left, right) => order(left).localeCompare(order(right)));
   return keys.flatMap((key): FieldSpec[] => {
     const raw = properties[key] ?? {};
     const schema = resolveSchema(raw, config.schema ?? {});

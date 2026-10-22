@@ -16,7 +16,7 @@ describe("model", () => {
   it("lists the rarest modules first", () => {
     const uses = moduleUsage({ blueprints: [{ modules: ["Lidar", "Map"] }, { modules: ["Map"] }] });
     const modules = ["map", "lidar", "solo"].map((name) => ({ name, class: name, streams: [] }));
-    expect(byRarity(modules, uses).map((m) => m.name)).toEqual(["solo", "lidar", "map"]);
+    expect(byRarity(modules, uses).map((module) => module.name)).toEqual(["solo", "lidar", "map"]);
   });
 
   it("finds the blueprint's live run however it was started, newest first", () => {

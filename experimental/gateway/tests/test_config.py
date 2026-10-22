@@ -125,8 +125,8 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
     monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
     narrow = client.get("/info").json()
     assert {
-        k: narrow[k]
-        for k in ("found", "installed", "version", "range", "inRange", "api", "commit", "tag")
+        key: narrow[key]
+        for key in ("found", "installed", "version", "range", "inRange", "api", "commit", "tag")
     } == {
         "found": True,
         "installed": True,

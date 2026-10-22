@@ -45,7 +45,9 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
 
 def test_remapped_streams_show_their_wired_topic() -> None:
     streams = {
-        (m["name"], s["name"]): s for m in blueprint("r1pro-nav")["modules"] for s in m["streams"]
+        (module["name"], stream["name"]): stream
+        for module in blueprint("r1pro-nav")["modules"]
+        for stream in module["streams"]
     }
     left = streams["headleftcamera", "jpeg_out"]
     assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")

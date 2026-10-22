@@ -96,8 +96,10 @@ function buildGraph(modules: Module[], extras: { topic: string; type: string }[]
       topics.set(extra.topic, { type: extra.type, extra: true });
     }
   }
-  const written = new Set(edges.filter((e) => e.from.startsWith("m:")).map((e) => e.topic));
-  const read = new Set(edges.filter((e) => e.to.startsWith("m:")).map((e) => e.topic));
+  const written = new Set(
+    edges.filter((edge) => edge.from.startsWith("m:")).map((edge) => edge.topic),
+  );
+  const read = new Set(edges.filter((edge) => edge.to.startsWith("m:")).map((edge) => edge.topic));
   for (const [topic, { type, extra }] of topics) {
     const width = Math.max(
       textWidth(topic, `500 12px ${mono}`),
@@ -216,11 +218,11 @@ export const BlueprintGraph = forwardRef<GraphViewHandle, BlueprintGraphProps>(
                   </text>
                 </>
               )}
-            {[0, node.w].map((x) => (
+            {[0, node.w].map((portX) => (
               <rect
-                key={x}
+                key={portX}
                 className="port"
-                x={x - PORT / 2}
+                x={portX - PORT / 2}
                 y={node.h / 2 - PORT / 2}
                 width={PORT}
                 height={PORT}

@@ -245,7 +245,7 @@ export function App() {
     if (!live || !modules) {
       return [];
     }
-    const wired = new Set(modules.flatMap((m) => m.streams.map(topicOf)));
+    const wired = new Set(modules.flatMap((module) => module.streams.map(topicOf)));
     return [...rates.keys()].filter((topic) => !wired.has(topic)).sort().map((topic) => ({
       topic,
       type: String(
@@ -319,7 +319,7 @@ export function App() {
     : "last run";
   const stale = running && launchedWithOther(launch, saved);
   const busy = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
-  const selectedModule = modules?.find((m) => m.name === selected);
+  const selectedModule = modules?.find((module) => module.name === selected);
 
   return (
     <>

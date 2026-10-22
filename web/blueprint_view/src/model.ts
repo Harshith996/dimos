@@ -71,6 +71,6 @@ export function moduleUsage(
 export function byRarity(modules: Module[], uses: Map<string, number>): Module[] {
   const count = (module: Module) => uses.get(moduleKey(module.name)) ?? 0;
   return modules.map((module, index) => ({ module, index }))
-    .sort((a, b) => count(a.module) - count(b.module) || a.index - b.index)
+    .sort((left, right) => count(left.module) - count(right.module) || left.index - right.index)
     .map(({ module }) => module);
 }
