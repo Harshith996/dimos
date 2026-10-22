@@ -20,6 +20,8 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::f64::consts::PI;
 
+use crate::geom::arcs_of;
+
 /// Fine distance-field pitch: half the map's voxel.
 const FINE: f64 = 0.04; // VOXEL / 2
 const PAD: f64 = 1.5;
@@ -603,6 +605,34 @@ impl World {
     }
 }
 
+/// The lattice a world is searched on and the working area it spans.
+#[derive(Clone, Copy, Debug)]
+struct Lattice {
+    cell: f64,
+    /// Room around the working area (m).
+    pad: f64,
+    /// The working area spans the cloud too, not only the pose and approach.
+    fit_cloud: bool,
+}
+
+impl Lattice {
+    /// The planning lattice, over the whole cloud.
+    const COARSE: Lattice = Lattice {
+        cell: CELL,
+        pad: PAD,
+        fit_cloud: true,
+    };
+
+    /// The refining lattice over a window, padded by window_m.
+    fn refining(window_m: f64) -> Self {
+        Lattice {
+            cell: REFINE_CELL,
+            pad: window_m,
+            fit_cloud: false,
+        }
+    }
+}
+
 #[cfg(test)]
 fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap: f64) -> World {
     build_world_explored(
@@ -612,14 +642,11 @@ fn build_world(points: &[[f64; 2]], pose: (f64, f64, f64), goal: (f64, f64), cap
         pose,
         &[[goal.0, goal.1]],
         cap,
-        CELL,
-        PAD,
-        true,
+        Lattice::COARSE,
     )
 }
 
 /// `build_world` with `terrain` priced, a soft point reaching the cells within `reach` of it.
-#[allow(clippy::too_many_arguments)]
 fn build_world_explored(
     points: &[[f64; 2]],
     terrain: &Terrain,
@@ -627,13 +654,16 @@ fn build_world_explored(
     pose: (f64, f64, f64),
     approach: &[[f64; 2]],
     cap: f64,
-    cell: f64,
-    pad: f64,
-    fit_cloud: bool,
+    lattice: Lattice,
 ) -> World {
+    let Lattice {
+        cell,
+        pad,
+        fit_cloud,
+    } = lattice;
     let band: Vec<(f64, f64)> = points.iter().map(|p| (p[0], p[1])).collect();
-    // Working area over {pose, approach} and, when `fit_cloud`, the cloud, padded by
-    // `pad`, low corner snapped onto the absolute lattice.
+    // Working area over the pose, the approach and maybe the cloud, padded, low corner
+    // snapped onto the absolute lattice.
     let (mut x0, mut y0, mut x1, mut y1) = (pose.0, pose.1, pose.0, pose.1);
     let cloud: &[(f64, f64)] = if fit_cloud { &band } else { &[] };
     for (x, y) in approach
@@ -1931,55 +1961,64 @@ struct Splice {
     end: (f64, f64),
 }
 
-/// The coarse route around a tight spot, its window re-searched on the refining
-/// lattice: coarse to the window, fine through it, coarse on to the goal. Returns
-/// the route and where it ends, or None when the fine lattice gets no further.
-#[allow(clippy::too_many_arguments)]
-fn refined(
+/// The stretch of approach around its first tight spot, by arc length.
+struct Window {
+    tight: f64,
+    s_in: f64,
+    s_out: f64,
+    points: Vec<[f64; 2]>,
+}
+
+/// The `samples` within `window_m` of the first one the walking body does not fit.
+fn tight_window(
     cl: &mut Clear,
     fps: &Fps,
     emb: &Emb,
-    points: &[[f64; 2]],
-    terrain: &Terrain,
-    pose: (f64, f64, f64),
-    approach: &[[f64; 2]],
-    cap: f64,
+    samples: &[(f64, [f64; 2])],
     margin: f64,
-    refine: &Refine,
-) -> Option<Splice> {
+    window_m: f64,
+) -> Option<Window> {
     let walk = fps.id(emb, Some(0.0));
-    let fits = |cl: &mut Clear, p: [f64; 2]| {
-        let (i, j) = cl.cell_of(p[0], p[1]);
-        (0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
-    };
-    let samples = arc_samples(approach, 0.5 * CELL);
     let total = samples.last()?.0;
-    let tight = samples.iter().find(|(_, p)| !fits(cl, *p))?.0;
-    let (s_in, s_out) = (
-        (tight - refine.window_m).max(0.0),
-        (tight + refine.window_m).min(total),
-    );
-    let window: Vec<[f64; 2]> = samples
+    let tight = samples
+        .iter()
+        .find(|(_, p)| {
+            let (i, j) = cl.cell_of(p[0], p[1]);
+            !(0..YAW_BINS).any(|b| cl.fits(b, walk, i, j, margin))
+        })?
+        .0;
+    let (s_in, s_out) = ((tight - window_m).max(0.0), (tight + window_m).min(total));
+    let points = samples
         .iter()
         .filter(|(s, _)| (s_in..=s_out).contains(s))
         .map(|(_, p)| *p)
         .collect();
-    let entry = *window.first()?;
-    // The window opens at the robot unless the tight spot is farther than a window away.
-    let lead = if s_in > 0.0 {
-        se2_search_in(cl, fps, pose, (entry[0], entry[1]), emb, margin)?
-    } else {
-        vec![[pose.0, pose.1, pose.2]]
-    };
-    let start = {
-        let e = lead.last()?;
-        (e[0], e[1], e[2])
-    };
+    Some(Window {
+        tight,
+        s_in,
+        s_out,
+        points,
+    })
+}
+
+/// Where the refining lattice gets through `window` from `start`, and its route there.
+#[allow(clippy::too_many_arguments)]
+fn fine_leg(
+    fps: &Fps,
+    emb: &Emb,
+    points: &[[f64; 2]],
+    terrain: &Terrain,
+    start: (f64, f64, f64),
+    window: &[[f64; 2]],
+    cap: f64,
+    margin: f64,
+    window_m: f64,
+) -> Option<Splice> {
     // The fine lattice spans the window padded by window_m. The points cover it out to the
     // field's cap, so nothing inside reads as empty floor.
-    let room = refine.window_m + cap + GRID_PAD;
+    let room = window_m + cap + GRID_PAD;
     let (mut x0, mut y0, mut x1, mut y1) = (start.0, start.1, start.0, start.1);
-    for p in &window {
+    for p in window {
         x0 = x0.min(p[0]);
         y0 = y0.min(p[1]);
         x1 = x1.max(p[0]);
@@ -1997,19 +2036,81 @@ fn refined(
         terrain,
         step_reach(emb),
         start,
-        &window,
+        window,
         cap,
-        REFINE_CELL,
-        refine.window_m,
-        false,
+        Lattice::refining(window_m),
     );
-    let (exit, mid) = {
-        let (gx, gy) = lattice_axes(&fw);
-        let mut fcl = Clear::new(&mut fw, fps, margin, gx, gy, emb.governor());
-        let exit = pull_back(&mut fcl, fps, emb, &window)?;
-        let mid = se2_search_in(&mut fcl, fps, start, exit, emb, margin)?;
-        (exit, mid)
+    let (gx, gy) = lattice_axes(&fw);
+    let mut fcl = Clear::new(&mut fw, fps, margin, gx, gy, emb.governor());
+    let exit = pull_back(&mut fcl, fps, emb, window)?;
+    let route = se2_search_in(&mut fcl, fps, start, exit, emb, margin)?;
+    Some(Splice { route, end: exit })
+}
+
+/// Appends `leg` past its head to `route` when the segment joining them is free.
+fn join(cl: &mut Clear, fps: &Fps, emb: &Emb, route: &mut Vec<[f64; 3]>, leg: &[[f64; 3]]) -> bool {
+    let (Some(&from), Some(to)) = (route.last(), leg.get(1)) else {
+        return true;
     };
+    if !seg_free(cl.w, fps, emb, &from, to, 0.0) {
+        return false;
+    }
+    route.extend_from_slice(&leg[1..]);
+    true
+}
+
+/// The fine leg saw only the window's points, so every state after the robot's is
+/// checked on the full world for a wall the window missed.
+fn clear_on_full_world(cl: &mut Clear, fps: &Fps, route: &[[f64; 3]]) -> bool {
+    let gap = OFFSET_STEP * std::f64::consts::FRAC_1_SQRT_2;
+    let stand = fps.stand().to_vec();
+    route
+        .iter()
+        .skip(1)
+        .all(|s| pose_clear(cl.w, &stand, s[0], s[1], s[2]) > gap)
+}
+
+/// The coarse route with its tight-spot window re-searched on the refining lattice.
+#[allow(clippy::too_many_arguments)]
+fn refined(
+    cl: &mut Clear,
+    fps: &Fps,
+    emb: &Emb,
+    points: &[[f64; 2]],
+    terrain: &Terrain,
+    pose: (f64, f64, f64),
+    approach: &[[f64; 2]],
+    cap: f64,
+    margin: f64,
+    refine: &Refine,
+) -> Option<Splice> {
+    let samples = arc_samples(approach, 0.5 * CELL);
+    let total = samples.last()?.0;
+    let window = tight_window(cl, fps, emb, &samples, margin, refine.window_m)?;
+    let entry = *window.points.first()?;
+    let lead = if window.s_in > 0.0 {
+        se2_search_in(cl, fps, pose, (entry[0], entry[1]), emb, margin)?
+    } else {
+        vec![[pose.0, pose.1, pose.2]]
+    };
+    let start = {
+        let e = lead.last()?;
+        (e[0], e[1], e[2])
+    };
+    let Splice {
+        route: mid,
+        end: exit,
+    } = fine_leg(
+        fps,
+        emb,
+        points,
+        terrain,
+        start,
+        &window.points,
+        cap,
+        margin,
+        refine.window_m,
+    )?;
     let past = samples
         .iter()
         .min_by(|a, b| {
@@ -2017,37 +2118,28 @@ fn refined(
             d(a.1).total_cmp(&d(b.1))
         })?
         .0;
-    if past <= tight {
+    if past <= window.tight {
         return None;
     }
     let mut route = lead;
-    route.extend_from_slice(&mid[1..]);
+    if !join(cl, fps, emb, &mut route, &mid) {
+        return None;
+    }
     let mut end = exit;
-    if s_out < total {
+    if window.s_out < total {
         let tail: Vec<[f64; 2]> = samples
             .iter()
-            .filter(|(s, _)| *s >= s_out)
+            .filter(|(s, _)| *s >= window.s_out)
             .map(|(_, p)| *p)
             .collect();
         let goal = pull_back(cl, fps, emb, &tail)?;
-        let from = route.last()?;
-        if let Some(rest) = se2_search_in(cl, fps, (from[0], from[1], from[2]), goal, emb, margin) {
-            route.extend_from_slice(&rest[1..]);
+        let from = *route.last()?;
+        let rest = se2_search_in(cl, fps, (from[0], from[1], from[2]), goal, emb, margin);
+        if rest.is_some_and(|r| join(cl, fps, emb, &mut route, &r)) {
             end = goal;
         }
     }
-    // The fine leg saw only the window's points, so every state after the robot's is
-    // checked on the full world for a wall the window missed.
-    let gap = OFFSET_STEP * std::f64::consts::FRAC_1_SQRT_2;
-    let stand = fps.stand().to_vec();
-    if route
-        .iter()
-        .skip(1)
-        .any(|s| pose_clear(cl.w, &stand, s[0], s[1], s[2]) <= gap)
-    {
-        return None;
-    }
-    Some(Splice { route, end })
+    clear_on_full_world(cl, fps, &route).then_some(Splice { route, end })
 }
 
 /// A soft point as the search takes it.
@@ -2102,9 +2194,7 @@ pub fn plan_explored(
         pose,
         approach,
         cap,
-        CELL,
-        PAD,
-        true,
+        Lattice::COARSE,
     );
     let margin = emb.precision;
     // World from {pose, approach, cloud}, never the incumbent. One clearance table for both.
@@ -2122,11 +2212,7 @@ pub fn plan_explored(
             .as_ref()
             .is_some_and(|f| stray(f, approach) > refine.detour_m);
         if refine.window_m > 0.0 && (fresh.is_none() || short || strays) {
-            let arc = |r: &[[f64; 3]]| -> f64 {
-                r.windows(2)
-                    .map(|p| (p[1][0] - p[0][0]).hypot(p[1][1] - p[0][1]))
-                    .sum()
-            };
+            let arc = |r: &[[f64; 3]]| arcs_of(r).last().copied().unwrap_or(0.0);
             if let Some(Splice { route, end }) = refined(
                 &mut cl, &fps, emb, points, terrain, pose, approach, cap, margin, refine,
             ) {
