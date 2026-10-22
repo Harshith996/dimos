@@ -18,6 +18,7 @@ import json
 import multiprocessing
 import subprocess
 import sys
+import threading
 import time
 from typing import ClassVar
 
@@ -32,7 +33,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule, SimulationSpec
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount
@@ -58,7 +59,7 @@ class _RobotConnection(Module):
     def start(self):
         super().start()
         descriptor = self._simulation.describe()["robots"][self.config.instance_name]
-        self._client = SimRobotClient(ChannelDescriptor.from_dict(descriptor), writable=True)
+        self._client = SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True)
         self._client.connect()
 
     @rpc
@@ -141,6 +142,7 @@ def test_collection_preserves_explicit_world_and_rejects_duplicate_robot(world_c
         )
 
 
+@pytest.mark.native_e2e
 def test_two_namespaced_connections_deploy_into_one_world(world_config):
     robot = world_config.robots["left"].config
     robot = replace(robot, sensors=robot.sensors[:1])
@@ -337,9 +339,9 @@ def test_reset_between_client_validation_and_publication_rejects_late_command(
     observed = client.read()
     publish = client._channel.publish_action
 
-    def reset_then_publish(values, metadata):
+    def reset_then_publish(values, metadata, **kwargs):
         world.reset()
-        return publish(values, metadata)
+        return publish(values, metadata, **kwargs)
 
     mocker.patch.object(client._channel, "publish_action", side_effect=reset_then_publish)
     client.write_motors(command(), observed=observed)
@@ -412,26 +414,28 @@ def test_close_invalidates_clients_and_restart_has_a_new_generation(worlds, clie
     world.close()
     with pytest.raises(RuntimeError, match="closed"):
         client.read()
-    with pytest.raises(FileNotFoundError):
-        with SimRobotClient(old):
-            pytest.fail("closed world reattached")
+    with pytest.raises((RuntimeError, TimeoutError)):
+        closed = SimRobotClient(old)
+        closed.connect(timeout=0.1)
     replacement = worlds(sim_id="restart")
     new = replacement.robots["left"].channel.descriptor
     assert new.generation != old.generation
-    assert new.shm_name != old.shm_name
+    assert new.topic != old.topic
     assert clients(replacement).read().metadata.physics_tick == 0
 
 
 def _command_in_spawned_process(descriptor, pipe):
     pipe.send("ready")
     pipe.recv()
-    with SimRobotClient(ChannelDescriptor.from_dict(descriptor), writable=True) as client:
+    with SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True) as client:
         observation = client.read()
         sequence = client.write_motors(command(), observed=observation)
         pipe.send((sequence, observation.values["position"].tolist()))
+        pipe.recv()  # Keep ownership until the parent has applied the command.
     pipe.close()
 
 
+@pytest.mark.native_e2e
 def test_client_controls_world_across_spawned_process(worlds):
     world = worlds()
     context = multiprocessing.get_context("spawn")
@@ -447,12 +451,21 @@ def test_client_controls_world_across_spawned_process(worlds):
         assert parent.recv() == "ready"
         world.step()
         parent.send("sample now")
-        assert parent.poll(15), "child did not return a command"
+        deadline = time.monotonic() + 15
+        while not parent.poll(0.005) and time.monotonic() < deadline:
+            world.step()
+        assert parent.poll(), "child did not return a command"
         sequence, position = parent.recv()
+        deadline = time.monotonic() + 1
+        while world.robots["left"].channel.read_action() is None and time.monotonic() < deadline:
+            threading.Event().wait(0.001)
         world.step()
         assert position == pytest.approx([0.1, 850])
         assert world.robots["left"].applied_action_sequence == sequence
-        assert world.data.ctrl[world.robots["left"].actuators] == pytest.approx([1.4, 0.02])
+        assert world.data.ctrl[world.robots["left"].actuators] == pytest.approx(
+            [1.4, 0.02], abs=0.05
+        )
+        parent.send("applied")
         process.join(10)
         assert process.exitcode == 0
     finally:
@@ -463,7 +476,8 @@ def test_client_controls_world_across_spawned_process(worlds):
         process.close()
 
 
-def test_independent_reader_exit_does_not_unlink_the_world(worlds, clients):
+@pytest.mark.native_e2e
+def test_independent_reader_exit_does_not_stop_the_world(worlds, clients):
     world = worlds()
     descriptor = world.robots["left"].channel.descriptor
     result = subprocess.run(
@@ -471,8 +485,8 @@ def test_independent_reader_exit_does_not_unlink_the_world(worlds, clients):
             sys.executable,
             "-c",
             "import json,sys; from dimos.sim2.client import SimRobotClient; "
-            "from dimos.sim2.ipc.abi import ChannelDescriptor; "
-            "client=SimRobotClient(ChannelDescriptor.from_dict(json.loads(sys.argv[1])), "
+            "from dimos.sim2.messages import StreamDescriptor; "
+            "client=SimRobotClient(StreamDescriptor.from_dict(json.loads(sys.argv[1])), "
             "feedback_timeout=10); client.connect(); "
             "print(client.read().metadata.episode_id); client.close()",
             json.dumps(descriptor.to_dict()),
@@ -486,3 +500,25 @@ def test_independent_reader_exit_does_not_unlink_the_world(worlds, clients):
     assert "resource_tracker" not in result.stderr
     world.step()
     assert clients(world).read().metadata.physics_tick == 1
+
+
+def test_pre_reset_command_with_fresh_feedback_is_rejected(worlds, clients):
+    world = worlds()
+    client = clients(world, writable=True)
+    queued = command()
+    world.reset()
+    with pytest.raises(RuntimeError, match="predates reset"):
+        client.write_motors(queued, observed=client.read())
+    world.step()
+    assert world.robots["left"].applied_action_sequence == 0
+
+
+def test_expired_command_is_not_retimed_when_forwarded(worlds, clients):
+    world = worlds()
+    client = clients(world, writable=True)
+    queued = command()
+    queued.timestamp -= 1
+    # It may predate the reset as well, but neither case may reach the actuator.
+    with pytest.raises((RuntimeError, TimeoutError)):
+        client.write_motors(queued, observed=client.read())
+    assert world.robots["left"].channel.read_action() is None

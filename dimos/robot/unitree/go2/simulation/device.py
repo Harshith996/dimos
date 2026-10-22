@@ -41,7 +41,7 @@ from dimos.robot.unitree.go2.controllers.locomotion.policy import (
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -59,7 +59,7 @@ class Go2SimDevice:
         self._thread: Thread | None = None
         self._error: str | None = None
 
-    def bind(self, descriptor: ChannelDescriptor) -> None:
+    def bind(self, descriptor: StreamDescriptor) -> None:
         self._client = SimRobotClient(descriptor, writable=True)
         self._client.connect()
 
@@ -116,14 +116,21 @@ class Go2SimDevice:
                     ),
                     command,
                 )
-                self._client.write_motors(
-                    MotorCommandArray(
-                        q=target[self._motor_order].tolist(),
-                        kp=policy.kp[self._motor_order].tolist(),
-                        kd=policy.kd[self._motor_order].tolist(),
-                    ),
-                    observed=frame,
-                )
+                try:
+                    self._client.write_motors(
+                        MotorCommandArray(
+                            q=target[self._motor_order].tolist(),
+                            kp=policy.kp[self._motor_order].tolist(),
+                            kd=policy.kd[self._motor_order].tolist(),
+                            timestamp=float(v["wall_time"][0]),
+                        ),
+                        observed=frame,
+                    )
+                except RuntimeError:
+                    # A reset during inference invalidates this result, not the policy loop.
+                    if self._client.read().metadata.episode_id != episode:
+                        continue
+                    raise
                 w, x, y, z = v["root_quaternion"]
                 self._odom.on_next(
                     PoseStamped(

@@ -52,11 +52,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.controllers.locomotion.policy import load_policy
 from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
 from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.spec import RobotInstance
 from dimos.sim2.world.scene import scene_robot
@@ -492,7 +493,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
                 raise RuntimeError("Go2 requires the collected sim2 world")
             robot_id = self.config.instance_name or self.name
             self.connection.bind(
-                ChannelDescriptor.from_dict(self._simulation.describe()["robots"][robot_id])
+                StreamDescriptor.from_dict(self._simulation.describe()["robots"][robot_id])
             )
         self.connection.start()
 
@@ -502,8 +503,13 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             self.connection.check_health()
         return {}
 
-    def write(self, values: dict[str, float]) -> None:
-        self.move(twist_from_values(values, f"{self.config.source}/base"))
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
+        duration = 0.0
+        if isinstance(self.connection, Go2SimDevice) and source_ts is not None:
+            duration = CMD_VEL_TIMEOUT - max(0.0, time.time() - source_ts)
+            if duration <= 0:
+                raise TimeoutError("Go2 velocity command is stale")
+        self.move(twist_from_values(values, f"{self.config.source}/base"), duration)
 
     def halt(self) -> None:
         self.connection.stop_movement()

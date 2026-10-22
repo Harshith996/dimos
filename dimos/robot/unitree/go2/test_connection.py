@@ -20,6 +20,7 @@ dimos/robot/unitree/test_connection.py; this pins the go2-local routing.
 
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
+from dataclasses import replace
 import json
 from pathlib import Path
 import threading
@@ -40,9 +41,12 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection, go2_connection
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.controllers.locomotion.policy import OnnxGo2Policy
 from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
 from dimos.robot.unitree.go2.simulation.model import go2_definition
+from dimos.sim2.client import SimRobotClient
+from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.world.scene import scene_path
 
@@ -262,6 +266,20 @@ def test_mujoco_selects_internal_device_not_another_world():
         device.start()
 
 
+def test_queued_sim_velocity_does_not_get_a_new_lifetime(mocker):
+    with ExitStack() as stack:
+        connection = GO2Connection(g=GlobalConfig(simulation="mujoco"))
+        stack.callback(connection.stop)
+        move = mocker.patch.object(connection.connection, "move")
+        mocker.patch("dimos.robot.unitree.go2.connection.time.time", return_value=100.0)
+        values = {"go2/base/vx": 0.2, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
+        connection.write(values, source_ts=100.0 - CMD_VEL_TIMEOUT / 2)
+        assert move.call_args.args[1] == pytest.approx(CMD_VEL_TIMEOUT / 2)
+        with pytest.raises(TimeoutError, match="stale"):
+            connection.write(values, source_ts=100.0 - CMD_VEL_TIMEOUT * 2)
+        assert move.call_count == 1
+
+
 def test_policy_joint_order_is_bound_to_the_physical_device(mocker):
     names = tuple(j.name for j in go2_definition(camera=False, lidar=False).joints)
     policy = mocker.Mock(spec=OnnxGo2Policy, joint_names=names[::-1])
@@ -280,6 +298,49 @@ def test_policy_joint_order_is_bound_to_the_physical_device(mocker):
         assert policy_state[device._motor_order].tolist() == state.tolist()
     finally:
         device.stop()
+
+
+def test_reset_during_inference_discards_result_and_restarts_policy(mocker):
+    names = tuple(j.name for j in go2_definition(camera=False, lidar=False).joints)
+    policy = mocker.Mock(spec=OnnxGo2Policy, joint_names=names, kp=np.ones(12), kd=np.ones(12))
+    policy.act.return_value = np.zeros(12)
+    mocker.patch("dimos.robot.unitree.go2.simulation.device.load_policy", return_value=policy)
+    thread = mocker.patch("dimos.robot.unitree.go2.simulation.device.Thread")
+    thread.return_value.is_alive.return_value = False
+    frame = StateFrame(
+        FrameMetadata(1, 0, 1, 1, 0.005),
+        {
+            "position": np.zeros(12),
+            "velocity": np.zeros(12),
+            "imu_gyroscope": np.zeros(3),
+            "imu_quaternion": np.array([1, 0, 0, 0]),
+            "root_position": np.zeros(3),
+            "root_quaternion": np.array([1, 0, 0, 0]),
+            "wall_time": np.array([123.0]),
+        },
+    )
+    reset = replace(frame, metadata=replace(frame.metadata, episode_id=1))
+    client = mocker.Mock(spec=SimRobotClient, descriptor=mocker.Mock(joint_names=names))
+    client.read.side_effect = [frame, reset, reset]
+    with ExitStack() as stack:
+        device = Go2SimDevice()
+        stack.callback(device.stop)
+        mocker.patch.object(device, "_client", client)
+
+        def write(*args, **kwargs):
+            if client.write_motors.call_count == 1:
+                raise RuntimeError("sim2 robot was reset")
+            device._stop.set()
+
+        client.write_motors.side_effect = write
+        device.start()
+        device._run()
+
+        assert device._error is None
+        assert policy.reset.call_count == 2
+        assert client.write_motors.call_count == 2
+        assert client.write_motors.call_args.kwargs["observed"] is reset
+        assert client.write_motors.call_args.args[0].timestamp == 123.0
 
 
 @pytest.mark.parametrize("duration,velocity", [(-1, 0), (1, float("nan")), (float("inf"), 1)])
