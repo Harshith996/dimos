@@ -172,8 +172,7 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "tf_tolerance_s": tf_tolerance_s,
                 # Past this the per-pixel calibration has few lidar anchors to lean on.
                 "max_range_m": 6.0,
-                # Scans from the last few seconds anchor the head, so it is calibrated over more than one sweep.
-                "lidar_history_s": 6.0,
+                # lidar_history_s stays at d2d's 2 s (20 sweeps): at 6 s a person who walked off stayed in the anchors, a 6 s ghost.
                 # The lidar never sees the floor (base_link z = 0): unanchored, the near field read 2-5x short.
                 "height_frame": BASE_FRAME,
                 "floor_tolerance_m": HeadFloorPriorConfig.model_fields["floor_tolerance_m"].default,
