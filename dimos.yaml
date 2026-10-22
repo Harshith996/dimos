@@ -291,5 +291,3 @@ provides:
         summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
 start: |
   "$DIMOS_DIR/.venv/bin/python" -m experimental.gateway --detach --dimos-dir "$DIMOS_DIR" --socket "$DIMOS_SERVER_SOCKET"
-socket: |
-  echo "$DIMOS_SERVER_SOCKET"
