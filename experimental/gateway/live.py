@@ -97,21 +97,25 @@ class Live:
         from experimental.gateway.introspect import base_rpcs
 
         app = self.app()
-        by_class = {m["class"]: m for m in (scanned or {}).get("modules", {}).values()}
+        by_class = {
+            module["class"]: module for module in (scanned or {}).get("modules", {}).values()
+        }
         streams = self.streams()
         found = []
         for info in app.list_modules():
             id_ = instance_id(info.instance_name)
-            known = {r["name"]: r for r in by_class.get(info.qualified_path, {}).get("rpcs", [])}
+            known = {
+                rpc["name"]: rpc for rpc in by_class.get(info.qualified_path, {}).get("rpcs", [])
+            }
             rpcs = [
                 {
-                    **known.get(r.name, {"params": None, "return_type": None, "skill": None}),
-                    "name": r.name,
+                    **known.get(rpc.name, {"params": None, "return_type": None, "skill": None}),
+                    "name": rpc.name,
                     "module": id_,
-                    "doc": known.get(r.name, {}).get("doc") or r.documentation or "",
+                    "doc": known.get(rpc.name, {}).get("doc") or rpc.documentation or "",
                 }
-                for r in sorted(info.rpcs, key=lambda r: r.name)
-                if r.name in known or r.name not in base_rpcs()
+                for rpc in sorted(info.rpcs, key=lambda rpc: rpc.name)
+                if rpc.name in known or rpc.name not in base_rpcs()
             ]
             found.append(
                 {
@@ -121,29 +125,29 @@ class Live:
                     "namespace": id_.rsplit(":", 1)[0] if ":" in id_ else None,
                     "doc": info.documentation or "",
                     "rpcs": rpcs,
-                    "streams": [s for s in streams if s["module"] == id_],
+                    "streams": [stream for stream in streams if stream["module"] == id_],
                 }
             )
-        return sorted(found, key=lambda m: m["id"])
+        return sorted(found, key=lambda module: module["id"])
 
     def module(self, scanned: dict[str, Any] | None, id_: str) -> dict[str, Any]:
         modules = self.modules(scanned)
-        found = next((m for m in modules if m["id"] == id_), None)
+        found = next((listed for listed in modules if listed["id"] == id_), None)
         if found is None:
-            running = ", ".join(m["id"] for m in modules) or "none"
+            running = ", ".join(listed["id"] for listed in modules) or "none"
             raise ApiError(404, f"no running module {id_} (running: {running})")
         return found
 
     def streams(self) -> list[dict[str, Any]]:
         return [
             {
-                "name": s.name,
-                "type": s.type_name,
-                "direction": s.direction,
-                "channel": s.channel,
-                "module": instance_id(str(s.module_name or "")),
+                "name": stream.name,
+                "type": stream.type_name,
+                "direction": stream.direction,
+                "channel": stream.channel,
+                "module": instance_id(str(stream.module_name or "")),
             }
-            for s in self.app().list_streams()
+            for stream in self.app().list_streams()
         ]
 
     def call(
@@ -155,8 +159,8 @@ class Live:
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
         module = self.module(scanned, id_)
-        if name not in {r["name"] for r in module["rpcs"]}:
-            listed = ", ".join(r["name"] for r in module["rpcs"])
+        if name not in {rpc["name"] for rpc in module["rpcs"]}:
+            listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
             raise ApiError(404, f"{id_} has no RPC {name} (its RPCs: {listed})")
         # porcelain takes a namespaced instance's key, or an un-namespaced one's class name
         handle = self.app().get_module(id_.replace(":", "/") if ":" in id_ else module["class"])
@@ -190,7 +194,7 @@ class Live:
         return {"ok": True, "error": None}
 
     def peek(self, name: str, timeout: float) -> dict[str, Any]:
-        stream = next((s for s in self.streams() if s["name"] == name), None)
+        stream = next((listed for listed in self.streams() if listed["name"] == name), None)
         if stream is None:
             raise ApiError(404, f"no running stream {name}")
         try:

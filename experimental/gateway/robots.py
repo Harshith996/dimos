@@ -140,7 +140,9 @@ def _setting(
         words = key.rsplit(".", 1)[-1].replace("_", " ")
         merged["label"] = words[:1].upper() + words[1:]
     ordered: dict[str, Any] = {
-        k: merged.pop(k) for k in ("global", "module", "field", "label") if k in merged
+        ordered_key: merged.pop(ordered_key)
+        for ordered_key in ("global", "module", "field", "label")
+        if ordered_key in merged
     }
     return {
         "id": key,
@@ -168,8 +170,13 @@ def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any
             keys = settings_keys(settings)
             blueprint["robot"] = robot_id
             blueprint["recommended_config"] = [
-                _setting(i, e, None if own is None else by_key.get(setting_key(e) or ""), keys)
-                for i, e in enumerate(settings)
+                _setting(
+                    index,
+                    setting,
+                    None if own is None else by_key.get(setting_key(setting) or ""),
+                    keys,
+                )
+                for index, setting in enumerate(settings)
             ]
             blueprint.setdefault("starter", None)
             blueprint.setdefault("hidden", HIDDEN_NAME.search(name) is not None)

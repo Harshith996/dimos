@@ -44,7 +44,7 @@ async def info(state: GatewayState) -> dict[str, Any]:
     paths = {
         "dimosDir": str(state.dimos_dir),
         "runsDir": str(REGISTRY_DIR),
-        "logsDirs": [str(d) for d in logs.logs_dirs(state.dimos_dir)],
+        "logsDirs": [str(logs_dir) for logs_dir in logs.logs_dirs(state.dimos_dir)],
         "recordingsDir": str(store.recordings_dir()),
     }
     server = {

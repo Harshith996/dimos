@@ -66,11 +66,15 @@ def parse(raw: Any) -> LaunchOverrides:
     )
     if not isinstance(global_, dict):
         raise OverrideError("overrides.global must be an object")
-    if not isinstance(modules, dict) or not all(isinstance(f, dict) for f in modules.values()):
+    if not isinstance(modules, dict) or not all(
+        isinstance(fields, dict) for fields in modules.values()
+    ):
         raise OverrideError("overrides.modules must be an object of objects")
-    if not isinstance(secrets, list) or not all(isinstance(p, str) for p in secrets):
+    if not isinstance(secrets, list) or not all(isinstance(path, str) for path in secrets):
         raise OverrideError("overrides.secrets must be a list of paths")
-    return LaunchOverrides(dict(global_), {m: dict(f) for m, f in modules.items()}, secrets)
+    return LaunchOverrides(
+        dict(global_), {module: dict(fields) for module, fields in modules.items()}, secrets
+    )
 
 
 def is_secret_name(path: str) -> bool:
@@ -106,28 +110,42 @@ def module_env(modules: ModuleValues) -> dict[str, str]:
 
 
 def secret_env(global_: dict[str, Any], modules: ModuleValues, paths: list[str]) -> dict[str, str]:
-    env = {key.upper(): as_text(v) for key, v in global_.items() if key in paths and v is not None}
-    secret = {m: {n: v for n, v in f.items() if f"{m}.{n}" in paths} for m, f in modules.items()}
+    env = {
+        key.upper(): as_text(value)
+        for key, value in global_.items()
+        if key in paths and value is not None
+    }
+    secret = {
+        module: {name: value for name, value in fields.items() if f"{module}.{name}" in paths}
+        for module, fields in modules.items()
+    }
     return {**env, **module_env(secret)}
 
 
 def without_secrets(
     global_: dict[str, Any], modules: ModuleValues, paths: list[str]
 ) -> tuple[dict[str, Any], ModuleValues]:
-    flat = {k: v for k, v in global_.items() if k not in paths}
+    flat = {key: value for key, value in global_.items() if key not in paths}
     nested = {
-        m: {n: v for n, v in f.items() if f"{m}.{n}" not in paths} for m, f in modules.items()
+        module: {name: value for name, value in fields.items() if f"{module}.{name}" not in paths}
+        for module, fields in modules.items()
     }
-    return flat, {m: f for m, f in nested.items() if f}
+    return flat, {module: fields for module, fields in nested.items() if fields}
 
 
 def redact(
     global_: dict[str, Any], modules: ModuleValues, paths: list[str]
 ) -> tuple[dict[str, Any], ModuleValues]:
-    flat = {k: HIDDEN if k in paths and v is not None else v for k, v in global_.items()}
+    flat = {
+        key: HIDDEN if key in paths and value is not None else value
+        for key, value in global_.items()
+    }
     nested = {
-        m: {n: HIDDEN if f"{m}.{n}" in paths and v is not None else v for n, v in f.items()}
-        for m, f in modules.items()
+        module: {
+            name: HIDDEN if f"{module}.{name}" in paths and value is not None else value
+            for name, value in fields.items()
+        }
+        for module, fields in modules.items()
     }
     return flat, nested
 
@@ -146,9 +164,13 @@ def check_global(values: dict[str, Any]) -> None:
     if unknown:
         raise OverrideError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
     try:
-        GlobalConfig.model_validate({k: v for k, v in values.items() if v is not None})
+        GlobalConfig.model_validate(
+            {key: value for key, value in values.items() if value is not None}
+        )
     except ValidationError as error:
-        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+        problems = "; ".join(
+            f"{'.'.join(map(str, problem['loc']))}: {problem['msg']}" for problem in error.errors()
+        )
         raise OverrideError(f"bad GlobalConfig value: {problems}") from error
 
 
