@@ -77,6 +77,7 @@ all_blueprints = {
     "go2-nav-hosted": "dimos.mapping.experimental.blueprints:go2_nav_hosted",
     "go2-nav-l1": "dimos.robot.unitree.go2.dds.blueprints:go2_nav_l1",
     "go2-nav-model-hosted": "dimos.mapping.experimental.blueprints:go2_nav_model_hosted",
+    "go2-nav-model-replay": "dimos.mapping.experimental.model_mesh_replay:go2_nav_model_replay",
     "go2-nav-viewer": "dimos.robot.unitree.go2.dds.blueprints:go2_nav_viewer",
     "go2-nav-viewer-mesh": "dimos.mapping.experimental.blueprints:go2_nav_viewer_mesh",
     "go2-nav-viewer-model": "dimos.mapping.experimental.blueprints:go2_nav_viewer_model",

@@ -25,3 +25,9 @@ The map is a directory with `lidar.pc2.lcm` (the recorded map, frame `map`) and 
 `dimos run go2-nav-viewer-model --map-file=<dir>`
 
 or, as one hosted run, `dimos run go2-nav-model-hosted --map-file=<dir>`. Fixes go out as `odom -> map` and repeat every `reloc_interval` (10 s) to correct drift; the recorded map seeds the ray tracer like any premap.
+
+On a recorded walk instead of the robot (Point-LIO lidar and tf replayed at recorded rate into the ray tracer and `ModelMesh`, no planner):
+
+`dimos --replay-db <walk.db> run go2-nav-model-replay --map-file=<dir>`
+
+`--seek`, `--speed` and `--loop` steer the replay. The first fix needs a local map of 20 k points that scores fitness 0.8, typically 20-30 s into a walk.
