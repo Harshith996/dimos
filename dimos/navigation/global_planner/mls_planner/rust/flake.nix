@@ -31,18 +31,21 @@
           cp -r ${moduleSource} $out
           chmod -R u+w $out
           mkdir -p $out/sdk
-          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros ${sharedSource}/native/rust/dimos-message-adapters $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-message-adapters/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../../native/rust/dimos-message-adapters' 'sdk/dimos-message-adapters' \
             --replace-fail '../../../../../build/message-source/rust' 'messages' \
             --replace-fail '[workspace]' '[workspace]
-          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-message-adapters", "messages"]'
         '';
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-module" "dimos-module-macros" ];
+        ours = [ name "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
         callWith = mode: import generated {
           inherit pkgs;
           buildRustCrateForPkgs = cratePkgs: crate:

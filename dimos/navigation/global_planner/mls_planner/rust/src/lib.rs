@@ -25,5 +25,3 @@ mod region_viz;
 mod smoother;
 mod surfaces;
 pub mod voxel;
-
-mod wire;

@@ -34,6 +34,7 @@ infrared_right_camera_info = "sensor_msgs/msg/CameraInfo"
 
 [dependencies]
 dimos-module = { path = "../../../../../../native/rust/dimos-module", features = ["cdr"] }
+dimos-message-adapters = { path = "../../../../../../native/rust/dimos-message-adapters" }
 dimos-generated-messages = { path = "../../../../../../build/message-source/rust" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"
