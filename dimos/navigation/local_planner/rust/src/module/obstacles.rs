@@ -24,9 +24,8 @@ use crate::planner::{Emb, Soft};
 /// Edge of the local map's voxels (m). Its points are voxel centers.
 pub const VOXEL: f64 = 0.08;
 
-/// A voxel starting under this is floor (m): the floor layer and the one above it, since a
-/// voxelized floor reads a voxel high in places.
-pub const FREE: f64 = 0.10;
+/// Height the gait clears without contact (m). With 8 cm voxels this is the floor layer.
+pub const FREE: f64 = 0.03;
 
 /// Voxel centers carry f32 rounding, so a height within this of a threshold is on it (m).
 const ON: f32 = 1e-3;
@@ -110,14 +109,13 @@ pub fn referenced(points: &[[f32; 3]], ground: &Plane) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// The surface the cloud saw, as xy: floor voxels and those centered at or under `steppable`.
+/// The surface the cloud saw, as xy: voxels centered at or under `steppable`.
 /// Lattice cells with none are priced as unseen (`Config::unseen_cost`).
 pub fn ground_points(points: &[[f32; 3]], ground: &Plane, steppable: f64) -> Vec<[f64; 2]> {
     let ceiling = steppable as f32 + ON;
-    let half = (VOXEL / 2.0) as f32;
     referenced(points, ground)
         .iter()
-        .filter(|p| p[2] - half < FREE as f32 || p[2] <= ceiling)
+        .filter(|p| p[2] <= ceiling)
         .map(|p| [p[0] as f64, p[1] as f64])
         .collect()
 }
@@ -190,58 +188,12 @@ mod tests {
 
     #[test]
     fn the_floor_layer_is_free_and_a_low_object_is_soft() {
-        let cloud = column(1.0, &[0, 1, 2], -0.3);
-        let FieldPoints { hard, soft } =
-            field_points(model().as_ref(), &cloud, &Plane::flat(-0.27));
+        let cloud = column(1.0, &[0, 1], -0.3);
+        let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &Plane::flat(-0.3));
         assert!(hard.is_empty(), "{hard:?}");
         assert_eq!(soft.len(), 1);
-        // the voxel is centered 0.17 m up, 0.85 of the way to steppable
-        assert!((soft[0].cost - 5.0 * 0.17 / 0.2).abs() < 1e-5, "{soft:?}");
-    }
-
-    #[test]
-    fn a_floor_a_voxel_off_is_free_on_any_floor() {
-        // the plane anywhere from a voxel face to a voxel center
-        for top in -40..=40 {
-            for frac in [0.0, 0.25, 0.5] {
-                let ground = Plane::flat((top as f64 + frac) * VOXEL);
-                let cloud = [
-                    [1.0, 0.0, center(top - 1)],
-                    [2.0, 0.0, center(top)],
-                    [3.0, 0.0, center(top + 1)],
-                ];
-                let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &ground);
-                assert!(
-                    hard.is_empty() && soft.is_empty(),
-                    "floor layer {top}+{frac}: {hard:?} {soft:?}"
-                );
-                assert_eq!(ground_points(&cloud, &ground, fixture().steppable).len(), 3);
-                // two voxels up is not floor
-                let up = [[1.0, 0.0, center(top + 2)]];
-                let FieldPoints { hard, soft } = field_points(model().as_ref(), &up, &ground);
-                assert_eq!(hard.len() + soft.len(), 1, "floor layer {top}+{frac}");
-            }
-        }
-    }
-
-    #[test]
-    fn a_body_stepping_one_voxel_has_floor_and_walls_only() {
-        let emb = Emb {
-            steppable: 0.10,
-            ..fixture()
-        };
-        let m = load("body_band", &emb, 5.0).expect("known model");
-        for top in -40..=40 {
-            for frac in [0.0, 0.25, 0.5] {
-                let ground = Plane::flat((top as f64 + frac) * VOXEL);
-                let cloud: Vec<[f32; 3]> = (top - 1..=top + 4)
-                    .map(|k| [k as f32, 0.0, center(k)])
-                    .collect();
-                let FieldPoints { hard, soft } = field_points(m.as_ref(), &cloud, &ground);
-                assert!(soft.is_empty(), "floor layer {top}+{frac}: {soft:?}");
-                assert_eq!(hard.len(), 3, "floor layer {top}+{frac}: {hard:?}");
-            }
-        }
+        // the voxel is centered 0.12 m up, 0.6 of the way to steppable
+        assert!((soft[0].cost - 5.0 * 0.12 / 0.2).abs() < 1e-5, "{soft:?}");
     }
 
     #[test]
@@ -305,8 +257,8 @@ mod tests {
             gx: 0.05,
             gy: 0.0,
         };
-        // 3 m out the floor is 0.15 m up: a voxel there at 0.19 is floor, at 0.35 a step
-        let cloud = [[3.0, 0.0, 0.19], [3.0, 1.0, 0.35], [3.0, 2.0, 0.55]];
+        // 3 m out the floor is 0.15 m up: a voxel there at 0.19 is floor, at 0.27 a step
+        let cloud = [[3.0, 0.0, 0.19], [3.0, 1.0, 0.27], [3.0, 2.0, 0.55]];
         let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &tilted);
         assert_eq!(soft.len(), 1, "{soft:?}");
         assert_eq!(soft[0].xy[1], 1.0);
@@ -318,7 +270,7 @@ mod tests {
     #[test]
     fn the_foot_of_a_wall_is_wall_not_step() {
         let mut cloud = column(1.0, &[0, 1, 2, 3, 4], 0.0);
-        cloud.extend(column(2.0, &[0, 2], 0.0));
+        cloud.extend(column(2.0, &[0, 1], 0.0));
         let FieldPoints { hard, soft } = field_points(model().as_ref(), &cloud, &Plane::flat(0.0));
         assert_eq!(hard.len(), 2);
         assert_eq!(soft.len(), 1);

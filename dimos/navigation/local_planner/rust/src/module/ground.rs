@@ -148,22 +148,6 @@ fn fit(points: &[[f32; 3]], x: f64, y: f64, body_z: f64, emb: &Emb) -> Option<Gr
         }
         plane = least_squares(kept.iter().map(|&i| samples[i]));
     }
-    // A grade lifting the floor less than a voxel across the fit is the voxelized floor's own
-    // unevenness, not a slope.
-    if plane[1].hypot(plane[2]) * PLANE_RADIUS < VOXEL {
-        plane = [plane[0], 0.0, 0.0];
-        for _ in 0..ROUNDS {
-            let kept = near(&plane);
-            if kept.len() < GROUND_MIN_COLUMNS {
-                return None;
-            }
-            plane = [
-                kept.iter().map(|&i| samples[i][2]).sum::<f64>() / kept.len() as f64,
-                0.0,
-                0.0,
-            ];
-        }
-    }
     let [z, gx, gy] = plane;
     let plane = Plane {
         x0: x,
@@ -303,19 +287,13 @@ mod tests {
     #[test]
     fn a_tilted_floor_is_floor_not_low_objects() {
         let model = load("body_band", &fixture(), 5.0).expect("known model");
-        // a degree of tilt, read level as it lifts the floor under a voxel across the fit, a 3
-        // percent walkway and the steepest floor the fit reports
+        // a degree of tilt, a 3 percent walkway and the steepest floor the fit reports
         for g_in in [0.0175, 0.03, MAX_GRADE] {
             let (gx, gy) = (g_in * 0.6, g_in * 0.8);
             let cloud = sloped(3.0, 0.37, gx, gy);
             let g = fit_at_origin(&cloud, 0.37);
-            let (ex, ey) = if g_in * PLANE_RADIUS < VOXEL {
-                (0.0, 0.0)
-            } else {
-                (gx, gy)
-            };
             assert!(
-                (g.plane.gx - ex).abs() < 0.004 && (g.plane.gy - ey).abs() < 0.004,
+                (g.plane.gx - gx).abs() < 0.004 && (g.plane.gy - gy).abs() < 0.004,
                 "grade {g_in}: {:?}",
                 g.plane
             );

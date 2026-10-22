@@ -1141,7 +1141,7 @@ mod tests {
         assert!(produced.poses.len() > 1, "the ground read as a wall");
     }
 
-    /// A low object: two voxel layers over the floor layer, as the local map shows a 15 cm box.
+    /// A low object: one voxel layer over the floor layer, as the local map shows a 10 cm box.
     fn low_object(x: (f32, f32), y: (f32, f32)) -> Vec<[f32; 3]> {
         let mut pts = Vec::new();
         let mut u = x.0;
@@ -1149,7 +1149,6 @@ mod tests {
             let mut v = y.0;
             while v <= y.1 {
                 pts.push([u, v, 0.12]);
-                pts.push([u, v, 0.20]);
                 v += 0.08;
             }
             u += 0.08;
@@ -1263,58 +1262,6 @@ mod tests {
         assert!(
             ceilings.iter().all(|&c| c > cfg.step_speed + 1e-3),
             "slowed on bare floor: {ceilings:?}"
-        );
-    }
-
-    #[test]
-    fn a_floor_a_voxel_high_in_places_is_crossed_straight() {
-        // a floor two voxels deep, its top a voxel higher in columns of a patch across the
-        // way, under a body that steps one voxel
-        let emb = Emb {
-            steppable: 0.10,
-            ..fixture()
-        };
-        let cfg = Config {
-            embodiment: emb.clone(),
-            ..config()
-        };
-        let v = obstacles::VOXEL;
-        let z = |k: i64| (k as f64 * v + v * 0.5) as f32;
-        let mut cloud = Vec::new();
-        for i in -25i64..=75 {
-            for j in -37i64..=37 {
-                let (x, y) = ((i as f64 + 0.5) * v, (j as f64 + 0.5) * v);
-                let patch = (1.0..3.0).contains(&x) && y.abs() < 2.0;
-                let k = if patch && (i * 7 + j * 13).rem_euclid(3) == 0 {
-                    -3
-                } else {
-                    -4
-                };
-                cloud.push([x as f32, y as f32, z(k)]);
-                cloud.push([x as f32, y as f32, z(k + 1)]);
-            }
-        }
-        let ground = ground::read(&cloud, 0.0, 0.0, -0.3, &emb);
-        let produced = plan_once(
-            &cfg,
-            &emb,
-            model(&cfg).as_ref(),
-            &cloud,
-            (0.0, 0.0, 0.0),
-            &[[4.0, 0.0]],
-            &ground.plane,
-            None,
-        );
-        let states = msg::path_states(&produced);
-        assert!(states.len() > 1, "refused");
-        let len: f64 = states
-            .windows(2)
-            .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
-            .sum();
-        let off = states.iter().map(|s| s[1].abs()).fold(0.0, f64::max);
-        assert!(
-            len < 4.4 && off < 0.2,
-            "went around the floor: {len:.2} m, {off:.2} m off"
         );
     }
 
