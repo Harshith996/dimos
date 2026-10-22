@@ -36,8 +36,10 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 # MIT gains from Mustafa's step sweeps of 2026-10-16 with the fitted gravity model
 # (dual_openyam_calibration_2026-10-15.json, control_gains); stock was 80/5 arm, 10/1.5 wrist.
+# The shoulder runs at the elbow's 240 rather than the swept 120: with the fitted
+# masses both arms held 1.4 to 1.7 deg high at joint 2 (2026-10-21 hover checks).
 # Wrist kd stays near 1.5: 3 and above buzzes at 100 Hz.
-_ARM_KP = (120.0, 120.0, 240.0, 80.0, 80.0, 80.0)
+_ARM_KP = (120.0, 240.0, 240.0, 80.0, 80.0, 80.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
 
 
