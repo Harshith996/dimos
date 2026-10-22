@@ -124,7 +124,7 @@ def gateway(
     zenoh_connect: str = typer.Option(None),
     zenoh: bool = typer.Option(True),
 ) -> None:
-    configured = store.setting("gateway", "socket")
+    configured = store.setting("dimos-gateway", "socket")
     socket_path = socket or (
         Path(configured) if configured else store.gateway_dir() / "dimos-gateway.sock"
     )

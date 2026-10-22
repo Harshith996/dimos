@@ -283,15 +283,18 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
 ) -> None:
     from experimental.gateway import events, store
 
-    assert (events.resolve_namespace(None), store.setting("gateway", "socket")) == (None, None)
+    assert (events.resolve_namespace(None), store.setting("dimos-gateway", "socket")) == (
+        None,
+        None,
+    )
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         "zenoh: {namespace: desk1, connect: 'tcp/10.0.0.2:7447', gossip: false}\n"
-        "gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
+        "dimos-gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
     )
     assert events.resolve_namespace(None) == "desk1"
     assert events.resolve_namespace("given") == "given"
     assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
-    assert store.setting("gateway", "socket") == "/tmp/gw.sock"
+    assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
     client.post("/active/launch", json={"blueprint": "demo"})
     until(output_has(client, "gossip false"))
