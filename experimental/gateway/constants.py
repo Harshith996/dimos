@@ -31,12 +31,10 @@ INTROSPECT_TIMEOUT_S = 180.0
 # introspection: an answer is reused ten minutes; a blueprint added or removed clears them all
 INTROSPECT_CACHE_S = 600.0
 
-# watchers: a launch's phase reaches Desktop within a second
-LAUNCH_WATCH_INTERVAL_S = 1.0
-# watchers: how often dimos/robot and site-packages are re-walked for added or removed blueprints
-BLUEPRINT_POLL_S = 2.0
-# watchers: re-list once the files stop changing this long (a git checkout, a uv sync)
-BLUEPRINT_SETTLE_S = 3.0
+# watchers: a run that crashed leaves its registry file behind, so no file event says it ended; this finds it
+STALE_RUN_CHECK_S = 5.0
+# watchers: file changes are grouped into one batch for at most this long (awatch's default)
+FILE_EVENT_DEBOUNCE_MS = 1_600
 
 # launches: the last ~200 KB of a launch's output, enough for its startup error without reading a huge log
 LAUNCH_OUTPUT_TAIL_BYTES = 200_000

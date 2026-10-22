@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 import json
@@ -37,6 +38,8 @@ from experimental.gateway.overrides import ModuleValues
 # GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
 DTOP_ENV = "DTOP"
 _lock = threading.RLock()
+# called from a thread when a launched child exits (the launch watcher wakes on it)
+exit_listeners: list[Callable[[], None]] = []
 
 
 class RunError(StatusError):
@@ -272,8 +275,14 @@ def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) 
             stderr=log,
             start_new_session=True,
         )
-    threading.Thread(target=child.wait, daemon=True).start()
+    threading.Thread(target=_wait_then_tell, args=(child,), daemon=True).start()
     return child.pid
+
+
+def _wait_then_tell(child: subprocess.Popen[bytes]) -> None:
+    child.wait()
+    for listener in list(exit_listeners):
+        listener()
 
 
 def _remember(blueprint: str, pid: int, request: dict[str, Any], shown: dict[str, Any]) -> None:

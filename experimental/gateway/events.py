@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 import json
-import os
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Any
 
+import watchfiles
+
+from dimos.core import run_registry
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, launches, store
 
@@ -84,47 +87,95 @@ class Bus:
             self.send({"type": "launch", "launch": launch})
 
 
+async def set_on_changes(
+    wake: asyncio.Event,
+    paths: list[Path],
+    watch_filter: Callable[[watchfiles.Change, str], bool],
+    recursive: bool = True,
+    debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS,
+) -> None:
+    """Sets `wake` after each batch of file changes under the paths that exist."""
+    existing = [path for path in paths if path.is_dir()]
+    if not existing:
+        return
+    try:
+        async for _ in watchfiles.awatch(
+            *existing, watch_filter=watch_filter, recursive=recursive, debounce=debounce_ms
+        ):
+            wake.set()
+    except Exception:
+        logger.exception("watching files failed", paths=[str(path) for path in existing])
+
+
+async def wait_or_timeout(wake: asyncio.Event, timeout_s: float) -> None:
+    # python 3.10's wait_for raises asyncio.TimeoutError, not the builtin
+    with suppress(asyncio.TimeoutError, TimeoutError):
+        await asyncio.wait_for(wake.wait(), timeout_s)
+    wake.clear()
+
+
 # the stats subscription ends with the run
 async def watch_launch(
     bus: Bus,
     stats: ProcessStats | None = None,
-    interval: float = constants.LAUNCH_WATCH_INTERVAL_S,
+    stale_check_s: float = constants.STALE_RUN_CHECK_S,
+    debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS,
 ) -> None:
+    """Publishes the launch on registry or launch.json changes, the child exiting, or a crash check."""
+    registry_dir, gateway_dir = Path(run_registry.REGISTRY_DIR), store.gateway_dir()
+    for directory in (registry_dir, gateway_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    # the OS reports resolved paths (macOS: /private/var for /var)
+    registry_dir = registry_dir.resolve()
+    launch_file_name = launches.launch_file().name
+
+    def is_launch_state(_change: watchfiles.Change, path: str) -> bool:
+        changed = Path(path)
+        return changed.parent == registry_dir or changed.name == launch_file_name
+
+    wake = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def child_exited() -> None:
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(wake.set)
+
+    launches.exit_listeners.append(child_exited)
+    file_watch = asyncio.create_task(
+        set_on_changes(
+            wake,
+            [registry_dir, gateway_dir],
+            is_launch_state,
+            recursive=False,
+            debounce_ms=debounce_ms,
+        )
+    )
     failure = ""
-    while True:
-        await asyncio.sleep(interval)
-        try:
-            bus.launch(await asyncio.to_thread(launches.current_launch))
-            if stats is not None:
-                await asyncio.to_thread(stats.stop_if_nothing_runs)
-            failure = ""
-        except Exception as error:
-            if repr(error) != failure:
-                failure = repr(error)
-                logger.exception("reading the launch failed")
+    try:
+        while True:
+            try:
+                bus.launch(await asyncio.to_thread(launches.current_launch))
+                if stats is not None:
+                    await asyncio.to_thread(stats.stop_if_nothing_runs)
+                failure = ""
+            except Exception as error:
+                if repr(error) != failure:
+                    failure = repr(error)
+                    logger.exception("reading the launch failed")
+            await wait_or_timeout(wake, stale_check_s)
+    finally:
+        launches.exit_listeners.remove(child_exited)
+        file_watch.cancel()
 
 
-def snapshot(dimos_dir: Path, site_dirs: list[Path]) -> frozenset[tuple[str, int]]:
-    found: set[tuple[str, int]] = set()
-    for root, dirs, files in os.walk(dimos_dir / "dimos" / "robot"):
-        dirs[:] = [name for name in dirs if name != "__pycache__"]
-        for name in files:
-            if name.endswith(".py"):
-                path = os.path.join(root, name)
-                try:
-                    found.add((path, os.stat(path).st_mtime_ns))
-                except OSError:
-                    continue
-    for packages in site_dirs:
-        try:
-            found |= {
-                (dir_entry.path, 0)
-                for dir_entry in os.scandir(packages)
-                if ".dist-info" in dir_entry.name
-            }
-        except OSError:
-            continue
-    return frozenset(found)
+def is_blueprint_source(_change: watchfiles.Change, path: str) -> bool:
+    """A .py file or a directory (a deleted one has no suffix either), outside __pycache__."""
+    changed = Path(path)
+    return "__pycache__" not in changed.parts and changed.suffix in ("", ".py")
+
+
+def is_installed_package(_change: watchfiles.Change, path: str) -> bool:
+    return any(".dist-info" in part for part in Path(path).parts)
 
 
 async def watch_blueprints(
@@ -132,27 +183,37 @@ async def watch_blueprints(
     site_dirs: list[Path],
     relist: Callable[[], Awaitable[list[str]]],
     changed: Callable[[list[str], list[str]], None],
-    poll: float = constants.BLUEPRINT_POLL_S,
-    settle: float = constants.BLUEPRINT_SETTLE_S,
+    debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS,
 ) -> None:
-    names = await relist()
-    seen = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)
-    while True:
-        await asyncio.sleep(poll)
-        now = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)
-        if now == seen:
-            continue
-        await asyncio.sleep(settle)
-        while (later := await asyncio.to_thread(snapshot, dimos_dir, site_dirs)) != now:
-            now = later
-            await asyncio.sleep(settle)
-        seen = now
-        try:
-            listed = await relist()
-        except Exception as error:
-            logger.warning("re-listing the blueprints failed", error=str(error))
-            continue
-        added, removed = sorted(set(listed) - set(names)), sorted(set(names) - set(listed))
-        names = listed
-        if added or removed:
-            changed(added, removed)
+    """Re-lists the blueprints after dimos/robot's sources or site-packages' installs change."""
+    wake = asyncio.Event()
+    # site-packages is watched one level deep: a recursive watch of a venv can exhaust inotify's watches
+    watchers = [
+        asyncio.create_task(
+            set_on_changes(
+                wake, [dimos_dir / "dimos" / "robot"], is_blueprint_source, debounce_ms=debounce_ms
+            )
+        ),
+        asyncio.create_task(
+            set_on_changes(
+                wake, site_dirs, is_installed_package, recursive=False, debounce_ms=debounce_ms
+            )
+        ),
+    ]
+    try:
+        names = await relist()
+        while True:
+            await wake.wait()
+            wake.clear()
+            try:
+                listed = await relist()
+            except Exception as error:
+                logger.warning("re-listing the blueprints failed", error=str(error))
+                continue
+            added, removed = sorted(set(listed) - set(names)), sorted(set(names) - set(listed))
+            names = listed
+            if added or removed:
+                changed(added, removed)
+    finally:
+        for watcher in watchers:
+            watcher.cancel()
