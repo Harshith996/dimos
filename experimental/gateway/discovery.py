@@ -231,6 +231,10 @@ class Scanner:
         task.add_done_callback(self.single.discard)
         return job
 
+    def running(self) -> list[asyncio.Task[None]]:
+        """The scans in flight, the full one and single blueprints'."""
+        return [task for task in (self.task, *self.single) if task is not None and not task.done()]
+
     async def scan_one(self, job: Job, name: str) -> None:
         ok = False
         async with self.lock:
@@ -667,6 +671,7 @@ class Jobs:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
         self.ids = itertools.count(1)
+        self.tasks: set[asyncio.Task[None]] = set()
 
     def prune(self) -> None:
         """Keeps every running job and the latest finished job of each kind."""
@@ -728,7 +733,9 @@ class Jobs:
             job.finish(bool(job.ok), job.error)
             then()
 
-        asyncio.get_running_loop().create_task(run())
+        task = asyncio.get_running_loop().create_task(run())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
         return job
 
     async def step(self, job: Job, command: list[str], cwd: Path, env: dict[str, str]) -> int:
