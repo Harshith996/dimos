@@ -177,7 +177,7 @@ class Live:
             return {"ok": False, "result": None, "error": f"{type(error).__name__}: {error}"}
         try:
             encoded = jsonable_encoder(result)
-        except Exception:
+        except ValueError:  # jsonable_encoder's error for a value with no fields it can read (no __dict__, not iterable)
             encoded = str(result)
         return {"ok": True, "result": encoded, "error": None}
 
@@ -214,7 +214,7 @@ class Live:
             raise ApiError(504, f"{name} sent nothing within {timeout} s")
         try:
             encoded = jsonable_encoder(value)
-        except Exception:
+        except ValueError:  # jsonable_encoder's error for a value with no fields it can read (no __dict__, not iterable)
             encoded = str(value)
         return {
             "name": name,

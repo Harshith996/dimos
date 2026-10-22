@@ -707,12 +707,16 @@ class Jobs:
                     job.error = f"{title} failed (exit {code})"
                     printed = [line for line in job.lines if line.strip()]
                     job.failure = printed[-constants.JOB_FAILURE_TAIL_LINES :]
-            except Exception as error:
+            except OSError as error:
                 job.ok = False
                 job.error = f"{title} couldn't start: {type(error).__name__}: {error}"
                 job.failure = [job.error]
-            job.finish(bool(job.ok), job.error)
-            then()
+            finally:
+                # a cancel or a bug still ends the job, and the bug's traceback reaches the log
+                if job.ok is None:
+                    job.error = f"{title} stopped before it finished (see the gateway log)"
+                job.finish(bool(job.ok), job.error)
+                then()
 
         task = asyncio.get_running_loop().create_task(run())
         self.tasks.add(task)

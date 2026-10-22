@@ -26,12 +26,15 @@ from typing import Annotated, Any
 from fastapi import Depends, Query, Request
 from pydantic import BeforeValidator
 
+from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
 from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
+
+logger = setup_logger()
 
 API_VERSION = "8.0.0"
 
@@ -69,8 +72,9 @@ class State:
     async def relist(self) -> list[str]:
         try:
             self.listed = (await introspect.run_child(self.dimos_dir, ["list"]))["blueprints"]
-        except introspect.IntrospectError:
-            pass
+        except introspect.IntrospectError as error:
+            # a checkout mid-edit can fail to list: keep the last listing, and say why
+            logger.warning("listing the blueprints failed", error=str(error))
         return [entry["name"] for entry in self.listed or []]
 
     def blueprints_changed(self, added: list[str], removed: list[str]) -> None:
