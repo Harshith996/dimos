@@ -34,19 +34,16 @@ class UploadRequest(BaseModel):
 
 @router.get("/cloud/account", response_model=responses.Account)
 async def account(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
-    """The cloud account, and the device login in progress."""
     return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
 
 
 @router.post("/cloud/login", response_model=responses.Login)
 async def start_login(state: GatewayState) -> dict[str, Any]:
-    """Start a device login: open the answer's url and enter its code."""
     return await state.uploads.start_login()
 
 
 @router.delete("/cloud/login", response_model=responses.Account)
 async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
-    """Cancel the device login in progress; with none in progress, log out."""
     if state.uploads.login_state()["state"] in ("starting", "pending"):
         state.uploads.cancel_login()
         answer = await state.uploads.account(False)
@@ -57,13 +54,11 @@ async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/cloud/uploads", response_model=responses.Uploads)
 async def upload_list(state: GatewayState) -> dict[str, Any]:
-    """The upload queue, and every file uploaded before, by path."""
     return {**state.uploads.listing(), **state.uploads.uploaded()}
 
 
 @router.post("/cloud/uploads", response_model=responses.Upload)
 async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
-    """Queue a recording ({path}), or a finished upload again ({retry: id})."""
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
     if request.path is None:
@@ -74,7 +69,6 @@ async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]
 
 @router.delete("/cloud/uploads", response_model=responses.Uploads)
 async def remove(state: GatewayState, id: str | None = None) -> dict[str, Any]:
-    """Cancel a queued or running upload, or remove a finished one (?id=); no id clears the finished ones."""
     if id is None:
         state.uploads.clear_finished()
     else:
