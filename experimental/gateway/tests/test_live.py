@@ -97,7 +97,7 @@ class FakeDimos:
 
     def unload(self, name: str) -> None:
         self.calls.append(("unload", name))
-        if name == "camera":
+        if name == "class x.Camera":
             raise ValueError("camera is busy")
 
     def peek_stream(self, name: str, timeout: float) -> Any:
@@ -116,6 +116,8 @@ def dimos(state: State, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return world["apps"][-1]
 
     state.live = live.Live(connect, lambda: world["run"])
+    # stands in for importing the module class from its class path
+    monkeypatch.setattr(live, "load_class", lambda path: f"class {path}")
     monkeypatch.setattr(
         state.scanner,
         "cache",
@@ -187,7 +189,9 @@ def test_an_rpc_is_called_on_one_instance(client: TestClient, dimos: dict[str, A
     assert len(app.calls) == 2
 
 
-def test_restart_and_stop_go_by_instance(client: TestClient, dimos: dict[str, Any]) -> None:
+def test_restart_and_stop_go_by_the_instances_class(
+    client: TestClient, dimos: dict[str, Any]
+) -> None:
     assert client.post("/active/modules/robot0:speaker/restart").json() == {
         "ok": True,
         "error": None,
@@ -198,9 +202,9 @@ def test_restart_and_stop_go_by_instance(client: TestClient, dimos: dict[str, An
     assert client.post("/active/modules/nope/stop").status_code == 404
     calls = [c for c in dimos["apps"][-1].calls if c[0] in ("restart", "unload")]
     assert calls == [
-        ("restart", "robot0/speaker"),
-        ("unload", "robot1/speaker"),
-        ("unload", "camera"),
+        ("restart", "class x.Speaker"),
+        ("unload", "class x.Speaker"),
+        ("unload", "class x.Camera"),
     ]
 
 
