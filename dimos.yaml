@@ -1,4 +1,5 @@
 # What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+spec-version: v1.4 # "@desktop-gateway" paths are relative to /gateways/desktop/
 name: dimos
 version: "0.0.14"
 install: |
@@ -331,14 +332,16 @@ provides:
 # What the gateway's own pages (the blueprint view) call outside it.
 uses:
   "@desktop-gateway":
-    - GET /api/dimos/config/global
-    - PUT /api/dimos/config/global
-    - GET /api/dimos/config/blueprints/{name}
-    - PUT /api/dimos/config/blueprints/{name}
-    - POST /api/dimos/launch
-    - POST /api/dimos/relaunch
-    - GET /api/topics/rates
+    - GET /topics/rates
     # dimos-react's zenoh connection, for the launch events
-    - GET /api/desktop/zenoh
+    - GET /management/gateways/zenoh
+  # Desktop's built-in Launcher: the config it saves for every launch, and launching with it
+  "@launcher":
+    - GET config/global
+    - PUT config/global
+    - GET config/blueprints/{name}
+    - PUT config/blueprints/{name}
+    - POST launch
+    - POST relaunch
 start: |
   .venv/bin/python -m experimental.gateway --detach

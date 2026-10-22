@@ -61,10 +61,10 @@ async function loadSaved(): Promise<Saved | null> {
   try {
     const [global, mine] = await Promise.all([
       getJson<{ overrides?: Saved["global"]; defaults?: Saved["defaults"] }>(
-        "../api/dimos/config/global",
+        "../../apps/@launcher/config/global",
       ),
       getJson<{ global?: Saved["global"]; modules?: Saved["modules"] }>(
-        `../api/dimos/config/blueprints/${encodeURIComponent(NAME)}`,
+        `../../apps/@launcher/config/blueprints/${encodeURIComponent(NAME)}`,
       ),
     ]);
     return {
@@ -221,7 +221,7 @@ export function App() {
     }
     const poll = async () => {
       try {
-        const answer = await getJson<RatesAnswer>("../api/topics/rates");
+        const answer = await getJson<RatesAnswer>("../desktop/topics/rates");
         setRatesError(answer.up === false ? answer.error ?? null : null);
         setRateRowsHeard(
           (answer.topics ?? []).filter((row) => !String(row.topic).startsWith("/rpc/")),
@@ -322,8 +322,8 @@ export function App() {
     act(() =>
       // through Desktop, which keeps the saved config: it merges it in, so edits take effect
       (running
-        ? send("POST", "../api/dimos/relaunch")
-        : send("POST", "../api/dimos/launch", { blueprint: NAME })).then(
+        ? send("POST", "../../apps/@launcher/relaunch")
+        : send("POST", "../../apps/@launcher/launch", { blueprint: NAME })).then(
           () => setRelaunching("starting"),
           (caught) => {
             setRelaunching(false);

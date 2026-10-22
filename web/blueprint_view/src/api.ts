@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
-// Paths are the gateway's, relative to <base>/blueprint_view ("active" → <base>/active); "../api/..." is Desktop's own API.
-const BASE = import.meta.env.DEV ? "/dimos-gateway/" : "";
+// Paths are the gateway's, relative to <base>/blueprint_view ("active" → <base>/active); "../…" is another gateway (Desktop's at ../desktop/), "../../apps/…" an app.
+const BASE = import.meta.env.DEV ? "/gateways/dimos/" : "";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {

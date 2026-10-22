@@ -57,7 +57,7 @@ export interface BlueprintSchema {
   >;
 }
 
-/** GET/PUT Desktop's ../api/dimos/config/blueprints/{name}: what's saved for the blueprint. */
+/** GET/PUT Desktop's Launcher ../../apps/@launcher/config/blueprints/{name}: what's saved for the blueprint. */
 export interface SavedBlueprint {
   global?: Record<string, unknown>;
   modules?: Record<string, Record<string, unknown>>;

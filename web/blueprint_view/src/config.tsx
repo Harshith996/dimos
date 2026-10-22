@@ -1,5 +1,5 @@
 // The config dialog: the blueprint's recommended settings, its modules' args and dimos's global config, each saved
-// by Desktop for every launch of this blueprint (PUT ../api/dimos/config/blueprints/{name}, PUT ../api/dimos/config/global).
+// by Desktop for every launch of this blueprint (PUT ../../apps/@launcher/config/blueprints/{name}, PUT ../../apps/@launcher/config/global).
 import {
   Alert,
   Button,
@@ -91,9 +91,9 @@ export function ConfigModal(
   useEffect(() => {
     const at = encodeURIComponent(name);
     Promise.all([
-      getJson<GlobalConfig>("../api/dimos/config/global"),
+      getJson<GlobalConfig>("../../apps/@launcher/config/global"),
       getJson<BlueprintSchema>(`catalog/blueprints/${at}/config`),
-      getJson<SavedBlueprint>(`../api/dimos/config/blueprints/${at}`),
+      getJson<SavedBlueprint>(`../../apps/@launcher/config/blueprints/${at}`),
       recommendedOf(name),
     ]).then(([loadedGlobal, loadedSchema, savedBlueprint, loadedRecommended]) => {
       setGlobal(loadedGlobal);
@@ -128,7 +128,7 @@ export function ConfigModal(
   const saveModules = async (overrides: ModuleOverrides) => {
     const saved = await send<SavedBlueprint>(
       "PUT",
-      `../api/dimos/config/blueprints/${encodeURIComponent(name)}`,
+      `../../apps/@launcher/config/blueprints/${encodeURIComponent(name)}`,
       {
         global: blueprintGlobal,
         modules: overrides,
@@ -137,7 +137,7 @@ export function ConfigModal(
     setModules(blueprintConfig(schema!, saved));
   };
   const saveGlobal = async (overrides: Overrides) =>
-    setGlobal(await send<GlobalConfig>("PUT", "../api/dimos/config/global", { overrides }));
+    setGlobal(await send<GlobalConfig>("PUT", "../../apps/@launcher/config/global", { overrides }));
   const setField = (spec: FieldSpec, value: unknown) =>
     save(() => {
       const atBase = sameValue(value, spec.base);

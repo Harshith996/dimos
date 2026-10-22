@@ -15,16 +15,16 @@ const npmReactSubpaths: Plugin = {
   },
 };
 
-// Relative assets under blueprint_view/ (the gateway's /blueprint_view/{file}); the dev proxy strips /dimos-gateway as Desktop does.
+// Relative assets under blueprint_view/ (the gateway's /blueprint_view/{file}); the dev proxy strips /gateways/dimos as Desktop does.
 export default defineConfig({
   plugins: [npmReactSubpaths, deno(), react()],
   base: "./",
   resolve: { dedupe: ["react", "react-dom"] },
   server: {
     proxy: {
-      "/dimos-gateway": {
+      "/gateways/dimos": {
         target: "http://127.0.0.1:5555",
-        rewrite: (path) => path.replace(/^\/dimos-gateway/, ""),
+        rewrite: (path) => path.replace(/^\/gateways\/dimos/, ""),
       },
       "/api": "http://127.0.0.1:5555",
     },
