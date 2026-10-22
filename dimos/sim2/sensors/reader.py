@@ -41,10 +41,7 @@ class WorldReader:
     def update(self) -> bool:
         if self.channel.lifecycle != "ready":
             return False
-        try:
-            frame = self.channel.read_observation()
-        except BlockingIOError:
-            return False
+        frame = self.channel.read_observation()
         if frame is None:
             return False
         changed = frame.metadata.sequence != self.sequence
@@ -61,11 +58,7 @@ class WorldReader:
 
     def history(self, start: float, end: float) -> bool:
         """Pin a complete interval from this episode; never invent missing motion."""
-        try:
-            frames = self.channel.read_observations()
-        except BlockingIOError:
-            self._history = ()
-            return False
+        frames = self.channel.read_observations()
         self._history = tuple(f for f in frames if f.metadata.episode_id == self.episode)
         times = np.array([f.metadata.sim_time for f in self._history])
         first = max(0, bisect_right(times, start) - 1)
