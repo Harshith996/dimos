@@ -145,14 +145,14 @@ def test_close_all_empties_the_pool_even_when_a_session_will_not_close(
     assert len(opens) == 2
 
 
-def test_shared_memory_stays_on() -> None:
-    """Local peers get zenoh's shared-memory path, which nothing here turns off.
+def test_shared_memory_is_off() -> None:
+    """Zenoh's shared-memory path is disabled: it silently lost payloads over 3 kB.
 
-    Zenoh enables it by default; a wheel built without the feature drops the key.
+    A planned path reached a light subscriber but not the rerun bridge.
     """
 
     config = json.loads(str(zenohservice._zenoh_config(ZenohConfig())))
-    assert config["transport"]["shared_memory"]["enabled"] is True
+    assert config["transport"]["shared_memory"]["enabled"] is False
 
 
 def test_different_modes_produce_different_keys() -> None:
@@ -186,7 +186,10 @@ def test_pickled_pubsub_and_rpc_rebuild_their_runtime(session_pool) -> None:
     rpc = pickle.loads(pickle.dumps(ZenohRPC(session_pool=session_pool)))
     assert rpc._pending == {}
     assert rpc._queryables == []
-    assert rpc._call_thread_pool is None
+    try:
+        assert rpc._get_call_thread_pool().submit(lambda: 42).result(timeout=2.0) == 42
+    finally:
+        rpc.stop()
 
 
 def test_start_creates_session(session_pool) -> None:
