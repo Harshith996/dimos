@@ -19,7 +19,6 @@ from pathlib import Path
 import socket as sockets
 import subprocess
 import sys
-import time
 
 import typer
 
@@ -27,14 +26,12 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from experimental.gateway import store
 
 
-# bounds a wedged gateway; a live one answers /healthz at once
-def healthy(socket_path: Path, timeout: float = 2.0) -> bool:
+# a gateway is listening when its socket takes a connection (a stale socket file refuses)
+def healthy(socket_path: Path) -> bool:
     try:
         with sockets.socket(sockets.AF_UNIX, sockets.SOCK_STREAM) as connection:
-            connection.settimeout(timeout)
             connection.connect(str(socket_path))
-            connection.sendall(b"GET /healthz HTTP/1.0\r\nHost: localhost\r\n\r\n")
-            return connection.recv(64).split(b" ")[1:2] == [b"200"]
+            return True
     except OSError:
         return False
 
@@ -46,6 +43,7 @@ def serve(
     zenoh_namespace: str | None,
     zenoh_connect: str | None,
     zenoh: bool,
+    ready_fd: int | None = None,
 ) -> None:
     import uvicorn
 
@@ -74,6 +72,8 @@ def serve(
         tcp.setsockopt(sockets.SOL_SOCKET, sockets.SO_REUSEADDR, 1)
         tcp.bind(("127.0.0.1", port))
         listening.append(tcp)
+    for listener in listening:
+        listener.listen()  # connections queue from here until uvicorn serves them
 
     def exit_now() -> None:
         socket_path.unlink(missing_ok=True)
@@ -81,11 +81,11 @@ def serve(
 
     state = new_state(dimos_dir, bus)
     state.exit = exit_now
-    server = uvicorn.Server(
-        # open requests get 2 s to finish on shutdown, so a restart isn't held up by a slow one
-        uvicorn.Config(create_app(state), log_level="warning", timeout_graceful_shutdown=2)
-    )
+    server = uvicorn.Server(uvicorn.Config(create_app(state), log_level="warning"))
     print(f"dimos gateway -> {socket_path}{f' and 127.0.0.1:{port}' if port else ''}", flush=True)
+    if ready_fd is not None:
+        os.write(ready_fd, b"1")
+        os.close(ready_fd)
     try:
         server.run(sockets=listening)
     finally:
@@ -98,21 +98,24 @@ def detach(arguments: list[str], socket_path: Path) -> None:
         return
     log_file = store.logs_dir() / "dimos-gateway.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    ready_read, ready_write = os.pipe()
     command = [sys.executable, "-m", "experimental.gateway", *arguments]
     with log_file.open("a") as log:
         child = subprocess.Popen(
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True
+            [*command, "--ready-fd", str(ready_write)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+            pass_fds=(ready_write,),
         )
-    startup_s = 15.0  # a cold start imports fastapi and dimos before it answers
-    deadline = time.monotonic() + startup_s
-    while time.monotonic() < deadline:
-        if healthy(socket_path):
-            print(f"the dimos gateway is running on {socket_path} (pid {child.pid})")
-            return
-        if child.poll() is not None:
-            raise SystemExit(f"the dimos gateway exited ({child.returncode}); see {log_file}")
-        time.sleep(0.25)
-    raise SystemExit(f"the dimos gateway didn't answer in {startup_s:.0f} s; see {log_file}")
+    os.close(ready_write)
+    # the child writes a byte once its socket listens; EOF means it exited first
+    with os.fdopen(ready_read, "rb") as ready:
+        signaled = ready.read(1)
+    if not signaled:
+        raise SystemExit(f"the dimos gateway exited ({child.wait()}); see {log_file}")
+    print(f"the dimos gateway is running on {socket_path} (pid {child.pid})")
 
 
 def gateway(
@@ -123,6 +126,7 @@ def gateway(
     zenoh_namespace: str = typer.Option(None),
     zenoh_connect: str = typer.Option(None),
     zenoh: bool = typer.Option(True),
+    ready_fd: int = typer.Option(None, hidden=True),
 ) -> None:
     configured = store.setting("dimos-gateway", "socket")
     socket_path = socket or (
@@ -134,7 +138,7 @@ def gateway(
             socket_path,
         )
     else:
-        serve(socket_path, dimos_dir, port, zenoh_namespace, zenoh_connect, zenoh)
+        serve(socket_path, dimos_dir, port, zenoh_namespace, zenoh_connect, zenoh, ready_fd)
 
 
 if __name__ == "__main__":

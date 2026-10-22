@@ -23,16 +23,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from experimental.gateway import events, process_stats
+from experimental.gateway import events
 from experimental.gateway.errors import StatusError
 from experimental.gateway.routes import active, catalog, history, jobs, server
 from experimental.gateway.state import API_VERSION, State, site_dirs
-
-
-async def drop_idle_stats(state: State) -> None:
-    while True:
-        await asyncio.sleep(process_stats.IDLE_S / 3)  # unsubscribes at most a third late
-        await asyncio.to_thread(state.process_stats.stop_if_idle)
 
 
 def create_app(state: State, background: bool = True) -> FastAPI:
@@ -43,9 +37,8 @@ def create_app(state: State, background: bool = True) -> FastAPI:
                 state.dimos_dir, site_dirs(state.dimos_dir), state.relist, state.blueprints_changed
             )
             state.background += [
-                asyncio.create_task(events.watch_launch(state.bus)),
+                asyncio.create_task(events.watch_launch(state.bus, state.process_stats)),
                 asyncio.create_task(watch),
-                asyncio.create_task(drop_idle_stats(state)),
             ]
         yield
         for task in state.background:

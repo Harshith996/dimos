@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import importlib
+import inspect
 import threading
 from typing import Any
 
@@ -46,8 +47,7 @@ def connect_dimos() -> Any:
     launch = current_launch() or {}
     transport = launch.get("config", {}).get("global", {}).get("transport")
     global_config.update(transport=transport or GlobalConfig().transport)
-    # 1 s, not connect's 5 s: a run whose coordinator doesn't answer fails each request fast
-    return Dimos.connect(timeout=1.0)
+    return Dimos.connect()
 
 
 def load_class(path: str) -> Any:
@@ -197,7 +197,11 @@ class Live:
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
         return {"ok": True, "error": None}
 
-    def peek(self, name: str, timeout: float) -> dict[str, Any]:
+    def peek(self, name: str, timeout: float | None = None) -> dict[str, Any]:
+        from dimos.porcelain.dimos import Dimos
+
+        if timeout is None:
+            timeout = inspect.signature(Dimos.peek_stream).parameters["timeout"].default
         stream = next((listed for listed in self.streams() if listed["name"] == name), None)
         if stream is None:
             raise ApiError(404, f"no running stream {name}")

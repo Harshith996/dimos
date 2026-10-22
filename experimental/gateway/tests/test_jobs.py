@@ -333,3 +333,14 @@ def test_a_module_answers_with_its_methods_and_config(
         "class": "x.f.<locals>.Cam",
     }
     assert client.get("/catalog/modules/Cam").status_code == 404
+
+
+def test_only_the_latest_finished_job_of_each_kind_is_kept() -> None:
+    jobs = discovery.Jobs()
+    first, second = jobs.add("one", "scan", []), jobs.add("two", "scan", [])
+    other, running = jobs.add("three", "install", []), jobs.add("four", "scan", [])
+    for job in (first, second, other):
+        job.finish(True)
+    assert jobs.get(first.id) is None
+    assert jobs.get(second.id) is second and jobs.get(other.id) is other
+    assert jobs.get(running.id) is running
