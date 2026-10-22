@@ -122,6 +122,21 @@ the pick-and-place module places top-down with the grasp orientation and a
 pre-place 0.05 above the target, and the arm's fingers-down reach ends near
 z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
 
+### Rebuilding a scene
+
+The grasp stacks carry a scene overlay module, pass-through until a scene is named. Point it at
+the folder of saved overhead captures and the Rerun "Scene overlay" tile shows the live image
+with that capture blended over it, so objects can be put back where they were:
+
+```bash
+dimos run dual-openyam-grasp-agent --sceneoverlaymodule.scenes-dir ~/scenes --sceneoverlaymodule.scene Scene_10
+```
+
+From `dimos shell`, `SceneOverlayModule.set_scene("Scene_25")` switches scenes,
+`capture_reference("Scene_25")` saves the current frame as one, `set_opacity(0.5)` and
+`set_mode("edges")` change the drawing, and after `capture_background()` of the empty table
+`get_alignment()` scores how well each object sits on its ghost.
+
 ## Model assets
 
 `dual_openyam_workcell_v3`, exported as `DUAL_OPENYAM_MODEL`, is the physical

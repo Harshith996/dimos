@@ -352,6 +352,7 @@ all_modules = {
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "robo-plan-point-cloud-self-filter": "dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter.RoboPlanPointCloudSelfFilter",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
+    "scene-overlay-module": "dimos.robot.manipulators.dual_openyam.scene_overlay.SceneOverlayModule",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",

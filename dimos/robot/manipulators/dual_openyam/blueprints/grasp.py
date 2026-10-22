@@ -55,6 +55,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.scene_overlay import SceneOverlayModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 # Table top in the workcell frame (rig calibration 2026-10-15); the model's slab sits 1 cm lower.
@@ -145,17 +146,18 @@ def dual_openyam_grasp_view() -> Any:
 
     cameras = [
         ("world/color_image", "Overhead"),
+        ("world/overlay_image", "Scene overlay"),
         ("world/left_wrist_color_image", "Left wrist"),
         ("world/right_wrist_color_image", "Right wrist"),
     ]
-    overhead, *wrists = cameras
+    overhead, *others = cameras
     tiles = [
         rrb.Spatial2DView(
             origin=overhead[0],
             name=overhead[1],
             contents=["$origin/**", "/world/detections_3d/**"],
         ),
-        *[rrb.Spatial2DView(origin=path, name=name) for path, name in wrists],
+        *[rrb.Spatial2DView(origin=path, name=name) for path, name in others],
     ]
     return rrb.Blueprint(
         rrb.Horizontal(
@@ -176,6 +178,7 @@ def dual_openyam_grasp_view() -> Any:
 
 DUAL_OPENYAM_VIEW_TOPICS = [
     "color_image",
+    "overlay_image",
     "camera_info",
     "left_wrist_color_image",
     "right_wrist_color_image",
@@ -242,6 +245,9 @@ def dual_openyam_grasp_modules(
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
+        # Ghost of a saved scene over the overhead image, for rebuilding benchmark scenes;
+        # pass-through until --sceneoverlaymodule.scene names a capture in scenes-dir.
+        SceneOverlayModule.blueprint(),
         ObjectSceneRegistrationModule.blueprint(
             target_frame="world",
             detector_backend="moondream",
