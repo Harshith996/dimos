@@ -347,7 +347,6 @@ class JobLog(JobStatus):
     lines: list[str]
     next: int
     failure: list[str]
-    code: str | None
 
 
 LaunchConfigShown = TypedDict(
