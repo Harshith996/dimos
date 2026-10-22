@@ -19,7 +19,9 @@ import time
 from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
 import watchfiles
+import watchfiles.main
 
 from experimental.gateway import events
 from experimental.gateway.state import State
@@ -28,8 +30,6 @@ from experimental.gateway.state import State
 NO_STALE_CHECK_S = 60.0
 # a short batch so the tests answer in well under a second
 TEST_DEBOUNCE_MS = 50
-# the OS watcher's setup time before a change is seen
-WATCHER_START_S = 0.5
 
 
 async def until(check: Callable[[], bool], seconds: float = 5.0) -> None:
@@ -39,14 +39,32 @@ async def until(check: Callable[[], bool], seconds: float = 5.0) -> None:
         await asyncio.sleep(0.02)
 
 
-def test_a_blueprint_file_added_under_dimos_robot_relists(tmp_path: Path) -> None:
+@pytest.fixture
+def watchers(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The OS file watchers awatch has opened: a change made after one opens is seen."""
+    opened: list[Any] = []
+    open_watcher = watchfiles.main.RustNotify
+
+    def recorded(*args: Any) -> Any:
+        opened.append(open_watcher(*args))
+        return opened[-1]
+
+    monkeypatch.setattr(watchfiles.main, "RustNotify", recorded)
+    return opened
+
+
+def test_a_blueprint_file_added_under_dimos_robot_relists(
+    tmp_path: Path, watchers: list[Any]
+) -> None:
     robot_dir = tmp_path / "dimos" / "robot"
     robot_dir.mkdir(parents=True)
     (robot_dir / "old_robot.py").write_text("blueprint = None\n")
     reported: list[tuple[list[str], list[str]]] = []
+    listings: list[list[str]] = []
 
     async def relist() -> list[str]:
-        return sorted(path.stem for path in robot_dir.glob("*.py"))
+        listings.append(sorted(path.stem for path in robot_dir.glob("*.py")))
+        return listings[-1]
 
     async def scenario() -> None:
         watcher = asyncio.create_task(
@@ -58,7 +76,8 @@ def test_a_blueprint_file_added_under_dimos_robot_relists(tmp_path: Path) -> Non
                 debounce_ms=TEST_DEBOUNCE_MS,
             )
         )
-        await asyncio.sleep(WATCHER_START_S)
+        # the first listing is what a change is compared with
+        await until(lambda: bool(watchers and listings))
         (robot_dir / "new_robot.py").write_text("blueprint = None\n")
         await until(lambda: bool(reported))
         watcher.cancel()
@@ -82,7 +101,12 @@ def launch_phases(sent: list[tuple[str, Any]]) -> list[str]:
 
 
 def watch_a_launch(
-    client: TestClient, state: State, sent: list[tuple[str, Any]], blueprint: str, phase: str
+    client: TestClient,
+    state: State,
+    sent: list[tuple[str, Any]],
+    watchers: list[Any],
+    blueprint: str,
+    phase: str,
 ) -> None:
     async def scenario() -> None:
         watcher = asyncio.create_task(
@@ -90,23 +114,21 @@ def watch_a_launch(
                 state.bus, stale_check_s=NO_STALE_CHECK_S, debounce_ms=TEST_DEBOUNCE_MS
             )
         )
-        await asyncio.sleep(WATCHER_START_S)
+        await until(lambda: bool(watchers))
         await asyncio.to_thread(client.post, "/active/launch", json={"blueprint": blueprint})
         await until(lambda: phase in launch_phases(sent))
         watcher.cancel()
-        if phase == "running":
-            await asyncio.to_thread(client.post, "/active/stop")
 
     asyncio.run(scenario())
 
 
 def test_a_registered_run_is_published_as_running(
-    client: TestClient, state: State, sent: list[tuple[str, Any]]
+    client: TestClient, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
-    watch_a_launch(client, state, sent, "demo", "running")
+    watch_a_launch(client, state, sent, watchers, "demo", "running")
 
 
 def test_a_launch_whose_child_exits_is_published_as_failed(
-    client: TestClient, state: State, sent: list[tuple[str, Any]]
+    client: TestClient, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
-    watch_a_launch(client, state, sent, "fail", "failed")
+    watch_a_launch(client, state, sent, watchers, "fail", "failed")

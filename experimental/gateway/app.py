@@ -45,6 +45,11 @@ def create_app(state: State, background: bool = True) -> FastAPI:
         state.uploads.shutdown()
         for task in state.background:
             task.cancel()
+        # awaited while the loop runs: asyncio's own shutdown also cancels a starting child's pipe setup, then waits for it forever
+        children = [*state.scanner.running(), *state.jobs.tasks]
+        for task in children:
+            task.cancel()
+        await asyncio.gather(*children, return_exceptions=True)
 
     app = FastAPI(
         title="dimos gateway",

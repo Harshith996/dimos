@@ -265,48 +265,6 @@ def test_docs_search_opens_the_docs_site_on_the_query(client: TestClient, checko
     assert answer.headers["location"] == "https://docs.example/?q=go2%20blueprint"
 
 
-def test_unitree_dds_on_a_machine_without_a_wheel_builds_cyclonedds_with_nix_first(
-    client: TestClient, state: State, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (state.dimos_dir / "pyproject.toml").write_text(
-        '[project]\nname = "dimos"\nversion = "1"\n[project.optional-dependencies]\n'
-        'unitree-dds = ["cyclonedds>=0.10"]\n'
-    )
-    (state.dimos_dir / "uv.lock").write_text(
-        '[[package]]\nname = "cyclonedds"\nversion = "0.10.5"\nwheels = [{ url = "https://x/cyclonedds-0.10.5-cp310-cp310-macosx_11_0_arm64.whl" }]\n'
-    )
-    link = state.dimos_dir / ".venv" / "cyclonedds"
-    nix = tmp_path / "nix"
-    nix.write_text(f"#!/bin/sh\nmkdir -p {tmp_path}/store/lib && ln -sfn {tmp_path}/store {link}\n")
-    nix.chmod(0o755)
-    uv = tmp_path / "uv"
-    uv.write_text('#!/bin/sh\necho "CYCLONEDDS_HOME=$CYCLONEDDS_HOME" "$@"\n')
-    uv.chmod(0o755)
-    monkeypatch.setattr(discovery, "find_uv", lambda: str(uv))
-    monkeypatch.setattr(discovery, "find_nix", lambda: str(nix))
-    monkeypatch.delenv("CYCLONEDDS_HOME", raising=False)
-    environment = {
-        "platform_system": "Darwin",
-        "platform_machine": "arm64",
-        "python_version": "3.12",
-    }
-
-    async def packages(args: list[str], stdin: Any = None) -> Any:
-        return {"python": sys.executable, "environment": environment, "packages": {}}
-
-    monkeypatch.setattr(state, "introspected", packages)
-    job = client.post("/extras/install", json={"extras": ["unitree-dds"]}).json()["job"]
-    until(lambda: client.get(f"/jobs/{job}").json()["done"])
-    log = client.get(f"/jobs/{job}").json()
-    assert log["ok"], log
-    assert log["lines"][0].startswith(
-        f"$ {nix} --extra-experimental-features nix-command flakes build --out-link {link} "
-    )
-    assert f"CYCLONEDDS_HOME={(tmp_path / 'store').resolve()} sync --locked --inexact" in "\n".join(
-        log["lines"]
-    )
-
-
 def test_one_blueprint_rescans_without_a_full_scan(client: TestClient, scanned: State) -> None:
     scanned.listed = [{"name": "good", "kind": "builtin"}, {"name": "missing", "kind": "builtin"}]
     assert client.post("/catalog/scan/blueprints/nope").status_code == 404

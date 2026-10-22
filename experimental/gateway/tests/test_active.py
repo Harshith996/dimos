@@ -53,16 +53,7 @@ def stopped(client: TestClient) -> Callable[[], bool]:
     return lambda: launch_of(client).get("phase") == "stopped"
 
 
-@pytest.fixture
-def launched(client: TestClient) -> Any:
-    yield
-    if client.get("/active").json()["running"]:
-        client.post("/active/stop")
-
-
-def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(
-    client: TestClient, launched: None
-) -> None:
+def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient) -> None:
     assert client.get("/active").json() == {
         "running": False,
         "runId": None,
@@ -116,7 +107,7 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
 
 
 def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
-    client: TestClient, launched: None
+    client: TestClient,
 ) -> None:
     started = client.post("/active/launch", json={"module": "cam", "config": {"n_workers": 3}})
     assert started.status_code == 200, started.text
@@ -138,9 +129,7 @@ def test_a_module_launches_like_a_blueprint_and_exec_relaunches_as_typed(
     assert launch_of(client)["output"].splitlines()[0].endswith("run demo --n-workers=7")
 
 
-def test_relaunch_starts_the_last_launch_with_its_secrets(
-    client: TestClient, launched: None
-) -> None:
+def test_relaunch_starts_the_last_launch_with_its_secrets(client: TestClient) -> None:
     assert client.post("/active/relaunch").status_code == 409
     config = {"global": {"n_workers": 2}, "modules": {"agent": {"api_key": "k2"}}}
     client.post("/active/launch", json={"blueprint": "demo", "config": config})
@@ -161,7 +150,7 @@ def test_relaunch_starts_the_last_launch_with_its_secrets(
 
 
 def test_relaunch_copies_a_run_the_gateway_did_not_launch(
-    client: TestClient, launched: None, tmp_path: Path
+    client: TestClient, tmp_path: Path
 ) -> None:
     command = [sys.executable, "-c", "import time; time.sleep(60)", "run", "outside"]
     env = {**os.environ, "OUTSIDE_RUN": "yes"}
@@ -177,7 +166,8 @@ def test_relaunch_copies_a_run_the_gateway_did_not_launch(
     assert client.get("/active").json()["blueprint"] == "outside"
     relaunched = client.post("/active/relaunch")
     assert relaunched.status_code == 200, relaunched.text
-    assert outside.poll() is not None
+    # the stop reaped it; poll() could miss a reap the waiting thread has not finished recording
+    assert outside.wait() is not None
     again = psutil.Process(relaunched.json()["pid"])
     assert again.cmdline()[-2:] == ["run", "outside"]
     assert again.cwd() == str(tmp_path.resolve())
@@ -279,7 +269,7 @@ def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
 
 
 def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
-    client: TestClient, launched: None, tmp_path: Path
+    client: TestClient, tmp_path: Path
 ) -> None:
     from experimental.gateway import events, store
 

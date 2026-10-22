@@ -64,10 +64,12 @@ def serve(
     namespace = events.resolve_namespace(zenoh_namespace) if zenoh else None
     bus = events.Bus()
     if namespace is not None:
+        import zenoh as zenoh_library
+
         try:
             bus = events.Bus(namespace, events.zenoh_put(events.resolve_connect(zenoh_connect)))
             print(f"dimos gateway events -> zenoh {namespace}/dimos/events/<type>", flush=True)
-        except Exception as error:
+        except zenoh_library.ZError as error:
             print(f"dimos gateway: no zenoh session, no events ({error})", flush=True)
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     socket_path.unlink(missing_ok=True)

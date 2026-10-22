@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import inspect
 import json
 import os
@@ -515,9 +515,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
         secret_vars = secret_env(launch.global_, launch.modules, paths)
         shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
         shown_launch_args = shown_args(launch.args)
-        shown_run = run_args(
-            blueprint, LaunchConfig(**{**launch.__dict__, "args": shown_launch_args})
-        )
+        shown_run = run_args(blueprint, replace(launch, args=shown_launch_args))
         venv = store.venv_dir(dimos_dir)
         env = {
             **os.environ,

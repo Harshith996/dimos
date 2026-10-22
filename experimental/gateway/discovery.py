@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import hashlib
 import itertools
@@ -228,6 +228,10 @@ class Scanner:
         self.single.add(task)
         task.add_done_callback(self.single.discard)
         return job
+
+    def running(self) -> list[asyncio.Task[None]]:
+        """The scans in flight, the full one and single blueprints'."""
+        return [task for task in (self.task, *self.single) if task is not None and not task.done()]
 
     async def scan_one(self, job: Job, name: str) -> None:
         ok = False
@@ -623,7 +627,6 @@ class Job:
     started_at: str = field(default_factory=now_iso)
     finished_at: str | None = None
     ended: float | None = None
-    code: str | None = None
     progress: dict[str, Any] | None = None
 
     def finish(self, ok: bool, error: str | None = None) -> None:
@@ -650,21 +653,14 @@ class Job:
             "lines": self.lines[max(after, 0) :],
             "next": len(self.lines),
             "failure": self.failure,
-            "code": self.code,
         }
-
-
-Prepare = Callable[[Callable[[list[str]], Awaitable[int]]], Awaitable[dict[str, str]]]
-
-
-class MissingForJobError(Exception):
-    pass
 
 
 class Jobs:
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
         self.ids = itertools.count(1)
+        self.tasks: set[asyncio.Task[None]] = set()
 
     def prune(self) -> None:
         """Keeps every running job and the latest finished job of each kind."""
@@ -700,33 +696,31 @@ class Jobs:
         cwd: Path,
         env: dict[str, str],
         then: Callable[[], None],
-        prepare: Prepare | None = None,
     ) -> Job:
         job = self.add(title, kind, command)
 
         async def run() -> None:
             try:
-                ready = env
-                if prepare is not None:
-                    ready = {**env, **await prepare(lambda line: self.step(job, line, cwd, env))}
-                code = await self.step(job, command, cwd, ready)
+                code = await self.step(job, command, cwd, env)
                 job.ok = code == 0
                 if code != 0:
                     job.error = f"{title} failed (exit {code})"
                     printed = [line for line in job.lines if line.strip()]
                     job.failure = printed[-constants.JOB_FAILURE_TAIL_LINES :]
-            except MissingForJobError as error:
-                job.ok, job.code, job.error = False, "cyclonedds_missing", str(error)
-                job.failure = [job.error]
-                job.lines.append(job.error)
-            except Exception as error:
+            except OSError as error:
                 job.ok = False
                 job.error = f"{title} couldn't start: {type(error).__name__}: {error}"
                 job.failure = [job.error]
-            job.finish(bool(job.ok), job.error)
-            then()
+            finally:
+                # a cancel or a bug still ends the job, and the bug's traceback reaches the log
+                if job.ok is None:
+                    job.error = f"{title} stopped before it finished (see the gateway log)"
+                job.finish(bool(job.ok), job.error)
+                then()
 
-        asyncio.get_running_loop().create_task(run())
+        task = asyncio.get_running_loop().create_task(run())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
         return job
 
     async def step(self, job: Job, command: list[str], cwd: Path, env: dict[str, str]) -> int:
@@ -746,93 +740,6 @@ class Jobs:
             text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace"))
             job.lines += text.rstrip("\r\n").split("\r")
         return await process.wait()
-
-
-def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
-    system = {"Darwin": "macosx", "Linux": "linux"}.get(
-        environment.get("platform_system", ""), "win"
-    )
-    machine = environment.get("platform_machine", "").lower()
-    cpus = {"arm64": ("arm64", "universal2"), "aarch64": ("aarch64",)}.get(machine, (machine,))
-    python = "cp" + "".join(environment.get("python_version", "3.12").split(".")[:2])
-    for wheel in entry.get("wheels", []):
-        file = str(wheel.get("url", "")).rsplit("/", 1)[-1]
-        tags = file.removesuffix(".whl").split("-")[-3:] if file.endswith(".whl") else []
-        if len(tags) != 3:
-            continue
-        python_fits = (
-            tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
-        )
-        platform_fits = tags[2] == "any" or (
-            system in tags[2] and any(cpu in tags[2] for cpu in cpus)
-        )
-        if python_fits and platform_fits:
-            return True
-    return False
-
-
-def builds_cyclonedds(dimos_dir: Path, probe: dict[str, Any], wanted: list[str]) -> bool:
-    statuses = extras_status(dimos_dir, probe)
-    if not any(
-        "cyclonedds" in status["missing"] for status in statuses if status["name"] in wanted
-    ):
-        return False
-    lock = read_lock(dimos_dir) or {}
-    entry = next(
-        (package for package in lock.get("package", []) if package["name"] == "cyclonedds"), None
-    )
-    return entry is None or not has_wheel_here(entry, probe.get("environment", {}))
-
-
-def find_nix() -> str | None:
-    fixed = [Path("/nix/var/nix/profiles/default/bin/nix"), Path("/run/current-system/sw/bin/nix")]
-    return shutil.which("nix") or next((str(path) for path in fixed if path.is_file()), None)
-
-
-def nixpkgs_ref(dimos_dir: Path) -> str:
-    try:
-        lock = json.loads((dimos_dir / "flake.lock").read_text())
-        nodes = lock["nodes"]
-        locked = nodes[nodes[lock["root"]]["inputs"]["nixpkgs"]]["locked"]
-        if locked.get("type") == "github":
-            return f"github:{locked['owner']}/{locked['repo']}/{locked['rev']}"
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    return "nixpkgs"
-
-
-def cyclonedds_env(home: Path) -> dict[str, str]:
-    prefix = os.pathsep.join(
-        part for part in (str(home), os.environ.get("CMAKE_PREFIX_PATH", "")) if part
-    )
-    return {"CYCLONEDDS_HOME": str(home), "CMAKE_PREFIX_PATH": prefix}
-
-
-def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
-    async def prepare(step: Callable[[list[str]], Awaitable[int]]) -> dict[str, str]:
-        given = os.environ.get("CYCLONEDDS_HOME")
-        if given and (Path(given) / "lib").is_dir():
-            return cyclonedds_env(Path(given))
-        link = store.venv_dir(dimos_dir) / "cyclonedds"
-        nix = find_nix()
-        if nix is not None:
-            features = ["--extra-experimental-features", "nix-command flakes"]
-            flake = f"{nixpkgs_ref(dimos_dir)}#cyclonedds"
-            built = await step([nix, *features, "build", "--out-link", str(link), flake]) == 0
-            if built and (link / "lib").is_dir():
-                return cyclonedds_env(link.resolve())
-        # Homebrew's prefixes on Apple silicon and on Intel
-        for brewed in (Path("/opt/homebrew/opt/cyclonedds"), Path("/usr/local/opt/cyclonedds")):
-            if (brewed / "lib").is_dir():
-                return cyclonedds_env(brewed.resolve())
-        raise MissingForJobError(
-            "The cyclonedds package is built here against the CycloneDDS C library, and none was found"
-            + (" (nix couldn't build it, see above)" if nix else "")
-            + ": install nix, or `brew install cyclonedds`, or set CYCLONEDDS_HOME to an install of"
-            " CycloneDDS 0.10, then install again."
-        )
-
-    return prepare
 
 
 def docs_site(dimos_dir: Path) -> tuple[str | None, str | None]:
