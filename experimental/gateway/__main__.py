@@ -23,7 +23,7 @@ import sys
 import typer
 
 from dimos.constants import DIMOS_PROJECT_ROOT
-from experimental.gateway import store
+from experimental.gateway import constants, store
 
 
 # a gateway is listening when its socket takes a connection (a stale socket file refuses)
@@ -40,6 +40,7 @@ def serve(
     socket_path: Path,
     dimos_dir: Path,
     port: int | None,
+    host: str,
     zenoh_namespace: str | None,
     zenoh_connect: str | None,
     zenoh: bool,
@@ -51,6 +52,13 @@ def serve(
     from experimental.gateway.app import create_app
     from experimental.gateway.state import new_state
 
+    path_length = len(os.fsencode(str(socket_path)))
+    if path_length > constants.UNIX_SOCKET_PATH_LIMIT:
+        raise SystemExit(
+            f"the gateway socket path {socket_path} is {path_length} bytes, over this platform's "
+            f"{constants.UNIX_SOCKET_PATH_LIMIT}; point `dimos-gateway.socket` in ~/.dimos/config.yaml "
+            "(or --socket) somewhere shorter"
+        )
     if healthy(socket_path):
         raise SystemExit(f"a dimos gateway is already answering on {socket_path}")
     namespace = events.resolve_namespace(zenoh_namespace) if zenoh else None
@@ -70,7 +78,7 @@ def serve(
     if port is not None:
         tcp = sockets.socket(sockets.AF_INET, sockets.SOCK_STREAM)
         tcp.setsockopt(sockets.SOL_SOCKET, sockets.SO_REUSEADDR, 1)
-        tcp.bind(("127.0.0.1", port))
+        tcp.bind((host, port))
         listening.append(tcp)
     for listener in listening:
         listener.listen()  # connections queue from here until uvicorn serves them
@@ -82,7 +90,7 @@ def serve(
     state = new_state(dimos_dir, bus)
     state.exit = exit_now
     server = uvicorn.Server(uvicorn.Config(create_app(state), log_level="warning"))
-    print(f"dimos gateway -> {socket_path}{f' and 127.0.0.1:{port}' if port else ''}", flush=True)
+    print(f"dimos gateway -> {socket_path}{f' and {host}:{port}' if port else ''}", flush=True)
     if ready_fd is not None:
         os.write(ready_fd, b"1")
         os.close(ready_fd)
@@ -122,6 +130,7 @@ def gateway(
     socket: Path = typer.Option(None),
     dimos_dir: Path = typer.Option(DIMOS_PROJECT_ROOT),
     port: int = typer.Option(None),
+    host: str = typer.Option(constants.DEFAULT_HOST),
     detach_: bool = typer.Option(False, "--detach"),
     zenoh_namespace: str = typer.Option(None),
     zenoh_connect: str = typer.Option(None),
@@ -138,7 +147,7 @@ def gateway(
             socket_path,
         )
     else:
-        serve(socket_path, dimos_dir, port, zenoh_namespace, zenoh_connect, zenoh, ready_fd)
+        serve(socket_path, dimos_dir, port, host, zenoh_namespace, zenoh_connect, zenoh, ready_fd)
 
 
 if __name__ == "__main__":

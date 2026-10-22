@@ -35,7 +35,7 @@ from packaging.utils import canonicalize_name
 import yaml
 
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import annotations as annotation_file, store
+from experimental.gateway import annotations as annotation_file, constants, store
 from experimental.gateway.introspect import MARKER, child_command, kill_group
 
 if sys.version_info >= (3, 11):
@@ -45,8 +45,6 @@ else:
 
 logger = setup_logger()
 
-# one blueprint's imports in the scan child; past this it reads as hung
-ITEM_TIMEOUT_S = 120.0
 IMPORT_ALIASES: dict[str, tuple[str, ...]] = {
     "cv2": ("opencv-python", "opencv-python-headless", "opencv-contrib-python"),
     "PIL": ("pillow",),
@@ -141,6 +139,7 @@ class Scanner:
         self.state = "idle"
         self.current: str | None = None
         self.saved: dict[str, Any] | None = None
+        self.item_timeout_s = constants.SCAN_ITEM_TIMEOUT_S
         self.looked = False
         self.now_print: tuple[float, str] | None = None
         # one child at a time: a full scan and a single blueprint's share the fields above
@@ -161,8 +160,10 @@ class Scanner:
         return self.saved
 
     def current_fingerprint(self) -> str:
-        # a burst of requests shares one git status
-        if self.now_print is None or time.monotonic() - self.now_print[0] > 2.0:
+        if (
+            self.now_print is None
+            or time.monotonic() - self.now_print[0] > constants.FINGERPRINT_CACHE_S
+        ):
             self.now_print = (time.monotonic(), fingerprint(self.dimos_dir))
         return self.now_print[1]
 
@@ -184,9 +185,12 @@ class Scanner:
             "stale": cache is None or cache.get("fingerprint") != self.current_fingerprint(),
         }
 
-    def start(self, reason: str = "requested") -> Job:
+    def start(
+        self, reason: str = "requested", item_timeout_s: float = constants.SCAN_ITEM_TIMEOUT_S
+    ) -> Job:
         """The running scan's job, or a new scan's."""
         if self.task is None or self.task.done():
+            self.item_timeout_s = item_timeout_s
             self.state = "scanning"
             self.job = self.jobs.add(f"Scan blueprints ({reason})", "scan", [*self.command, "scan"])
             self.task = asyncio.get_running_loop().create_task(self.scan(self.job))
@@ -213,11 +217,12 @@ class Scanner:
                 "current": self.current,
             }
 
-    def start_one(self, name: str) -> Job:
+    def start_one(self, name: str, item_timeout_s: float = constants.SCAN_ITEM_TIMEOUT_S) -> Job:
         """A scan of just `name` and its modules (the full scan's job if one is running)."""
         if self.task is not None and not self.task.done():
             assert self.job is not None
             return self.job
+        self.item_timeout_s = item_timeout_s
         job = self.jobs.add(f"Scan {name}", "scan", [*self.command, "scan"])
         task = asyncio.get_running_loop().create_task(self.scan_one(job, name))
         self.single.add(task)
@@ -332,12 +337,12 @@ class Scanner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            limit=64 * 1024 * 1024,
+            limit=constants.SCAN_STDOUT_LIMIT_BYTES,
         )
         assert child.stdin and child.stdout and child.stderr
         child.stdin.write(json.dumps(request).encode())
         child.stdin.close()
-        tail: deque[str] = deque(maxlen=20)
+        tail: deque[str] = deque(maxlen=constants.SCAN_STDERR_TAIL_LINES)
 
         async def drain() -> None:
             assert child.stderr
@@ -348,9 +353,9 @@ class Scanner:
         try:
             while True:
                 try:
-                    line = await asyncio.wait_for(child.stdout.readline(), ITEM_TIMEOUT_S)
+                    line = await asyncio.wait_for(child.stdout.readline(), self.item_timeout_s)
                 except asyncio.TimeoutError:
-                    return f"no answer in {ITEM_TIMEOUT_S:.0f} s (hung while importing)"
+                    return f"no answer in {self.item_timeout_s:g} s (hung while importing)"
                 if not line:
                     await child.wait()
                     last = next(
@@ -708,7 +713,8 @@ class Jobs:
                 job.ok = code == 0
                 if code != 0:
                     job.error = f"{title} failed (exit {code})"
-                    job.failure = [line for line in job.lines if line.strip()][-15:]
+                    printed = [line for line in job.lines if line.strip()]
+                    job.failure = printed[-constants.JOB_FAILURE_TAIL_LINES :]
             except MissingForJobError as error:
                 job.ok, job.code, job.error = False, "cyclonedds_missing", str(error)
                 job.failure = [job.error]

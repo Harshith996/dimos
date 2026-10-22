@@ -149,3 +149,23 @@ const schema = await (await fetch("../../dimos-gateway/catalog/blueprints/unitre
 const globals = await (await fetch("../../dimos-gateway/catalog/config")).json() // { schema, defaults, secrets }
 const one = await (await fetch("../../dimos-gateway/catalog/modules/go2connection/config")).json() // { name, class, args }
 ```
+
+## How do I run it myself?
+
+Desktop starts it (dimos.yaml `start:`), but it also runs on its own from a dimos checkout:
+
+```sh
+.venv/bin/python -m experimental.gateway --detach      # in the background, on its unix socket
+.venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
+```
+
+- Its routes have no prefix: Desktop serves them under `/dimos-gateway/`, so `/active` here is `/dimos-gateway/active` there.
+- It reads `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
+  `zenoh.connect`, `zenoh.gossip` and `recordings.dir`. Command-line flags (`--socket`, `--zenoh-namespace`, ...) win.
+- Events go on zenoh at `<namespace>/dimos/events/<type>` (`launch`, `blueprints`, `upload`, `uploads`, `upload-removed`,
+  `cloud-login`); without a namespace there are none.
+- Its tuning numbers (timeouts, cache lifetimes, limits) are in `experimental/gateway/constants.py`.
+- Robot and blueprint descriptions come from `experimental/gateway/annotations.yaml`.
+- Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.
+- Its last launch, including what `/active/relaunch` re-runs (0600), is kept in `$XDG_STATE_HOME/dimos/gateway/`.
+- Tests: `python -m pytest experimental/gateway/tests` and `python -m mypy experimental/gateway`.

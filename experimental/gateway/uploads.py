@@ -32,14 +32,13 @@ import urllib.request
 from dimos.cli import cloud
 from dimos.cloud.config import CloudConfig
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import store
+from experimental.gateway import constants, store
 from experimental.gateway.errors import ApiError
 from experimental.gateway.events import Bus
 
 logger = setup_logger()
 
 FINISHED = ("done", "failed", "cancelled")
-TAU_S = 6.0
 IDLE_LOGIN: dict[str, Any] = {
     "state": "idle",
     **dict.fromkeys(("url", "urlComplete", "code", "expiresAt", "email", "error")),
@@ -56,7 +55,7 @@ class CancelledUploadError(Exception):
 
 @dataclass
 class Rate:
-    """Bytes per second, a moving average over about TAU_S seconds."""
+    """Bytes per second, a moving average over about constants.UPLOAD_RATE_SMOOTHING_S."""
 
     since: float
     at: float
@@ -66,14 +65,12 @@ class Rate:
     def tick(self, at: float, done: int) -> None:
         if at > self.at:
             instant = (done - self.done) / (at - self.at)
-            alpha = 1.0 - math.exp(-(at - self.at) / TAU_S)
+            alpha = 1.0 - math.exp(-(at - self.at) / constants.UPLOAD_RATE_SMOOTHING_S)
             self.bps = instant if self.bps is None else self.bps + alpha * (instant - self.bps)
             self.at, self.done = at, done
 
     def eta(self, remaining: int) -> float | None:
-        if (
-            not self.bps or self.at - self.since < 1.0
-        ):  # no ETA in the first second, the rate is noise
+        if not self.bps or self.at - self.since < constants.UPLOAD_ETA_WARMUP_S:
             return None
         return max(remaining / self.bps, 1.0 if remaining > 0 else 0.0)
 
@@ -239,6 +236,7 @@ class Uploads:
         self.running: tuple[str, threading.Event] | None = None
         self.login: dict[str, Any] = dict(IDLE_LOGIN)
         self.login_cancel: threading.Event | None = None
+        self.login_changed = threading.Event()
         self.account_cache: tuple[float, dict[str, Any]] | None = None
         self.stopping = False
 
@@ -353,9 +351,7 @@ class Uploads:
 
     async def account(self, fresh: bool) -> dict[str, Any]:
         cached = self.account_cache
-        if (
-            not fresh and cached and time.monotonic() - cached[0] < 20.0
-        ):  # the account is re-checked at most every 20 s
+        if not fresh and cached and time.monotonic() - cached[0] < constants.ACCOUNT_CACHE_S:
             return cached[1]
         value = await asyncio.to_thread(account)
         self.account_cache = (time.monotonic(), value)
@@ -376,6 +372,7 @@ class Uploads:
 
     def set_login(self, **change: Any) -> None:
         self.login.update(change)
+        self.login_changed.set()
         self.bus.send({"type": "cloud-login", "login": dict(self.login)})
 
     def _device_login(self, cancel: threading.Event) -> None:
@@ -412,11 +409,10 @@ class Uploads:
         self.cancel_login()
         self.login_cancel = cancel = threading.Event()
         self.set_login(**{**IDLE_LOGIN, "state": "starting"})
+        self.login_changed.clear()
         threading.Thread(target=self._device_login, args=(cancel,), daemon=True).start()
-        for _ in range(300):
-            if self.login_state()["state"] != "starting":
-                break
-            await asyncio.sleep(0.1)
+        # answers once the login thread moves past "starting" (it got a device code, or failed)
+        await asyncio.to_thread(self.login_changed.wait, constants.LOGIN_START_WAIT_S)
         return self.login_state()
 
     def cancel_login(self) -> dict[str, Any]:

@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import launches, overrides, responses
+from experimental.gateway import launches, responses
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.live import NothingRunningError
 from experimental.gateway.routes.history import read_log
@@ -87,9 +87,9 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     name = str(request.blueprint or request.module)
     if not name or name.startswith("-"):
         raise ApiError(400, f"bad name: {name}")
-    parsed = overrides.parse(request.config)
-    overrides.check_global(parsed.global_)
-    return await started(state, name, LaunchConfig(parsed.global_, parsed.modules, parsed.secrets))
+    launch_config = launches.parse(request.config)
+    launches.check_global(launch_config.global_)
+    return await started(state, name, launch_config)
 
 
 @router.post("/exec", response_model=responses.Launch)
