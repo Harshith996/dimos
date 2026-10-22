@@ -23,9 +23,9 @@ use std::io::{self, BufWriter, Write};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use dimos_livox::pcap::PcapSource;
-use dimos_livox::pipeline::{imu_records, FrameAssembler, PacketSource, RawPoint, GRAVITY_MS2};
-use dimos_livox::wire::{DataPacket, DataType, LIDAR_IMU_PORT, LIDAR_POINT_PORT};
+use dimos_pointlio::pcap::PcapSource;
+use dimos_pointlio::pipeline::{imu_records, FrameAssembler, PacketSource, RawPoint, GRAVITY_MS2};
+use dimos_pointlio::wire::{DataPacket, DataType, LIDAR_IMU_PORT, LIDAR_POINT_PORT};
 use pointlio_core::{Config, LivoxPoint, PointLio};
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -72,7 +72,8 @@ fn main() -> io::Result<()> {
         .map(|p| File::create(p).map(BufWriter::new))
         .transpose()?;
 
-    let mut source = PcapSource::from_file(pcap, LIDAR_POINT_PORT, LIDAR_IMU_PORT, None, stop)?;
+    let mut source =
+        PcapSource::from_file(pcap, LIDAR_POINT_PORT, LIDAR_IMU_PORT, None, 0.0, stop)?;
     let mut assembler = FrameAssembler::new(hz);
     let mut buf = [0u8; 4096];
     let mut frames = 0u32;
@@ -112,8 +113,8 @@ fn main() -> io::Result<()> {
         }
     };
 
-    while let Some(len) = source.recv(&mut buf) {
-        let Ok(packet) = DataPacket::parse(&buf[..len]) else {
+    while let Some(received) = source.recv(&mut buf) {
+        let Ok(packet) = DataPacket::parse(&buf[..received.len]) else {
             continue;
         };
         match packet.data_type {

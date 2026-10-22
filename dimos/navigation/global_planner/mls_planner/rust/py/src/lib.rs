@@ -102,6 +102,8 @@ impl MLSPlanner {
             goal_tolerance: 1.0,
             // Unused here. Only the binary's worker publishes viz artifacts.
             viz_publish_hz: 1.0,
+            viz_cell_m: 4.0,
+            viz_sweep_cells: 0,
             worker_threads,
         };
         config
@@ -134,18 +136,43 @@ impl MLSPlanner {
         sensor_z: f32,
     ) -> PyResult<()> {
         let pts = extract_points(points)?;
-        let bounds = RegionBounds::capped(
-            origin.0,
-            origin.1,
+        let bounds = RegionBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
             radius,
             z_min,
             z_max,
-            sensor_z,
-            self.config.max_overhead_m,
-        );
+        }
+        .capped_at(sensor_z, self.config.max_overhead_m);
         let config = &self.config;
         let planner = &mut self.planner;
-        py.allow_threads(move || planner.update_region(&pts, &bounds, config));
+        py.allow_threads(|| planner.update_region(&pts, &bounds, config));
+        Ok(())
+    }
+
+    /// Apply one region of a seeded map. Its bounds are the premap's own, so
+    /// no sensor ceiling applies.
+    #[pyo3(signature = (points, origin, radius, z_min, z_max))]
+    fn update_seed_region(
+        &mut self,
+        py: Python<'_>,
+        points: &Bound<'_, PyAny>,
+        origin: (f32, f32),
+        radius: f32,
+        z_min: f32,
+        z_max: f32,
+    ) -> PyResult<()> {
+        let pts = extract_points(points)?;
+        let bounds = RegionBounds {
+            origin_x: origin.0,
+            origin_y: origin.1,
+            radius,
+            z_min,
+            z_max,
+        };
+        let config = &self.config;
+        let planner = &mut self.planner;
+        py.allow_threads(|| planner.update_seed_region(&pts, &bounds, config));
         Ok(())
     }
 
@@ -194,7 +221,7 @@ impl MLSPlanner {
         let graph = self.planner.graph();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(graph.nodes.len() * 3);
-            for n in &graph.nodes {
+            for n in graph.nodes.iter() {
                 out.push(n.pos.0);
                 out.push(n.pos.1);
                 out.push(n.pos.2);

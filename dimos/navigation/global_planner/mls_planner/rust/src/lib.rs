@@ -13,12 +13,15 @@
 // limitations under the License.
 
 mod adjacency;
+mod bit_grid;
+mod columns;
 mod dijkstra;
 pub mod edges;
 pub mod mls_planner;
 pub mod module;
 mod nodes;
 mod planner;
+mod region_viz;
 mod smoother;
 mod surfaces;
 pub mod voxel;
