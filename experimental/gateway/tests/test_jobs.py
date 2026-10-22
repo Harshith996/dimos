@@ -317,3 +317,28 @@ def test_only_the_latest_finished_job_of_each_kind_is_kept() -> None:
     assert jobs.get(first.id) is None
     assert jobs.get(second.id) is second and jobs.get(other.id) is other
     assert jobs.get(running.id) is running
+
+
+def test_an_extras_install_forgets_the_cached_package_probe(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (state.dimos_dir / "pyproject.toml").write_text(
+        '[project]\nname = "dimos"\n[project.optional-dependencies]\nsim = ["mujoco"]\n'
+    )
+    probes: list[list[str]] = []
+
+    async def probe(dimos_dir: Path, args: list[str], *rest: Any, **options: Any) -> Any:
+        probes.append(args)
+        return {"python": sys.executable, "environment": {}, "packages": {}}
+
+    monkeypatch.setattr(introspect, "run_child", probe)
+    monkeypatch.setattr(discovery, "find_uv", lambda: "uv")
+    monkeypatch.setattr(discovery, "install_command", lambda *args: [sys.executable, "-c", "pass"])
+    assert client.get("/extras").status_code == 200
+    assert client.get("/extras").status_code == 200
+    assert len(probes) == 1
+    job = client.post("/extras/install", json={"extras": ["sim"]}).json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert client.get(f"/jobs/{job}").json()["ok"]
+    client.get("/extras")
+    assert len(probes) == 2

@@ -38,6 +38,10 @@ print("gossip", os.environ.get("ZENOH_GOSSIP"), flush=True)
 if "fail" in sys.argv:
     print("ValueError: no robot answered", flush=True)
     sys.exit(1)
+if "slow" in sys.argv:
+    # a startup that never gets as far as registering
+    time.sleep(60)
+    sys.exit(0)
 # registers like `dimos run` does, under the id it picks itself
 blueprint = sys.argv[sys.argv.index("run") + 1]
 run_id = time.strftime("%Y%m%d-%H%M%S-") + blueprint + "-" + str(os.getpid())

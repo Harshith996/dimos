@@ -21,7 +21,9 @@ import threading
 from typing import Any
 
 from fastapi.encoders import jsonable_encoder
+import psutil
 
+from dimos.core.run_registry import RunEntry
 from experimental.gateway.errors import ApiError
 
 
@@ -37,15 +39,45 @@ def instance_id(remote_name: str) -> str:
     return remote_name.replace("/", ":") if "/" in remote_name else remote_name.lower()
 
 
-def connect_dimos() -> Any:
-    """`Dimos.connect()` on the transport the gateway's launch ran with (its `config.global.transport`), since
-    connect finds the coordinator on the gateway's own GlobalConfig transport."""
-    from dimos.core.global_config import GlobalConfig, global_config
-    from dimos.porcelain.dimos import Dimos
+def flag_value(argv: list[str], flag: str) -> str | None:
+    """The last `--flag=value` or `--flag value` in a command line."""
+    found = None
+    for index, arg in enumerate(argv):
+        if arg.startswith(flag + "="):
+            found = arg.partition("=")[2]
+        elif arg == flag and index + 1 < len(argv):
+            found = argv[index + 1]
+    return found
+
+
+def run_transport(entry: RunEntry) -> str | None:
+    """The transport a run said it uses: its registry entry's global overrides, its command line, or its env."""
     from experimental.gateway.launches import current_launch
 
+    if transport := entry.config_overrides.get("transport"):
+        return str(transport)
+    if transport := flag_value(list(entry.original_argv), "--transport"):
+        return transport
     launch = current_launch() or {}
-    transport = launch.get("config", {}).get("global", {}).get("transport")
+    if int(launch.get("pid") or -1) == entry.pid:
+        if transport := launch.get("config", {}).get("global", {}).get("transport"):
+            return str(transport)
+    try:
+        environment: dict[str, str] = psutil.Process(entry.pid).environ()
+    except psutil.Error:
+        environment = {}
+    return environment.get("DIMOS_TRANSPORT")
+
+
+def connect_dimos() -> Any:
+    """`Dimos.connect()` on the transport the active run uses, since connect finds the coordinator on the gateway's
+    own GlobalConfig transport."""
+    from dimos.core.global_config import GlobalConfig, global_config
+    from dimos.core.run_registry import get_most_recent
+    from dimos.porcelain.dimos import Dimos
+
+    entry = get_most_recent(alive_only=True)
+    transport = run_transport(entry) if entry is not None else None
     # TODO(core): Dimos.connect could take a transport= instead of reading the process-wide GlobalConfig
     global_config.update(transport=transport or GlobalConfig().transport)
     return Dimos.connect()

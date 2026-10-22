@@ -96,15 +96,17 @@ def _size_and_mtime(path: str) -> tuple[int, int] | None:
     return stat.st_size, int(stat.st_mtime * 1000)
 
 
-def uploaded_entry(upload: dict[str, Any]) -> dict[str, Any] | None:
-    found = _size_and_mtime(upload["path"])
-    if upload["state"] != "done" or found is None or not upload.get("uploadId"):
+def uploaded_entry(
+    upload: dict[str, Any], sent_size_and_mtime: tuple[int, int] | None
+) -> dict[str, Any] | None:
+    """The uploaded.json entry of a done upload, as the file was when its transfer started."""
+    if upload["state"] != "done" or sent_size_and_mtime is None or not upload.get("uploadId"):
         return None
     return {
         "path": upload["path"],
         "uploadId": upload["uploadId"],
-        "size": found[0],
-        "mtimeMs": found[1],
+        "size": sent_size_and_mtime[0],
+        "mtimeMs": sent_size_and_mtime[1],
         "uploadedAt": upload.get("finishedAt") or now_ms(),
         "link": upload.get("link"),
         "changed": False,
@@ -221,7 +223,8 @@ class Uploads:
             store.read_json(self.uploaded_file) if self.uploaded_file else None
         ) or {}
         for upload in self.items:
-            done = uploaded_entry(upload)
+            # only when uploaded.json lost it: the file as it is now is the best guess left
+            done = uploaded_entry(upload, _size_and_mtime(upload["path"]))
             if done:
                 self.uploaded_by_path.setdefault(done["path"], done)
             if upload["state"] == "uploading":
@@ -237,6 +240,8 @@ class Uploads:
         self.running: tuple[str, threading.Event] | None = None
         self.login: dict[str, Any] = dict(IDLE_LOGIN)
         self.login_cancel: threading.Event | None = None
+        # held while a login attempt checks it is still current and stores its key, and while one is cancelled
+        self.login_lock = threading.RLock()
         self.login_changed = threading.Event()
         self.account_cache: tuple[float, dict[str, Any]] | None = None
         self.stopping = False
@@ -368,8 +373,8 @@ class Uploads:
 
     async def logout(self) -> dict[str, Any]:
         # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
-        await asyncio.to_thread(cloud._forget)
         self.cancel_login()
+        await asyncio.to_thread(cloud._forget)
         self.login = dict(IDLE_LOGIN)
         return self.announce_account(await asyncio.to_thread(account))
 
@@ -383,11 +388,23 @@ class Uploads:
         self.login_changed.set()
         self.bus.send({"type": "cloud-login", "login": dict(self.login)})
 
+    def _is_current(self, cancel: threading.Event) -> bool:
+        return self.login_cancel is cancel and not cancel.is_set()
+
+    def _set_login_if_current(self, cancel: threading.Event, **change: Any) -> bool:
+        """Change the login only for the attempt still running; a cancelled one changes nothing."""
+        with self.login_lock:
+            if not self._is_current(cancel):
+                return False
+            self.set_login(**change)
+            return True
+
     def _device_login(self, cancel: threading.Event) -> None:
         try:
             # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
             device = cloud._post("/auth/device", label=socket.gethostname())
-            self.set_login(
+            self._set_login_if_current(
+                cancel,
                 state="pending",
                 url=device["verification_uri"],
                 urlComplete=device.get("verification_uri_complete"),
@@ -398,39 +415,43 @@ class Uploads:
             while time.time() < deadline and not cancel.wait(device["interval"]):
                 answer = cloud._post("/auth/token", device_code=device["device_code"])
                 if answer["status"] == "ok":
-                    cloud._store(answer["api_key"])
-                    self.set_login(state="approved", email=answer.get("email"))
+                    with self.login_lock:
+                        if not self._is_current(cancel):
+                            return  # cancelled while the token request was out: the key is dropped
+                        # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+                        cloud._store(answer["api_key"])
+                        self.set_login(state="approved", email=answer.get("email"))
                     self.announce_account(account())
                     self.logged_in()
                     return
                 if answer["status"] in ("denied", "expired"):
-                    self.set_login(state=answer["status"])
+                    self._set_login_if_current(cancel, state=answer["status"])
                     return
-            if not cancel.is_set():
-                self.set_login(state="expired")
+            self._set_login_if_current(cancel, state="expired")
         except Exception as error:
-            if not cancel.is_set():
-                self.set_login(state="failed", error=classify(error)[1])
+            self._set_login_if_current(cancel, state="failed", error=classify(error)[1])
 
     async def start_login(self) -> dict[str, Any]:
         if self.login_state()["state"] in ("starting", "pending"):
             return self.login_state()
-        self.cancel_login()
-        self.login_cancel = cancel = threading.Event()
-        self.set_login(**{**IDLE_LOGIN, "state": "starting"})
-        self.login_changed.clear()
+        with self.login_lock:
+            self.cancel_login()
+            self.login_cancel = cancel = threading.Event()
+            self.set_login(**{**IDLE_LOGIN, "state": "starting"})
+            self.login_changed.clear()
         threading.Thread(target=self._device_login, args=(cancel,), daemon=True).start()
         # Desktop opens the approval page from this answer, so it waits for the device code (one cloud request)
         await asyncio.to_thread(self.login_changed.wait, CloudConfig().http_timeout)
         return self.login_state()
 
     def cancel_login(self) -> dict[str, Any]:
-        if self.login_cancel is not None:
-            self.login_cancel.set()
-            self.login_cancel = None
-        if self.login_state()["state"] in ("starting", "pending"):
-            self.set_login(**IDLE_LOGIN)
-        return self.login_state()
+        with self.login_lock:
+            if self.login_cancel is not None:
+                self.login_cancel.set()
+                self.login_cancel = None
+            if self.login_state()["state"] in ("starting", "pending"):
+                self.set_login(**IDLE_LOGIN)
+            return self.login_state()
 
     def shutdown(self) -> None:
         self.stopping = True
@@ -519,6 +540,8 @@ class Uploads:
         loop, cancel, started = self.loop, threading.Event(), time.monotonic()
         self.running = (id, cancel)
         last_phase, last_emit = "", -1.0
+        # taken before the transfer reads the file, so one that grows meanwhile reads as changed afterwards
+        sent_size_and_mtime = _size_and_mtime(upload["path"])
 
         def progress(phase: str, done: int, total: int) -> None:
             nonlocal last_phase, last_emit
@@ -539,6 +562,9 @@ class Uploads:
             result = await asyncio.to_thread(
                 self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
             )
+            # TODO(core): CloudData.upload should take a cancel signal through completion and preview
+            if cancel.is_set():
+                raise CancelledUploadError(result.get("upload_id"))
             quota: dict[str, Any] = result.get("quota") or {}
             quota_state = quota.get("state")
             updated = self.update(
@@ -553,8 +579,17 @@ class Uploads:
                 else None,
                 finishedAt=now_ms(),
             )
-        except CancelledUploadError:
-            updated = self.update(id, state="cancelled", finishedAt=now_ms())
+        except CancelledUploadError as cancelled:
+            sent_upload_id = cancelled.args[0] if cancelled.args else None
+            updated = self.update(
+                id,
+                state="cancelled",
+                uploadId=sent_upload_id or upload["uploadId"],
+                notice="Cancelled after every byte was sent: Dimensional cloud may still keep this copy."
+                if sent_upload_id
+                else None,
+                finishedAt=now_ms(),
+            )
         except PermissionError:
             updated = self.wait_for_login(
                 id, "Not logged in to Dimensional cloud. Log in, then retry."
@@ -571,7 +606,7 @@ class Uploads:
         self.running = None
         if self.stopping:
             return
-        done = uploaded_entry(updated) if updated else None
+        done = uploaded_entry(updated, sent_size_and_mtime) if updated else None
         if done is not None and self.uploaded_file:
             self.uploaded_by_path[done["path"]] = done
             store.write_atomic(

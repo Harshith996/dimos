@@ -106,6 +106,45 @@ def test_a_running_upload_can_be_cancelled_and_retried(
     assert client.post("/cloud/uploads", json={}).status_code == 400
 
 
+def test_a_recording_that_grows_during_its_upload_reads_as_changed(
+    client: TestClient, recording: Path, transfer: threading.Event
+) -> None:
+    work(client)
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    until(lambda: client.get("/cloud/uploads").json()["uploads"][0]["bytesDone"] == 50)
+    with recording.open("ab") as file:
+        file.write(b"y" * 10)
+    transfer.set()
+    until(lambda: state_of(client, upload["id"]) == "done")
+    entry = client.get("/cloud/uploads").json()["byPath"][str(recording)]
+    assert entry["size"] == 100 and entry["changed"] is True
+
+
+def test_an_upload_cancelled_after_its_last_part_ends_cancelled(
+    client: TestClient, recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_completion = threading.Event()
+
+    def completes_without_progress(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None]
+    ) -> dict[str, Any]:
+        tick("upload", 100, 100)
+        release_completion.wait(10)
+        return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
+
+    state: State = client.app.state.gateway  # type: ignore[attr-defined]
+    monkeypatch.setattr(state.uploads, "_transfer", completes_without_progress)
+    work(client)
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    until(lambda: client.get("/cloud/uploads").json()["uploads"][0]["phase"] == "finishing")
+    assert client.delete(f"/cloud/uploads?id={upload['id']}").status_code == 200
+    release_completion.set()
+    until(lambda: state_of(client, upload["id"]) == "cancelled")
+    listing = client.get("/cloud/uploads").json()
+    assert str(recording) not in listing["byPath"]
+    assert listing["uploads"][0]["uploadId"] == "cloud-1" and listing["uploads"][0]["notice"]
+
+
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
     assert client.post("/cloud/uploads", json={"path": "relative.mcap"}).status_code == 400
     assert (
@@ -207,6 +246,50 @@ def test_deleting_a_login_cancels_it_when_pending_and_logs_out_otherwise(
     assert forgot == []
     assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
     assert forgot == [1]
+
+
+def test_a_login_cancelled_while_its_token_request_is_out_stores_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_requested, release_token = threading.Event(), threading.Event()
+    stored: list[str] = []
+    woken: list[int] = []
+
+    def post(path: str, **params: Any) -> dict[str, Any]:
+        if path == "/auth/device":
+            return {
+                "verification_uri": "https://console/device",
+                "user_code": "ABCD",
+                "expires_in": 600,
+                "interval": 0.05,
+                "device_code": "d",
+            }
+        token_requested.set()
+        release_token.wait(10)
+        return {"status": "ok", "api_key": "key", "email": "a@b.c"}
+
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+    monkeypatch.setattr(cloud, "_post", post)
+    monkeypatch.setattr(cloud, "_store", stored.append)
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(bool(stored)))
+    state: State = client.app.state.gateway  # type: ignore[attr-defined]
+    monkeypatch.setattr(state.uploads, "logged_in", lambda: woken.append(1))
+    login_thread_done = threading.Event()
+    device_login = state.uploads._device_login
+
+    def device_login_then_signal(cancel: threading.Event) -> None:
+        device_login(cancel)
+        login_thread_done.set()
+
+    monkeypatch.setattr(state.uploads, "_device_login", device_login_then_signal)
+    assert client.post("/cloud/login").json()["state"] == "pending"
+    assert token_requested.wait(10)
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+    release_token.set()
+    assert login_thread_done.wait(10)
+    assert stored == []
+    assert woken == []
+    assert client.get("/cloud/account").json()["login"]["state"] == "idle"
 
 
 def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

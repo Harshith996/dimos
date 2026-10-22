@@ -12,14 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
 from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
 
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, StreamInfo
-from experimental.gateway import live
+from dimos.core.run_registry import RunEntry
+from dimos.porcelain.dimos import Dimos
+from experimental.gateway import launches, live
 from experimental.gateway.state import State
 
 SPEAK = {
@@ -239,3 +248,50 @@ def test_instance_ids_are_the_coordinators_keys() -> None:
     assert live.instance_id("robot0/go2connection") == "robot0:go2connection"
     assert live.instance_id("fleet/robot0/go2connection") == "fleet:robot0:go2connection"
     assert live.instance_id("GO2Connection") == "go2connection"
+
+
+@pytest.fixture
+def terminal_run(home: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[subprocess.Popen[bytes]]:
+    """A `dimos run` started in a terminal, its env without DIMOS_TRANSPORT, and the transport connect would use."""
+    monkeypatch.delenv("DIMOS_TRANSPORT", raising=False)
+    environment = {name: value for name, value in os.environ.items() if name != "DIMOS_TRANSPORT"}
+    sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+    process = subprocess.Popen(sleeper, env=environment, start_new_session=True)
+    threading.Thread(target=process.wait, daemon=True).start()
+    monkeypatch.setattr(Dimos, "connect", staticmethod(lambda: global_config.transport))
+    monkeypatch.setattr(global_config, "transport", global_config.transport)
+    yield process
+    process.kill()
+
+
+def registered(pid: int, **fields: Any) -> None:
+    RunEntry(
+        run_id="20260101-120000-demo",
+        pid=pid,
+        blueprint="demo",
+        started_at="2026-01-01T12:00:00+00:00",
+        log_dir="/tmp",
+        **fields,
+    ).save()
+
+
+def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
+    terminal_run: subprocess.Popen[bytes],
+) -> None:
+    # the gateway's last launch ran on lcm and has since stopped
+    launches._save(
+        {
+            "blueprint": "demo",
+            "started_at": "2026-01-01T11:00:00Z",
+            "pid": 999_999_999,
+            "config": {"global": {"transport": "lcm"}, "modules": {}},
+        }
+    )
+    registered(terminal_run.pid)
+    assert live.connect_dimos() == GlobalConfig().transport == "zenoh"
+    registered(terminal_run.pid, config_overrides={"transport": "lcm"})
+    assert live.connect_dimos() == "lcm"
+    registered(terminal_run.pid, original_argv=["dimos", "run", "demo", "--transport", "lcm"])
+    assert live.connect_dimos() == "lcm"
+    registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
+    assert live.connect_dimos() == "lcm"
