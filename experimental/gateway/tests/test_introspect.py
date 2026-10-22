@@ -28,7 +28,7 @@ from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
-    blueprint,
+    blueprint_detail,
     rpcs,
     run_child,
     spec_topic,
@@ -46,7 +46,7 @@ def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
 def test_remapped_streams_show_their_wired_topic() -> None:
     streams = {
         (module["name"], stream["name"]): stream
-        for module in blueprint("r1pro-nav")["modules"]
+        for module in blueprint_detail("r1pro-nav")["modules"]
         for stream in module["streams"]
     }
     left = streams["headleftcamera", "jpeg_out"]
