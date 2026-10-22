@@ -32,8 +32,10 @@ HIDDEN_NAME = re.compile(r"^coordinator-|test|benchmark")
 
 
 def load(path: Path = SOURCE_FILE) -> dict[str, Any]:
+    """The `robots:` section: its `types` and `robots` (an older checkout has them at the top)."""
     source: dict[str, Any] = yaml.safe_load(path.read_text())
-    return source
+    section = source.get("robots") or {}
+    return section if "types" in section else source
 
 
 def owner_of(doc: dict[str, Any], path: str) -> str | None:

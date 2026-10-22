@@ -23,7 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import overrides as ov, robots
+from experimental.gateway import annotations as annotation_file, overrides as ov
 from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
@@ -263,7 +263,7 @@ def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestCl
 
 
 def test_annotations_name_registered_blueprints_and_real_fields() -> None:
-    source = robots.load()
+    source = annotation_file.load()
     for robot_id, robot in source["robots"].items():
         for name, blueprint in robot["blueprints"].items():
             assert name in all_blueprints, f"{robot_id} lists {name}, which isn't registered"

@@ -35,7 +35,7 @@ from packaging.utils import canonicalize_name
 import yaml
 
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import robots, store
+from experimental.gateway import annotations as annotation_file, store
 from experimental.gateway.introspect import MARKER, child_command, kill_group
 
 if sys.version_info >= (3, 11):
@@ -389,7 +389,7 @@ class Scanner:
 
     def finish(self) -> dict[str, dict[str, Any]]:
         """The scan's records by name, in its order, with each one's robot and the extras that would fix it."""
-        doc, providers = robots.load(), providing_extras(self.dimos_dir)
+        doc, providers = annotation_file.load(), providing_extras(self.dimos_dir)
         order = {name: index for index, name in enumerate(self.names["blueprints"])}
         found = sorted(
             self.blueprints.values(), key=lambda record: order.get(record["name"], len(order))
@@ -397,7 +397,7 @@ class Scanner:
         return {
             record["name"]: {
                 **record,
-                "robot": robots.robot_of(doc, record["name"], record["ref"]),
+                "robot": annotation_file.robot_of(doc, record["name"], record["ref"]),
                 "suggested_extras": providers(record.get("missing_module")),
             }
             for record in found

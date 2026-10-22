@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from experimental.gateway import robots
+from experimental.gateway import annotations as annotation_file
 from experimental.gateway.errors import StatusError
 
 SCAN_FIELDS = ("importable", "import_error", "missing_module", "optional_dependency")
@@ -27,9 +27,9 @@ SCAN_FIELDS = ("importable", "import_error", "missing_module", "optional_depende
 
 def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     """annotations.yaml (the checkout's own when it has one), resolved against `names`."""
-    checkout = dimos_dir / "experimental" / "gateway" / robots.SOURCE_FILE.name
-    return robots.resolved(
-        robots.load(checkout if checkout.exists() else robots.SOURCE_FILE), names
+    checkout = dimos_dir / "experimental" / "gateway" / annotation_file.SOURCE_FILE.name
+    return annotation_file.resolved(
+        annotation_file.load(checkout if checkout.exists() else annotation_file.SOURCE_FILE), names
     )
 
 
@@ -59,7 +59,7 @@ def blueprints(
                 "title": note.get("title"),
                 "description": note.get("description"),
                 "starter": note.get("starter"),
-                "hidden": note.get("hidden", robots.HIDDEN_NAME.search(name) is not None),
+                "hidden": note.get("hidden", annotation_file.HIDDEN_NAME.search(name) is not None),
                 "recommended_config": note.get("recommended_config", []),
                 "modules": [module["module"] for module in record.get("modules") or []],
                 **{key: record.get(key) for key in SCAN_FIELDS},
