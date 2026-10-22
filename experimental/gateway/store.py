@@ -22,6 +22,8 @@ import sys
 import tempfile
 from typing import Any
 
+import yaml
+
 from dimos.constants import RECORDINGS_DIR, STATE_DIR
 
 if sys.version_info >= (3, 11):
@@ -38,9 +40,19 @@ def logs_dir() -> Path:
     return gateway_dir() / "logs"
 
 
+def setting(section: str, key: str) -> Any:
+    """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
+    home = Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
+    try:
+        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
+    return None if value == "" else value
+
+
 def recordings_dir() -> Path:
-    # Desktop's shared recordings folder (its server_env); dimos's own otherwise
-    configured = os.environ.get("DIMOS_RECORDINGS_DIR")
+    configured = setting("recordings", "dir")
     return Path(configured).expanduser() if configured else RECORDINGS_DIR
 
 

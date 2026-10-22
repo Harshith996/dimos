@@ -9,7 +9,8 @@ through Desktop.
 
 - `GET /openapi.json` lists every route (FastAPI's own document); `x-slow: true` marks the ones that import dimos.
 - Events go on zenoh at `<ns>/dimos/events/<type>` (`launch`, `blueprints`, `upload`, `uploads`, `upload-removed`,
-  `cloud-login`); the namespace is `--zenoh-namespace` or `$DIMOS_ZENOH_NAMESPACE`, with no namespace there are no events.
+  `cloud-login`); the namespace is `--zenoh-namespace` or `zenoh.namespace` in `~/.dimos/config.yaml`, with no namespace
+  there are no events.
 - The last launch (its record, and what it was started with for `/active/relaunch`, 0600) lives in `$XDG_STATE_HOME/dimos/gateway/`.
 - `annotations.yaml` describes every robot and its blueprints (`GET /catalog/robots`, and on each blueprint in `GET /catalog/blueprints`).
 - Anything that imports a blueprint runs in a child process (`introspect.py`), so a blueprint that hangs or crashes

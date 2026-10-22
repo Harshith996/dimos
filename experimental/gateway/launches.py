@@ -244,6 +244,11 @@ def active() -> dict[str, Any]:
     }
 
 
+def gossip_env() -> dict[str, str]:
+    gossip = store.setting("zenoh", "gossip")
+    return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
+
+
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
     global_, modules = overrides.without_secrets(
         launch.global_, launch.modules, launch.secret_paths()
@@ -322,6 +327,8 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             **overrides.launch_env_defaults(),
             # dtop's stats for GET /active/stats; a --no-dtop flag still wins
             DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
+            # Desktop's zenoh gossip setting, which dimos's GlobalConfig.zenoh_gossip reads from the env
+            **gossip_env(),
             **secret_env,
         }
         pid = _spawn(

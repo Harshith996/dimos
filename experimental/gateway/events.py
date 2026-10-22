@@ -23,14 +23,13 @@ import re
 from typing import Any
 
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import launches
+from experimental.gateway import launches, store
 
 logger = setup_logger()
 
 
 def resolve_namespace(given: str | None) -> str | None:
-    # Desktop sets it for the gateway (its server_env); only the gateway's own event bus uses it
-    namespace = given or os.environ.get("DIMOS_ZENOH_NAMESPACE")
+    namespace = given or store.setting("zenoh", "namespace")
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -41,7 +40,8 @@ def resolve_namespace(given: str | None) -> str | None:
 def resolve_connect(given: str | None) -> list[str]:
     from dimos.core.global_config import global_config
 
-    value = given if given is not None else global_config.zenoh_connect
+    configured = store.setting("zenoh", "connect")
+    value = given if given is not None else configured or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
