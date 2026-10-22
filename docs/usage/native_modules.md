@@ -328,14 +328,9 @@ building a missing executable. Calling `build()` again checks these rules again.
 
 ### Dev builds without nix
 
-Every built-in module also sets `dev_build_command`, a plain `cargo` or `cmake`
-build, and `dev_executable`, where that build leaves the binary (all under
-`<repo>/target/native`, so modules share compiled dependencies). You install the
-toolchain and libraries yourself. Turn it on for every module with
-`DIMOS_NATIVE_DEV_BUILD=1` (or `--native-dev-build`), or for one module with
-`use_dev_build=True` in its config; `use_dev_build=False` keeps a module on nix
-while the global switch is on. Dev builds run on every start, since cargo and
-cmake only rebuild what changed.
+Each built-in module also sets `dev_build_command` (plain `cargo` or `cmake`, into
+`<repo>/target/native`) and `dev_executable`. `DIMOS_NATIVE_DEV_BUILD=1` switches every
+module to it; `use_dev_build` switches one. Dev builds run on every start.
 
 ### Faster builds via the Cachix substituter
 

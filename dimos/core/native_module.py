@@ -134,11 +134,9 @@ class NativeModuleConfig(ModuleConfig):
     executable: str
     source_dir: str | None = None
     build_command: str | None = None
-    # A build without nix (cargo, cmake, ...) that needs the toolchain and libraries installed
     dev_build_command: str | None = None
-    # Where dev_build_command leaves the binary, relative to source_dir; None reuses executable
     dev_executable: str | None = None
-    # Build with dev_build_command; None follows global_config.native_dev_build
+    # None follows global_config.native_dev_build
     use_dev_build: bool | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
@@ -171,8 +169,8 @@ class NativeModuleConfig(ModuleConfig):
             source = Path(self.source_dir)
             if not self.source_dir or source.is_absolute() or ".." in source.parts:
                 raise ValueError("source_dir must stay relative to the project checkout")
-            for executable in filter(None, (self.executable, self.dev_executable)):
-                if Path(executable).is_absolute():
+            for executable in [self.executable, *filter(None, [self.dev_executable])]:
+                if not executable or Path(executable).is_absolute():
                     raise ValueError(
                         "Source builds require a relative executable; "
                         "for an external binary set source_dir=None and build_command=None"
@@ -180,15 +178,11 @@ class NativeModuleConfig(ModuleConfig):
                 artifact = os.path.normpath(source / executable)
                 if artifact == ".." or artifact.startswith("../"):
                     raise ValueError("executable must stay within the project checkout")
-            if not self.executable:
-                raise ValueError("Source builds require a relative executable")
         return self
 
     @property
     def dev_build(self) -> bool:
-        """Whether this module builds with dev_build_command instead of build_command."""
         wanted = self.g.native_dev_build if self.use_dev_build is None else self.use_dev_build
-        # an external binary (source_dir=None) has nothing to build
         return wanted and self.dev_build_command is not None and self.source_dir is not None
 
     @property
@@ -554,9 +548,9 @@ class NativeModule(Module):
                 )
             return
 
-        # dev builds are incremental, so they always run and pick up edits
-        rebuild = self.config.dev_build or self.config.auto_build or self.config.g.build_native
-        if exe.exists() and not rebuild:
+        if exe.exists() and not (
+            self.config.dev_build or self.config.auto_build or self.config.g.build_native
+        ):
             return
 
         logger.info(

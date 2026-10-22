@@ -95,7 +95,6 @@ class GlobalConfig(BaseSettings):
         validation_alias=AliasChoices("DIMOS_TRANSPORT", "transport"),
     )
     build_native: bool = DEFAULT_BUILD_NATIVE
-    # Build native modules with their dev_build_command (cargo, cmake) instead of nix
     native_dev_build: bool = Field(
         default=False,
         validation_alias=AliasChoices("DIMOS_NATIVE_DEV_BUILD", "native_dev_build"),
