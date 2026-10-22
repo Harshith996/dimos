@@ -77,6 +77,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
     seed_bounds: In[RegionBounds]
     goal: In[PointStamped]
     tf: IO[TFMessage]
+    tf_static: In[TFMessage]
 
     path: Out[Path]
     surface_map: Out[PointCloudRegion]

@@ -25,13 +25,13 @@ image = "sensor_msgs/msg/CompressedImage"
 camera_info = "sensor_msgs/msg/CameraInfo"
 lidar = "sensor_msgs/msg/PointCloud2"
 tf = "tf2_msgs/msg/TFMessage"
+tf_static = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.depth2depth_cloud.outputs]
 depth_cloud = "sensor_msgs/msg/PointCloud2"
 
 [dependencies]
-dimos-module = { path = "../../../../native/rust/dimos-module", features = ["cdr"] }
-dimos-message-adapters = { path = "../../../../native/rust/dimos-message-adapters" }
+dimos-module = { path = "../../../../native/rust/dimos-module" }
 dimos-generated-messages = { path = "../../../../build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
