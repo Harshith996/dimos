@@ -17,21 +17,22 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
     cartesian_ik_task,
-    coordinator,
     eef_twist_task,
     teleop_ik_task,
     trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import (
     ArmPoseCoordinator,
-    ArmTeleopCoordinator,
     ArmTwistCoordinator,
 )
+from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
+    PIPER_SIM_PATH,
     make_piper_hardware,
     make_piper_model_config,
     piper_hardware,
@@ -48,8 +49,7 @@ _piper_model = make_piper_model_config()
 
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    coordinator(
-        cls=ArmTwistCoordinator,
+    ArmTwistCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -81,8 +81,7 @@ _piper_mock_cartesian_hw = make_piper_hardware(
     gripper=False,
 )
 
-coordinator_cartesian_ik_mock = coordinator(
-    cls=ArmPoseCoordinator,
+coordinator_cartesian_ik_mock = ArmPoseCoordinator.blueprint(
     instance_name="ControlCoordinator",
     hardware=[_piper_mock_cartesian_hw],
     tasks=[
@@ -98,8 +97,7 @@ _piper_teleop_hw = piper_hardware("arm")
 
 
 coordinator_teleop_piper = autoconnect(
-    coordinator(
-        cls=ArmTeleopCoordinator,
+    TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
@@ -128,6 +126,7 @@ coordinator_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(PIPER_SIM_PATH, len(_piper_teleop_hw.joints)),
 )
 
 _piper_cartesian_hw = make_piper_hardware(
@@ -137,8 +136,7 @@ _piper_cartesian_hw = make_piper_hardware(
     gripper=True,
 )
 
-coordinator_cartesian_ik_piper = coordinator(
-    cls=ArmPoseCoordinator,
+coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
     instance_name="ControlCoordinator",
     hardware=[_piper_cartesian_hw],
     tasks=[

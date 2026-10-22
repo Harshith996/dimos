@@ -16,14 +16,9 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.manipulators.common.blueprints import coordinator, teleop_ik_task, trajectory_task
-from dimos.robot.manipulators.common.coordinators import (
-    MixedArmCoordinator,
-    MixedArmTeleopCoordinator,
-)
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.robot.manipulators.common.blueprints import teleop_ik_task, trajectory_task
 from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
     make_piper_model_config,
@@ -47,17 +42,9 @@ _piper_dual = make_piper_hardware(
     canonical_joint_names=[f"piper_arm/joint{i}" for i in range(1, 7)],
 )
 
-_base_poses = {
-    "xarm_arm": PoseStamped(frame_id="world", position=Vector3(0, 0.4, 0.12)),
-    "piper_arm": PoseStamped(frame_id="world", position=Vector3(0, -0.4, 0.12)),
-}
-
-coordinator_piper_xarm = coordinator(
-    cls=MixedArmCoordinator,
-    instance_name="ControlCoordinator",
+coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual, _piper_dual],
     tasks=[trajectory_task(_xarm6_dual, _piper_dual)],
-    base_poses=_base_poses,
 )
 
 _xarm6_teleop_hw = make_xarm_hardware(
@@ -73,21 +60,12 @@ _piper_teleop_hw = make_piper_hardware(
     address="can0",
     gripper=True,
 )
-_xarm6_teleop_model = make_xarm6_model_config(
-    add_gripper=False,
-    prefix="xarm_arm/",
-    base_pose=_base_poses["xarm_arm"],
-)
-_piper_teleop_model = make_piper_model_config(
-    joint_prefix="piper_arm/",
-    base_pose=_base_poses["piper_arm"],
-)
+_xarm6_teleop_model = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
+_piper_teleop_model = make_piper_model_config()
 
-coordinator_teleop_dual = coordinator(
-    cls=MixedArmTeleopCoordinator,
+coordinator_teleop_dual = TeleopControlCoordinator.blueprint(
     instance_name="ControlCoordinator",
     hardware=[_xarm6_teleop_hw, _piper_teleop_hw],
-    base_poses=_base_poses,
     tasks=[
         teleop_ik_task(
             _xarm6_teleop_hw,

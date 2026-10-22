@@ -228,6 +228,7 @@ class SimulationModule(Module):
                     "sim_time": float(runtime.data.time),
                     "steps": runtime.tick,
                     "episode": runtime.episode,
+                    "generation": runtime.generation,
                     "paused": runtime.paused,
                     "waiting_for_control": sorted(runtime.waiting_for_control),
                     "truth_enabled": self._truth_enabled,
