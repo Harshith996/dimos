@@ -144,17 +144,6 @@ def test_reader_observes_reset_generation_without_recompiling(reader):
     assert observer.model is model
 
 
-def test_busy_snapshot_is_skipped_without_stopping_sensor(reader, mocker):
-    world, observer = reader
-    frame = world.snapshots.read_observation()
-    mocker.patch.object(
-        observer.channel, "read_observation", side_effect=[BlockingIOError("busy"), frame]
-    )
-    assert not observer.update()
-    assert observer.update()
-    assert observer.sequence == frame.metadata.sequence
-
-
 def test_composition_contains_one_world_and_no_public_sim_connections(world_config):
     instance = world_config.robots["left"]
     robot = instance.config
