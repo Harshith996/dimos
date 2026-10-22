@@ -83,6 +83,10 @@ pub struct Config {
     /// A coarse route farther than this from the global route is a detour worth refining (m).
     #[validate(range(min = 0.0))]
     pub refine_detour_m: f64,
+    /// A plan that ends short of a carrot mid-route is published as a hold once the robot
+    /// is this close to its end, so the follower never claims it as the goal (m).
+    #[validate(range(min = 0.0))]
+    pub hold_short_m: f64,
     /// What counts as an obstacle (`obstacles.rs`).
     pub obstacle_model: String,
     /// Hold once the local map is this old, measured from arrival.
@@ -227,6 +231,28 @@ pub fn approach_along(
     }
     Some(route[i..].to_vec())
 }
+
+/// Should a plan ending at `end` be held? It falls short of the `carrot`, by more than the
+/// lattice's snap mid-route or by more than `hold_m` at the route's end, and the robot is
+/// within `hold_m` of it: the follower would read arriving there as reaching the goal.
+pub fn short_hold(
+    end: (f64, f64),
+    carrot: (f64, f64),
+    route_end: (f64, f64),
+    robot: (f64, f64),
+    hold_m: f64,
+) -> bool {
+    let d = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).hypot(a.1 - b.1);
+    let short = if d(carrot, route_end) > 1e-9 {
+        SHORT_M
+    } else {
+        hold_m
+    };
+    d(end, carrot) > short && d(end, robot) < hold_m
+}
+
+/// A plan end this far from the carrot falls short of it (m), past the lattice's snap.
+const SHORT_M: f64 = 0.17;
 
 /// Has an input the plan depends on moved? The route enters only through the
 /// carrot, so that is what is compared.
@@ -519,6 +545,38 @@ impl Worker {
                         );
                         Some((path, ground.support))
                     });
+                    let route_end = route[route.len() - 1];
+                    let produced = produced.map(|(path, support)| {
+                        let end = path
+                            .poses
+                            .last()
+                            .map(|p| (p.pose.position.x, p.pose.position.y));
+                        let short = path.poses.len() >= 2
+                            && end.is_some_and(|e| {
+                                short_hold(
+                                    e,
+                                    goal,
+                                    (route_end[0], route_end[1]),
+                                    (pose.0, pose.1),
+                                    self.config.hold_short_m,
+                                )
+                            });
+                        if short {
+                            debug_throttled!(
+                                Duration::from_secs(5),
+                                "plan ends short of the carrot at the robot, holding"
+                            );
+                            let held = hold_stub(
+                                pose,
+                                &self.config.world_frame,
+                                msg::now_secs(),
+                                body_z.unwrap_or(0.0),
+                            );
+                            (held, support)
+                        } else {
+                            (path, support)
+                        }
+                    });
                     if let Some((produced, support)) = produced {
                         let floor =
                             msg::build_cloud(&support, &self.config.world_frame, msg::now_secs());
@@ -746,6 +804,56 @@ mod tests {
         assert!(gate.enter()); // and a second spell warns again
     }
 
+    #[test]
+    fn a_plan_ending_short_mid_route_is_held_near_its_end() {
+        let route_end = (10.0, 0.0);
+        assert!(short_hold(
+            (2.0, 0.0),
+            (5.0, 0.0),
+            route_end,
+            (1.6, 0.0),
+            0.6
+        ));
+        assert!(!short_hold(
+            (2.0, 0.0),
+            (5.0, 0.0),
+            route_end,
+            (1.0, 0.0),
+            0.6
+        ));
+    }
+
+    #[test]
+    fn a_plan_ending_far_short_of_the_goal_is_held() {
+        // The goal lies past a gap the body does not fit, and the plan stops meters short of it.
+        assert!(short_hold(
+            (7.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 0.0),
+            (6.6, 0.0),
+            0.6
+        ));
+    }
+
+    #[test]
+    fn a_plan_reaching_the_carrot_or_the_route_end_is_not_held() {
+        assert!(!short_hold(
+            (5.0, 0.0),
+            (5.0, 0.0),
+            (10.0, 0.0),
+            (4.8, 0.0),
+            0.6
+        ));
+        // At the goal the carrot is the route end, and arriving a little short of it is arriving.
+        assert!(!short_hold(
+            (9.6, 0.0),
+            (10.0, 0.0),
+            (10.0, 0.0),
+            (9.5, 0.0),
+            0.6
+        ));
+    }
+
     fn config() -> Config {
         Config {
             embodiment: Emb::fixture(),
@@ -763,6 +871,7 @@ mod tests {
             reset_carrot_m: 1.0,
             refine_window_m: 0.0,
             refine_detour_m: 1.5,
+            hold_short_m: 0.6,
             obstacle_model: "body_band".into(),
             max_map_age_s: 5.0,
         }
