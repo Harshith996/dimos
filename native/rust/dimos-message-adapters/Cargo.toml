@@ -1,0 +1,13 @@
+[package]
+name = "dimos-message-adapters"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Generated-message adapters for the dimOS native module SDK"
+
+[workspace]
+
+[dependencies]
+dimos-module = { path = "../dimos-module", features = ["cdr"] }
+dimos-generated-messages = { path = "../../../build/message-source/rust" }
+nalgebra = "0.35.0"
