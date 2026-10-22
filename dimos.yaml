@@ -16,7 +16,7 @@ provides:
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
     version: 7.0.0
     description: >-
-      The dimos gateway: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
+      The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); and past runs (logs, recordings). It saves no config: each launch
       carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
   paths:
