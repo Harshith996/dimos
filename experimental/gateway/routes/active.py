@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import launches, overrides as ov, responses
+from experimental.gateway import launches, overrides, responses
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.live import NothingRunningError
 from experimental.gateway.routes.history import read_log
@@ -87,8 +87,8 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     name = str(request.blueprint or request.module)
     if not name or name.startswith("-"):
         raise ApiError(400, f"bad name: {name}")
-    parsed = ov.parse(request.config)
-    ov.check_global(parsed.global_)
+    parsed = overrides.parse(request.config)
+    overrides.check_global(parsed.global_)
     return await started(state, name, LaunchConfig(parsed.global_, parsed.modules, parsed.secrets))
 
 
@@ -183,6 +183,7 @@ async def streams(state: GatewayState) -> dict[str, Any]:
     return {"streams": await asyncio.to_thread(state.live.streams)}
 
 
+# 1 s, as Dimos.peek_stream's own default
 @router.get("/streams/{name}/peek", response_model=responses.Peeked)
 async def peek(state: GatewayState, name: str, timeout: float = 1.0) -> dict[str, Any]:
     return await asyncio.to_thread(state.live.peek, name, timeout)

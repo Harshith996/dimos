@@ -30,14 +30,12 @@ import psutil
 
 from dimos.constants import LOG_DIR
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import overrides as ov, store
+from experimental.gateway import overrides, store
 from experimental.gateway.errors import ApiError, StatusError
 from experimental.gateway.overrides import ModuleValues
 
-ACTIVE = ("starting", "running", "stopping")
 # GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
 DTOP_ENV = "DTOP"
-OUTPUT_TAIL = 200_000
 _lock = threading.RLock()
 
 
@@ -61,7 +59,7 @@ class LaunchConfig:
     exact: bool = False
 
     def secret_paths(self) -> list[str]:
-        return ov.secret_paths(self.global_, self.modules, self.secrets)
+        return overrides.secret_paths(self.global_, self.modules, self.secrets)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -74,7 +72,7 @@ class LaunchConfig:
 
     @staticmethod
     def from_json(value: dict[str, Any]) -> LaunchConfig:
-        parsed = ov.parse(
+        parsed = overrides.parse(
             {key: value[key] for key in ("global", "modules", "secrets") if key in value}
         )
         return LaunchConfig(
@@ -213,7 +211,7 @@ def current_launch() -> dict[str, Any] | None:
         phase = "failed"
     run_id = record.get("run_id")
     log_dir = LOG_DIR / run_id if run_id else None
-    output = _tail(launch_log(), OUTPUT_TAIL)
+    output = _tail(launch_log(), 200_000)  # the last ~200 KB of the launch's output
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],
         "phase": phase,
@@ -247,11 +245,13 @@ def active() -> dict[str, Any]:
 
 
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
-    global_, modules = ov.without_secrets(launch.global_, launch.modules, launch.secret_paths())
+    global_, modules = overrides.without_secrets(
+        launch.global_, launch.modules, launch.secret_paths()
+    )
     if launch.args:
-        flags = ov.global_flags(global_, explicit_bools=True)
-        return ["run", blueprint, *flags, *ov.module_flags(modules), *launch.args]
-    return [*ov.global_flags(global_), "run", blueprint, *ov.module_flags(modules)]
+        flags = overrides.global_flags(global_, explicit_bools=True)
+        return ["run", blueprint, *flags, *overrides.module_flags(modules), *launch.args]
+    return [*overrides.global_flags(global_), "run", blueprint, *overrides.module_flags(modules)]
 
 
 def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
@@ -291,7 +291,7 @@ def _remember(blueprint: str, pid: int, request: dict[str, Any], shown: dict[str
 
 def check_idle() -> None:
     previous = current_launch()
-    if previous and previous["phase"] in ACTIVE:
+    if previous and previous["phase"] in ("starting", "running", "stopping"):
         raise StillRunningError(
             f"{previous['blueprint']} is still {previous['phase']}; stop it first"
         )
@@ -308,9 +308,9 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
         paths = launch.secret_paths()
-        secret_env = ov.secret_env(launch.global_, launch.modules, paths)
-        shown_env = [f"{name}={ov.HIDDEN}" for name in secret_env]
-        shown_args = ov.shown_args(launch.args)
+        secret_env = overrides.secret_env(launch.global_, launch.modules, paths)
+        shown_env = [f"{name}={overrides.HIDDEN}" for name in secret_env]
+        shown_args = overrides.shown_args(launch.args)
         shown_run = run_args(blueprint, LaunchConfig(**{**launch.__dict__, "args": shown_args}))
         venv = store.venv_dir(dimos_dir)
         env = {
@@ -319,7 +319,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "VIRTUAL_ENV": str(venv),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
-            **ov.launch_env_defaults(),
+            **overrides.launch_env_defaults(),
             # dtop's stats for GET /active/stats; a --no-dtop flag still wins
             DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
             **secret_env,
@@ -330,7 +330,7 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             str(dimos_dir),
             env,
         )
-        global_, modules = ov.redact(launch.global_, launch.modules, paths)
+        global_, modules = overrides.redact(launch.global_, launch.modules, paths)
         shown = {"config": {"global": global_, "modules": modules}}
         _remember(
             blueprint,
@@ -358,7 +358,7 @@ def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
     with _lock:
         check_idle()
         command = [str(arg) for arg in copy["command"]]
-        pid = _spawn(command, ov.shown_args(command), str(copy["cwd"]), dict(copy["env"]))
+        pid = _spawn(command, overrides.shown_args(command), str(copy["cwd"]), dict(copy["env"]))
         _remember(blueprint, pid, {"copy": copy}, {"relaunched": True})
         started = current_launch()
         assert started is not None

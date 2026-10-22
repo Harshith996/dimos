@@ -45,9 +45,8 @@ else:
 
 logger = setup_logger()
 
+# one blueprint's imports in the scan child; past this it reads as hung
 ITEM_TIMEOUT_S = 120.0
-JOB_KEEP_S = 30 * 60
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 IMPORT_ALIASES: dict[str, tuple[str, ...]] = {
     "cv2": ("opencv-python", "opencv-python-headless", "opencv-contrib-python"),
     "PIL": ("pillow",),
@@ -120,7 +119,6 @@ def saved_scan_file(dimos_dir: Path) -> Path:
     )
 
 
-FINGERPRINT_TTL_S = 2.0
 # a saved scan in an older format reads as never scanned (2: modules carry rpcs, not skills)
 SCAN_FORMAT = 2
 
@@ -163,7 +161,8 @@ class Scanner:
         return self.saved
 
     def current_fingerprint(self) -> str:
-        if self.now_print is None or time.monotonic() - self.now_print[0] > FINGERPRINT_TTL_S:
+        # a burst of requests shares one git status
+        if self.now_print is None or time.monotonic() - self.now_print[0] > 2.0:
             self.now_print = (time.monotonic(), fingerprint(self.dimos_dir))
         return self.now_print[1]
 
@@ -389,7 +388,7 @@ class Scanner:
 
     def finish(self) -> dict[str, dict[str, Any]]:
         """The scan's records by name, in its order, with each one's robot and the extras that would fix it."""
-        doc, providers = annotation_file.load(), providing_extras(self.dimos_dir)
+        notes, providers = annotation_file.load(), providing_extras(self.dimos_dir)
         order = {name: index for index, name in enumerate(self.names["blueprints"])}
         found = sorted(
             self.blueprints.values(), key=lambda record: order.get(record["name"], len(order))
@@ -397,7 +396,7 @@ class Scanner:
         return {
             record["name"]: {
                 **record,
-                "robot": annotation_file.robot_of(doc, record["name"], record["ref"]),
+                "robot": annotation_file.robot_of(notes, record["name"], record["ref"]),
                 "suggested_extras": providers(record.get("missing_module")),
             }
             for record in found
@@ -544,8 +543,8 @@ def providing_extras(dimos_dir: Path) -> Callable[[str | None], list[str]]:
     extras = parse_extras(declared(dimos_dir, {}))
     closures = lock_closures(dimos_dir)
     direct = {
-        extra_name: {canonicalize_name(requirement.name) for requirement in reqs}
-        for extra_name, (reqs, _) in extras.items()
+        extra_name: {canonicalize_name(requirement.name) for requirement in requirements}
+        for extra_name, (requirements, _) in extras.items()
     }
 
     def contains(extra: str, other: str, seen: frozenset[str] = frozenset()) -> bool:
@@ -663,7 +662,7 @@ class Jobs:
         self.ids = itertools.count(1)
 
     def prune(self) -> None:
-        cutoff = time.monotonic() - JOB_KEEP_S
+        cutoff = time.monotonic() - 30 * 60  # a finished job's log stays readable half an hour
         self.jobs = {
             job_id: job
             for job_id, job in self.jobs.items()
@@ -732,11 +731,10 @@ class Jobs:
         )
         assert process.stdout
         async for raw in process.stdout:
-            job.lines += ANSI.sub("", raw.decode("utf-8", "replace")).rstrip("\r\n").split("\r")
+            # without the ANSI colour codes
+            text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw.decode("utf-8", "replace"))
+            job.lines += text.rstrip("\r\n").split("\r")
         return await process.wait()
-
-
-BREWED_CYCLONEDDS = (Path("/opt/homebrew/opt/cyclonedds"), Path("/usr/local/opt/cyclonedds"))
 
 
 def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
@@ -751,9 +749,13 @@ def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
         tags = file.removesuffix(".whl").split("-")[-3:] if file.endswith(".whl") else []
         if len(tags) != 3:
             continue
-        py_ok = tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
-        plat_ok = tags[2] == "any" or (system in tags[2] and any(cpu in tags[2] for cpu in cpus))
-        if py_ok and plat_ok:
+        python_fits = (
+            tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
+        )
+        platform_fits = tags[2] == "any" or (
+            system in tags[2] and any(cpu in tags[2] for cpu in cpus)
+        )
+        if python_fits and platform_fits:
             return True
     return False
 
@@ -808,7 +810,8 @@ def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
             built = await step([nix, *features, "build", "--out-link", str(link), flake]) == 0
             if built and (link / "lib").is_dir():
                 return cyclonedds_env(link.resolve())
-        for brewed in BREWED_CYCLONEDDS:
+        # Homebrew's prefixes on Apple silicon and on Intel
+        for brewed in (Path("/opt/homebrew/opt/cyclonedds"), Path("/usr/local/opt/cyclonedds")):
             if (brewed / "lib").is_dir():
                 return cyclonedds_env(brewed.resolve())
         raise MissingForJobError(

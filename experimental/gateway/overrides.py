@@ -26,7 +26,6 @@ from experimental.gateway.errors import StatusError
 ModuleValues = dict[str, dict[str, Any]]
 
 HIDDEN = "•••"
-SECRET_WORDS = ("secret", "token", "password", "passwd")
 STRUCTURED = ("global", "modules", "secrets")
 
 
@@ -79,7 +78,11 @@ def parse(raw: Any) -> LaunchOverrides:
 
 def is_secret_name(path: str) -> bool:
     name = path.rsplit(".", 1)[-1].lower()
-    return name == "key" or name.endswith("_key") or any(word in name for word in SECRET_WORDS)
+    return (
+        name == "key"
+        or name.endswith("_key")
+        or any(word in name for word in ("secret", "token", "password", "passwd"))
+    )
 
 
 def secret_paths(

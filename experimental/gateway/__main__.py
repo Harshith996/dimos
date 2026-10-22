@@ -27,6 +27,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from experimental.gateway import store
 
 
+# bounds a wedged gateway; a live one answers /healthz at once
 def healthy(socket_path: Path, timeout: float = 2.0) -> bool:
     try:
         with sockets.socket(sockets.AF_UNIX, sockets.SOCK_STREAM) as connection:
@@ -81,6 +82,7 @@ def serve(
     state = new_state(dimos_dir, bus)
     state.exit = exit_now
     server = uvicorn.Server(
+        # open requests get 2 s to finish on shutdown, so a restart isn't held up by a slow one
         uvicorn.Config(create_app(state), log_level="warning", timeout_graceful_shutdown=2)
     )
     print(f"dimos gateway -> {socket_path}{f' and 127.0.0.1:{port}' if port else ''}", flush=True)
@@ -101,14 +103,16 @@ def detach(arguments: list[str], socket_path: Path) -> None:
         child = subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True
         )
-    for _ in range(60):
+    startup_s = 15.0  # a cold start imports fastapi and dimos before it answers
+    deadline = time.monotonic() + startup_s
+    while time.monotonic() < deadline:
         if healthy(socket_path):
             print(f"the dimos gateway is running on {socket_path} (pid {child.pid})")
             return
         if child.poll() is not None:
             raise SystemExit(f"the dimos gateway exited ({child.returncode}); see {log_file}")
         time.sleep(0.25)
-    raise SystemExit(f"the dimos gateway didn't answer in 15 s; see {log_file}")
+    raise SystemExit(f"the dimos gateway didn't answer in {startup_s:.0f} s; see {log_file}")
 
 
 def gateway(

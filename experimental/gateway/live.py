@@ -46,6 +46,7 @@ def connect_dimos() -> Any:
     launch = current_launch() or {}
     transport = launch.get("config", {}).get("global", {}).get("transport")
     global_config.update(transport=transport or GlobalConfig().transport)
+    # 1 s, not connect's 5 s: a run whose coordinator doesn't answer fails each request fast
     return Dimos.connect(timeout=1.0)
 
 
@@ -102,40 +103,41 @@ class Live:
         }
         streams = self.streams()
         found = []
-        for info in app.list_modules():
-            id_ = instance_id(info.instance_name)
+        for instance in app.list_modules():
+            module_id = instance_id(instance.instance_name)
             known = {
-                rpc["name"]: rpc for rpc in by_class.get(info.qualified_path, {}).get("rpcs", [])
+                rpc["name"]: rpc
+                for rpc in by_class.get(instance.qualified_path, {}).get("rpcs", [])
             }
             rpcs = [
                 {
                     **known.get(rpc.name, {"params": None, "return_type": None, "skill": None}),
                     "name": rpc.name,
-                    "module": id_,
+                    "module": module_id,
                     "doc": known.get(rpc.name, {}).get("doc") or rpc.documentation or "",
                 }
-                for rpc in sorted(info.rpcs, key=lambda rpc: rpc.name)
+                for rpc in sorted(instance.rpcs, key=lambda rpc: rpc.name)
                 if rpc.name in known or rpc.name not in base_rpcs()
             ]
             found.append(
                 {
-                    "id": id_,
-                    "class": info.class_name,
-                    "catalogId": info.qualified_path,
-                    "namespace": id_.rsplit(":", 1)[0] if ":" in id_ else None,
-                    "doc": info.documentation or "",
+                    "id": module_id,
+                    "class": instance.class_name,
+                    "catalogId": instance.qualified_path,
+                    "namespace": module_id.rsplit(":", 1)[0] if ":" in module_id else None,
+                    "doc": instance.documentation or "",
                     "rpcs": rpcs,
-                    "streams": [stream for stream in streams if stream["module"] == id_],
+                    "streams": [stream for stream in streams if stream["module"] == module_id],
                 }
             )
         return sorted(found, key=lambda module: module["id"])
 
-    def module(self, scanned: dict[str, Any] | None, id_: str) -> dict[str, Any]:
+    def module(self, scanned: dict[str, Any] | None, module_id: str) -> dict[str, Any]:
         modules = self.modules(scanned)
-        found = next((listed for listed in modules if listed["id"] == id_), None)
+        found = next((listed for listed in modules if listed["id"] == module_id), None)
         if found is None:
             running = ", ".join(listed["id"] for listed in modules) or "none"
-            raise ApiError(404, f"no running module {id_} (running: {running})")
+            raise ApiError(404, f"no running module {module_id} (running: {running})")
         return found
 
     def streams(self) -> list[dict[str, Any]]:
@@ -153,21 +155,23 @@ class Live:
     def call(
         self,
         scanned: dict[str, Any] | None,
-        id_: str,
+        module_id: str,
         name: str,
         args: list[Any],
         kwargs: dict[str, Any],
     ) -> dict[str, Any]:
-        module = self.module(scanned, id_)
+        module = self.module(scanned, module_id)
         if name not in {rpc["name"] for rpc in module["rpcs"]}:
             listed = ", ".join(rpc["name"] for rpc in module["rpcs"])
-            raise ApiError(404, f"{id_} has no RPC {name} (its RPCs: {listed})")
+            raise ApiError(404, f"{module_id} has no RPC {name} (its RPCs: {listed})")
         # porcelain takes a namespaced instance's key, or an un-namespaced one's class name
-        handle = self.app().get_module(id_.replace(":", "/") if ":" in id_ else module["class"])
+        handle = self.app().get_module(
+            module_id.replace(":", "/") if ":" in module_id else module["class"]
+        )
         try:
             result = getattr(handle, name)(*args, **kwargs)
         except TimeoutError:
-            raise ApiError(500, f"{id_}/{name} didn't answer in time")
+            raise ApiError(500, f"{module_id}/{name} didn't answer in time")
         except Exception as error:
             return {"ok": False, "result": None, "error": f"{type(error).__name__}: {error}"}
         try:
@@ -179,14 +183,14 @@ class Live:
     # TODO(core): Dimos.restart and Dimos.unload take a module class, so with several namespaced copies of one class
     # (robot0:go2connection, robot1:go2connection) they refuse ("Multiple instances"). Doing this cleanly needs them
     # to take an instance name: the coordinator already has restart_module_by_name, but unloading by name has no RPC.
-    def restart(self, id_: str) -> dict[str, Any]:
-        return self._try(lambda app, cls: app.restart(cls), id_)
+    def restart(self, module_id: str) -> dict[str, Any]:
+        return self._try(lambda app, module_class: app.restart(module_class), module_id)
 
-    def unload(self, id_: str) -> dict[str, Any]:
-        return self._try(lambda app, cls: app.unload(cls), id_)
+    def unload(self, module_id: str) -> dict[str, Any]:
+        return self._try(lambda app, module_class: app.unload(module_class), module_id)
 
-    def _try(self, action: Callable[[Any, Any], None], id_: str) -> dict[str, Any]:
-        module = self.module(None, id_)
+    def _try(self, action: Callable[[Any, Any], None], module_id: str) -> dict[str, Any]:
+        module = self.module(None, module_id)
         try:
             action(self.app(), load_class(module["catalogId"]))
         except Exception as error:

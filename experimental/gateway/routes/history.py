@@ -32,7 +32,7 @@ async def read_log(
     run_id: str,
     after: int | None,
     level: str | None,
-    q: str | None,
+    query: str | None,
     limit: int | None,
 ) -> dict[str, Any]:
     file = await asyncio.to_thread(logs.find, state.dimos_dir, run_id)
@@ -41,7 +41,7 @@ async def read_log(
             404, "no run has a log yet" if run_id == "latest" else f"no log for run {run_id}"
         )
     return await asyncio.to_thread(
-        logs.read, file, run_id, after, limit or 1000, q or None, level or None
+        logs.read, file, run_id, after, limit or 1000, query or None, level or None
     )
 
 
