@@ -20,7 +20,7 @@
 
 from typing import Any
 
-import msgpack  # type: ignore[import-untyped]
+import msgpack
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
