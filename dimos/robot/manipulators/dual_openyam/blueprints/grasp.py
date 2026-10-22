@@ -32,6 +32,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -60,6 +61,26 @@ DUAL_OPENYAM_TABLE_TOP_Z = -0.0346
 # Pad centre 3.7 cm beyond the grasp frame; the printed fingers match stock (calipers 2026-10-15).
 DUAL_OPENYAM_PAD_CENTRE_OFFSET = 0.037
 DUAL_OPENYAM_FINGER_EXTENSION = {"left": 0.009, "right": 0.009}
+
+# The same gripper in GraspGenX's convention: origin on the gripper link, approach
+# along +Z, jaws closing along X. Pads meet 0.137 m out and the open jaws span 94 mm.
+DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME = {
+    "extents_open": (0.094, 0.028, 0.020),
+    "offset_open": (0.0, 0.0, DUAL_OPENYAM_PAD_CENTRE_OFFSET + 0.10),
+    "extents_half_open": (0.047, 0.028, 0.020),
+    "offset_half_open": (0.0, 0.0, DUAL_OPENYAM_PAD_CENTRE_OFFSET + 0.10),
+    "fingertip_depth": 0.10
+    + DUAL_OPENYAM_PAD_CENTRE_OFFSET
+    + DUAL_OPENYAM_FINGER_EXTENSION["left"],
+}
+# GraspGenX frame -> {side}_tcp: the quarter turn that takes GraspGenX's X closing axis
+# onto the gripper's Y, then out along the approach to the fingertip the tcp sits on.
+DUAL_OPENYAM_GRASP_FRAME_TO_TCP = (
+    (0.0, 1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME["fingertip_depth"]),
+    (0.0, 0.0, 0.0, 1.0),
+)
 # Overhead colour optical pose from the 2026-10-15 calibration, expressed as camera_link.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=-0.01684, y=0.01262, z=0.41508),
@@ -189,7 +210,9 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
 
 
-def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
+def dual_openyam_grasp_modules(
+    grasp_provider: Blueprint | None = None,
+) -> tuple[Blueprint, ...]:
     return (
         planner(
             model=dual_openyam_grasp_model_config(),
@@ -203,7 +226,7 @@ def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
         ManipulationSkills.blueprint(),
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(planning_frame="world", pregrasp_offset=0.05),
-        HeuristicGraspModule.blueprint(),
+        grasp_provider or HeuristicGraspModule.blueprint(),
         # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(
             width=640,
@@ -239,3 +262,12 @@ def dual_openyam_grasp_modules() -> tuple[Blueprint, ...]:
 dual_openyam_grasp = autoconnect(*dual_openyam_grasp_modules()).global_config(
     record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS
 )
+
+dual_openyam_grasp_graspgenx = autoconnect(
+    *dual_openyam_grasp_modules(
+        GraspGenXModule.blueprint(
+            gripper=DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
+            grasp_frame_to_tcp=DUAL_OPENYAM_GRASP_FRAME_TO_TCP,
+        )
+    )
+).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)

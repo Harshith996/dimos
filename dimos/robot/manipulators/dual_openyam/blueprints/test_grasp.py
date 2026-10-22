@@ -21,6 +21,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -35,6 +36,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_RECORD_TOPICS,
     DUAL_OPENYAM_VIEW_TOPICS,
     dual_openyam_grasp,
+    dual_openyam_grasp_graspgenx,
     dual_openyam_grasp_model_config,
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -130,3 +132,13 @@ def test_agent_prompt_names_both_groups_and_their_drop_poses() -> None:
     assert "place_at 0.26 0.2 0.05 left_manipulator" in prompt
     assert "place_at 0.26 -0.2 0.05 right_manipulator" in prompt
     assert {HeuristicGraspModule, ManipulationModule} <= _modules(dual_openyam_grasp_agent)
+
+
+def test_graspgenx_variant_only_swaps_the_grasp_provider() -> None:
+    heuristic = _modules(dual_openyam_grasp)
+    learned = _modules(dual_openyam_grasp_graspgenx)
+    assert HeuristicGraspModule in heuristic and GraspGenXModule not in heuristic
+    assert GraspGenXModule in learned and HeuristicGraspModule not in learned
+    assert heuristic - {HeuristicGraspModule} == learned - {GraspGenXModule}
+    atom = _atom(dual_openyam_grasp_graspgenx, GraspGenXModule)
+    assert atom.kwargs["grasp_frame_to_tcp"][2][3] == pytest.approx(0.146)

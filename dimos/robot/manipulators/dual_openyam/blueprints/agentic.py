@@ -31,6 +31,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_TABLE_TOP_Z,
     dual_openyam_grasp,
+    dual_openyam_grasp_graspgenx,
 )
 
 _PROMPT = """\
@@ -89,6 +90,12 @@ def dual_openyam_agent_prompt() -> str:
 # Assigned through autoconnect so the registry generator sees it.
 dual_openyam_grasp_agent = autoconnect(
     dual_openyam_grasp,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=dual_openyam_agent_prompt()),
+)
+
+dual_openyam_grasp_graspgenx_agent = autoconnect(
+    dual_openyam_grasp_graspgenx,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=dual_openyam_agent_prompt()),
 )
