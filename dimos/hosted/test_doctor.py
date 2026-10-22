@@ -15,6 +15,7 @@
 import pytest
 
 from dimos.hosted.doctor import CHECKS, Check, run
+from dimos.protocol.service.zenohservice import LOOPBACK_INTERFACE
 
 
 def test_doctor_runner_outcomes() -> None:
@@ -69,6 +70,12 @@ def test_a_loopback_only_host_is_flagged_unreachable(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447"))
     assert "Only this machine" in (doctor._reachable() or "")
     monkeypatch.setattr(
-        doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447,iface/eth0")
+        doctor,
+        "HostConfig",
+        lambda: HostConfig(listen=f"tcp/127.0.0.1:7447,iface/{LOOPBACK_INTERFACE}"),
+    )
+    assert "Only this machine" in (doctor._reachable() or "")
+    monkeypatch.setattr(
+        doctor, "HostConfig", lambda: HostConfig(listen="tcp/127.0.0.1:7447,tcp/10.0.0.5:7447")
     )
     assert doctor._reachable() is None
