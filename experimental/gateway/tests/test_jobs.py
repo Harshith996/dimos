@@ -95,7 +95,9 @@ def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     client: TestClient, scanned: State, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FAKE_SCAN_NAMES", '["dies_after", "good", "missing"]')
-    scanned.listed = [{"name": n, "kind": "builtin"} for n in ("dies_after", "good", "missing")]
+    scanned.listed = [
+        {"name": name, "kind": "builtin"} for name in ("dies_after", "good", "missing")
+    ]
     job = client.post("/catalog/scan").json()["job"]
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
     assert client.get(f"/jobs/{job}").json()["ok"]
@@ -109,7 +111,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
         '[project]\nname = "dimos"\n[project.optional-dependencies]\nunitree-dds = ["unitree-sdk2py"]\n'
     )
     scanned.listed = [
-        {"name": n, "kind": "builtin"} for n in ("good", "crashes", "missing", "other")
+        {"name": name, "kind": "builtin"} for name in ("good", "crashes", "missing", "other")
     ]
     never = client.get("/catalog").json()
     assert never["modules"] == [] and never["scan"]["scanned"] is False and never["scan"]["stale"]
@@ -126,7 +128,7 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
     assert any("crashed" in line for line in status["lines"])
     answer = client.get("/catalog/blueprints").json()
     scan = answer["scan"]
-    assert {k: scan[k] for k in ("job", "state", "scanned", "stale", "finished_at")} == {
+    assert {key: scan[key] for key in ("job", "state", "scanned", "stale", "finished_at")} == {
         "job": job,
         "state": "idle",
         "scanned": True,
@@ -134,14 +136,19 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
         "finished_at": status["finished_at"],
     }
     assert 0 <= scan["age_seconds"] < 60
-    found = {b["name"]: b for b in answer["blueprints"]}
+    found = {blueprint["name"]: blueprint for blueprint in answer["blueprints"]}
     assert found["good"]["robot"] == "go2" and found["good"]["modules"] == ["cam"]
     assert found["good"]["scanned_at"] == status["finished_at"]
     assert "crashed" in found["crashes"]["import_error"]
     assert found["missing"]["suggested_extras"] == ["unitree-dds"]
     assert found["other"]["importable"] is None and found["other"]["scanned_at"] is None
     catalog = client.get("/catalog").json()
-    assert [b["name"] for b in catalog["blueprints"]] == ["good", "crashes", "missing", "other"]
+    assert [blueprint["name"] for blueprint in catalog["blueprints"]] == [
+        "good",
+        "crashes",
+        "missing",
+        "other",
+    ]
     assert catalog["modules"][0]["blueprints"] == ["good"] and "go2" in catalog["robots"]
     assert catalog["modules"][0]["rpcs"] == ["snap"] and catalog["modules"][0]["robots"] == ["go2"]
     assert (
@@ -149,21 +156,23 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
         and catalog["rpcs"][0]["skill"]
         and catalog["scan"]["scanned"]
     )
-    assert any(e.startswith("blueprint missing: ") for e in catalog["errors"])
+    assert any(error.startswith("blueprint missing: ") for error in catalog["errors"])
     one = client.get("/catalog?module=x.Cam").json()
-    assert [m["name"] for m in one["modules"]] == ["cam"] and [r["name"] for r in one["rpcs"]] == [
-        "snap"
-    ]
+    assert [module["name"] for module in one["modules"]] == ["cam"] and [
+        rpc["name"] for rpc in one["rpcs"]
+    ] == ["snap"]
     assert client.get("/catalog?module=nope").json()["modules"] == []
     bp = client.get("/catalog?blueprint=good").json()
-    assert [b["name"] for b in bp["blueprints"]] == ["good"] and [
-        m["name"] for m in bp["modules"]
+    assert [blueprint["name"] for blueprint in bp["blueprints"]] == ["good"] and [
+        module["name"] for module in bp["modules"]
     ] == ["cam"]
     assert "stale" in bp["scan"] and "age_seconds" in bp["scan"]
     assert client.get("/catalog?blueprint=nope").json()["modules"] == []
     names = client.get("/catalog/blueprints?fields=blueprints.name").json()
-    assert {b["name"] for b in names["blueprints"]} == set(found)
-    assert all(b.keys() == {"name"} for b in names["blueprints"]) and "scan" in names
+    assert {blueprint["name"] for blueprint in names["blueprints"]} == set(found)
+    assert (
+        all(blueprint.keys() == {"name"} for blueprint in names["blueprints"]) and "scan" in names
+    )
     picked = client.get("/catalog?fields=modules.name,robots.name").json()
     assert set(picked) == {"modules", "robots", "scan"} and picked["modules"] == [{"name": "cam"}]
     assert picked["robots"]["go2"] == {"name": "Unitree Go2"}
@@ -198,9 +207,11 @@ def test_extras_status_from_pyproject(tmp_path: Path) -> None:
         'sim = ["mujoco>=3"]\nall = ["dimos[sim]", "torch"]\n'
     )
     probe = {"environment": {}, "packages": {"mujoco": "3.1", "torch": "2.0"}}
-    status = {e["name"]: e for e in discovery.extras_status(tmp_path, probe)}
+    status = {extra["name"]: extra for extra in discovery.extras_status(tmp_path, probe)}
     assert status["sim"]["installed"] and status["all"]["includes"] == ["sim"]
-    missing = {e["name"]: e for e in discovery.extras_status(tmp_path, {"packages": {}})}
+    missing = {
+        extra["name"]: extra for extra in discovery.extras_status(tmp_path, {"packages": {}})
+    }
     assert missing["all"]["missing"] == ["torch", "mujoco"]
 
 
@@ -287,7 +298,10 @@ def test_one_blueprint_rescans_without_a_full_scan(client: TestClient, scanned: 
     job = client.post("/catalog/scan/blueprints/good").json()["job"]
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
     assert client.get(f"/jobs/{job}").json()["ok"]
-    found = {b["name"]: b for b in client.get("/catalog/blueprints").json()["blueprints"]}
+    found = {
+        blueprint["name"]: blueprint
+        for blueprint in client.get("/catalog/blueprints").json()["blueprints"]
+    }
     assert found["good"]["importable"] and found["good"]["scanned_at"]
     assert found["missing"]["importable"] is None
     scan = client.get("/catalog").json()

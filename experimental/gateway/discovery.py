@@ -196,8 +196,8 @@ class Scanner:
 
     def pending(self) -> tuple[list[str], list[str]]:
         return (
-            [n for n in self.names["blueprints"] if n not in self.blueprints],
-            [n for n in self.names["modules"] if n not in self.finished_modules],
+            [name for name in self.names["blueprints"] if name not in self.blueprints],
+            [name for name in self.names["modules"] if name not in self.finished_modules],
         )
 
     def error(self, text: str) -> None:
@@ -298,7 +298,9 @@ class Scanner:
                 "format": SCAN_FORMAT,
                 "fingerprint": before,
                 "finished_at": finished,
-                "results": {n: {**r, "scanned_at": finished} for n, r in results.items()},
+                "results": {
+                    name: {**result, "scanned_at": finished} for name, result in results.items()
+                },
                 "modules": self.modules,
                 "errors": self.errors,
                 "names": self.names,
@@ -352,7 +354,10 @@ class Scanner:
                     return f"no answer in {ITEM_TIMEOUT_S:.0f} s (hung while importing)"
                 if not line:
                     await child.wait()
-                    last = next((t for t in reversed(tail) if t.strip()), "no output")
+                    last = next(
+                        (tail_line for tail_line in reversed(tail) if tail_line.strip()),
+                        "no output",
+                    )
                     return f"the import crashed its process (exit {child.returncode}): {last}"
                 text = line.decode("utf-8", "replace")
                 if MARKER in text and self.take(json.loads(text.rpartition(MARKER)[2])):
@@ -386,21 +391,23 @@ class Scanner:
         """The scan's records by name, in its order, with each one's robot and the extras that would fix it."""
         doc, providers = robots.load(), providing_extras(self.dimos_dir)
         order = {name: index for index, name in enumerate(self.names["blueprints"])}
-        found = sorted(self.blueprints.values(), key=lambda r: order.get(r["name"], len(order)))
+        found = sorted(
+            self.blueprints.values(), key=lambda record: order.get(record["name"], len(order))
+        )
         return {
-            r["name"]: {
-                **r,
-                "robot": robots.robot_of(doc, r["name"], r["ref"]),
-                "suggested_extras": providers(r.get("missing_module")),
+            record["name"]: {
+                **record,
+                "robot": robots.robot_of(doc, record["name"], record["ref"]),
+                "suggested_extras": providers(record.get("missing_module")),
             }
-            for r in found
+            for record in found
         }
 
     def scanned(self, entry: dict[str, Any]) -> dict[str, Any]:
         """A /blueprints entry with what the last finished scan found for it."""
         cache = self.cache()
         record = cache["results"].get(entry["name"]) if cache else None
-        return {**entry, **{k: record.get(k) for k in SCANNED}} if record else entry
+        return {**entry, **{key: record.get(key) for key in SCANNED}} if record else entry
 
 
 def is_checkout(dimos_dir: Path) -> bool:
@@ -420,7 +427,10 @@ def declared(dimos_dir: Path, probe: dict[str, Any]) -> dict[str, list[str]]:
     try:
         project = tomllib.loads((dimos_dir / "pyproject.toml").read_text())["project"]
         if project.get("name") == "dimos":
-            return {k: list(v) for k, v in project.get("optional-dependencies", {}).items()}
+            return {
+                extra_name: list(requirements)
+                for extra_name, requirements in project.get("optional-dependencies", {}).items()
+            }
     except (OSError, KeyError, tomllib.TOMLDecodeError):
         pass
     environment = probe.get("environment", {})
@@ -433,10 +443,10 @@ def declared(dimos_dir: Path, probe: dict[str, Any]) -> dict[str, list[str]]:
     return {
         extra: [
             text
-            for text, r in parsed
-            if r.marker is not None
-            and applies(r, environment, extra)
-            and not applies(r, environment)
+            for text, requirement in parsed
+            if requirement.marker is not None
+            and applies(requirement, environment, extra)
+            and not applies(requirement, environment)
         ]
         for extra in probe.get("dimos_extras", [])
     }
@@ -464,7 +474,10 @@ def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]
     environment, installed = probe.get("environment", {}), probe.get("packages", {})
     extras = declared(dimos_dir, probe)
     parsed = {
-        name: ([r for r in requirements if applies(r, environment, name)], includes)
+        name: (
+            [required for required in requirements if applies(required, environment, name)],
+            includes,
+        )
         for name, (requirements, includes) in parse_extras(extras).items()
     }
 
@@ -477,7 +490,9 @@ def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]
                 found.append(canonicalize_name(requirement.name))
         for include in includes:
             if include not in seen:
-                found += [m for m in missing(include, seen | {name}) if m not in found]
+                found += [
+                    package for package in missing(include, seen | {name}) if package not in found
+                ]
         return found
 
     lacking = {name: missing(name) for name in extras}
@@ -504,7 +519,9 @@ def read_lock(dimos_dir: Path) -> dict[str, Any] | None:
 
 def lock_closures(dimos_dir: Path) -> dict[str, set[str]]:
     lock = read_lock(dimos_dir) or {}
-    by_name: dict[str, Any] = {canonicalize_name(e["name"]): e for e in lock.get("package", [])}
+    by_name: dict[str, Any] = {
+        canonicalize_name(package["name"]): package for package in lock.get("package", [])
+    }
     dimos = by_name.get("dimos")
     if dimos is None:
         return {}
@@ -526,11 +543,16 @@ def lock_closures(dimos_dir: Path) -> dict[str, set[str]]:
 def providing_extras(dimos_dir: Path) -> Callable[[str | None], list[str]]:
     extras = parse_extras(declared(dimos_dir, {}))
     closures = lock_closures(dimos_dir)
-    direct = {e: {canonicalize_name(r.name) for r in reqs} for e, (reqs, _) in extras.items()}
+    direct = {
+        extra_name: {canonicalize_name(requirement.name) for requirement in reqs}
+        for extra_name, (reqs, _) in extras.items()
+    }
 
     def contains(extra: str, other: str, seen: frozenset[str] = frozenset()) -> bool:
         inner = set(extras.get(extra, ([], []))[1]) - seen
-        return other in inner or any(contains(i, other, seen | {extra}) for i in inner)
+        return other in inner or any(
+            contains(included, other, seen | {extra}) for included in inner
+        )
 
     def providers(module: str | None) -> list[str]:
         if not module:
@@ -538,21 +560,38 @@ def providing_extras(dimos_dir: Path) -> Callable[[str | None], list[str]]:
         names = {canonicalize_name(module), *IMPORT_ALIASES.get(module, ())}
 
         def provides(package: str) -> bool:
-            return any(package == n or package.startswith(n + "-") for n in names)
+            return any(package == name or package.startswith(name + "-") for name in names)
 
-        if any(provides(p) for p in closures.get("", ())):
+        if any(provides(dependency) for dependency in closures.get("", ())):
             return []
-        found = [e for e in extras if any(provides(p) for p in direct[e])]
-        found = found or [e for e in extras if any(provides(p) for p in closures.get(e, ()))]
-        minimal = [e for e in found if not any(o != e and contains(e, o) for o in found)]
-        return sorted(minimal, key=lambda e: len(closures.get(e, ())))
+        found = [
+            extra_name
+            for extra_name in extras
+            if any(provides(dependency) for dependency in direct[extra_name])
+        ]
+        found = found or [
+            extra_name
+            for extra_name in extras
+            if any(provides(dependency) for dependency in closures.get(extra_name, ()))
+        ]
+        minimal = [
+            extra_name
+            for extra_name in found
+            if not any(
+                other_extra != extra_name and contains(extra_name, other_extra)
+                for other_extra in found
+            )
+        ]
+        return sorted(minimal, key=lambda extra_name: len(closures.get(extra_name, ())))
 
     return providers
 
 
 def find_uv() -> str | None:
     candidates = [Path.home() / ".local/bin/uv", Path.home() / ".cargo/bin/uv"]
-    return shutil.which("uv") or next((str(c) for c in candidates if c.is_file()), None)
+    return shutil.which("uv") or next(
+        (str(candidate) for candidate in candidates if candidate.is_file()), None
+    )
 
 
 def install_command(dimos_dir: Path, extras: list[str], uv: str) -> list[str]:
@@ -625,14 +664,18 @@ class Jobs:
 
     def prune(self) -> None:
         cutoff = time.monotonic() - JOB_KEEP_S
-        self.jobs = {k: j for k, j in self.jobs.items() if j.ended is None or j.ended >= cutoff}
+        self.jobs = {
+            job_id: job
+            for job_id, job in self.jobs.items()
+            if job.ended is None or job.ended >= cutoff
+        }
 
     def get(self, job_id: str) -> Job | None:
         self.prune()
         return self.jobs.get(job_id)
 
     def running(self, kind: str) -> Job | None:
-        return next((j for j in self.jobs.values() if j.kind == kind and not j.done), None)
+        return next((job for job in self.jobs.values() if job.kind == kind and not job.done), None)
 
     def add(self, title: str, kind: str, command: list[str]) -> Job:
         self.prune()
@@ -709,7 +752,7 @@ def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
         if len(tags) != 3:
             continue
         py_ok = tags[0].startswith(("py3", "py2.py3")) or python in tags[0] or tags[1] == "abi3"
-        plat_ok = tags[2] == "any" or (system in tags[2] and any(c in tags[2] for c in cpus))
+        plat_ok = tags[2] == "any" or (system in tags[2] and any(cpu in tags[2] for cpu in cpus))
         if py_ok and plat_ok:
             return True
     return False
@@ -717,16 +760,20 @@ def has_wheel_here(entry: dict[str, Any], environment: dict[str, str]) -> bool:
 
 def builds_cyclonedds(dimos_dir: Path, probe: dict[str, Any], wanted: list[str]) -> bool:
     statuses = extras_status(dimos_dir, probe)
-    if not any("cyclonedds" in e["missing"] for e in statuses if e["name"] in wanted):
+    if not any(
+        "cyclonedds" in status["missing"] for status in statuses if status["name"] in wanted
+    ):
         return False
     lock = read_lock(dimos_dir) or {}
-    entry = next((e for e in lock.get("package", []) if e["name"] == "cyclonedds"), None)
+    entry = next(
+        (package for package in lock.get("package", []) if package["name"] == "cyclonedds"), None
+    )
     return entry is None or not has_wheel_here(entry, probe.get("environment", {}))
 
 
 def find_nix() -> str | None:
     fixed = [Path("/nix/var/nix/profiles/default/bin/nix"), Path("/run/current-system/sw/bin/nix")]
-    return shutil.which("nix") or next((str(p) for p in fixed if p.is_file()), None)
+    return shutil.which("nix") or next((str(path) for path in fixed if path.is_file()), None)
 
 
 def nixpkgs_ref(dimos_dir: Path) -> str:
@@ -742,7 +789,9 @@ def nixpkgs_ref(dimos_dir: Path) -> str:
 
 
 def cyclonedds_env(home: Path) -> dict[str, str]:
-    prefix = os.pathsep.join(p for p in (str(home), os.environ.get("CMAKE_PREFIX_PATH", "")) if p)
+    prefix = os.pathsep.join(
+        part for part in (str(home), os.environ.get("CMAKE_PREFIX_PATH", "")) if part
+    )
     return {"CYCLONEDDS_HOME": str(home), "CMAKE_PREFIX_PATH": prefix}
 
 

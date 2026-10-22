@@ -29,7 +29,7 @@ SLOW = {"x-slow": True}
 
 
 def check_name(name: str) -> None:
-    if not name or name.startswith("-") or any(c.isspace() for c in name):
+    if not name or name.startswith("-") or any(char.isspace() for char in name):
         raise ApiError(400, f"bad name: {name}")
 
 
@@ -44,7 +44,7 @@ async def listed(state: State) -> list[dict[str, Any]]:
 async def blueprint_list(state: State) -> list[dict[str, Any]]:
     entries = await listed(state)
     notes = await asyncio.to_thread(
-        catalog.notes_for, state.dimos_dir, [e["name"] for e in entries]
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
     )
     return catalog.blueprints(entries, state.scanner.cache(), notes)
 
@@ -52,7 +52,9 @@ async def blueprint_list(state: State) -> list[dict[str, Any]]:
 async def find_blueprint(state: State, name: str) -> dict[str, Any]:
     """A blueprint the gateway's checkout has, or one running from another checkout."""
     check_name(name)
-    found = next((b for b in await blueprint_list(state) if b["name"] == name), None)
+    found = next(
+        (candidate for candidate in await blueprint_list(state) if candidate["name"] == name), None
+    )
     if found is None and await asyncio.to_thread(running_source, state, name) is not None:
         found = catalog.blueprints([{"name": name}], None, {"robots": {}})[0]
     if found is None:
@@ -101,23 +103,23 @@ async def everything(
 ) -> dict[str, Any]:
     entries = await listed(state)
     notes = await asyncio.to_thread(
-        catalog.notes_for, state.dimos_dir, [e["name"] for e in entries]
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
     )
     cache = state.scanner.cache()
     blueprints, modules = catalog.blueprints(entries, cache, notes), catalog.modules(cache)
     if blueprint is not None:
-        blueprints = [b for b in blueprints if b["name"] == blueprint]
-        names = {name for b in blueprints for name in b["modules"]}
-        modules = [m for m in modules if m["name"] in names]
+        blueprints = [entry for entry in blueprints if entry["name"] == blueprint]
+        names = {name for entry in blueprints for name in entry["modules"]}
+        modules = [entry for entry in modules if entry["name"] in names]
     if module is not None:
-        modules = [m for m in modules if module in (m["name"], m["class"])]
-        names = {m["name"] for m in modules}
-        blueprints = [b for b in blueprints if names & set(b["modules"])]
-    kept = {m["name"] for m in modules}
+        modules = [entry for entry in modules if module in (entry["name"], entry["class"])]
+        names = {entry["name"] for entry in modules}
+        blueprints = [entry for entry in blueprints if names & set(entry["modules"])]
+    kept = {entry["name"] for entry in modules}
     answer = {
         "blueprints": blueprints,
         "modules": modules,
-        "rpcs": [r for r in catalog.rpcs(cache) if r["module"] in kept],
+        "rpcs": [rpc_record for rpc_record in catalog.rpcs(cache) if rpc_record["module"] in kept],
         "robots": catalog.robot_list(notes),
         "types": notes.get("types", {}),
         "errors": catalog.errors(cache),
@@ -145,7 +147,7 @@ async def blueprints(state: GatewayState, fields: str | None = None) -> dict[str
 @router.get("/blueprints/{name}", response_model=responses.BlueprintDetail, openapi_extra=SLOW)
 async def blueprint(state: GatewayState, name: str, fields: str | None = None) -> dict[str, Any]:
     found = await find_blueprint(state, name)
-    wanted = {f.strip().split(".")[0] for f in fields.split(",")} if fields else None
+    wanted = {field.strip().split(".")[0] for field in fields.split(",")} if fields else None
     if wanted is None or wanted & {"file", "line", "modules", "checkout", "checkoutError"}:
         found.update(
             await from_run_checkout(state, ["blueprint", name], await has_locally(state, name))
@@ -168,7 +170,12 @@ async def blueprint_config(state: GatewayState, name: str) -> Any:
 async def find_module(state: State, name: str) -> dict[str, Any]:
     check_name(name)
     found = next(
-        (m for m in catalog.modules(state.scanner.cache()) if name in (m["name"], m["class"])), None
+        (
+            candidate
+            for candidate in catalog.modules(state.scanner.cache())
+            if name in (candidate["name"], candidate["class"])
+        ),
+        None,
     )
     if found is None:
         raise ApiError(404, f"no module {name} in the last scan")
@@ -213,7 +220,7 @@ async def modules(state: GatewayState, fields: str | None = None) -> dict[str, A
 async def module(state: GatewayState, name: str) -> dict[str, Any]:
     found = await importable_module(state, name)
     detail = await state.introspected(["module", found["class"]])
-    return {**found, **{k: detail[k] for k in ("rpcs", "file", "line")}}
+    return {**found, **{key: detail[key] for key in ("rpcs", "file", "line")}}
 
 
 @router.get("/modules/{name}/config", response_model=responses.ModuleSchema, openapi_extra=SLOW)
@@ -245,7 +252,7 @@ async def rpc(
 async def robots(state: GatewayState, fields: str | None = None) -> dict[str, Any]:
     entries = await listed(state)
     notes = await asyncio.to_thread(
-        catalog.notes_for, state.dimos_dir, [e["name"] for e in entries]
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
     )
     return picked({"types": notes.get("types", {}), "robots": catalog.robot_list(notes)}, fields)
 

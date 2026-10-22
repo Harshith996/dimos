@@ -71,7 +71,7 @@ def test_it_subscribes_on_the_first_ask_and_keeps_cpu_history() -> None:
     stats = ProcessStats(factory)
     assert made == []
     assert stats.snapshot()["up"] is False
-    assert [t.topic for t in made] == ["/resource_stats"] and made[0].started
+    assert [publisher.topic for publisher in made] == ["/resource_stats"] and made[0].started
     for cpu in (1.0, 2.0, 3.0):
         made[0].send(stats_message(cpu))
     shown = stats.snapshot()

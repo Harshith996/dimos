@@ -128,7 +128,7 @@ def dimos(state: State, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 def test_instances_carry_their_rpcs_and_streams(client: TestClient, dimos: dict[str, Any]) -> None:
     modules = client.get("/active/modules").json()["modules"]
-    assert [m["id"] for m in modules] == ["camera", "robot0:speaker", "robot1:speaker"]
+    assert [module["id"] for module in modules] == ["camera", "robot0:speaker", "robot1:speaker"]
     camera, speaker = modules[0], modules[1]
     assert (camera["class"], camera["catalogId"], camera["namespace"], camera["doc"]) == (
         "Camera",
@@ -147,24 +147,24 @@ def test_instances_carry_their_rpcs_and_streams(client: TestClient, dimos: dict[
     ]
     assert speaker["namespace"] == "robot0"
     # every Module's own RPCs (start) are left out; volume isn't in the scan, so it has no params or skill flag
-    assert [(r["name"], r["skill"], r["doc"]) for r in speaker["rpcs"]] == [
+    assert [(rpc["name"], rpc["skill"], rpc["doc"]) for rpc in speaker["rpcs"]] == [
         ("speak", True, "Say something."),
         ("volume", None, "Loudness."),
     ]
     assert client.get("/active/modules/robot1:speaker").json()["id"] == "robot1:speaker"
     assert client.get("/active/modules/nope").status_code == 404
     assert [
-        r["name"] for r in client.get("/active/modules/robot0:speaker/rpcs").json()["rpcs"]
+        rpc["name"] for rpc in client.get("/active/modules/robot0:speaker/rpcs").json()["rpcs"]
     ] == [
         "speak",
         "volume",
     ]
     skills = client.get("/active/skills").json()["skills"]
-    assert [(s["module"], s["name"]) for s in skills] == [
+    assert [(skill["module"], skill["name"]) for skill in skills] == [
         ("robot0:speaker", "speak"),
         ("robot1:speaker", "speak"),
     ]
-    assert [s["module"] for s in client.get("/active/streams").json()["streams"]] == [
+    assert [stream["module"] for stream in client.get("/active/streams").json()["streams"]] == [
         "camera",
         "robot0:speaker",
     ]
@@ -200,7 +200,7 @@ def test_restart_and_stop_go_by_the_instances_class(
     busy = client.post("/active/modules/camera/stop").json()
     assert not busy["ok"] and "camera is busy" in busy["error"]
     assert client.post("/active/modules/nope/stop").status_code == 404
-    calls = [c for c in dimos["apps"][-1].calls if c[0] in ("restart", "unload")]
+    calls = [call for call in dimos["apps"][-1].calls if call[0] in ("restart", "unload")]
     assert calls == [
         ("restart", "class x.Speaker"),
         ("unload", "class x.Speaker"),

@@ -109,7 +109,11 @@ def snapshot(dimos_dir: Path, site_dirs: list[Path]) -> frozenset[tuple[str, int
                     continue
     for packages in site_dirs:
         try:
-            found |= {(e.path, 0) for e in os.scandir(packages) if ".dist-info" in e.name}
+            found |= {
+                (dir_entry.path, 0)
+                for dir_entry in os.scandir(packages)
+                if ".dist-info" in dir_entry.name
+            }
         except OSError:
             continue
     return frozenset(found)

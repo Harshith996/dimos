@@ -51,7 +51,9 @@ class Cache:
     async def get(self, key: str, ttl: float, compute: Callable[[], Awaitable[Any]]) -> Any:
         # keys include request args, so expired entries go or they pile up for days
         now = time.monotonic()
-        self.entries = {k: entry for k, entry in self.entries.items() if entry[0] > now}
+        self.entries = {
+            cache_key: entry for cache_key, entry in self.entries.items() if entry[0] > now
+        }
         if key not in self.entries:
             self.entries[key] = (now + ttl, asyncio.ensure_future(compute()))
         task = self.entries[key][1]
@@ -193,7 +195,7 @@ def blueprint_source(name: str) -> dict[str, Any]:
     except Exception:  # importing a blueprint runs its code, which can raise anything
         return {"file": None, "line": None}
     assignment = re.compile(rf"{re.escape(attr)}\s*(:|=(?!=))")
-    line = next((n for n, text in enumerate(lines, 1) if assignment.match(text)), 1)
+    line = next((number for number, text in enumerate(lines, 1) if assignment.match(text)), 1)
     return {"file": relative_to_checkout(inspect.getfile(module)), "line": line}
 
 
@@ -419,7 +421,9 @@ def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, 
     fields = only.config_cls.model_fields
     keep = settable(schema, only.atom.name)
     return field_args(
-        {k: f for k, f in fields.items() if k in keep}, set(ModuleConfig.model_fields), values
+        {key: field for key, field in fields.items() if key in keep},
+        set(ModuleConfig.model_fields),
+        values,
     )
 
 
@@ -436,7 +440,9 @@ def config(name: str) -> dict[str, Any]:
         entry: dict[str, Any] = {"class": type_name(atom.module)}
         try:
             keep = settable(schema, atom.name)
-            fields = {k: f for k, f in module.config_cls.model_fields.items() if k in keep}
+            fields = {
+                key: field for key, field in module.config_cls.model_fields.items() if key in keep
+            }
             entry["args"] = field_args(fields, set(ModuleConfig.model_fields), dict(atom.kwargs))
         except Exception as error:  # a module's config class is its own code
             entry["args"] = {}
@@ -446,7 +452,7 @@ def config(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "global": field_args(
-            {k: f for k, f in GlobalConfig.model_fields.items() if k in keep}, set()
+            {key: field for key, field in GlobalConfig.model_fields.items() if key in keep}, set()
         ),
         "modules": modules,
     }
@@ -461,13 +467,16 @@ def module_class(name: str) -> tuple[str, Any]:
     if not module_path:
         raise KeyError(f"no module {name}")
     cls = getattr(importlib.import_module(module_path), attr)
-    return next((n for n, p in all_modules.items() if p == path), attr), cls
+    return next(
+        (registry_name for registry_name, class_path in all_modules.items() if class_path == path),
+        attr,
+    ), cls
 
 
 def module(name: str) -> dict[str, Any]:
     registry, cls = module_class(name)
     record = module_record(registry, cls)
-    return {**{k: v for k, v in record.items() if k != "kind"}, **source_of(cls)}
+    return {**{key: value for key, value in record.items() if key != "kind"}, **source_of(cls)}
 
 
 def module_config(name: str) -> dict[str, Any]:
@@ -505,10 +514,14 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
         "class": type_name(cls),
         "doc": first_line(cls),
         "inputs": [
-            {"name": s.name, "type": s.type.__name__} for s in streams if s.direction != "out"
+            {"name": stream.name, "type": stream.type.__name__}
+            for stream in streams
+            if stream.direction != "out"
         ],
         "outputs": [
-            {"name": s.name, "type": s.type.__name__} for s in streams if s.direction != "in"
+            {"name": stream.name, "type": stream.type.__name__}
+            for stream in streams
+            if stream.direction != "in"
         ],
         "rpcs": rpcs(cls),
     }
@@ -525,7 +538,9 @@ def scan(request: Any) -> dict[str, Any]:
     names = request.get("blueprints")
     if names is None:
         names = sorted(all_blueprints) + [
-            n for n in list_external_blueprint_names() if n not in all_blueprints
+            blueprint_name
+            for blueprint_name in list_external_blueprint_names()
+            if blueprint_name not in all_blueprints
         ]
         emit({"kind": "names", "blueprints": names, "modules": sorted(all_modules)})
     per_file = Counter(path.split(":")[0] for path in all_blueprints.values())
@@ -596,9 +611,9 @@ def packages() -> dict[str, Any]:
     from packaging.utils import canonicalize_name
 
     found = {
-        canonicalize_name(d.metadata["Name"]): d.version
-        for d in distributions()
-        if d.metadata["Name"]
+        canonicalize_name(distribution.metadata["Name"]): distribution.version
+        for distribution in distributions()
+        if distribution.metadata["Name"]
     }
     try:
         dimos_requires, dimos_extras = (
