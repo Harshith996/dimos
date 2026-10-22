@@ -156,7 +156,7 @@ Desktop starts it (dimos.yaml `start:`), but it also runs on its own from a dimo
 
 ```sh
 .venv/bin/python -m experimental.gateway --detach      # in the background, on its unix socket
-.venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on 127.0.0.1:8123
+.venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
 ```
 
 - Its routes have no prefix: Desktop serves them under `/dimos-gateway/`, so `/active` here is `/dimos-gateway/active` there.

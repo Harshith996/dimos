@@ -14,6 +14,8 @@
 
 """Every tuning number of the gateway: timeouts, intervals, cache lifetimes, size and length limits."""
 
+import sys
+
 # scan: one blueprint's imports in the scan child, past this it reads as hung (the default of the scan routes' ?timeout=)
 SCAN_ITEM_TIMEOUT_S = 120.0
 # scan: longest line the scan child may print, since one record carries a whole blueprint's modules
@@ -53,3 +55,8 @@ STALE_AFTER_SAMPLES = 3
 
 # server: POST /server/stop exits this long after answering, so its response gets out first
 SERVER_STOP_DELAY_S = 0.2
+
+# server: the default TCP host is loopback because the gateway has no auth
+DEFAULT_HOST = "127.0.0.1"
+# server: longest unix socket path the kernel takes (sun_path is 104 bytes on macOS/BSD, 108 on Linux)
+UNIX_SOCKET_PATH_LIMIT = 104 if sys.platform == "darwin" else 108

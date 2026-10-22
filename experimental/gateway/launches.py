@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+import inspect
 import json
 import os
 from pathlib import Path
@@ -28,12 +29,17 @@ import time
 from typing import Any
 
 import psutil
+from pydantic import ValidationError
 
 from dimos.constants import LOG_DIR
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import constants, overrides, store
+from experimental.gateway import constants, store
 from experimental.gateway.errors import ApiError, StatusError
-from experimental.gateway.overrides import ModuleValues
+
+ModuleValues = dict[str, dict[str, Any]]
+
+HIDDEN = "•••"
+STRUCTURED = ("global", "modules", "secrets")
 
 # GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
 DTOP_ENV = "DTOP"
@@ -50,6 +56,10 @@ class StillRunningError(RunError):
     status = 409
 
 
+class LaunchConfigError(StatusError, ValueError):
+    status = 400
+
+
 @dataclass
 class LaunchConfig:
     """One launch's config, all of it: the gateway saves none, the caller sends it every time."""
@@ -62,7 +72,7 @@ class LaunchConfig:
     exact: bool = False
 
     def secret_paths(self) -> list[str]:
-        return overrides.secret_paths(self.global_, self.modules, self.secrets)
+        return secret_paths(self.global_, self.modules, self.secrets)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -75,16 +85,198 @@ class LaunchConfig:
 
     @staticmethod
     def from_json(value: dict[str, Any]) -> LaunchConfig:
-        parsed = overrides.parse(
-            {key: value[key] for key in ("global", "modules", "secrets") if key in value}
+        launch = parse({key: value[key] for key in STRUCTURED if key in value})
+        launch.args = [str(arg) for arg in value.get("args") or []]
+        launch.exact = bool(value.get("exact"))
+        return launch
+
+
+def launch_env_defaults() -> dict[str, str]:
+    """No rerun window pops up from a launch, the web viewer instead: env, not flags (a flag for a module
+    the blueprint lacks is refused), so a saved setting still wins."""
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    return module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
+
+
+def parse(raw: Any) -> LaunchConfig:
+    if raw is None:
+        return LaunchConfig()
+    if not isinstance(raw, dict):
+        raise LaunchConfigError("overrides must be an object")
+    if not any(key in raw for key in STRUCTURED):
+        return LaunchConfig(dict(raw))
+    other = next((key for key in raw if key not in STRUCTURED), None)
+    if other is not None:
+        raise LaunchConfigError(f"overrides has `{other}` next to `global`/`modules`")
+    global_, modules, secrets = (
+        raw.get("global") or {},
+        raw.get("modules") or {},
+        raw.get("secrets") or [],
+    )
+    if not isinstance(global_, dict):
+        raise LaunchConfigError("overrides.global must be an object")
+    if not isinstance(modules, dict) or not all(
+        isinstance(fields, dict) for fields in modules.values()
+    ):
+        raise LaunchConfigError("overrides.modules must be an object of objects")
+    if not isinstance(secrets, list) or not all(isinstance(path, str) for path in secrets):
+        raise LaunchConfigError("overrides.secrets must be a list of paths")
+    return LaunchConfig(
+        dict(global_), {module: dict(fields) for module, fields in modules.items()}, secrets
+    )
+
+
+def is_secret_name(path: str) -> bool:
+    name = path.rsplit(".", 1)[-1].lower()
+    return (
+        name == "key"
+        or name.endswith("_key")
+        or any(word in name for word in ("secret", "token", "password", "passwd"))
+    )
+
+
+def secret_paths(
+    global_: dict[str, Any], modules: ModuleValues, listed: list[str] | tuple[str, ...] = ()
+) -> list[str]:
+    paths = [key for key in sorted(global_) if is_secret_name(key) or key in listed]
+    for module, fields in sorted(modules.items()):
+        paths += [
+            f"{module}.{name}"
+            for name in sorted(fields)
+            if is_secret_name(name) or f"{module}.{name}" in listed
+        ]
+    return paths
+
+
+def as_text(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+
+
+def module_env(modules: ModuleValues) -> dict[str, str]:
+    """dimos's env names for module settings: MODULE__FIELD."""
+    return {
+        f"{module.replace('/', '_')}__{name}".upper(): as_text(value)
+        for module, fields in modules.items()
+        for name, value in fields.items()
+        if value is not None
+    }
+
+
+def secret_env(global_: dict[str, Any], modules: ModuleValues, paths: list[str]) -> dict[str, str]:
+    env = {
+        key.upper(): as_text(value)
+        for key, value in global_.items()
+        if key in paths and value is not None
+    }
+    secret = {
+        module: {name: value for name, value in fields.items() if f"{module}.{name}" in paths}
+        for module, fields in modules.items()
+    }
+    return {**env, **module_env(secret)}
+
+
+def without_secrets(
+    global_: dict[str, Any], modules: ModuleValues, paths: list[str]
+) -> tuple[dict[str, Any], ModuleValues]:
+    flat = {key: value for key, value in global_.items() if key not in paths}
+    nested = {
+        module: {name: value for name, value in fields.items() if f"{module}.{name}" not in paths}
+        for module, fields in modules.items()
+    }
+    return flat, {module: fields for module, fields in nested.items() if fields}
+
+
+def redact(
+    global_: dict[str, Any], modules: ModuleValues, paths: list[str]
+) -> tuple[dict[str, Any], ModuleValues]:
+    flat = {
+        key: HIDDEN if key in paths and value is not None else value
+        for key, value in global_.items()
+    }
+    nested = {
+        module: {
+            name: HIDDEN if f"{module}.{name}" in paths and value is not None else value
+            for name, value in fields.items()
+        }
+        for module, fields in modules.items()
+    }
+    return flat, nested
+
+
+def flag_fields() -> set[str]:
+    from dimos.cli.commands.global_options import create_dynamic_callback
+
+    callback = create_dynamic_callback()  # type: ignore[no-untyped-call]
+    return set(inspect.signature(callback).parameters) - {"ctx"}
+
+
+def check_global(values: dict[str, Any]) -> None:
+    from dimos.core.global_config import GlobalConfig
+
+    unknown = sorted(set(values) - flag_fields())
+    if unknown:
+        raise LaunchConfigError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
+    try:
+        GlobalConfig.model_validate(
+            {key: value for key, value in values.items() if value is not None}
         )
-        return LaunchConfig(
-            parsed.global_,
-            parsed.modules,
-            parsed.secrets,
-            [str(arg) for arg in value.get("args") or []],
-            bool(value.get("exact")),
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(map(str, problem['loc']))}: {problem['msg']}" for problem in error.errors()
         )
+        raise LaunchConfigError(f"bad GlobalConfig value: {problems}") from error
+
+
+def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[str]:
+    flags: list[str] = []
+    for key, value in sorted(values.items()):
+        flag = "--" + key.replace("_", "-")
+        if value is True:
+            flags.append(f"{flag}=true" if explicit_bools else flag)
+        elif value is False:
+            flags.append("--no-" + key.replace("_", "-"))
+        elif value is not None:
+            flags.append(f"{flag}={as_text(value)}")
+    return flags
+
+
+def nested(fields: dict[str, Any]) -> dict[str, Any]:
+    """`addresses.arm` and `addresses.base` become one `addresses` object."""
+    out: dict[str, Any] = {}
+    for name, value in sorted(fields.items()):
+        if value is None:
+            continue
+        head, dot, rest = name.partition(".")
+        if dot:
+            out.setdefault(head, {})[rest] = value
+        else:
+            out[name] = value
+    return out
+
+
+def module_flags(modules: ModuleValues) -> list[str]:
+    flags = []
+    for module, fields in sorted(modules.items()):
+        root = module.replace("/", "_").replace("_", "-")
+        for name, value in nested(fields).items():
+            flags.append(f"--{root}.{name.replace('_', '-')}={as_text(value)}")
+    return flags
+
+
+def shown_args(args: list[str]) -> list[str]:
+    shown: list[str] = []
+    hide_next = False
+    for arg in args:
+        if hide_next and not arg.startswith("-"):
+            shown.append(HIDDEN)
+            hide_next = False
+            continue
+        option, separator, _ = arg.partition("=")
+        secret = arg.startswith("--") and is_secret_name(option[2:].replace("-", "_"))
+        shown.append(f"{option}={HIDDEN}" if secret and separator else arg)
+        hide_next = secret and not separator
+    return shown
 
 
 def launch_file() -> Path:
@@ -253,13 +445,11 @@ def gossip_env() -> dict[str, str]:
 
 
 def run_args(blueprint: str, launch: LaunchConfig) -> list[str]:
-    global_, modules = overrides.without_secrets(
-        launch.global_, launch.modules, launch.secret_paths()
-    )
+    global_, modules = without_secrets(launch.global_, launch.modules, launch.secret_paths())
     if launch.args:
-        flags = overrides.global_flags(global_, explicit_bools=True)
-        return ["run", blueprint, *flags, *overrides.module_flags(modules), *launch.args]
-    return [*overrides.global_flags(global_), "run", blueprint, *overrides.module_flags(modules)]
+        flags = global_flags(global_, explicit_bools=True)
+        return ["run", blueprint, *flags, *module_flags(modules), *launch.args]
+    return [*global_flags(global_), "run", blueprint, *module_flags(modules)]
 
 
 def _spawn(command: list[str], shown: list[str], cwd: str, env: dict[str, str]) -> int:
@@ -322,10 +512,12 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
         if not program.exists():
             raise RunError(f"no dimos at {dimos_dir} (no {program})")
         paths = launch.secret_paths()
-        secret_env = overrides.secret_env(launch.global_, launch.modules, paths)
-        shown_env = [f"{name}={overrides.HIDDEN}" for name in secret_env]
-        shown_args = overrides.shown_args(launch.args)
-        shown_run = run_args(blueprint, LaunchConfig(**{**launch.__dict__, "args": shown_args}))
+        secret_vars = secret_env(launch.global_, launch.modules, paths)
+        shown_env = [f"{name}={HIDDEN}" for name in secret_vars]
+        shown_launch_args = shown_args(launch.args)
+        shown_run = run_args(
+            blueprint, LaunchConfig(**{**launch.__dict__, "args": shown_launch_args})
+        )
         venv = store.venv_dir(dimos_dir)
         env = {
             **os.environ,
@@ -333,12 +525,12 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "VIRTUAL_ENV": str(venv),
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
-            **overrides.launch_env_defaults(),
+            **launch_env_defaults(),
             # dtop's stats for GET /active/stats; a --no-dtop flag still wins
             DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
             # Desktop's zenoh gossip setting, which dimos's GlobalConfig.zenoh_gossip reads from the env
             **gossip_env(),
-            **secret_env,
+            **secret_vars,
         }
         pid = _spawn(
             [str(program), *run_args(blueprint, launch)],
@@ -346,13 +538,13 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             str(dimos_dir),
             env,
         )
-        global_, modules = overrides.redact(launch.global_, launch.modules, paths)
+        global_, modules = redact(launch.global_, launch.modules, paths)
         shown = {"config": {"global": global_, "modules": modules}}
         _remember(
             blueprint,
             pid,
             launch.to_json(),
-            {**shown, **({"args": shown_args} if launch.args else {})},
+            {**shown, **({"args": shown_launch_args} if launch.args else {})},
         )
         started = current_launch()
         assert started is not None
@@ -374,7 +566,7 @@ def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
     with _lock:
         check_idle()
         command = [str(arg) for arg in copy["command"]]
-        pid = _spawn(command, overrides.shown_args(command), str(copy["cwd"]), dict(copy["env"]))
+        pid = _spawn(command, shown_args(command), str(copy["cwd"]), dict(copy["env"]))
         _remember(blueprint, pid, {"copy": copy}, {"relaunched": True})
         started = current_launch()
         assert started is not None

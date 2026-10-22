@@ -378,7 +378,7 @@ def field_args(
     fields: dict[str, Any], base: set[str], values: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any]]:
     """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
-    from experimental.gateway.overrides import is_secret_name
+    from experimental.gateway.launches import is_secret_name
 
     args = {}
     for name, field in fields.items():
