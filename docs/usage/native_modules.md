@@ -326,6 +326,17 @@ If the executable exists, preparation skips compilation unless `auto_build=True`
 or `--build-native` requests a rebuild. `auto_build=False` does not disable
 building a missing executable. Calling `build()` again checks these rules again.
 
+### Dev builds without nix
+
+Every built-in module also sets `dev_build_command`, a plain `cargo` or `cmake`
+build, and `dev_executable`, where that build leaves the binary (all under
+`<repo>/target/native`, so modules share compiled dependencies). You install the
+toolchain and libraries yourself. Turn it on for every module with
+`DIMOS_NATIVE_DEV_BUILD=1` (or `--native-dev-build`), or for one module with
+`use_dev_build=True` in its config; `use_dev_build=False` keeps a module on nix
+while the global switch is on. Dev builds run on every start, since cargo and
+cmake only rebuild what changed.
+
 ### Faster builds via the Cachix substituter
 
 Nix-built native modules can be substituted from the `dimensionalos` Cachix
