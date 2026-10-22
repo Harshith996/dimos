@@ -56,7 +56,7 @@ class MemoryRPC(LCMRPC):
 
 
 def test_native_planner_declares_canonical_generated_port_identities():
-    module = LocalPlannerNative(rpc_transport=MemoryRPC)
+    module = LocalPlannerNative(rpc_transport=MemoryRPC, embodiment=GO2)
     try:
         assert module.local_map.type is PointCloud2
         assert module.planner_path.type is Path and module.path.type is Path
@@ -65,10 +65,10 @@ def test_native_planner_declares_canonical_generated_port_identities():
         module.stop()
 
 
+@pytest.mark.native_e2e
 def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(monkeypatch):
     executable = os.environ.get("DIMOS_NATIVE_LOCAL_PLANNER_BINARY")
-    if not executable:
-        pytest.skip("Set DIMOS_NATIVE_LOCAL_PLANNER_BINARY to the compiled local_planner")
+    assert executable, "Build and set the native binary before running native_e2e"
     binary = FilePath(executable).resolve()
     assert binary.is_file()
     monkeypatch.setattr(global_config, "transport", "zenoh")
@@ -95,6 +95,7 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
             connect_timeout=5,
         )
         module = LocalPlannerNative(
+            embodiment=GO2,
             rpc_transport=MemoryRPC,
             executable=str(binary),
             source_dir=None,
@@ -102,7 +103,7 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
             session=session,
         )
         wires = {}
-        for name in ["local_map", "planner_path", "tf", "path"]:
+        for name in ["local_map", "planner_path", "tf", "path", "ground_support"]:
             port = getattr(module, name)
             wire = ZenohTransport(
                 ZenohTopic("native/planner/" + name, port.type), **session.model_dump()

@@ -258,6 +258,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdr"
+version = "0.2.4"
+source = "git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb#38a4368255d408faf374726653b39d4a4e9735cb"
+dependencies = [
+ "byteorder",
+ "serde",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -575,15 +584,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-message-adapters"
+version = "0.1.0"
+dependencies = [
+ "dimos-generated-messages",
+ "dimos-module",
+ "nalgebra",
+]
+
+[[package]]
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
+ "cdr",
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
  "nalgebra",
  "rayon",
- "re_cdr",
  "serde",
  "serde_json",
  "tokio",
@@ -609,6 +627,7 @@ name = "dimos-realsense"
 version = "0.1.0"
 dependencies = [
  "dimos-generated-messages",
+ "dimos-message-adapters",
  "dimos-module",
  "pkg-config",
  "realsense-rust",

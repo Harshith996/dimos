@@ -21,6 +21,7 @@ required-features = ["module"]
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
 dimos-module = { path = "../../../../../native/rust/dimos-module", features = ["cdr"], optional = true }
+dimos-message-adapters = { path = "../../../../../native/rust/dimos-message-adapters", optional = true }
 dimos-generated-messages = { path = "../../../../../build/message-source/rust", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -35,7 +36,7 @@ serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 # Python; maturin builds with defaults and gets the extension module.
 default = []
 python = ["dep:pyo3", "dep:numpy", "dep:serde_json"]
-module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:dimos-generated-messages", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
+module = ["dep:dimos-message-adapters", "dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:dimos-generated-messages", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
 
 # `cargo test --features module` also runs the module's own tests.
 [dev-dependencies]
