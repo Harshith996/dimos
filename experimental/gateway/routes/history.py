@@ -47,19 +47,16 @@ async def read_log(
 
 @router.get("", response_model=responses.History)
 async def history(state: GatewayState) -> dict[str, Any]:
-    """Every run with a log, newest first, whether or not it still runs."""
     return {"runs": await asyncio.to_thread(logs.history, state.dimos_dir)}
 
 
 @router.get("/recordings", response_model=responses.Recordings)
 async def recordings() -> dict[str, Any]:
-    """The standard directory dimos writes recordings (mcap and db files) to."""
     return {"path": str(store.recordings_dir())}
 
 
 @router.get("/{runId}", response_model=responses.PastRunDetail)
 async def past_run(state: GatewayState, run_id: RunId) -> dict[str, Any]:
-    """One run's entry and its log directory; `latest` is the newest."""
     runs = await asyncio.to_thread(logs.history, state.dimos_dir)
     wanted = runs[:1] if run_id == "latest" else [r for r in runs if r["runId"] == run_id]
     found = wanted[0] if wanted else None
@@ -78,5 +75,4 @@ async def past_log(
     q: str | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    """A run's log (`latest`: the newest run's)."""
     return await read_log(state, run_id, after, level, q, limit)

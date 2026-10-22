@@ -64,6 +64,5 @@ async def info(state: GatewayState) -> dict[str, Any]:
 
 @router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
-    """Stop this gateway (a running blueprint keeps running)."""
     asyncio.get_running_loop().call_later(0.2, state.exit)
     return {"stopping": True}

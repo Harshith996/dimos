@@ -42,7 +42,6 @@ async def extras(state: GatewayState) -> dict[str, Any]:
 
 @router.post("/extras/install", status_code=202, response_model=responses.JobStarted)
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
-    """Install dimos extras with uv, as a job."""
     probed = await state.introspected(["packages"])
     declared = discovery.declared(state.dimos_dir, probed)
     unknown = [name for name in request.extras if name not in declared]
@@ -83,13 +82,11 @@ def found(state: State, job: str) -> discovery.Job:
 
 @router.get("/jobs/{job}", response_model=responses.JobLog)
 async def job(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
-    """A job (an extras install, a blueprint scan): whether it finished, its progress, and its output from line `after` on."""
     return found(state, job).log(after)
 
 
 @router.get("/docs/search", response_class=RedirectResponse, status_code=307)
 async def docs_search(state: GatewayState, q: str = "") -> str:
-    """Redirects to dimos's docs site with its search open on ?q= (open it in a new tab, or an iframe)."""
     url = await asyncio.to_thread(discovery.docs_search_url, state.dimos_dir, q)
     if url is None:
         raise ApiError(404, f"no docs site in {state.dimos_dir / 'mkdocs.yml'} (site_url)")
