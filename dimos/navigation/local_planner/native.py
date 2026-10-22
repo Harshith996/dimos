@@ -58,6 +58,11 @@ class LocalPlannerNativeConfig(NativeModuleConfig):
     replan_carrot_m: float = 0.3
     # A carrot jump this far is a new task: the warm start and hysteresis are reset.
     reset_carrot_m: float = 1.0
+    # A gap the 0.12 m lattice cannot land in is re-searched at 0.04 m over this much route on
+    # each side of it, when the coarse search refuses, pulls the carrot short or detours.
+    refine_window_m: float = 0.75
+    # A coarse route farther than this from the global route counts as a detour worth refining.
+    refine_detour_m: float = 1.5
     # What counts as an obstacle; "body_band" reads the cloud against the surface the feet stand on.
     obstacle_model: str = "body_band"
     # Hold once the local map is this old: a dropped link must not leave us replanning on a frozen world.

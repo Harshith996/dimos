@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, Refine, Terrain, COMMIT_MARGIN};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::PoseStamped;
@@ -76,6 +76,13 @@ pub struct Config {
     /// A carrot jump beyond this drops the held route.
     #[validate(range(min = 0.0))]
     pub reset_carrot_m: f64,
+    /// Arc of approach re-searched on the fine lattice on each side of a tight spot,
+    /// and the room around it (m). Zero turns refinement off.
+    #[validate(range(min = 0.0))]
+    pub refine_window_m: f64,
+    /// A coarse route farther than this from the global route is a detour worth refining (m).
+    #[validate(range(min = 0.0))]
+    pub refine_detour_m: f64,
     /// What counts as an obstacle (`obstacles.rs`).
     pub obstacle_model: String,
     /// Hold once the local map is this old, measured from arrival.
@@ -328,6 +335,10 @@ pub fn plan_once(
         config.resolution,
         incumbent,
         COMMIT_MARGIN,
+        &Refine {
+            window_m: config.refine_window_m,
+            detour_m: config.refine_detour_m,
+        },
     ) {
         Some(s) if !s.is_empty() => s,
         _ => {
@@ -750,6 +761,8 @@ mod tests {
             replan_on_change: true,
             replan_carrot_m: 0.2,
             reset_carrot_m: 1.0,
+            refine_window_m: 0.0,
+            refine_detour_m: 1.5,
             obstacle_model: "body_band".into(),
             max_map_age_s: 5.0,
         }
