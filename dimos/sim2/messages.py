@@ -91,6 +91,11 @@ def robot_descriptor(
 
 @dataclass(frozen=True)
 class FrameMetadata:
+    """Internal transport stamp; episode_id is the command/sensor generation.
+
+    Unlike SceneState.episode, it also changes on an edit or resume.
+    """
+
     sequence: int
     episode_id: int
     physics_tick: int

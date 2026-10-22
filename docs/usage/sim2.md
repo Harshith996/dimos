@@ -195,6 +195,12 @@ before a reset cannot command the new generation, including a reset racing with
 command publication. Application-level reset must also stop/reset controllers,
 maps and policy history; physics reset alone does not do that.
 
+`SceneState.episode` counts physical resets. `SceneState.generation` also
+advances for an edit or resume, invalidating pending control and sensor work
+without starting a new task episode. Graders must retain both, plus simulation
+time, rather than treating every scene edit as another trial. Internal transport
+`FrameMetadata.episode_id` carries that invalidation generation.
+
 ## Transport and tests
 
 `device.poll()` returns typed `Measurement` values without requiring a Module,

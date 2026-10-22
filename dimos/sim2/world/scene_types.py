@@ -114,10 +114,15 @@ class RegionState(SceneRecord):
 
 
 class SceneState(SceneRecord):
-    """Privileged physical observation; never a substitute for robot perception."""
+    """Privileged physical observation; never a substitute for robot perception.
+
+    A reset starts a new episode. Edits and resume also advance generation to
+    invalidate pending control/sensing work, but remain in the same episode.
+    """
 
     world_id: str
     scene_id: str
+    episode: int
     generation: int
     tick: int
     sim_time: float

@@ -238,7 +238,7 @@ def test_devices_acquire_without_a_module_and_wait_for_modeled_delivery(
         assert measurements
         assert {m.acquisition_end for m in measurements} == {0.0}
         assert {m.available_at for m in measurements} == {0.025}
-        assert all(m.episode == world.episode for m in measurements)
+        assert all(m.episode == world.generation for m in measurements)
         device.published(measurements[0], at=measurements[0].available_timestamp + 0.02)
         assert device.status()["lateness_seconds"] == pytest.approx(0.02, abs=1e-6)
         assert device.poll() == []
@@ -268,7 +268,7 @@ def test_pause_and_reset_discard_old_deliveries(reader):
     device = ImuDevice(observer, sensor, "left")
     try:
         assert device.poll() == []
-        old_episode = world.episode
+        old_episode = world.generation
         world.set_paused(True)
         world.step()
         assert device.poll() == []
