@@ -172,6 +172,8 @@ pub async fn exchange_sdp(
     let notify_url = format!("http://{ip}:{SIGNALING_PORT}/con_notify");
     let notify_b64 = match post(&notify_url, "application/json", None, timeout).await {
         Ok(notify) => notify,
+        // A device key means new firmware: no plaintext fallback a forged notify error could force.
+        Err(err) if !aes_key.is_empty() => return Err(err),
         Err(err) => {
             return legacy_offer(ip, offer_json, timeout)
                 .await

@@ -175,25 +175,29 @@ impl Depacketizer {
     }
 }
 
-/// Puts RTP packets back in sequence order: one that comes early waits for the ones before it, up to `window`
-/// packets; past that the missing ones count as lost.
+/// Puts RTP packets back in sequence order: one that comes early waits for the ones before it, up to `wait_ns`
+/// (long enough for a NACK's retransmit, however many packets a keyframe burst puts in between); past that the
+/// missing ones count as lost.
 pub struct Reorder<T> {
-    window: usize,
+    wait_ns: u64,
     next: Option<i64>,
     held: std::collections::BTreeMap<i64, T>,
+    /// when the packet at `next` started being waited for
+    gap_since: Option<u64>,
 }
 
 impl<T> Reorder<T> {
-    pub fn new(window: usize) -> Self {
+    pub fn new(wait_ns: u64) -> Self {
         Self {
-            window,
+            wait_ns,
             next: None,
             held: Default::default(),
+            gap_since: None,
         }
     }
 
     /// The packets now ready, in order; a duplicate or one that comes after its turn is dropped.
-    pub fn push(&mut self, seq: u16, item: T) -> Vec<T> {
+    pub fn push(&mut self, seq: u16, item: T, arrived_ns: u64) -> Vec<T> {
         let next = *self.next.get_or_insert(seq as i64);
         let key = next + seq.wrapping_sub(next as u16) as i16 as i64;
         if key < next {
@@ -206,8 +210,14 @@ impl<T> Reorder<T> {
             if let Some(item) = self.held.remove(&next) {
                 ready.push(item);
                 next += 1;
-            } else if self.held.len() > self.window {
+                self.gap_since = None;
+            } else if self.held.is_empty() {
+                break;
+            } else if arrived_ns.saturating_sub(*self.gap_since.get_or_insert(arrived_ns))
+                > self.wait_ns
+            {
                 next = *self.held.keys().next().expect("held isn't empty");
+                self.gap_since = None;
             } else {
                 break;
             }
@@ -225,17 +235,20 @@ mod tests {
 
     #[test]
     fn reorder_puts_packets_back_in_sequence() {
-        let mut reorder = Reorder::new(4);
-        assert_eq!(reorder.push(65534, 'a'), vec!['a']);
-        assert_eq!(reorder.push(0, 'c'), Vec::<char>::new());
-        assert_eq!(reorder.push(65535, 'b'), vec!['b', 'c']);
+        let mut reorder = Reorder::new(100);
+        assert_eq!(reorder.push(65534, 'a', 0), vec!['a']);
+        assert_eq!(reorder.push(0, 'c', 1), Vec::<char>::new());
+        assert_eq!(reorder.push(65535, 'b', 2), vec!['b', 'c']);
         // a duplicate of one already handed out
-        assert_eq!(reorder.push(65535, 'b'), Vec::<char>::new());
-        // 1 never comes: once more than 4 wait, it counts as lost
-        for (seq, item) in [(2, 'e'), (3, 'f'), (4, 'g'), (5, 'h')] {
-            assert_eq!(reorder.push(seq, item), Vec::<char>::new());
+        assert_eq!(reorder.push(65535, 'b', 3), Vec::<char>::new());
+        // 1 never comes: however many packets wait, it counts as lost only once it's 100 ns late
+        for seq in 2..500u16 {
+            assert_eq!(reorder.push(seq, 'e', 10), Vec::<char>::new());
         }
-        assert_eq!(reorder.push(6, 'i'), vec!['e', 'f', 'g', 'h', 'i']);
+        assert_eq!(reorder.push(500, 'f', 111).len(), 499);
+        // a late retransmit within the wait still lands in order
+        assert_eq!(reorder.push(502, 'h', 120), Vec::<char>::new());
+        assert_eq!(reorder.push(501, 'g', 150), vec!['g', 'h']);
     }
 
     fn pkt(seq: u16, ts: u32, marker: bool, payload: &[u8]) -> Packet<'_> {

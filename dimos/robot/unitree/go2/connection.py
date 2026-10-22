@@ -95,8 +95,8 @@ class WebRtcTiming(BaseConfig):
     clock_reset: float = 1.0
     video_queue_packets: int = 2048
     capture_max_waiting: int = 16
-    # RTP packets that may wait for a late earlier one before it counts as lost
-    reorder_packets: int = 32
+    # how long RTP packets wait for a late earlier one (a NACK's retransmit, an RTT behind) before it counts as lost
+    reorder_wait: float = 0.15
     max_frame_bytes: int = 4 << 20
     camera_info_period: float = 1.0
     stats_period: float = 10.0
@@ -133,8 +133,8 @@ class ConnectionConfig(NativeModuleConfig):
     # Turn off where another module owns the base_link edge. The odom port
     # keeps publishing either way.
     publish_tf: bool = True
-    # Reconnect when the Go2 drops the WebRTC link; off, the module exits and the run sees the robot is gone.
-    auto_reconnect: bool = False
+    # Reconnect when the Go2 drops the WebRTC link (a Wi-Fi drop mustn't end a recording); off, the module exits.
+    auto_reconnect: bool = True
     timing: WebRtcTiming = Field(default_factory=WebRtcTiming)
 
     @model_validator(mode="after")
@@ -499,7 +499,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             super().start()
             # a bad key or a busy robot fails the run here, as it does on the other backends
             deadline = self.config.timing.connect_deadline()
-            if not linked.wait(deadline) and not self.config.auto_reconnect:
+            if not linked.wait(deadline):
                 raise RuntimeError(
                     f"the Go2 at {self.config.ip} didn't connect within {deadline} s (see the go2_webrtc log)"
                 )
@@ -563,6 +563,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
     def _send(self, verb: str) -> bool:
         """A verb for the Rust module, as Go2Base.send_command: it runs in order, and a failure is logged there."""
+        # TODO: True only means "sent", not "ran" (hosted teleop acks on it); return the outcome once Rust modules have RPCs.
         self.command.transport.publish(String(verb))
         return True
 
@@ -714,19 +715,20 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             return None
 
     @rpc
-    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any] | None:
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to
             data: The data dictionary to publish
         Returns:
-            The result of the publish request (on the real robot it's sent without waiting: {})
+            The result of the publish request (on the real robot it's sent without waiting: None)
         """
         if self.connection is None:
             parameter = data.get("parameter")
             verb = f"request {topic} {data['api_id']}"
             if parameter is not None:
                 verb += f" {json.dumps(parameter)}"
+            # TODO: return the robot's answer once Rust modules have RPCs.
             self._send(verb)
-            return {}
+            return None
         return self.connection.publish_request(topic, data)

@@ -59,8 +59,8 @@ pub struct Timing {
     pub video_queue_packets: usize,
     /// frames in the decoder the capture clock remembers
     pub capture_max_waiting: usize,
-    /// RTP packets that may wait for an earlier one that came late before it counts as lost
-    pub reorder_packets: usize,
+    /// how long RTP packets wait for an earlier one that came late (a NACK's retransmit) before it counts as lost
+    pub reorder_wait: f64,
     /// a frame bigger than this is a broken stream, not video
     pub max_frame_bytes: usize,
     /// camera_info goes out at most this often

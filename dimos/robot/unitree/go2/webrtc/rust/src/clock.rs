@@ -22,6 +22,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const NANOS_PER_SEC: i64 = 1_000_000_000;
 
+/// Nanoseconds on a clock that never steps (unlike now_ns under NTP), never 0; for deadlines, not stamps.
+pub fn monotonic_ns() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_nanos() as u64
+        + 1
+}
+
 pub fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

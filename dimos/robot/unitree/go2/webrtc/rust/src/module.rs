@@ -37,7 +37,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{mpsc as tokio_mpsc, Notify};
 use tracing::{error, info, warn};
 
-use crate::clock::{now_ns, place, CaptureClock, HostClock};
+use crate::clock::{monotonic_ns, now_ns, place, CaptureClock, HostClock};
 use crate::conn::{Conn, Event};
 use crate::h264::{Depacketizer, Packet, Reorder};
 use crate::lidar::decode_voxels;
@@ -212,13 +212,15 @@ struct Shared {
     config: Config,
     handle: Handle,
     conn: Mutex<Option<Arc<Conn>>>,
-    /// the last cmd_vel's arrival (ns) while the base is being driven, 0 once stopped
+    /// the last cmd_vel's arrival (monotonic_ns) while the base is being driven, 0 once stopped
     driving_since: AtomicU64,
     move_ids: AtomicU64,
     stopping: AtomicBool,
     lost: Notify,
     /// bumped by stop, damp and teardown: a verb started under an older value gives up at its next step
     cancels: AtomicU64,
+    /// woken on every cancel, so the verb running drops out mid-request or mid-settle
+    cancel_wake: Notify,
     /// held by the verb running and by the start sequence: one thing drives the robot at a time
     turn: tokio::sync::Mutex<()>,
     session: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -275,11 +277,11 @@ impl Shared {
     /// Stops whatever runs, lies the robot down and closes the link: the robot keeps one WebRTC client at a time.
     async fn shut_down(&self) {
         self.stopping.store(true, Ordering::Relaxed);
-        self.cancels.fetch_add(1, Ordering::Relaxed);
+        self.cancel();
         if let Some(session) = self.session.lock().unwrap().take() {
             session.abort();
         }
-        // what was driving the robot gives up at its next step; wait for that before lying down
+        // what was driving the robot drops out at once; wait for that before lying down
         let _turn = self.turn.lock().await;
         let _ = self.stop_movement().await;
         // lie down before the link closes, as GO2Connection.stop does on every backend
@@ -289,6 +291,29 @@ impl Shared {
         let conn = self.conn.lock().unwrap().take();
         if let Some(conn) = conn {
             conn.close().await;
+        }
+    }
+
+    /// Bumps the cancel count and wakes the verb running; returns the new count.
+    fn cancel(&self) -> u64 {
+        let generation = self.cancels.fetch_add(1, Ordering::Relaxed) + 1;
+        self.cancel_wake.notify_waiters();
+        generation
+    }
+
+    /// Runs `work` unless a cancel comes first, in which case it is dropped wherever it is waiting.
+    async fn unless_cancelled<T>(
+        &self,
+        generation: u64,
+        work: impl std::future::Future<Output = Result<T, String>>,
+    ) -> Result<T, String> {
+        let woken = self.cancel_wake.notified();
+        tokio::pin!(woken);
+        woken.as_mut().enable();
+        self.cancelled(generation)?;
+        tokio::select! {
+            result = work => result,
+            _ = woken => Err("cancelled by stop".into()),
         }
     }
 
@@ -302,7 +327,11 @@ impl Shared {
 
     /// Waits `seconds`, then says whether the verb may go on.
     async fn settle(&self, generation: u64, seconds: f64) -> Result<(), String> {
-        tokio::time::sleep(secs(seconds)).await;
+        self.unless_cancelled(generation, async {
+            tokio::time::sleep(secs(seconds)).await;
+            Ok(())
+        })
+        .await?;
         self.cancelled(generation)
     }
 
@@ -336,6 +365,7 @@ impl Shared {
         if current.as_deref() == Some(name) {
             return Ok(());
         }
+        self.cancelled(generation)?;
         self.request(MOTION_SWITCHER, SELECT_MODE, Some(json!({ "name": name })))
             .await?;
         self.settle(generation, self.config.timing.motion_mode_settle)
@@ -354,11 +384,11 @@ impl Shared {
                 duration,
             } => {
                 if duration > 0.0 {
-                    let until = now_ns() + (duration * 1e9) as u64;
+                    let until = monotonic_ns() + (duration * 1e9) as u64;
                     let driven = async {
-                        while now_ns() < until {
+                        while monotonic_ns() < until {
                             // kept fresh so the deadman covers a timed move too
-                            self.driving_since.store(now_ns(), Ordering::Relaxed);
+                            self.driving_since.store(monotonic_ns(), Ordering::Relaxed);
                             self.drive(x, y, yaw).await?;
                             self.settle(generation, self.config.timing.move_period)
                                 .await?;
@@ -369,7 +399,7 @@ impl Shared {
                     let stopped = self.stop_movement().await;
                     done(driven.and(stopped))
                 } else {
-                    self.driving_since.store(now_ns(), Ordering::Relaxed);
+                    self.driving_since.store(monotonic_ns(), Ordering::Relaxed);
                     done(self.drive(x, y, yaw).await)
                 }
             }
@@ -608,6 +638,7 @@ impl Go2WebRtc {
             stopping: AtomicBool::new(false),
             lost: Notify::new(),
             cancels: AtomicU64::new(0),
+            cancel_wake: Notify::new(),
             turn: tokio::sync::Mutex::new(()),
             session: Mutex::new(None),
         });
@@ -622,7 +653,10 @@ impl Go2WebRtc {
                 while let Some(Queued { verb, generation }) = queued.recv().await {
                     let shown = format!("{verb:?}");
                     let _turn = shared.turn.lock().await;
-                    if let Err(err) = shared.run(verb, generation).await {
+                    if let Err(err) = shared
+                        .unless_cancelled(generation, shared.run(verb, generation))
+                        .await
+                    {
                         warn!(verb = shown, "command failed: {err}");
                     }
                 }
@@ -699,7 +733,9 @@ impl Go2WebRtc {
 
     async fn on_cmd_vel(&mut self, msg: Twist) {
         let Some(shared) = &self.shared else { return };
-        shared.driving_since.store(now_ns(), Ordering::Relaxed);
+        shared
+            .driving_since
+            .store(monotonic_ns(), Ordering::Relaxed);
         if let Err(err) = shared
             .drive(msg.linear.x, msg.linear.y, msg.angular.z)
             .await
@@ -718,7 +754,7 @@ impl Go2WebRtc {
         };
         info!(?verb, "command");
         if cuts_in(&verb) {
-            let generation = shared.cancels.fetch_add(1, Ordering::Relaxed) + 1;
+            let generation = shared.cancel();
             tokio::spawn(async move {
                 if let Err(err) = shared.run(verb, generation).await {
                     warn!(verb = %msg.data, "command failed: {err}");
@@ -757,6 +793,9 @@ async fn session(shared: Arc<Shared>, on_event: crate::conn::OnEvent) {
                 if !started {
                     started = true;
                     start_sequence(&shared).await;
+                } else {
+                    // link_up put the robot back on "ai"
+                    restore_motion_mode(&shared).await;
                 }
                 shared.lost.notified().await;
                 conn.close().await;
@@ -809,11 +848,30 @@ async fn link_up(shared: &Shared, conn: &Conn) -> Result<(), String> {
     Ok(())
 }
 
+/// After a reconnect: config.motion_mode again, without the rest of the start sequence.
+async fn restore_motion_mode(shared: &Shared) {
+    let mode = &shared.config.motion_mode;
+    if mode.is_empty() {
+        return;
+    }
+    let _turn = shared.turn.lock().await;
+    let generation = shared.cancels.load(Ordering::Relaxed);
+    if let Err(err) = shared
+        .unless_cancelled(generation, shared.set_motion_mode(mode, generation))
+        .await
+    {
+        warn!("motion mode after reconnect: {err}");
+    }
+}
+
 /// The start sequence: motion mode, stand, balance, rage, obstacle avoidance.
 async fn start_sequence(shared: &Shared) {
     let _turn = shared.turn.lock().await;
     let generation = shared.cancels.load(Ordering::Relaxed);
-    if let Err(err) = start_steps(shared, generation).await {
+    if let Err(err) = shared
+        .unless_cancelled(generation, start_steps(shared, generation))
+        .await
+    {
         warn!("start sequence: {err}");
     }
 }
@@ -864,7 +922,7 @@ async fn deadman(shared: Arc<Shared>) {
     loop {
         tokio::time::sleep(secs(shared.config.timing.cmd_vel_timeout / 10.0)).await;
         let since = shared.driving_since.load(Ordering::Relaxed);
-        if since != 0 && now_ns().saturating_sub(since) > timeout_ns {
+        if since != 0 && monotonic_ns().saturating_sub(since) > timeout_ns {
             if let Err(err) = shared.stop_movement().await {
                 warn!("deadman stop: {err}");
             }
@@ -1111,7 +1169,8 @@ impl VideoLoop {
         };
         let timing = &self.shared.config.timing;
         let mut depacketizer = Depacketizer::new(timing.max_frame_bytes);
-        let mut reorder = Reorder::new(timing.reorder_packets);
+        let reorder_wait_ns = secs(timing.reorder_wait).as_nanos() as u64;
+        let mut reorder = Reorder::new(reorder_wait_ns);
         let mut capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
         let mut ssrc = None;
         // when each RTP time's first packet arrived (a frame's packets share one)
@@ -1132,14 +1191,16 @@ impl VideoLoop {
                 .is_some_and(|old| old != packet.header.ssrc)
             {
                 depacketizer = Depacketizer::new(timing.max_frame_bytes);
-                reorder = Reorder::new(timing.reorder_packets);
+                reorder = Reorder::new(reorder_wait_ns);
                 capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
                 first_arrival.clear();
                 self.want_keyframe();
             }
-            for (packet, arrived_ns) in
-                reorder.push(packet.header.sequence_number, (packet, arrived_ns))
-            {
+            for (packet, arrived_ns) in reorder.push(
+                packet.header.sequence_number,
+                (packet, arrived_ns),
+                arrived_ns,
+            ) {
                 // a lost keyframe request (or one the Go2 ignored) would leave the camera dark until its next keyframe
                 if !depacketizer.synced()
                     && arrived_ns.saturating_sub(last_keyframe_ask_ns) > keyframe_retry_ns
@@ -1150,7 +1211,7 @@ impl VideoLoop {
                 if self.dropped.swap(false, Ordering::Relaxed) {
                     // packets were dropped before this one: the frame in progress is broken
                     depacketizer = Depacketizer::new(timing.max_frame_bytes);
-                    reorder = Reorder::new(timing.reorder_packets);
+                    reorder = Reorder::new(reorder_wait_ns);
                     capture = CaptureClock::new(timing.capture_max_waiting, timing.clock_window);
                     self.want_keyframe();
                 }
@@ -1159,7 +1220,8 @@ impl VideoLoop {
                     .is_none_or(|&(rtp, _)| rtp != packet.header.timestamp)
                 {
                     first_arrival.push_back((packet.header.timestamp, arrived_ns));
-                    if first_arrival.len() > timing.capture_max_waiting + timing.reorder_packets {
+                    // the frames in the decoder, and the one the depacketizer is building
+                    if first_arrival.len() > timing.capture_max_waiting + 1 {
                         first_arrival.pop_front();
                     }
                 }
