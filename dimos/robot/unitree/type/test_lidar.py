@@ -21,10 +21,10 @@ import numpy as np
 import pytest
 import reactivex as rx
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,

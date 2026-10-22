@@ -22,6 +22,7 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -36,7 +37,6 @@ from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPoseStamped
 from dimos.msgs.nav_msgs.Path import Path as LegacyPath
-from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.visualization.rerun.cdr import generated_archetypes, path_archetype
 

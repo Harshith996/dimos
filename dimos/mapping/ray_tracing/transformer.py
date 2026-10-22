@@ -22,8 +22,8 @@ import numpy as np
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.transform import FnTransformer, Transformer
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

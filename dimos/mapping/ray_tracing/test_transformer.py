@@ -30,13 +30,13 @@ from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
 
 
 def _cloud(points, frame_id="lidar", timestamp=0.0):

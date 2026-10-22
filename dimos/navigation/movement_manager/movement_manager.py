@@ -30,9 +30,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 from dimos.messages.std_msgs.msg import Bool, Header
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

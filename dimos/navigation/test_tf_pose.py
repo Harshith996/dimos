@@ -14,9 +14,9 @@
 
 import pytest
 
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_seconds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_seconds
 from dimos.navigation.tf_pose import TfPose
 from dimos.protocol.tf.tf import MultiTBuffer
 

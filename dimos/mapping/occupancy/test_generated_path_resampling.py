@@ -21,13 +21,13 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
 from dimos.msgs.nav_msgs.Path import Path as LegacyPath
-from dimos.msgs.time import time_from_nanoseconds
 
 
 def make_path(points, stamp):

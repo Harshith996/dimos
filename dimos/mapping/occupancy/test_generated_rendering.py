@@ -22,16 +22,16 @@ import pytest
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.mapping.occupancy.visualizations import generate_rgba_texture, visualize_occupancy_grid
 from dimos.mapping.occupancy.visualize_path import visualize_path
+from dimos.message_utils.image import image_view
+from dimos.message_utils.occupancy import grid_to_world, occupancy_from_array
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
-from dimos.msgs.image import image_view
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
 from dimos.msgs.nav_msgs.Path import Path as LegacyPath
-from dimos.msgs.occupancy import grid_to_world, occupancy_from_array
-from dimos.msgs.time import time_from_nanoseconds
 
 
 def make_values(stamp, rotated=False):

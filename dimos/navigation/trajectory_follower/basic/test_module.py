@@ -15,9 +15,9 @@
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.time import time_from_seconds
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower, lookahead_distance
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 

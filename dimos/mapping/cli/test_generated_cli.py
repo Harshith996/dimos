@@ -25,6 +25,14 @@ from dimos.mapping.cli.map import _accumulate, _camera_info_static, _denoise
 from dimos.memory.cli import dataset
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import (
+    pointcloud_from_xyz,
+    pointcloud_from_xyz_rgb,
+    pointcloud_stamps,
+    pointcloud_xyz,
+)
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -37,14 +45,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import (
-    pointcloud_from_xyz,
-    pointcloud_from_xyz_rgb,
-    pointcloud_stamps,
-    pointcloud_xyz,
-)
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds
 from dimos.navigation.go2.loop_closure.pgo import Keyframe, PoseGraph
 from dimos.visualization.rerun.cdr import cloud_archetype
 

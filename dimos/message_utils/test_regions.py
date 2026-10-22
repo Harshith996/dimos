@@ -22,6 +22,8 @@ from mcap.writer import Writer
 import numpy as np
 import pytest
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
 from dimos.messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
@@ -32,8 +34,6 @@ from dimos.messages.dimos_msgs.msg import (
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 
 
 def region_values(region_id):

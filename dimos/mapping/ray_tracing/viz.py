@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.pointcloud import pointcloud_xyz
+from dimos.message_utils.pointcloud import pointcloud_xyz
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:

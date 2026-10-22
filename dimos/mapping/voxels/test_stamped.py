@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.pointcloud import pointcloud_stamps, pointcloud_with_xyz, pointcloud_xyz
+from dimos.message_utils.pointcloud import pointcloud_stamps, pointcloud_with_xyz, pointcloud_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 VOXEL = 0.05

@@ -65,8 +65,8 @@ def pose_fill(
     image pose.
     """
     from dimos.memory.type.observation import _to_tuple
+    from dimos.message_utils.geometry import compose_transform_values
     from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
-    from dimos.msgs.geometry import compose_transform_values
 
     def _fill(pair_obs: Observation[Any]) -> Observation[Any]:
         primary, secondary = cast(

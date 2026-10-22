@@ -37,11 +37,11 @@ from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESET
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
+from dimos.message_utils.geometry import vector_array
+from dimos.message_utils.pointcloud import pointcloud_to_open3d, pointcloud_xyz, transform_cloud
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import vector_array
-from dimos.msgs.pointcloud import pointcloud_to_open3d, pointcloud_xyz, transform_cloud
-from dimos.msgs.time import time_from_seconds
 from dimos.utils.data import resolve_named_path
 from dimos.visualization.rerun.cdr import register_colormap_annotation
 

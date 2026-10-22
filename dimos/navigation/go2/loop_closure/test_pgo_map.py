@@ -16,6 +16,8 @@ from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -25,8 +27,6 @@ from dimos.messages.geometry_msgs.msg import (
     Vector3,
 )
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 
 # TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.

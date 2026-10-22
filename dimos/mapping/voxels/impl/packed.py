@@ -20,11 +20,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import time_from_seconds
 
 
 class PackedVoxels:

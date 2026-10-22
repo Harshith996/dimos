@@ -18,7 +18,7 @@ import numpy as np
 from scipy import ndimage
 
 from dimos.mapping.occupancy.operations import _grid_values, _GridT, _with_grid
-from dimos.msgs.occupancy import CostValues
+from dimos.message_utils.occupancy import CostValues
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

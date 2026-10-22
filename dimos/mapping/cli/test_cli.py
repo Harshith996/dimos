@@ -34,9 +34,9 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_seconds
 
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.

@@ -19,8 +19,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from dimos.msgs.geometry import pose_from_transform
-from dimos.msgs.time import to_nanoseconds
+from dimos.message_utils.geometry import pose_from_transform
+from dimos.message_utils.time import to_nanoseconds
 
 if TYPE_CHECKING:
     from collections.abc import Callable

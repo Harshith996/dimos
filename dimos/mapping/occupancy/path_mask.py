@@ -16,11 +16,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
+from dimos.message_utils.occupancy import CostValues
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.occupancy import CostValues
 
 
 def make_path_mask(

@@ -26,9 +26,9 @@ from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import to_seconds
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

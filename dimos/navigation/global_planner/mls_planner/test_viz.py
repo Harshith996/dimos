@@ -17,6 +17,8 @@ from functools import partial
 from dimos_cdrgen.registry import decode, encode
 import numpy as np
 
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
@@ -25,8 +27,6 @@ from dimos.messages.dimos_msgs.msg import (
 )
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds
 
 
 def _region(points):

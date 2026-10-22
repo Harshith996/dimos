@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_values, _GridT
-from dimos.msgs.occupancy import CostValues
+from dimos.message_utils.occupancy import CostValues
 
 # Rectangle type: (x, y, width, height)
 Rect = tuple[int, int, int, int]

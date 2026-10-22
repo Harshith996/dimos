@@ -51,15 +51,15 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.lidar.replay import main as replay_main
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import (
+from dimos.message_utils.pointcloud import (
     pointcloud_from_xyz,
     pointcloud_to_open3d,
     pointcloud_with_xyz,
     pointcloud_xyz,
 )
-from dimos.msgs.time import time_from_seconds
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 from dimos.visualization.rerun.cdr import cloud_archetype
 

@@ -28,6 +28,8 @@ import zenoh
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -40,8 +42,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.rpc.pubsubrpc import LCMRPC

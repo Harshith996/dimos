@@ -21,12 +21,17 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.path_map import make_navigation_map
+from dimos.message_utils.occupancy import (
+    grid_to_world,
+    occupancy_from_array,
+    occupancy_view,
+    world_to_grid,
+)
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.occupancy import grid_to_world, occupancy_from_array, occupancy_view, world_to_grid
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import _USE_CPP, min_cost_astar
 
 

@@ -24,12 +24,17 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
+from dimos.message_utils.geometry import point_distance, yaw
+from dimos.message_utils.occupancy import (
+    CostValues,
+    occupancy_cell_value,
+    occupancy_view,
+    world_to_grid,
+)
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, PoseStamped, Twist
 from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.messages.std_msgs.msg import Bool, Header
-from dimos.msgs.geometry import point_distance, yaw
-from dimos.msgs.occupancy import CostValues, occupancy_cell_value, occupancy_view, world_to_grid
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage

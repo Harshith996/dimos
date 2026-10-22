@@ -19,6 +19,7 @@ from threading import Event
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -31,7 +32,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
 from dimos.navigation.trajectory_follower.fancy.module import TrajectoryFollower

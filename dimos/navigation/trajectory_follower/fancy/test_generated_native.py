@@ -26,6 +26,7 @@ import zenoh
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -39,7 +40,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.rpc.pubsubrpc import LCMRPC

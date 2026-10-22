@@ -23,9 +23,9 @@ import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 

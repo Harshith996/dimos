@@ -33,14 +33,14 @@ from dimos.mapping.relocalization.lidar import relocalize as lidar
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization, window
 from dimos.mapping.relocalization.lidar.relocalize import MID360
 from dimos.mapping.relocalization.module import RelocalizationModule, fix_stream
+from dimos.message_utils.geometry import inverse_transform, transform_from_matrix, transform_matrix
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection3DArray
-from dimos.msgs.geometry import inverse_transform, transform_from_matrix, transform_matrix
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 
 
@@ -231,7 +231,7 @@ def test_real_cdr_premap_and_fix_ports_keep_metadata_and_own_published_stamp(
     path.write_bytes(payload)
     instance = module(map_file=str(tmp_path / "canonical"), tf_interval=0)
     stamp = 1700000000123456789
-    mocker.patch("dimos.msgs.time.time.time_ns", return_value=stamp)
+    mocker.patch("dimos.message_utils.time.time.time_ns", return_value=stamp)
     with ExitStack() as cleanup:
         received, ready = {}, {}
 

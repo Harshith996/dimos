@@ -27,11 +27,11 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.message_utils.geometry import yaw
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Bool
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import yaw
 from dimos.navigation import spec
 from dimos.navigation.go2.replanning_a_star.controllers import _velocity
 from dimos.utils.logging_config import setup_logger

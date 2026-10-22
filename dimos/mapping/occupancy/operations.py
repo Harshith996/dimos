@@ -19,11 +19,11 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
+from dimos.message_utils.occupancy import CostValues, occupancy_view, world_to_grid
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.occupancy import CostValues, occupancy_view, world_to_grid
 
 _GridT = TypeVar("_GridT", OccupancyGrid, CdrOccupancyGrid)
 

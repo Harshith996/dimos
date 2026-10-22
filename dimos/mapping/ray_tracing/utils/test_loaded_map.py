@@ -24,13 +24,13 @@ from scipy.spatial.transform import Rotation
 from dimos.mapping.ray_tracing.utils.loaded_map import first_loaded_map, place_loaded_map
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
+from dimos.message_utils.geometry import transform_from_matrix
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import transform_from_matrix
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import time_from_seconds
 
 pytestmark = [pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]
 

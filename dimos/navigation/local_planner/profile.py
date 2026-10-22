@@ -25,9 +25,9 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.message_utils.time import NANOSECONDS_PER_SECOND, to_nanoseconds
 from dimos.messages.nav_msgs.msg import Path as CdrPath
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.time import NANOSECONDS_PER_SECOND, to_nanoseconds
 from dimos.navigation.embodiment.base import Embodiment
 
 _FAN_EPS = 1e-6  # segment shorter than this is a rotation, not a move

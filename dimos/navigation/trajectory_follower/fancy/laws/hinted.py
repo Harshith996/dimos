@@ -25,10 +25,10 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.message_utils.geometry import yaw
+from dimos.message_utils.time import to_nanoseconds
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.messages.nav_msgs.msg import Path
-from dimos.msgs.geometry import yaw
-from dimos.msgs.time import to_nanoseconds
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import decode_ceilings

@@ -50,11 +50,11 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.message_utils.geometry import quaternion_euler
+from dimos.message_utils.time import header_now
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import quaternion_euler
-from dimos.msgs.time import header_now
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 

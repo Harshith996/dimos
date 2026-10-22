@@ -24,10 +24,10 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from dimos.message_utils.geometry import pose_matrix
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import pose_matrix
 
 
 class CostValues(IntEnum):

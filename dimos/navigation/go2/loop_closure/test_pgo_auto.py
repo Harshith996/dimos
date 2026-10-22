@@ -18,11 +18,11 @@ import pytest
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.navigation.go2.loop_closure.pgo_auto import (
     FRAME_BODY,
     FRAME_WORLD_CORRECTED,

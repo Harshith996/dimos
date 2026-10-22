@@ -23,15 +23,15 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarWindowRelocalization
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import (
+from dimos.message_utils.pointcloud import (
     concatenate_clouds,
     pointcloud_from_xyz,
     pointcloud_xyz,
     transform_cloud,
 )
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.time import to_seconds
+from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.reactive import backpressure
 
 

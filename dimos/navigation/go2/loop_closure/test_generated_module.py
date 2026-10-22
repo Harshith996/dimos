@@ -21,12 +21,12 @@ import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.dimos_msgs.msg import LineSegments3D
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.loop_closure.module import PGOVoxelMapper
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers

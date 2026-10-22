@@ -29,6 +29,9 @@ import numpy as np
 from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -39,9 +42,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds
 
 
 def test_pose_fill_attaches_nearest_pose() -> None:

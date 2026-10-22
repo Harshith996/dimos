@@ -44,9 +44,9 @@ _WORLD_FRAMES = ("world", "map", "odom")
 
 def _camera_info_static() -> CameraInfo:
     """Load the packaged calibration without importing a robot connection."""
+    from dimos.message_utils.camera_info import camera_info_from_yaml
+    from dimos.message_utils.time import time_from_seconds
     from dimos.messages.std_msgs.msg import Header
-    from dimos.msgs.camera_info import camera_info_from_yaml
-    from dimos.msgs.time import time_from_seconds
 
     source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
     with resources.as_file(source) as path:
@@ -138,10 +138,10 @@ def _accumulate(
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
     from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.message_utils.geometry import compose_transform_values
+    from dimos.message_utils.pointcloud import transform_cloud
     from dimos.messages.geometry_msgs.msg import TransformStamped
     from dimos.messages.std_msgs.msg import Header
-    from dimos.msgs.geometry import compose_transform_values
-    from dimos.msgs.pointcloud import transform_cloud
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
@@ -192,7 +192,7 @@ def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
     """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
     import open3d as o3d  # type: ignore[import-untyped]
 
-    from dimos.msgs.pointcloud import pointcloud_to_open3d, select_points
+    from dimos.message_utils.pointcloud import pointcloud_to_open3d, select_points
 
     if cloud is None or cloud.width * cloud.height < 20:
         return cloud
@@ -219,9 +219,9 @@ def _log_reconstruction(
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
+    from dimos.message_utils.time import time_from_seconds
     from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
     from dimos.messages.std_msgs.msg import Header
-    from dimos.msgs.time import time_from_seconds
     from dimos.visualization.rerun.cdr import cloud_archetype
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
@@ -493,12 +493,12 @@ def main(
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
+    from dimos.message_utils.camera_info import camera_info_from_yaml
+    from dimos.message_utils.image import image_sharpness
+    from dimos.message_utils.time import time_from_seconds
     from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.messages.std_msgs.msg import Header
-    from dimos.msgs.camera_info import camera_info_from_yaml
-    from dimos.msgs.image import image_sharpness
-    from dimos.msgs.time import time_from_seconds
     from dimos.navigation.go2.loop_closure.pgo import PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.visualization.rerun.init import rerun_init

@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 import rerun as rr
 
+from dimos.message_utils.pointcloud import pointcloud_view, pointcloud_xyz
 from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import pointcloud_view, pointcloud_xyz
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:

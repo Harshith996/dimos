@@ -41,10 +41,10 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from packaging.version import Version
 
+from dimos.message_utils.geometry import inverse_transform, transform_from_matrix
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import inverse_transform, transform_from_matrix
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 

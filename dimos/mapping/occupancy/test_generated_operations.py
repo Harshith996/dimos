@@ -22,11 +22,11 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene, ide
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
+from dimos.message_utils.occupancy import occupancy_from_array, occupancy_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.occupancy import occupancy_from_array, occupancy_view
 
 
 @pytest.fixture(params=[(0, 0), (-1, 999999999), (1700000000, 123456789)])

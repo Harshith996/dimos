@@ -19,11 +19,11 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.time import time_from_seconds
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.trajectory_follower.fancy.controller import ControllerConfig
 from dimos.navigation.trajectory_follower.fancy.laws.seed import PursuitController

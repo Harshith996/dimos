@@ -15,10 +15,10 @@
 import numpy as np
 import pytest
 
+from dimos.message_utils.occupancy import occupancy_from_array
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.occupancy import occupancy_from_array
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 
 

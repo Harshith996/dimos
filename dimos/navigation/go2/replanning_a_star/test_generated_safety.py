@@ -19,14 +19,14 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.occupancy import grid_to_world, occupancy_from_array, world_to_grid
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
 from dimos.msgs.nav_msgs.Path import Path as LegacyPath
-from dimos.msgs.occupancy import grid_to_world, occupancy_from_array, world_to_grid
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer

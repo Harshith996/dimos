@@ -54,10 +54,7 @@ from scipy.spatial.transform import Rotation, Slerp
 
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
-from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import (
+from dimos.message_utils.geometry import (
     compose_transform_values,
     inverse_transform,
     quaternion_array,
@@ -66,7 +63,7 @@ from dimos.msgs.geometry import (
     transform_matrix,
     vector_array,
 )
-from dimos.msgs.pointcloud import (
+from dimos.message_utils.pointcloud import (
     concatenate_clouds,
     pointcloud_from_xyz,
     pointcloud_stamps,
@@ -76,7 +73,10 @@ from dimos.msgs.pointcloud import (
     transform_cloud,
     voxel_downsample_cloud,
 )
-from dimos.msgs.time import time_from_seconds, to_seconds
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 

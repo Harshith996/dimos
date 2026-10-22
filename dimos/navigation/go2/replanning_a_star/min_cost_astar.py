@@ -19,6 +19,7 @@ from typing import overload
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.message_utils.occupancy import grid_to_world, occupancy_view, world_to_grid
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -31,7 +32,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.occupancy import grid_to_world, occupancy_view, world_to_grid
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding

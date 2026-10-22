@@ -19,13 +19,13 @@ import numpy as np
 import rerun as rr
 
 from dimos.mapping.ray_tracing.viz import render_map_region
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.dimos_msgs.msg import PointCloudRegion
 from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
 from dimos.visualization.rerun.bridge import is_keyed_by_seq

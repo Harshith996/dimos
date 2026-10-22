@@ -24,9 +24,9 @@ from dimos_cdrgen.registry import decode, encode
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 from dimos.messages.std_msgs.msg import Bool, Header
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.movement_manager import movement_manager as movement_module
 from dimos.navigation.movement_manager.movement_manager import (
     MovementManager,

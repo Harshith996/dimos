@@ -22,6 +22,9 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.geometry import quaternion_from_euler, yaw
+from dimos.message_utils.occupancy import occupancy_cell_value, occupancy_from_array
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -33,9 +36,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.nav_msgs.msg import Odometry
 from dimos.messages.std_msgs.msg import Bool, Header
-from dimos.msgs.geometry import quaternion_from_euler, yaw
-from dimos.msgs.occupancy import occupancy_cell_value, occupancy_from_array
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.navigation.go2.replanning_a_star.controllers import PController, PdController, _velocity
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.go2.replanning_a_star.position_tracker import PositionTracker

@@ -22,8 +22,8 @@ from numpy.typing import NDArray
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.pointcloud import pointcloud_xyz, transform_cloud
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import pointcloud_xyz, transform_cloud
 
 LOADED_MAP_STREAM = "loaded_map"
 

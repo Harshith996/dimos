@@ -22,9 +22,9 @@ import numpy as np
 from reactivex import Subject
 
 from dimos.core.resource import Resource
+from dimos.message_utils.geometry import point_distance, yaw
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
 from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos.msgs.geometry import point_distance, yaw
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.controllers import Controller, PController, _velocity
 from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap

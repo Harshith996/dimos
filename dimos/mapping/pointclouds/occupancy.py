@@ -22,13 +22,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
+from dimos.message_utils.occupancy import occupancy_from_array
+from dimos.message_utils.pointcloud import pointcloud_xyz
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.occupancy import occupancy_from_array
-from dimos.msgs.pointcloud import pointcloud_xyz
 
 if TYPE_CHECKING:
     from collections.abc import Callable

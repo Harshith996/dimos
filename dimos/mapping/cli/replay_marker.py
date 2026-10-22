@@ -68,8 +68,8 @@ def main(
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
+    from dimos.message_utils.image import image_sharpness
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-    from dimos.msgs.image import image_sharpness
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype
 

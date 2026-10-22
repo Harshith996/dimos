@@ -18,8 +18,8 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.message_utils.geometry import yaw
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
-from dimos.msgs.geometry import yaw
 from dimos.utils.trigonometry import angle_diff
 
 

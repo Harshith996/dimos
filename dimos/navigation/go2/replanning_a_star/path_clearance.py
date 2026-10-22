@@ -19,8 +19,8 @@ from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_values
 from dimos.mapping.occupancy.path_mask import make_path_mask
+from dimos.message_utils.geometry import point_distance
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.msgs.geometry import point_distance
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 

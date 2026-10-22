@@ -32,13 +32,13 @@ from dimos.mapping.pointclouds.occupancy import (
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
+from dimos.message_utils.occupancy import occupancy_from_array, occupancy_view
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.occupancy import occupancy_from_array, occupancy_view
-from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyCloud
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.data import get_data

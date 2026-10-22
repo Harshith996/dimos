@@ -21,10 +21,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
+from dimos.message_utils.image import image_from_array
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
-from dimos.msgs.image import image_from_array
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat

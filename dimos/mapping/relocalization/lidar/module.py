@@ -29,8 +29,8 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.module import Config, RelocalizationModule
+from dimos.message_utils.pointcloud import concatenate_clouds, pointcloud_to_open3d
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.msgs.pointcloud import concatenate_clouds, pointcloud_to_open3d
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 

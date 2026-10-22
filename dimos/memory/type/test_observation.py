@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -33,7 +34,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.nav_msgs.msg import Odometry
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.time import time_from_nanoseconds
 
 
 def canonical_pose_values():
