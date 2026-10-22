@@ -25,8 +25,10 @@ import time
 from typing import cast
 import uuid
 
+from mcap.reader import make_reader
 import numpy as np
 import pytest
+from typer.testing import CliRunner
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
@@ -40,6 +42,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
+from dimos.memory.cli.app import mem_app
+from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -87,7 +91,7 @@ def rust_recorder_executable() -> Path:
                 "nix-command flakes",
                 "build",
                 "-L",
-                ".#dimos-memory-recorder",
+                "path:.#dimos-memory-recorder",
                 "--no-write-lock-file",
             ],
             cwd=_RUST_PACKAGE,
@@ -146,7 +150,6 @@ def test_rust_artifact_is_readable_by_python_memory2(
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
-    memory: SqliteStore | McapStore
     if store_kind == "sqlite":
         store = RustSqliteStoreConfig(path=str(artifact))
     else:
@@ -154,6 +157,8 @@ def test_rust_artifact_is_readable_by_python_memory2(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=store,
         record_tf=False,
@@ -242,11 +247,41 @@ def test_rust_artifact_is_readable_by_python_memory2(
             process.wait(timeout=10.0)
         recorder.stop()
 
-    if store_kind == "sqlite":
-        memory = SqliteStore(path=str(artifact))
-    else:
-        memory = McapStore(path=str(artifact))
-    with memory:
+    if store_kind == "mcap":
+        with artifact.open("rb") as recording:
+            reader = make_reader(recording)
+            assert reader.get_header().profile == "dimos"
+            summary = reader.get_summary()
+            assert summary is not None
+            assert summary.statistics is not None
+            assert summary.statistics.message_count == 2
+            channels = {channel.topic: channel for channel in summary.channels.values()}
+            assert set(channels) == {"imu", "color_image"}
+            assert channels["imu"].message_encoding == "lz4+lcm"
+            assert channels["color_image"].message_encoding == "jpeg"
+            assert summary.schemas == {}
+            assert channels["imu"].schema_id == channels["color_image"].schema_id == 0
+            assert channels["imu"].metadata["dimos.payload_type"] == (
+                "dimos.msgs.sensor_msgs.Imu.Imu"
+            )
+            assert channels["color_image"].metadata["dimos.payload_type"] == (
+                "dimos.msgs.sensor_msgs.Image.Image"
+            )
+            messages = {channel.topic: message for _, channel, message in reader.iter_messages()}
+            assert messages["imu"].publish_time == 12_500_000_000
+            assert messages["color_image"].publish_time == 12_750_000_000
+            assert all(message.log_time > message.publish_time for message in messages.values())
+
+    result = CliRunner().invoke(mem_app, ["summary", str(artifact)])
+    assert result.exit_code == 0, result.output
+    assert "imu" in result.output
+    assert "color_image" in result.output
+    assert "raw bytes" not in result.output
+
+    with open_dataset(artifact) as memory:
+        assert memory.list_streams() == ["color_image", "imu"]
+        assert memory.stream("imu").count() == 1
+        assert memory.stream("color_image").count() == 1
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
         assert isinstance(observation.data, Imu)
@@ -283,8 +318,9 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(global_config, "record_encoding_threads", 2)
     monkeypatch.setattr(global_config, "transport", "lcm")
     monkeypatch.setattr(global_config, "build_native", False)
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", rust_recorder_executable)
-    monkeypatch.setattr(rust_cli_recorder, "_RUST_DIR", _RUST_PACKAGE)
+    monkeypatch.setattr(
+        rust_cli_recorder, "prepare_rust_recorder", lambda: rust_recorder_executable
+    )
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
@@ -326,6 +362,8 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = RustRecorder(
+        source_dir=None,
+        build_command=None,
         executable=str(rust_recorder_executable),
         store=RustSqliteStoreConfig(path=str(artifact)),
         record_tf=True,

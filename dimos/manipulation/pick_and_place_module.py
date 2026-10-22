@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
+import numpy as np
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -35,16 +37,28 @@ from dimos.manipulation.grasp_verification import (
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.manipulation_spec import ExecutionResult, ManipulationSpec, PlanResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+
+# The one box a pick leaves out of the planner's map.
+TARGET_BOX = "pick-and-place/target"
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # Margin (metres) added around the target's bounding box. Mapped cells in
+    # that box are not obstacles during the pick, and the same box rides with
+    # the gripper while the object is held. Too small, and a cell on the
+    # object's edge or the table under it stops the plan; too large, and a
+    # neighbour's cells are ignored too.
+    target_clearance: float = Field(default=0.03, gt=0.0)
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
@@ -68,6 +82,23 @@ def _gripper_reading(settle: GripperSettle) -> str:
     return f"Final gripper position {settle.position:.2f}."
 
 
+@dataclass(frozen=True)
+class TargetBox:
+    """Axis-aligned bounds of a target's point cloud, in the cloud's frame, metres."""
+
+    center: Vector3
+    size: Vector3
+
+
+def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
+    """The axis-aligned bounds of an object's points, or None for an empty cloud."""
+    points = np.asarray(pointcloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    if not len(points) or not np.isfinite(points).all():
+        return None
+    low, high = points.min(axis=0), points.max(axis=0)
+    return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
+
+
 class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
@@ -75,6 +106,8 @@ class PickAndPlaceModule(Module):
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
+    # Leaves boxes out of the planner's map; a stack without a map has none.
+    _box_filter: PointCloudBoxFilterSpec | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -107,10 +140,9 @@ class PickAndPlaceModule(Module):
             if detection.id and detection.results
         ]
         self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
-        return SkillResult.ok(
+        return SkillResult(
             f"Detected {detections.detections_length} object(s)",
-            prompts=prompts,
-            objects=list(self._objects.values()),
+            metadata={"prompts": prompts, "objects": list(self._objects.values())},
         )
 
     @rpc
@@ -128,20 +160,20 @@ class PickAndPlaceModule(Module):
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
         if self._holding_object:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Still holding object {self._selected_object_id}; "
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
         if object_id not in self._objects:
             scanned = ", ".join(self._objects) or "none"
-            return SkillResult.ok(
+            return SkillResult(
                 f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
                 "Use scan_objects to refresh the list."
             )
         pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
         if pointcloud is None:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         candidates = self._grasp_generator.propose_grasps(pointcloud)
@@ -153,8 +185,34 @@ class PickAndPlaceModule(Module):
                 f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult.ok(f"Generated 0 grasp candidates for object {object_id}.")
+            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
         group = self._gripper_group(planning_group)
+        # The target is mapped geometry: with its cells as obstacles the planner
+        # refuses the approach into it, and the held object blocks every move after.
+        box = _target_box(pointcloud)
+        if box is not None:
+            self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
+        try:
+            return self._pick_from(candidates, object_id, box, group)
+        finally:
+            if not self._holding_object:
+                self._clear_target_box()
+
+    def _pick_from(
+        self,
+        candidates: GraspCandidateArray,
+        object_id: str,
+        box: TargetBox | None,
+        group: PlanningGroupID,
+    ) -> SkillResult:
+        """Open the gripper and try the ranked grasps in order until one holds the object.
+
+        Args:
+            candidates: Ranked grasps in the planning frame, best first.
+            object_id: ID of the object being picked, for the report.
+            box: Bounds of the object's point cloud, or None when it has none.
+            group: Gripper-capable planning group doing the pick.
+        """
         if not_open := self._open_gripper(group, "before grasping"):
             return not_open
 
@@ -182,22 +240,44 @@ class PickAndPlaceModule(Module):
                     f"Move to grasp candidate {rank} for object {object_id}", blocked
                 )
             if not_held := self._close_and_verify(group, object_id):
+                # Back out while the target's cells are still ignored: left at
+                # the grasp pose, the arm would start the next plan inside them.
+                # Only with the jaws open again, so nothing half-gripped is dragged.
+                if not_held.metadata.get("reopened") and (
+                    blocked := self._servo(grasp, pregrasp, group)
+                ):
+                    stopped = self._stopped("Retract to the pre-grasp pose", blocked)
+                    return SkillResult(f"{not_held.message} {stopped.message}")
                 return not_held
 
             self._selected_object_id = object_id
             self._selected_grasp = grasp
             self._holding_object = True
+            if box is not None:
+                # The box in the tool tip's frame, as it is at the grasp pose:
+                # it rides with the tip from here.
+                inverse = grasp.orientation.inverse()
+                self._leave_out(
+                    Pose(
+                        position=inverse.rotate_vector(box.center - grasp.position),
+                        orientation=inverse,
+                    ),
+                    box.size,
+                    self._tip_frame(group),
+                )
             if blocked := self._servo(grasp, pregrasp, group):
                 return self._stopped(f"Retract after grasping object {object_id}", blocked)
-            return SkillResult.ok(
+            return SkillResult(
                 "Pick complete",
-                object_id=object_id,
-                rank=rank,
-                score=candidate.score,
-                candidates=len(candidates.candidates),
+                metadata={
+                    "object_id": object_id,
+                    "rank": rank,
+                    "score": candidate.score,
+                    "candidates": len(candidates.candidates),
+                },
             )
         attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
-        return SkillResult.ok(
+        return SkillResult(
             f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
             f"for object {object_id}; last planner result {last_plan}."
         )
@@ -224,7 +304,7 @@ class PickAndPlaceModule(Module):
         """
         target = f"({x:.2f}, {y:.2f}, {z:.2f})"
         if self._selected_grasp is None or not self._holding_object:
-            return SkillResult.ok(
+            return SkillResult(
                 f"Not holding any object; nothing was placed at {target}. Use pick_object first."
             )
         group = self._gripper_group(planning_group)
@@ -239,18 +319,48 @@ class PickAndPlaceModule(Module):
         if blocked := self._servo(preplace, place, group):
             return self._stopped(f"Move down to the place pose {target}", blocked)
         if not_open := self._open_gripper(group, "to release the object"):
-            return SkillResult.ok(f"{not_open.message} The arm stayed at the place pose.")
+            return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
         self._holding_object = False
         self._clear_selection()
+        # Released, the object no longer rides with the tool, so neither does its box.
+        self._clear_target_box()
         if blocked := self._servo(place, preplace, group):
             return self._stopped(f"Retract from {target} after releasing", blocked)
-        return SkillResult.ok("Place complete")
+        return SkillResult("Place complete")
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
         self._manipulation.show_grasp_proposals(GraspCandidateArray())
         self._selected_object_id = None
         self._selected_grasp = None
+
+    def _leave_out(self, pose: Pose, size: Vector3, frame_id: str | None = None) -> None:
+        """Leave the target's box, grown by target_clearance, out of the planner's map.
+
+        Args:
+            pose: The box's centre and orientation in ``frame_id``, metres.
+            size: The target's edge lengths, metres.
+            frame_id: The frame the box is fixed in, or None for the map's own
+                frame. A moving frame, such as the tool tip, carries the box.
+        """
+        if self._box_filter is None:
+            return
+        margin = 2.0 * self.config.target_clearance
+        self._box_filter.set_box(
+            TARGET_BOX, pose, Vector3(size.x + margin, size.y + margin, size.z + margin), frame_id
+        )
+
+    def _clear_target_box(self) -> None:
+        if self._box_filter is not None:
+            self._box_filter.clear_box(TARGET_BOX)
+
+    def _tip_frame(self, group: PlanningGroupID) -> str:
+        """The tool tip frame of a planning group that has one."""
+        return next(
+            info.tip_frame
+            for info in self._manipulation.list_planning_groups()
+            if info.id == group and info.tip_frame is not None
+        )
 
     def _gripper_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID:
         """Pick the planning group that has both a gripper and a tool frame.
@@ -289,7 +399,7 @@ class PickAndPlaceModule(Module):
             result: The planner or execution result that did not succeed.
         """
         source = "planner" if isinstance(result, PlanResult) else "execution"
-        return SkillResult.ok(f"{step} did not complete; {source} returned {_status(result)}")
+        return SkillResult(f"{step} did not complete; {source} returned {_status(result)}")
 
     def _apply_yaw_policy(self, pose: PoseStamped, group: PlanningGroupID) -> PoseStamped:
         if self.config.yaw_policy == "generated":
@@ -403,7 +513,7 @@ class PickAndPlaceModule(Module):
         )
         if settle.position is None or open_failure(settle, self.config.grasp_verification) is None:
             return None
-        return SkillResult.ok(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
+        return SkillResult(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
 
     def _close_and_verify(
         self, planning_group: PlanningGroupID, object_id: str
@@ -433,8 +543,10 @@ class PickAndPlaceModule(Module):
         report = f"Closed the gripper on object {object_id}. {_gripper_reading(settle)}"
         if "nothing in the jaws" in failure:
             reopened = self._open_gripper(planning_group, "after closing on nothing")
-            report = f"{report} {'Reopened the gripper.' if reopened is None else reopened.message}"
-        return SkillResult.ok(report)
+            if reopened is None:
+                return SkillResult(f"{report} Reopened the gripper.", metadata={"reopened": True})
+            report = f"{report} {reopened.message}"
+        return SkillResult(report)
 
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
         state = self._manipulation.get_state().groups.get(planning_group)

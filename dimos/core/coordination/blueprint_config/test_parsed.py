@@ -40,6 +40,14 @@ class PrimaryModule(Module):
     config: PrimaryConfig
 
 
+class SecondaryConfig(ModuleConfig):
+    count: int = 1
+
+
+class SecondaryModule(Module):
+    config: SecondaryConfig
+
+
 @dataclass
 class RecordingCallback:
     calls: list[int] = field(default_factory=list)
