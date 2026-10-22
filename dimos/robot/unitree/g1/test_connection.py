@@ -15,6 +15,7 @@
 """Robot-boundary contracts, plus actual GR00T/SONIC sim2 control loops."""
 
 from contextlib import ExitStack
+import json
 from pathlib import Path
 import runpy
 import sys
@@ -27,6 +28,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.transport import pZenohTransport
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.costmapper import Config as CostMapperConfig, CostMapper
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -34,13 +36,17 @@ from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
 from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
 from dimos.robot.unitree.g1.controllers.sonic.module import G1SonicPolicyModule
 from dimos.robot.unitree.g1.model.simulation import G1
+from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.lidar.module import LidarModule
@@ -65,6 +71,25 @@ def load_g1_blueprint(monkeypatch, mocker):
         return runpy.run_path(str(path))[name]
 
     return load
+
+
+def test_g1_does_not_restamp_a_queued_motor_command(mocker):
+    connection = G1Connection(controller="groot")
+    client = mocker.create_autospec(SimRobotClient, instance=True)
+    mocker.patch.object(connection, "_sim", client)
+    values = {
+        f"{name}/{field}": 0.0
+        for name in connection._names
+        for field in ("position", "velocity", "kp", "kd", "effort")
+    }
+    stamp = time.time() - 0.1
+    try:
+        connection.write(values, source_ts=stamp)
+        command = client.write_motors.call_args.args[0]
+        assert command.timestamp == stamp
+        assert len(command.q) == len(connection._names)
+    finally:
+        connection.stop()
 
 
 def _stream_key(blueprint, module, port):
@@ -298,21 +323,52 @@ def walking_stack(request, monkeypatch):
 
 @pytest.mark.self_hosted
 @pytest.mark.parametrize("walking_stack", ["groot", "sonic"], indirect=True)
-def test_real_policy_moves_robot_through_public_connection(walking_stack):
+def test_real_policy_moves_robot_through_public_connection(walking_stack, record_property):
     app = walking_stack
     world = app.get_instance(SimulationModule)
     robot = app.get_instance(G1Connection)
     mapped = Event()
+    commands, latency, image_ages, scans = {}, [], [], []
+    last_applied = 0
+    descriptor = StreamDescriptor.from_dict(world.describe()["robots"][G1Connection.name])
+
+    def on_command(frame):
+        commands[frame.metadata.sequence] = time.monotonic() - (time.time() - frame.source_ts)
+
+    def on_feedback(frame):
+        nonlocal last_applied
+        sequence = frame.metadata.applied_action_sequence
+        if sequence != last_applied and sequence in commands:
+            latency.append(float(frame.values["monotonic_time"][0]) - commands.pop(sequence))
+            last_applied = sequence
 
     def on_costmap(grid):
         if grid.info.width > 0 and grid.info.height > 0:
             mapped.set()
 
     with ExitStack() as stack:
+        for suffix, callback in (("command", on_command), ("state", on_feedback)):
+            transport = pZenohTransport(f"{descriptor.topic}/{suffix}")
+            stack.callback(transport.stop)
+            stack.callback(transport.subscribe(callback))
+        stack.callback(
+            app.transports[("color_image", Image)].subscribe(
+                lambda image: image_ages.append(time.time() - image.ts)
+            )
+        )
+        stack.callback(
+            app.transports[("pointcloud", PointCloud2)].subscribe(
+                lambda cloud: scans.append(cloud.ts)
+            )
+        )
         stack.callback(app.transports[("global_costmap", OccupancyGrid)].subscribe(on_costmap))
         stack.callback(robot.move, Twist())
         assert mapped.wait(15), "simulated lidar never produced a navigation costmap"
         start = world.status()
+        image_ages.clear()
+        scans.clear()
+        latency.clear()
+        started = time.monotonic()
         positions = []
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
@@ -320,7 +376,21 @@ def test_real_policy_moves_robot_through_public_connection(walking_stack):
             positions.append(world.status()["robots"][G1Connection.name])
             time.sleep(0.1)  # The commanded input rate, not a readiness wait.
     end = world.status()
+    elapsed = time.monotonic() - started
     samples = np.array(positions)
+    evidence = {
+        "elapsed_s": elapsed,
+        "realtime_factor": (end["sim_time"] - start["sim_time"]) / elapsed,
+        "physics_hz": (end["steps"] - start["steps"]) / elapsed,
+        "command_to_poststep_p99_ms": float(np.percentile(latency, 99) * 1000) if latency else None,
+        "command_samples": len(latency),
+        "camera_hz": len(image_ages) / elapsed,
+        "camera_age_p99_ms": float(np.percentile(image_ages, 99) * 1000) if image_ages else None,
+        "lidar_hz": len(scans) / elapsed,
+        "forward_m": float(samples[-1, 0] - samples[0, 0]),
+    }
+    record_property("sim2_zenoh_loaded", json.dumps(evidence))
+    assert len(latency) > 100 and evidence["command_to_poststep_p99_ms"] < 25, evidence
     assert end["error"] is None
     assert end["steps"] - start["steps"] > 1200
     assert np.isfinite(samples).all()

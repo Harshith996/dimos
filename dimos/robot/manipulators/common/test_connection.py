@@ -15,6 +15,7 @@
 """Connection contracts and native xArm/Piper trajectories through sim2."""
 
 from contextlib import ExitStack
+from dataclasses import replace
 import importlib
 from pathlib import Path
 
@@ -35,7 +36,7 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.piper.connection import PiperConnection
 from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import FrameMetadata, StateFrame, StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -108,6 +109,44 @@ def test_halt_discards_held_sdk_targets(sdk_connection):
     assert sdk.write_joint_positions.call_args.args[0][:2] == [0.05, 0.1]
 
 
+@pytest.fixture
+def simulated_connection(connection, mocker):
+    client = mocker.create_autospec(SimRobotClient, instance=True)
+    size = len(connection._names)
+    frame = StateFrame(
+        FrameMetadata(1, 0, 1, 1, 0.005),
+        {
+            "position": np.zeros(size),
+            "velocity": np.zeros(size),
+            "effort": np.zeros(size),
+            "wall_time": np.array([123.0]),
+        },
+    )
+    client.read.return_value = frame
+    mocker.patch.object(connection, "_sim", client)
+    yield connection, client, frame
+
+
+def test_sim_feedback_keeps_acquisition_time(simulated_connection):
+    connection, _, _ = simulated_connection
+    assert connection.read_state().source_ts == 123.0
+
+
+def test_reset_discards_partial_targets_before_next_state_poll(simulated_connection):
+    connection, client, frame = simulated_connection
+    connection.write({"arm/joint1/position": 0.5}, source_ts=123.1)
+    reset = replace(frame, metadata=replace(frame.metadata, sequence=2, episode_id=1))
+    client.read.return_value = reset
+
+    connection.write({"arm/joint2/position": 0.2}, source_ts=124.0)
+
+    client.write_positions.assert_called_with(
+        [0.0, 0.2] + [0.0] * (len(connection._names) - 2),
+        observed=reset,
+        source_ts=124.0,
+    )
+
+
 def test_xarm_velocity_and_gripper_do_not_change_each_others_mode(mocker):
     with ExitStack() as stack:
         connection = XArmConnection(dof=6)
@@ -152,9 +191,7 @@ def running_arm(request, monkeypatch):
         stack.callback(app.stop)
         world = app.get_instance(SimulationModule)
         client = stack.enter_context(
-            SimRobotClient(
-                ChannelDescriptor.from_dict(world.describe()["robots"]["arm_connection"])
-            )
+            SimRobotClient(StreamDescriptor.from_dict(world.describe()["robots"]["arm_connection"]))
         )
         yield app, client, dof
 

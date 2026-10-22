@@ -29,6 +29,7 @@ import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import functools
+import math
 import threading
 import time
 from typing import Any, ClassVar
@@ -81,12 +82,36 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 Values = dict[str, float]
-#: One subscription to make: the input port, its converter and the
-#: converter's second argument.
-_Listener = tuple[In[Any], Callable[[Any, Any], Values], Any]
-#: One output to publish: the port, and how to build its message from the
-#: checked readings, called as ``build(values, ts=unix_time)``.
-_Output = tuple[Out[Any], Callable[..., Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _Listener:
+    """One input port to subscribe to, and how to turn its messages into values.
+
+    Attributes:
+        port: The input port.
+        convert: Turns a message into named values, called as
+            ``convert(message, argument)``.
+        argument: The second argument ``convert`` needs, e.g. the base's name.
+    """
+
+    port: In[Any]
+    convert: Callable[[Any, Any], Values]
+    argument: Any
+
+
+@dataclass(frozen=True, slots=True)
+class _Output:
+    """One output port to publish readings on.
+
+    Attributes:
+        port: The output port.
+        build: Builds its message from the checked readings, called as
+            ``build(values, ts=unix_time)``.
+    """
+
+    port: Out[Any]
+    build: Callable[..., Any]
 
 
 class ConnectionConfig(ModuleConfig):
@@ -289,17 +314,19 @@ class ConnectionModule(Module, ABC):
         """
 
     @abstractmethod
-    def read_state(self) -> Values:
+    def read_state(self) -> Values | ControlValues:
         """The robot's latest readings, or an empty dict if nothing new has arrived.
 
         Keys are full keys such as ``"arm/joint1/position"``, each value in
         its key's unit, and every key the description lists must be present.
         A driver whose SDK delivers readings in a callback returns an empty
         dict here and calls ``publish_state`` from the callback instead.
+        Return ControlValues to preserve the device's acquisition timestamp;
+        an unstamped dict is stamped when read_state returns.
         """
 
     @abstractmethod
-    def write(self, values: Values) -> None:
+    def write(self, values: Values, *, source_ts: float | None = None) -> None:
         """Send one checked command to the hardware.
 
         Send and return, servo-style: never wait for a motion to finish; its
@@ -311,6 +338,8 @@ class ConnectionModule(Module, ABC):
         Args:
             values: Named values from one message, e.g.
                 ``{"arm/joint1/position": 0.3}``, already within their limits.
+            source_ts: Original command timestamp, or receipt time for an
+                unstamped input. Never replace this with forwarding time.
         """
 
     @abstractmethod
@@ -332,7 +361,7 @@ class ConnectionModule(Module, ABC):
 
         self.connect()
         self._connected = True
-        self._subscriptions = [self._listen(*listener) for listener in listeners]
+        self._subscriptions = [self._listen(listener) for listener in listeners]
         self._state_thread = threading.Thread(
             target=self._state_loop, daemon=True, name=f"{self._label}-state"
         )
@@ -385,7 +414,7 @@ class ConnectionModule(Module, ABC):
         logger.warning(f"{self._label}: halt requested")
         return self._halt()
 
-    def publish_state(self, values: Mapping[str, float]) -> None:
+    def publish_state(self, values: Mapping[str, float] | ControlValues) -> None:
         """Publish one set of readings on the output ports.
 
         The readings must carry exactly the keys the description lists; a set
@@ -398,22 +427,27 @@ class ConnectionModule(Module, ABC):
         """
         if self._stop_event.is_set():
             return
-        now = time.time()
         description = self.description
         try:
             # validate_state takes a ControlValues; this one never leaves the
             # process.
-            frame = ControlValues(
-                description.source, now, 0, 0, list(values), list(values.values())
+            frame = (
+                values
+                if isinstance(values, ControlValues)
+                else ControlValues(
+                    description.source, time.time(), 0, 0, list(values), list(values.values())
+                )
             )
+            if not math.isfinite(frame.source_ts):
+                raise ValueError("non-finite acquisition timestamp")
             checked = validate_state(description, frame)
         except (ValueError, FrameRejectedError) as error:
             self._report(f"bad readings: {error}")
             return
-        for port, build in self._outputs:
-            port.publish(build(checked, ts=now))
+        for output in self._outputs:
+            output.port.publish(output.build(checked, ts=frame.source_ts))
         with self._lock:
-            self._last_state_time = now
+            self._last_state_time = frame.source_ts
 
     def _plan_inputs(self, description: ControlDescription) -> list[_Listener]:
         """One subscription per port spec in the config."""
@@ -422,11 +456,13 @@ class ConnectionModule(Module, ABC):
             port = self.inputs[name]
             if isinstance(spec, TwistPort):
                 base = self._part(description, ResourceKind.BASE)
-                listeners.append((port, twist_to_values, base))
+                listeners.append(_Listener(port, twist_to_values, base))
             elif isinstance(spec, JointPort):
-                listeners.append((port, joint_state_to_values, (spec.interface,)))
+                listeners.append(_Listener(port, joint_state_to_values, (spec.interface,)))
             elif isinstance(spec, MotorPort):
-                listeners.append((port, motor_command_to_values, motor_joints([description])))
+                listeners.append(
+                    _Listener(port, motor_command_to_values, motor_joints([description]))
+                )
         return listeners
 
     def _plan_outputs(self, description: ControlDescription) -> list[_Output]:
@@ -446,24 +482,24 @@ class ConnectionModule(Module, ABC):
                     groups.setdefault(fields, []).append(name)
             port = self.outputs[reported[JointState]]
             for joints in groups.values():
-                outputs.append((port, functools.partial(joint_state_from_values, joints=joints)))
+                outputs.append(
+                    _Output(port, functools.partial(joint_state_from_values, joints=joints))
+                )
         if PoseStamped in reported:
             base = self._part(description, ResourceKind.BASE)
             pose = functools.partial(pose_from_values, base=base, frame_id=self._odom_frame())
-            outputs.append((self.outputs[reported[PoseStamped]], pose))
+            outputs.append(_Output(self.outputs[reported[PoseStamped]], pose))
         if Twist in reported:
             base = self._part(description, ResourceKind.BASE)
             speed = functools.partial(_measured_twist, base)
-            outputs.append((self.outputs[reported[Twist]], speed))
+            outputs.append(_Output(self.outputs[reported[Twist]], speed))
         if Imu in reported:
             imu = self._part(description, ResourceKind.SENSOR)
             imu_msg = functools.partial(imu_from_values, sensor=imu, frame_id=self.frame_id)
-            outputs.append((self.outputs[reported[Imu]], imu_msg))
+            outputs.append(_Output(self.outputs[reported[Imu]], imu_msg))
         return outputs
 
-    def _listen(
-        self, port: In[Any], convert: Callable[[Any, Any], Values], argument: Any
-    ) -> DisposableBase:
+    def _listen(self, listener: _Listener) -> DisposableBase:
         """Pass this robot's values from each message on ``port`` to ``_apply``,
         newest message only. ``convert(message, argument)`` gives the values.
 
@@ -476,23 +512,31 @@ class ConnectionModule(Module, ABC):
         def carries_mine(msg: Any) -> bool:
             return not isinstance(msg, JointState) or any(n.startswith(prefix) for n in msg.name)
 
-        async def handle(msg: Any) -> None:
+        async def handle(stamped: tuple[Any, float]) -> None:
+            msg, received_at = stamped
             try:
-                values = convert(msg, argument)
+                values = listener.convert(msg, listener.argument)
             except ValueError as error:
-                self._report(f"{port.name}: {error}", rejection=True)
+                self._report(f"{listener.port.name}: {error}", rejection=True)
                 return
             mine = {key: value for key, value in values.items() if key.startswith(prefix)}
             if mine:
-                self._apply(mine)
+                self._apply(
+                    mine, source_ts=getattr(msg, "timestamp", getattr(msg, "ts", received_at))
+                )
 
         return self.process_observable(
-            port.pure_observable().pipe(ops.filter(carries_mine)), handle
+            listener.port.pure_observable().pipe(
+                ops.filter(carries_mine), ops.map(lambda msg: (msg, time.time()))
+            ),
+            handle,
         )
 
-    def _apply(self, values: Values) -> None:
+    def _apply(self, values: Values, *, source_ts: float | None = None) -> None:
         description = self.description
         try:
+            if source_ts is not None and not math.isfinite(source_ts):
+                raise ValueError("non-finite command timestamp")
             # validate_command takes a ControlValues; this one never leaves the
             # process. Typed messages carry no sequence number, so order is
             # not checked.
@@ -514,7 +558,7 @@ class ConnectionModule(Module, ABC):
             with self._hardware_lock:
                 if not self._connected:
                     return
-                self.write(result.values)
+                self.write(result.values, source_ts=source_ts)
         except Exception as error:
             self._report(f"write failed: {type(error).__name__}: {error}")
             self._cancel_deadman()
@@ -532,10 +576,10 @@ class ConnectionModule(Module, ABC):
 
     def _deadman_expired(self) -> None:
         self._deadman = None
-        with self._lock:
-            self._deadman_fired = True
         logger.warning(f"{self._label}: no command in {self.config.deadman_timeout_s} s, halting")
         self._halt()
+        with self._lock:
+            self._deadman_fired = True
 
     def _halt(self) -> bool:
         """Call ``halt`` if connected. True if it ran and did not raise."""
