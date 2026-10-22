@@ -77,7 +77,7 @@ def test_snapshot_history_is_bounded_and_cleared_at_reset(worlds):
     assert len(frames) <= world.snapshot_descriptor.observation_slots
     world.reset()
     assert {frame.metadata.episode_id for frame in world.snapshots.read_observations()} == {
-        world.episode
+        world.generation
     }
 
 

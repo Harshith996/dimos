@@ -73,6 +73,7 @@ class SimulationRuntime:
         self.data = mujoco.MjData(self.model)
         self.lock = threading.RLock()
         self.episode = 0
+        self.generation = 0
         self.tick = 0
         self._clock_origin = time.time()
         self._closed = False
@@ -203,15 +204,16 @@ class SimulationRuntime:
             self._validate_update(update)
             mujoco.mj_setState(self.model, self.data, self._baseline, STATE)
             self._apply_update(update)
+            self.episode += 1
             return self._finish_change()
 
     def _finish_change(self, *, enable: bool = True) -> SceneState:
-        self.episode += 1
+        self.generation += 1
         self._clock_origin = time.time() - float(self.data.time)
-        self.snapshots.set_episode(self.episode)
+        self.snapshots.set_episode(self.generation)
         mujoco.mj_forward(self.model, self.data)
         for binding in self.robots.values():
-            binding.channel.set_episode(self.episode)
+            binding.channel.set_episode(self.generation)
             if enable:
                 binding.enabled = True
             binding.action = None
@@ -335,7 +337,8 @@ class SimulationRuntime:
             return SceneState(
                 world_id=self.world_id,
                 scene_id=self.description.id,
-                generation=self.episode,
+                episode=self.episode,
+                generation=self.generation,
                 tick=self.tick,
                 sim_time=float(self.data.time),
                 ts=time.time(),
@@ -388,7 +391,7 @@ class SimulationRuntime:
         dq = self.data.qvel[b.dofs]
         if (
             action is not None
-            and action.metadata.episode_id == self.episode
+            and action.metadata.episode_id == self.generation
             and time.monotonic() <= float(action.values["expires_at"][0])
         ):
             b.command_active = True
@@ -430,7 +433,7 @@ class SimulationRuntime:
             self.data.ctrl[aid] = value
 
     def _publish(self, *, force_snapshot: bool = False) -> None:
-        meta = FrameMetadata(0, self.episode, self.tick, 0, float(self.data.time))
+        meta = FrameMetadata(0, self.generation, self.tick, 0, float(self.data.time))
         timestamp = self._clock_origin + float(self.data.time)
         for b in self.robots.values():
             values: dict[str, Any] = {
@@ -461,7 +464,12 @@ class SimulationRuntime:
             b.channel.publish_observation(
                 values,
                 FrameMetadata(
-                    0, self.episode, self.tick, 0, float(self.data.time), b.applied_action_sequence
+                    0,
+                    self.generation,
+                    self.tick,
+                    0,
+                    float(self.data.time),
+                    b.applied_action_sequence,
                 ),
             )
         if force_snapshot or self.tick % self._snapshot_stride == 0:
