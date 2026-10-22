@@ -183,7 +183,7 @@ def test_device_login_then_logout(
     assert account_events == [True, False]
 
 
-def test_deleting_a_pending_login_only_cancels_it(
+def test_deleting_a_login_cancels_it_when_pending_and_logs_out_otherwise(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def post(path: str, **params: Any) -> dict[str, Any]:
@@ -204,8 +204,9 @@ def test_deleting_a_pending_login_only_cancels_it(
     monkeypatch.setattr(uploads, "account", lambda: logged_in_account(False))
     assert client.post("/cloud/login").json()["state"] == "pending"
     assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
-    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
     assert forgot == []
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+    assert forgot == [1]
 
 
 def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
