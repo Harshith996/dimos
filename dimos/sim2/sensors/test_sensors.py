@@ -296,7 +296,7 @@ def test_capture_timestamps_do_not_follow_host_polling_jitter(reader, mocker):
             world.step()
         second = device.poll()[0]
         assert second.value.ts - first.value.ts == pytest.approx(0.1, abs=1e-6)
-        device.published(second)
+        device.published(second, at=first.value.ts + 10)
         assert device.status()["lateness_seconds"] > 9
     finally:
         device.close()
