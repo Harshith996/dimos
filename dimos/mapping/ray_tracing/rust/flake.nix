@@ -17,8 +17,8 @@
 
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/d5f801d7dd0208731bab566d079bae7abe6278f1";
-          sha256 = "596db1c5658ac5e2f4b51b6d1ce8bcc4be9b590f718e3d2281faf61b4744c646";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/937e53e824b7a26bd52421ba46687d211f9e1e7b";
+          sha256 = "e7db5c2d0cc13a9e6dd76d90e4ee444fa99840f9ab0bf4c16139ba12673b1109";
         };
         sharedSource = pkgs.runCommand "dimos-ray-tracing-cdr-source-input" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -31,18 +31,21 @@
           cp -r ${moduleSource} $out
           chmod -R u+w $out
           mkdir -p $out/sdk
-          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros ${sharedSource}/native/rust/dimos-message-adapters $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-message-adapters/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../native/rust/dimos-message-adapters' 'sdk/dimos-message-adapters' \
             --replace-fail '../../../../build/message-source/rust' 'messages' \
             --replace-fail '[workspace]' '[workspace]
-          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-message-adapters", "messages"]'
         '';
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-module" "dimos-module-macros" ];
+        ours = [ name "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
         callWith = mode: import generated {
           inherit pkgs;
           buildRustCrateForPkgs = cratePkgs: crate:

@@ -34,8 +34,8 @@
         name = "dimos-depth2depth-cloud";
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/b971b729786cc12dcf4769cfbc233b0e36f1feee";
-          sha256 = "20abf8673b36a6fdea3c30b6949fe7e618c2836917c34f39425ef466609a5171";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/937e53e824b7a26bd52421ba46687d211f9e1e7b";
+          sha256 = "e7db5c2d0cc13a9e6dd76d90e4ee444fa99840f9ab0bf4c16139ba12673b1109";
         };
         sharedSource = pkgs.runCommand "dimos-depth-cloud-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -50,17 +50,20 @@
           cp -r ${moduleSource} $out
           chmod -R u+w $out
           mkdir -p $out/sdk
-          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros ${sharedSource}/native/rust/dimos-message-adapters $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-message-adapters/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
-          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-message-adapters", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../native/rust/dimos-message-adapters' 'sdk/dimos-message-adapters' \
             --replace-fail '../../../../build/message-source/rust' 'messages'
         '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-module" "dimos-module-macros" ];
+        ours = [ name "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
         build = mode: features: (import generated {
           inherit pkgs;
           rootFeatures = [ "default" ] ++ features;

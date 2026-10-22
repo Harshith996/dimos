@@ -121,16 +121,16 @@ pub struct TrajectoryFollower {
     #[input(decode = dimos_module::cdr::decode, handler = on_path)]
     path: Input<Path>,
 
-    #[output(encode = msg::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     nav_cmd_vel: Output<Twist>,
 
-    #[output(encode = msg::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     goal_reached: Output<Bool>,
 
     #[config]
     config: Config,
 
-    #[tf(decode = msg::decode_tf,encode = msg::encode_tf)]
+    #[tf(decode = dimos_message_adapters::tf::decode, encode = dimos_message_adapters::tf::encode)]
     tf: Tf,
 
     shared: Arc<Mutex<Shared>>,
@@ -361,8 +361,12 @@ mod tests {
 
     #[test]
     fn arrival_boolean_is_plain_cdr_and_empty_path_has_no_goal() {
-        assert_eq!(msg::encode(&Bool { data: true }), vec![0, 1, 0, 0, 1]);
-        let empty: Path = dimos_module::cdr::decode(&msg::encode(&path_of(&[]))).unwrap();
+        assert_eq!(
+            dimos_module::cdr::encode(&Bool { data: true }).unwrap(),
+            vec![0, 1, 0, 0, 1]
+        );
+        let empty: Path =
+            dimos_module::cdr::decode(&dimos_module::cdr::encode(&path_of(&[])).unwrap()).unwrap();
         assert_eq!(goal_of(&empty), None);
     }
 

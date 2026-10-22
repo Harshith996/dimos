@@ -31,6 +31,7 @@ depth_cloud = "sensor_msgs/msg/PointCloud2"
 
 [dependencies]
 dimos-module = { path = "../../../../native/rust/dimos-module", features = ["cdr"] }
+dimos-message-adapters = { path = "../../../../native/rust/dimos-message-adapters" }
 dimos-generated-messages = { path = "../../../../build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }

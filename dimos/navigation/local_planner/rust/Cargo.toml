@@ -18,6 +18,7 @@ required-features = ["module"]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 dimos-module = { path = "../../../../native/rust/dimos-module", features = ["cdr"], optional = true }
+dimos-message-adapters = { path = "../../../../native/rust/dimos-message-adapters", optional = true }
 dimos-generated-messages = { path = "../../../../build/message-source/rust", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -27,7 +28,7 @@ validator = { version = "0.21", features = ["derive"], optional = true }
 [features]
 # Nothing by default: `module` is the native module that runs on the robot.
 default = []
-module = ["dep:dimos-module", "dep:dimos-generated-messages", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
+module = ["dep:dimos-message-adapters", "dep:dimos-module", "dep:dimos-generated-messages", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:validator"]
 # `Emb::fixture()`, a test body for this crate and its dependants.
 test-bodies = []
 
