@@ -15,7 +15,9 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hosted.tags import Tag
 from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours, MeshModule
+from dimos.mapping.experimental.model_mesh import ModelMesh
 from dimos.mapping.ray_tracing.viz import MAP_REGIONS_ENTITY
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.navigation.global_planner.mls_planner.viz import SURFACE_MAP_ENTITY
 from dimos.robot.unitree.go2.dds.blueprints import (
     VIEW_Z_BAND,
@@ -44,5 +46,18 @@ go2_nav_hosted = autoconnect(
     MeshModule.blueprint(voxel_size=voxel_size, z_band=VIEW_Z_BAND).hosted(
         tags={"gpu": True}, prefer=Tag.gpu_mem
     ),
+    _viewer,
+).global_config(transport="zenoh", robot_model="unitree_go2")
+
+# The hand-built model instead of the lidar mesh, placed here next to the --map-file directory.
+# The robot runs go2-nav without a map, so its own relocalizer stays idle.
+go2_nav_viewer_model = autoconnect(
+    _viewer, ModelMesh.blueprint(world_frame="odom", republish_loaded_map=0.0)
+).global_config(n_workers=4, **VIEWER_GLOBAL_CONFIG)
+
+# The same in one run: the stack's relocalizer swapped for ModelMesh, which stays here.
+go2_nav_model_hosted = autoconnect(
+    _go2_nav_stack.disabled_modules(LocalMapRelocalization).hosted(tags={"go2": True}),
+    ModelMesh.blueprint(world_frame="odom", republish_loaded_map=0.0).hosted(local=True),
     _viewer,
 ).global_config(transport="zenoh", robot_model="unitree_go2")
