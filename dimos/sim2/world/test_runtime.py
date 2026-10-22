@@ -227,15 +227,40 @@ def test_scene_update_is_atomic_and_reset_restores_authored_state(worlds):
     with pytest.raises(ValueError, match="outside joint limits"):
         world.set_scene_state(SceneUpdate(poses={"box": Pose(2, 0, 0.3)}, joints={"door": 5}))
     assert world.scene_state().entities["box"] == before.entities["box"]
+    assert world.scene_state().episode == before.episode
+    assert world.scene_state().generation == before.generation
 
     changed = world.set_scene_state(
         SceneUpdate(poses={"box": Pose(2, 0, 0.3)}, joints={"door": 0.5})
     )
     assert changed.joints["door"] == pytest.approx(0.5)
+    assert changed.episode == before.episode
+    assert changed.generation == before.generation + 1
     reset = world.reset()
     assert reset.entities["box"] == before.entities["box"]
     assert reset.joints["door"] == 0
     assert reset.generation == changed.generation + 1
+    assert reset.episode == before.episode + 1
+
+
+def test_edit_and_pause_resume_keep_the_task_episode(worlds):
+    world = worlds()
+    world.step()
+    before = world.scene_state()
+
+    edited = world.set_scene_state(SceneUpdate(poses={"box": Pose(2, 0, 0.3)}))
+    world.set_paused(True)
+    world.set_paused(False)
+    resumed = world.scene_state()
+
+    assert edited.episode == resumed.episode == before.episode
+    assert edited.sim_time == resumed.sim_time == before.sim_time
+    assert resumed.generation == before.generation + 2
+    assert world.snapshots.read_observation().metadata.episode_id == resumed.generation
+    reset = world.reset()
+    assert reset.episode == before.episode + 1
+    assert reset.generation == resumed.generation + 1
+    assert reset.sim_time == 0
 
 
 def test_reset_publishes_snapshot_before_next_step(worlds):
@@ -303,7 +328,7 @@ def test_resume_preserves_pose_and_motor_enable_but_invalidates_old_work(
     with pytest.raises(RuntimeError, match="reset"):
         client.disable(observed=old_frame)
     world.set_paused(False)
-    assert world.episode == current.metadata.episode_id
+    assert world.generation == current.metadata.episode_id
     world.step()
     assert world.robots["left"].applied_action_sequence == 0
     assert world.robots["left"].enabled is not disabled
