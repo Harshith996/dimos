@@ -141,6 +141,7 @@ def classify(error: BaseException) -> tuple[str, str]:
 
 
 def console_datasets_url() -> str | None:
+    # TODO(core): CloudConfig should carry the console URL (neither it nor the upload answer gives one)
     base = CloudConfig().url.rstrip("/")
     return (
         base.replace("://api.", "://console.", 1) + "/console/data" if "://api." in base else None
@@ -168,7 +169,6 @@ def new_upload(
         "notice": None,
         "error": None,
         "errorCode": None,
-        "log": None,
         "createdAt": now_ms(),
         "startedAt": None,
         "finishedAt": None,
@@ -215,9 +215,10 @@ class Uploads:
     def __init__(self, bus: Bus, file: Path | None) -> None:
         self.bus = bus
         self.file = file
+        self.uploaded_file = file.with_name("uploaded.json") if file else None
         self.items: list[dict[str, Any]] = (store.read_json(file) if file else None) or []
         self.uploaded_by_path: dict[str, dict[str, Any]] = (
-            store.read_json(file.with_name("uploaded.json")) if file else None
+            store.read_json(self.uploaded_file) if self.uploaded_file else None
         ) or {}
         for upload in self.items:
             done = uploaded_entry(upload)
@@ -359,11 +360,18 @@ class Uploads:
             self.logged_in()
         return value
 
+    def announce_account(self, value: dict[str, Any]) -> dict[str, Any]:
+        """Cache a just-changed account and tell the clients."""
+        self.account_cache = (time.monotonic(), value)
+        self.bus.send({"type": "cloud-account", "account": value})
+        return value
+
     async def logout(self) -> dict[str, Any]:
+        # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
         await asyncio.to_thread(cloud._forget)
         self.cancel_login()
         self.login = dict(IDLE_LOGIN)
-        return await self.account(True)
+        return self.announce_account(await asyncio.to_thread(account))
 
     def login_state(self) -> dict[str, Any]:
         if self.login["state"] == "pending" and (self.login["expiresAt"] or math.inf) < now_ms():
@@ -377,6 +385,7 @@ class Uploads:
 
     def _device_login(self, cancel: threading.Event) -> None:
         try:
+            # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
             device = cloud._post("/auth/device", label=socket.gethostname())
             self.set_login(
                 state="pending",
@@ -391,7 +400,7 @@ class Uploads:
                 if answer["status"] == "ok":
                     cloud._store(answer["api_key"])
                     self.set_login(state="approved", email=answer.get("email"))
-                    self.account_cache = None
+                    self.announce_account(account())
                     self.logged_in()
                     return
                 if answer["status"] in ("denied", "expired"):
@@ -411,8 +420,8 @@ class Uploads:
         self.set_login(**{**IDLE_LOGIN, "state": "starting"})
         self.login_changed.clear()
         threading.Thread(target=self._device_login, args=(cancel,), daemon=True).start()
-        # answers once the login thread moves past "starting" (it got a device code, or failed)
-        await asyncio.to_thread(self.login_changed.wait, constants.LOGIN_START_WAIT_S)
+        # Desktop opens the approval page from this answer, so it waits for the device code (one cloud request)
+        await asyncio.to_thread(self.login_changed.wait, CloudConfig().http_timeout)
         return self.login_state()
 
     def cancel_login(self) -> dict[str, Any]:
@@ -441,6 +450,15 @@ class Uploads:
             else:
                 await self.wake.wait()
                 self.wake.clear()
+
+    def wait_for_login(self, id: str, message: str) -> dict[str, Any] | None:
+        """Requeue an upload that needs a login, and hold the queue until one."""
+        self.waiting_for_login, self.account_cache = True, None
+        updated = self.update(
+            id, state="queued", startedAt=None, error=message, errorCode="not_logged_in"
+        )
+        self.emit_waiting()
+        return updated
 
     def record_progress(
         self, id: str, phase: str, done: int, total: int, at: float
@@ -505,7 +523,10 @@ class Uploads:
         def progress(phase: str, done: int, total: int) -> None:
             nonlocal last_phase, last_emit
             updated = self.record_progress(id, phase, done, total, time.monotonic() - started)
-            if phase != last_phase or time.monotonic() - last_emit >= 0.4:
+            if (
+                phase != last_phase
+                or time.monotonic() - last_emit >= constants.UPLOAD_PROGRESS_EMIT_S
+            ):
                 last_phase, last_emit = phase, time.monotonic()
                 self.emit(updated)
 
@@ -534,21 +555,15 @@ class Uploads:
             )
         except CancelledUploadError:
             updated = self.update(id, state="cancelled", finishedAt=now_ms())
+        except PermissionError:
+            updated = self.wait_for_login(
+                id, "Not logged in to Dimensional cloud. Log in, then retry."
+            )
         except Exception as error:
-            if isinstance(error, PermissionError):
-                code, message = (
-                    "not_logged_in",
-                    "Not logged in to Dimensional cloud. Log in, then retry.",
-                )
-            else:
-                logger.exception("an upload failed", upload=id)
-                code, message = classify(error)
+            logger.exception("an upload failed", upload=id)
+            code, message = classify(error)
             if code == "not_logged_in":
-                self.waiting_for_login, self.account_cache = True, None
-                updated = self.update(
-                    id, state="queued", startedAt=None, error=message, errorCode=code
-                )
-                self.emit_waiting()
+                updated = self.wait_for_login(id, message)
             else:
                 updated = self.update(
                     id, state="failed", error=message, errorCode=code, finishedAt=now_ms()
@@ -557,10 +572,10 @@ class Uploads:
         if self.stopping:
             return
         done = uploaded_entry(updated) if updated else None
-        if done is not None and self.file:
+        if done is not None and self.uploaded_file:
             self.uploaded_by_path[done["path"]] = done
             store.write_atomic(
-                self.file.with_name("uploaded.json"),
+                self.uploaded_file,
                 json.dumps(dict(sorted(self.uploaded_by_path.items())), indent=2),
             )
         self.save()

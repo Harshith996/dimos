@@ -124,7 +124,20 @@ def test_without_a_login_the_queue_waits(
     assert state_of(client, upload["id"]) == "queued"
 
 
-def test_device_login(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def logged_in_account(logged_in: bool) -> dict[str, Any]:
+    return {
+        "loggedIn": logged_in,
+        "email": "a@b.c" if logged_in else None,
+        "scopes": [],
+        "source": "stored" if logged_in else None,
+        "cloudUrl": "x",
+        "error": None,
+    }
+
+
+def test_device_login_then_logout(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, sent: list[Any]
+) -> None:
     approved = threading.Event()
     stored: list[str] = []
 
@@ -143,20 +156,35 @@ def test_device_login(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> No
             else {"status": "pending"}
         )
 
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
     monkeypatch.setattr(cloud, "_post", post)
     monkeypatch.setattr(cloud, "_store", stored.append)
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(bool(stored)))
     pending = client.post("/cloud/login").json()
     assert pending["state"] == "pending" and pending["code"] == "ABCD"
     approved.set()
     until(lambda: client.get("/cloud/account").json()["login"]["state"] == "approved")
     assert stored == ["key"]
+    assert client.delete("/cloud/login").json()["loggedIn"]
     forgot: list[int] = []
-    monkeypatch.setattr(cloud, "_forget", lambda: forgot.append(1))
-    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+
+    def forget() -> None:
+        forgot.append(1)
+        stored.clear()
+
+    monkeypatch.setattr(cloud, "_forget", forget)
+    logged_out = client.delete("/cloud/account").json()
+    assert logged_out["loggedIn"] is False and logged_out["login"]["state"] == "idle"
     assert forgot == [1]
+    account_events = [
+        payload["account"]["loggedIn"]
+        for key, payload in sent
+        if key == "ns/dimos/events/cloud-account"
+    ]
+    assert account_events == [True, False]
 
 
-def test_deleting_a_pending_login_cancels_it(
+def test_deleting_a_pending_login_only_cancels_it(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def post(path: str, **params: Any) -> dict[str, Any]:
@@ -171,9 +199,12 @@ def test_deleting_a_pending_login_cancels_it(
         return {"status": "pending"}
 
     forgot: list[int] = []
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
     monkeypatch.setattr(cloud, "_post", post)
     monkeypatch.setattr(cloud, "_forget", lambda: forgot.append(1))
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(False))
     assert client.post("/cloud/login").json()["state"] == "pending"
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
     assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
     assert forgot == []
 
@@ -183,14 +214,7 @@ def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
 
     def account() -> dict[str, Any]:
         calls.append(1)
-        return {
-            "loggedIn": True,
-            "email": "a@b.c",
-            "scopes": [],
-            "source": "stored",
-            "cloudUrl": "x",
-            "error": None,
-        }
+        return logged_in_account(True)
 
     monkeypatch.setattr(uploads, "account", account)
     assert client.get("/cloud/account").json()["email"] == "a@b.c"

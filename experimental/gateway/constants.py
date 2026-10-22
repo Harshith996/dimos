@@ -65,7 +65,7 @@ UNIX_SOCKET_PATH_LIMIT = 104 if sys.platform == "darwin" else 108
 UPLOAD_RATE_SMOOTHING_S = 6.0
 # cloud uploads: no ETA until this long after an upload starts, while the measured rate is still noise
 UPLOAD_ETA_WARMUP_S = 1.0
-# cloud account: re-checked at most this often (?fresh= forces it), so polling pages don't hit the cloud each time
+# cloud uploads: progress events go out at most this often within a phase, so a fast upload doesn't flood the bus
+UPLOAD_PROGRESS_EMIT_S = 0.4
+# cloud account: account checks are cached this long; ?fresh= forces one
 ACCOUNT_CACHE_S = 20.0
-# cloud login: POST /cloud/login waits this long for the device code before answering "starting"
-LOGIN_START_WAIT_S = 30.0
