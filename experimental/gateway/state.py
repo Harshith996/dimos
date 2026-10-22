@@ -33,7 +33,7 @@ from experimental.gateway.launches import RunSource
 from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
 
-API_VERSION = "7.0.0"
+API_VERSION = "8.0.0"
 
 
 @dataclass
