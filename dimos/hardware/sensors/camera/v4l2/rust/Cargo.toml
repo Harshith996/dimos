@@ -21,7 +21,7 @@ python = "dimos.hardware.sensors.camera.v4l2.module:V4L2Camera"
 jpeg_out = "sensor_msgs/msg/CompressedImage"
 
 [dependencies]
-dimos-module = { path = "../../../../../../native/rust/dimos-module", features = ["cdr"] }
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
 dimos-generated-messages = { path = "../../../../../../build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }

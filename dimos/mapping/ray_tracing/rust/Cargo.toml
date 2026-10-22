@@ -24,6 +24,7 @@ threads = 2
 lidar = "sensor_msgs/msg/PointCloud2"
 loaded_map = "sensor_msgs/msg/PointCloud2"
 tf = "tf2_msgs/msg/TFMessage"
+tf_static = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.ray_tracing.outputs]
 global_map = "sensor_msgs/msg/PointCloud2"
@@ -35,8 +36,7 @@ region_bounds = "dimos_msgs/msg/RegionBounds"
 map_regions = "dimos_msgs/msg/PointCloudRegion"
 
 [dependencies]
-dimos-module = { path = "../../../../native/rust/dimos-module", features = ["cdr"] }
-dimos-message-adapters = { path = "../../../../native/rust/dimos-message-adapters" }
+dimos-module = { path = "../../../../native/rust/dimos-module" }
 dimos-generated-messages = { path = "../../../../build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
