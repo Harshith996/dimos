@@ -106,6 +106,20 @@ def test_a_running_upload_can_be_cancelled_and_retried(
     assert client.post("/cloud/uploads", json={}).status_code == 400
 
 
+def test_a_recording_that_grows_during_its_upload_reads_as_changed(
+    client: TestClient, recording: Path, transfer: threading.Event
+) -> None:
+    work(client)
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    until(lambda: client.get("/cloud/uploads").json()["uploads"][0]["bytesDone"] == 50)
+    with recording.open("ab") as file:
+        file.write(b"y" * 10)
+    transfer.set()
+    until(lambda: state_of(client, upload["id"]) == "done")
+    entry = client.get("/cloud/uploads").json()["byPath"][str(recording)]
+    assert entry["size"] == 100 and entry["changed"] is True
+
+
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
     assert client.post("/cloud/uploads", json={"path": "relative.mcap"}).status_code == 400
     assert (

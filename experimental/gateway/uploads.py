@@ -96,15 +96,17 @@ def _size_and_mtime(path: str) -> tuple[int, int] | None:
     return stat.st_size, int(stat.st_mtime * 1000)
 
 
-def uploaded_entry(upload: dict[str, Any]) -> dict[str, Any] | None:
-    found = _size_and_mtime(upload["path"])
-    if upload["state"] != "done" or found is None or not upload.get("uploadId"):
+def uploaded_entry(
+    upload: dict[str, Any], sent_size_and_mtime: tuple[int, int] | None
+) -> dict[str, Any] | None:
+    """The uploaded.json entry of a done upload, as the file was when its transfer started."""
+    if upload["state"] != "done" or sent_size_and_mtime is None or not upload.get("uploadId"):
         return None
     return {
         "path": upload["path"],
         "uploadId": upload["uploadId"],
-        "size": found[0],
-        "mtimeMs": found[1],
+        "size": sent_size_and_mtime[0],
+        "mtimeMs": sent_size_and_mtime[1],
         "uploadedAt": upload.get("finishedAt") or now_ms(),
         "link": upload.get("link"),
         "changed": False,
@@ -221,7 +223,8 @@ class Uploads:
             store.read_json(self.uploaded_file) if self.uploaded_file else None
         ) or {}
         for upload in self.items:
-            done = uploaded_entry(upload)
+            # only when uploaded.json lost it: the file as it is now is the best guess left
+            done = uploaded_entry(upload, _size_and_mtime(upload["path"]))
             if done:
                 self.uploaded_by_path.setdefault(done["path"], done)
             if upload["state"] == "uploading":
@@ -537,6 +540,8 @@ class Uploads:
         loop, cancel, started = self.loop, threading.Event(), time.monotonic()
         self.running = (id, cancel)
         last_phase, last_emit = "", -1.0
+        # taken before the transfer reads the file, so one that grows meanwhile reads as changed afterwards
+        sent_size_and_mtime = _size_and_mtime(upload["path"])
 
         def progress(phase: str, done: int, total: int) -> None:
             nonlocal last_phase, last_emit
@@ -589,7 +594,7 @@ class Uploads:
         self.running = None
         if self.stopping:
             return
-        done = uploaded_entry(updated) if updated else None
+        done = uploaded_entry(updated, sent_size_and_mtime) if updated else None
         if done is not None and self.uploaded_file:
             self.uploaded_by_path[done["path"]] = done
             store.write_atomic(
