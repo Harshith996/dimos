@@ -66,10 +66,8 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
     def then() -> None:
         state.cache.forget("packages")
 
-    builds = await asyncio.to_thread(discovery.builds_cyclonedds, state.dimos_dir, probed, wanted)
-    prepare = discovery.prepare_cyclonedds(state.dimos_dir) if builds else None
     title = f"Install extras: {', '.join(wanted)}"
-    job = state.jobs.start(title, "extras", command, state.dimos_dir, env, then, prepare)
+    job = state.jobs.start(title, "extras", command, state.dimos_dir, env, then)
     return {"shell": None, "job": job.id, "command": command}
 
 

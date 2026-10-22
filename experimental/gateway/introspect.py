@@ -412,6 +412,7 @@ def parser_schema(blueprint: Any) -> Any:
     """dimos run's own view of a blueprint's settings (a private method: dimos has no public one)."""
     from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 
+    # TODO(core): BlueprintConfigParser should expose its schema publicly (it carries the parser's skip list)
     return BlueprintConfigParser(blueprint)._get_schema()
 
 

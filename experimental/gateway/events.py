@@ -59,7 +59,10 @@ def zenoh_put(connect: list[str]) -> Callable[[str, bytes], None]:
     session = default_session_pool.acquire(ZenohConfig(connect=connect))
 
     def put(key: str, payload: bytes) -> None:
-        session.put(key, payload, encoding=zenoh.Encoding.APPLICATION_JSON)
+        try:
+            session.put(key, payload, encoding=zenoh.Encoding.APPLICATION_JSON)
+        except zenoh.ZError:
+            logger.exception("publishing an event failed", key=key)
 
     return put
 
@@ -75,10 +78,7 @@ class Bus:
     def send(self, event: dict[str, Any]) -> None:
         if self.put is None or self.namespace is None:
             return
-        try:
-            self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
-        except Exception:
-            logger.exception("publishing an event failed", event_type=event.get("type"))
+        self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
 
     def launch(self, launch: dict[str, Any] | None) -> None:
         key = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
@@ -207,8 +207,8 @@ async def watch_blueprints(
             wake.clear()
             try:
                 listed = await relist()
-            except Exception as error:
-                logger.warning("re-listing the blueprints failed", error=str(error))
+            except Exception:
+                logger.exception("re-listing the blueprints failed")
                 continue
             added, removed = sorted(set(listed) - set(names)), sorted(set(names) - set(listed))
             names = listed
