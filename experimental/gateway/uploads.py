@@ -237,6 +237,8 @@ class Uploads:
         self.running: tuple[str, threading.Event] | None = None
         self.login: dict[str, Any] = dict(IDLE_LOGIN)
         self.login_cancel: threading.Event | None = None
+        # held while a login attempt checks it is still current and stores its key, and while one is cancelled
+        self.login_lock = threading.RLock()
         self.login_changed = threading.Event()
         self.account_cache: tuple[float, dict[str, Any]] | None = None
         self.stopping = False
@@ -368,8 +370,8 @@ class Uploads:
 
     async def logout(self) -> dict[str, Any]:
         # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
-        await asyncio.to_thread(cloud._forget)
         self.cancel_login()
+        await asyncio.to_thread(cloud._forget)
         self.login = dict(IDLE_LOGIN)
         return self.announce_account(await asyncio.to_thread(account))
 
@@ -383,11 +385,23 @@ class Uploads:
         self.login_changed.set()
         self.bus.send({"type": "cloud-login", "login": dict(self.login)})
 
+    def _is_current(self, cancel: threading.Event) -> bool:
+        return self.login_cancel is cancel and not cancel.is_set()
+
+    def _set_login_if_current(self, cancel: threading.Event, **change: Any) -> bool:
+        """Change the login only for the attempt still running; a cancelled one changes nothing."""
+        with self.login_lock:
+            if not self._is_current(cancel):
+                return False
+            self.set_login(**change)
+            return True
+
     def _device_login(self, cancel: threading.Event) -> None:
         try:
             # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
             device = cloud._post("/auth/device", label=socket.gethostname())
-            self.set_login(
+            self._set_login_if_current(
+                cancel,
                 state="pending",
                 url=device["verification_uri"],
                 urlComplete=device.get("verification_uri_complete"),
@@ -398,39 +412,43 @@ class Uploads:
             while time.time() < deadline and not cancel.wait(device["interval"]):
                 answer = cloud._post("/auth/token", device_code=device["device_code"])
                 if answer["status"] == "ok":
-                    cloud._store(answer["api_key"])
-                    self.set_login(state="approved", email=answer.get("email"))
+                    with self.login_lock:
+                        if not self._is_current(cancel):
+                            return  # cancelled while the token request was out: the key is dropped
+                        # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+                        cloud._store(answer["api_key"])
+                        self.set_login(state="approved", email=answer.get("email"))
                     self.announce_account(account())
                     self.logged_in()
                     return
                 if answer["status"] in ("denied", "expired"):
-                    self.set_login(state=answer["status"])
+                    self._set_login_if_current(cancel, state=answer["status"])
                     return
-            if not cancel.is_set():
-                self.set_login(state="expired")
+            self._set_login_if_current(cancel, state="expired")
         except Exception as error:
-            if not cancel.is_set():
-                self.set_login(state="failed", error=classify(error)[1])
+            self._set_login_if_current(cancel, state="failed", error=classify(error)[1])
 
     async def start_login(self) -> dict[str, Any]:
         if self.login_state()["state"] in ("starting", "pending"):
             return self.login_state()
-        self.cancel_login()
-        self.login_cancel = cancel = threading.Event()
-        self.set_login(**{**IDLE_LOGIN, "state": "starting"})
-        self.login_changed.clear()
+        with self.login_lock:
+            self.cancel_login()
+            self.login_cancel = cancel = threading.Event()
+            self.set_login(**{**IDLE_LOGIN, "state": "starting"})
+            self.login_changed.clear()
         threading.Thread(target=self._device_login, args=(cancel,), daemon=True).start()
         # Desktop opens the approval page from this answer, so it waits for the device code (one cloud request)
         await asyncio.to_thread(self.login_changed.wait, CloudConfig().http_timeout)
         return self.login_state()
 
     def cancel_login(self) -> dict[str, Any]:
-        if self.login_cancel is not None:
-            self.login_cancel.set()
-            self.login_cancel = None
-        if self.login_state()["state"] in ("starting", "pending"):
-            self.set_login(**IDLE_LOGIN)
-        return self.login_state()
+        with self.login_lock:
+            if self.login_cancel is not None:
+                self.login_cancel.set()
+                self.login_cancel = None
+            if self.login_state()["state"] in ("starting", "pending"):
+                self.set_login(**IDLE_LOGIN)
+            return self.login_state()
 
     def shutdown(self) -> None:
         self.stopping = True

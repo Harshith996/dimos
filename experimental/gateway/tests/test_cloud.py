@@ -209,6 +209,50 @@ def test_deleting_a_login_cancels_it_when_pending_and_logs_out_otherwise(
     assert forgot == [1]
 
 
+def test_a_login_cancelled_while_its_token_request_is_out_stores_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_requested, release_token = threading.Event(), threading.Event()
+    stored: list[str] = []
+    woken: list[int] = []
+
+    def post(path: str, **params: Any) -> dict[str, Any]:
+        if path == "/auth/device":
+            return {
+                "verification_uri": "https://console/device",
+                "user_code": "ABCD",
+                "expires_in": 600,
+                "interval": 0.05,
+                "device_code": "d",
+            }
+        token_requested.set()
+        release_token.wait(10)
+        return {"status": "ok", "api_key": "key", "email": "a@b.c"}
+
+    # TODO(core): dimos.cli.cloud should expose device login / key storage publicly
+    monkeypatch.setattr(cloud, "_post", post)
+    monkeypatch.setattr(cloud, "_store", stored.append)
+    monkeypatch.setattr(uploads, "account", lambda: logged_in_account(bool(stored)))
+    state: State = client.app.state.gateway  # type: ignore[attr-defined]
+    monkeypatch.setattr(state.uploads, "logged_in", lambda: woken.append(1))
+    login_thread_done = threading.Event()
+    device_login = state.uploads._device_login
+
+    def device_login_then_signal(cancel: threading.Event) -> None:
+        device_login(cancel)
+        login_thread_done.set()
+
+    monkeypatch.setattr(state.uploads, "_device_login", device_login_then_signal)
+    assert client.post("/cloud/login").json()["state"] == "pending"
+    assert token_requested.wait(10)
+    assert client.delete("/cloud/login").json()["login"]["state"] == "idle"
+    release_token.set()
+    assert login_thread_done.wait(10)
+    assert stored == []
+    assert woken == []
+    assert client.get("/cloud/account").json()["login"]["state"] == "idle"
+
+
 def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
 
