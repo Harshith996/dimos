@@ -301,7 +301,10 @@ impl Tf {
         };
         // Reserve transport capacity before changing the graph. A closed queue
         // must neither publish nor make a transform visible locally.
-        let permit = sender.reserve().await.map_err(invalid)?;
+        let permit = sender
+            .reserve()
+            .await
+            .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error))?;
         self.graph.insert(message, is_static)?;
         permit.send(payload);
         Ok(())
@@ -584,7 +587,13 @@ mod tests {
     async fn closed_publication_queue_leaves_graph_unchanged() {
         let (tf, _, _, rx, _static_rx) = fixture();
         drop(rx);
-        assert!(tf.publish(&[edge("map", "base", 1, 1.)]).await.is_err());
+        assert_eq!(
+            tf.publish(&[edge("map", "base", 1, 1.)])
+                .await
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
         assert!(tf.get_latest("map", "base").is_none());
     }
     #[tokio::test]
