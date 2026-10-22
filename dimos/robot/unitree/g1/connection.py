@@ -73,7 +73,7 @@ class G1Config(ConnectionConfig):
     source: str = "g1"
     model: RobotModel | None = _MODEL
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
-    controller: Literal["stock", "groot", "sonic"] = Field(
+    controller: Literal["stock", "groot"] = Field(
         default_factory=lambda m: "groot" if m["g"].simulation == "mujoco" else "stock"
     )
     aes_128_key: str | None = Field(default=None, repr=False)
@@ -104,7 +104,7 @@ class G1Config(ConnectionConfig):
 
 
 class G1Connection(ConnectionModule):
-    """One public connection for stock firmware, GR00T or standalone SONIC.
+    """One public connection for stock firmware or GR00T.
 
     ``move`` / ``cmd_vel`` always express walking intent. A custom controller
     produces motor commands; only this module owns the SDK or SimRobotClient.
@@ -145,19 +145,8 @@ class G1Connection(ConnectionModule):
     def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance:
         config = cast("G1Config", config)
         if config.controller == "stock":
-            raise ValueError(
-                "MuJoCo requires groot or sonic; stock Unitree firmware is not emulated"
-            )
+            raise ValueError("MuJoCo requires groot; stock Unitree firmware is not emulated")
         home, kp, kd = G1_GROOT_HOME, G1_GROOT_KP, G1_GROOT_KD
-        if config.controller == "sonic":
-            # SONIC remains optional; loading physical G1 assets needs no inference package.
-            from dimos.robot.unitree.g1.controllers.sonic.inference import (
-                DEFAULT_ANGLES_DDS,
-                SONIC_KD,
-                SONIC_KP,
-            )
-
-            home, kp, kd = list(DEFAULT_ANGLES_DDS), list(SONIC_KP), list(SONIC_KD)
         instance = scene_robot(
             scene,
             g1_definition(config.source),
