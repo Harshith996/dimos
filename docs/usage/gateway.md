@@ -47,7 +47,7 @@ await post("active/modules/unitreeskillcontainer/rpcs/execute_sport_command", { 
 const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)).json() // then ?after=${page.offset}
 ```
 
-Live launch phases (and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
+Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
 (`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`).
 
 Decode dimos messages in a page with `msgs.js`:

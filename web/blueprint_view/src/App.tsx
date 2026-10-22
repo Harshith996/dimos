@@ -1,5 +1,4 @@
-// The blueprint view: ?name=<blueprint> (&run=<run id>, &view=logs, &hidden=1). The top bar runs it, the side lists its
-// modules and topic rates, the graph shows how they connect. Hidden (Desktop preloading it), it loads once and polls nothing.
+// The blueprint view (?name=, &run=, &view=logs, &hidden=1): the top bar runs it, the side lists modules and rates, the graph wires them.
 import {
   Badge,
   Button,
@@ -12,13 +11,22 @@ import {
   toDesktop,
   TopBar,
   type TopicRate,
+  useConnectionState,
   useDesktopChrome,
   useDesktopVisible,
   useEscape,
+  useZenoh,
 } from "dimos-react";
 import { GraphControls, type GraphViewHandle, type LayoutId } from "dimos-react/graph";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, getJson, send } from "./api.ts";
+import {
+  BUSY_LAUNCH_POLL_MS,
+  FONT_WAIT_MS,
+  LAUNCH_POLL_WITHOUT_EVENTS_MS,
+  RATES_POLL_MS,
+  STATS_POLL_MS,
+} from "./constants.ts";
 import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
 import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
@@ -99,6 +107,8 @@ export function App() {
   const [dialog, setDialog] = useState<"config" | "logs" | null>(null);
   const chrome = useDesktopChrome({ pausable: true });
   const visible = useDesktopVisible();
+  const zenoh = useZenoh();
+  const eventsArrive = useConnectionState() === "connected";
   const graph = useRef<GraphViewHandle>(null);
   const [graphArea, setGraphArea] = useState<HTMLElement | null>(null);
   useNoPagePinch(graphArea);
@@ -106,6 +116,7 @@ export function App() {
   const running = !!launch && (launch.phase === "running" || launch.phase === "starting");
   const live = running || !!liveRun;
   const logsRun = RUN ?? launch?.runId ?? null;
+  const busy = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
 
   // the gateway reads the blueprint from the checkout its live run came from, so a new run can change it
   const loadBlueprint = useCallback(async () => {
@@ -121,7 +132,7 @@ export function App() {
       setCheckout({ path: detail.checkout ?? null, error: detail.checkoutError ?? null });
       await Promise.race([
         document.fonts.ready,
-        new Promise((resolve) => setTimeout(resolve, 1500)),
+        new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
       ]);
       setModules(byRarity(detail.modules, await usage));
       setError(null);
@@ -166,8 +177,6 @@ export function App() {
   }, []);
   const relaunchedPidRef = useRef<number | null>(null);
   relaunchedPidRef.current = relaunchedPid;
-  const busyRef = useRef(false);
-  busyRef.current = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
 
   useEffect(() => {
     if (VIEW === "logs") {
@@ -175,20 +184,36 @@ export function App() {
     }
   }, [pollRuns]);
 
+  // GET active once on showing, then on each launch event and after a reconnect (events sent while down are gone)
   useEffect(() => {
     if (!visible) {
       return;
     }
     pollRuns();
-    let tick = 0;
-    const timer = setInterval(() => {
-      tick += 1;
-      if (busyRef.current || tick % 3 === 0) {
-        pollRuns();
-      }
-    }, 1000);
+    if (!zenoh) {
+      return;
+    }
+    const offLaunch = zenoh.subscribeDimos("launch", () => pollRuns());
+    const offReconnect = zenoh.onReconnect(() => pollRuns());
+    return () => {
+      offLaunch();
+      offReconnect();
+    };
+  }, [pollRuns, visible, zenoh]);
+
+  // polls only for what no event tells: a busy launch's steps, or anything while zenoh is down
+  const launchPollMs = busy
+    ? BUSY_LAUNCH_POLL_MS
+    : eventsArrive
+    ? null
+    : LAUNCH_POLL_WITHOUT_EVENTS_MS;
+  useEffect(() => {
+    if (!visible || launchPollMs === null) {
+      return;
+    }
+    const timer = setInterval(pollRuns, launchPollMs);
     return () => clearInterval(timer);
-  }, [pollRuns, visible]);
+  }, [pollRuns, visible, launchPollMs]);
 
   useEffect(() => {
     if (!visible) {
@@ -206,7 +231,7 @@ export function App() {
       }
     };
     poll();
-    const timer = setInterval(poll, 2000);
+    const timer = setInterval(poll, RATES_POLL_MS);
     return () => clearInterval(timer);
   }, [visible]);
 
@@ -228,7 +253,7 @@ export function App() {
       }
     };
     poll();
-    const timer = setInterval(poll, 2000);
+    const timer = setInterval(poll, STATS_POLL_MS);
     return () => clearInterval(timer);
   }, [visible, running]);
 
@@ -318,7 +343,6 @@ export function App() {
     ? "failed"
     : "last run";
   const stale = running && launchedWithOther(launch, saved);
-  const busy = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
   const selectedModule = modules?.find((module) => module.name === selected);
 
   return (

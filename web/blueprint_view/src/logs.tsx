@@ -2,6 +2,7 @@
 import { EditorNote, type LogRecord, Modal, StructuredLog, useDesktopEditor } from "dimos-react";
 import { useEffect, useRef, useState } from "react";
 import { errorText, getJson } from "./api.ts";
+import { LOG_POLL_MS, LOG_SEARCH_DEBOUNCE_MS } from "./constants.ts";
 import { projectPath } from "./model.ts";
 
 const MAX_RECORDS = 5000;
@@ -54,10 +55,10 @@ export function LogsModal(
         }
       }
       if (live) {
-        timer = setTimeout(poll, 1500);
+        timer = setTimeout(poll, LOG_POLL_MS);
       }
     };
-    timer = setTimeout(poll, query ? 250 : 0);
+    timer = setTimeout(poll, query ? LOG_SEARCH_DEBOUNCE_MS : 0);
     return () => {
       live = false;
       clearTimeout(timer);

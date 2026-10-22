@@ -54,8 +54,6 @@ class Info(Body):
     found: bool
     installed: bool
     version: str | None
-    range: str
-    inRange: bool
     api: str
     commit: str | None
     tag: str | None

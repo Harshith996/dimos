@@ -3,8 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import "./view.css";
 
-// Desktop serves its skins' tokens at /theme.css (the view is at /dimos-gateway/blueprint_view there); off Desktop the
-// bundled copy themes it.
+// Desktop's skins' tokens are at /theme.css (the view is /dimos-gateway/blueprint_view); off Desktop the bundled copy stands in.
 createRoot(document.getElementById("root")!).render(
   <DimThemeProvider themeUrl="../theme.css">
     <App />

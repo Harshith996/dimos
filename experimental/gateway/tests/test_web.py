@@ -14,6 +14,7 @@
 
 import json
 from pathlib import Path
+import re
 import subprocess
 
 from fastapi.testclient import TestClient
@@ -78,8 +79,21 @@ def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: 
     assert client.get("/source?file=gone.py").status_code == 404
 
 
-def test_login_page(client: TestClient) -> None:
-    assert "<html" in client.get("/cloud/login/page").text.lower()
+def test_login_page_calls_only_gateway_routes(client: TestClient) -> None:
+    page = client.get("/cloud/login/page").text
+    paths = client.get("/openapi.json").json()["paths"]
+    # the page's fetches are call("METHOD", "/path"), relative to /cloud
+    calls = {
+        (method.lower(), "/cloud" + path.split("?")[0])
+        for method, args in re.findall(r'call\("([A-Z]+)", ([^)]*)\)', page)
+        for path in re.findall(r'"(/[^"]*)"', args)
+    }
+    assert {
+        ("get", "/cloud/account"),
+        ("post", "/cloud/login"),
+        ("delete", "/cloud/login"),
+    } <= calls
+    assert [call for call in calls if call[0] not in paths.get(call[1], {})] == []
 
 
 def test_msgs_js_is_cached_and_decodes_what_python_encodes(

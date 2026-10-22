@@ -30,6 +30,11 @@ from typing import Any
 from experimental.gateway import constants
 from experimental.gateway.errors import ApiError
 
+if sys.version_info >= (3, 13):
+    from typing import is_protocol
+else:
+    from typing_extensions import is_protocol
+
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
 RUNTIME_FILE = Path(__file__).parent / "assets" / "msgs" / "runtime.ts"
 
@@ -46,13 +51,14 @@ def message_classes() -> list[tuple[str, type[Any]]]:
                 inspect.isclass(value)
                 and value.__module__ == module_name
                 and callable(getattr(value, "lcm_encode", None))
-                and not getattr(value, "_is_protocol", False)
+                and not is_protocol(value)
             ):
                 found.append((f"{path.relative_to(DIMOS_DIR.parent)}:{name}", value))
     return found
 
 
 def reason(type_name: str, error: str) -> str:
+    # TODO(core): lcm_codec should raise a typed error instead of the text this matches
     own = re.search(r"declares its own LCM fingerprint (\w+) but the \S+ schema has (\w+)", error)
     if own:
         return (
@@ -144,8 +150,7 @@ def bundle_js(ts_text: str) -> str:
             capture_output=True,
             cwd=tmp,
         )
-        text = target.read_text().replace("/* @__PURE__ */ ", "")
-    return "\n".join(line for line in text.splitlines() if not line.startswith("// ")) + "\n"
+        return target.read_text()
 
 
 def sources_hash() -> str:
@@ -180,6 +185,7 @@ async def built_js(cache_dir: Path) -> Path:
             _, err = await asyncio.wait_for(child.communicate(), constants.MSGS_BUILD_TIMEOUT_S)
         except asyncio.TimeoutError:
             child.kill()
+            await child.wait()
             raise ApiError(
                 503, f"building msgs.js took over {constants.MSGS_BUILD_TIMEOUT_S:g} s"
             ) from None

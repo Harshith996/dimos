@@ -330,5 +330,17 @@ provides:
     /cloud/login/page:
       get:
         summary: The cloud login page apps embed
+# What the gateway's own pages (the blueprint view) call outside it.
+uses:
+  "@desktop-gateway":
+    - GET /api/dimos/config/global
+    - PUT /api/dimos/config/global
+    - GET /api/dimos/config/blueprints/{name}
+    - PUT /api/dimos/config/blueprints/{name}
+    - POST /api/dimos/launch
+    - POST /api/dimos/relaunch
+    - GET /api/topics/rates
+    # dimos-react's zenoh connection, for the launch events
+    - GET /api/desktop/zenoh
 start: |
   .venv/bin/python -m experimental.gateway --detach

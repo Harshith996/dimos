@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The blueprint view's built page (web/blueprint_view/dist), rebuilt when its sources change.
-
-The same scheme as the cockpit's (dimos/web/relay_bridge/relay_process.py): a stamp over the
-sources, a cross-process lock, a build into a temporary dir and a rename into place. A wheel
-ships the dist prebuilt and no sources, so there it is served as-is.
-"""
+"""The blueprint view's dist, rebuilt like the cockpit's (relay_process) when its sources change; a wheel's is prebuilt."""
 
 from __future__ import annotations
 
@@ -66,7 +61,7 @@ def stamp(web_dir: Path, app: Path) -> str:
 
 def ensure_built(app: Path) -> Path | None:
     """The dist, rebuilt first if a source changed; None when there's none to serve."""
-    # TODO: uses relay_process's private build helpers; make them public there (a small core change)
+    # TODO(core): relay_process should expose its build helpers
     dist = app / "dist"
     if (app / "src").is_dir():
         web_dir = app.parent

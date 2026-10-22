@@ -91,49 +91,16 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return calls
 
 
-def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_server_routes(client: TestClient, checkout: Path) -> None:
     assert client.get("/healthz").text == "ok"
-    monkeypatch.delenv("DESKTOP_DIMOS_RANGE", raising=False)
     info = client.get("/info").json()
     assert {
-        key: info[key]
-        for key in (
-            "dir",
-            "found",
-            "installed",
-            "version",
-            "range",
-            "inRange",
-            "api",
-            "commit",
-            "tag",
-        )
+        key: info[key] for key in ("dir", "found", "installed", "version", "api", "commit", "tag")
     } == {
         "dir": str(checkout),
         "found": True,
         "installed": True,
         "version": "0.0.14",
-        "range": "",
-        "inRange": True,
-        "api": API_VERSION,
-        "commit": None,
-        "tag": None,
-    }
-    # the range is on the gateway API, not dimos's own version
-    major = int(API_VERSION.split(".")[0])
-    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", f">={major} <{major + 1}")
-    assert client.get("/info").json()["inRange"] is True
-    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
-    narrow = client.get("/info").json()
-    assert {
-        key: narrow[key]
-        for key in ("found", "installed", "version", "range", "inRange", "api", "commit", "tag")
-    } == {
-        "found": True,
-        "installed": True,
-        "version": "0.0.14",
-        "range": ">=0.1 <0.2",
-        "inRange": False,
         "api": API_VERSION,
         "commit": None,
         "tag": None,
