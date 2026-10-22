@@ -73,10 +73,9 @@ pub fn secs(seconds: f64) -> Duration {
     Duration::from_secs_f64(seconds.max(0.0))
 }
 
-#[cfg(test)]
-impl Timing {
+impl Default for Timing {
     /// GO2Connection's defaults, from the config fixture its tests check (tests/fixtures/config.json).
-    pub fn for_tests() -> Self {
+    fn default() -> Self {
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/config.json")).unwrap();
         serde_json::from_value(config["timing"].clone()).unwrap()

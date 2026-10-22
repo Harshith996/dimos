@@ -480,7 +480,7 @@ mod tests {
 
     #[tokio::test]
     async fn robot_offer_has_no_transport_cc() {
-        let pc = robot_api(&Timing::for_tests())
+        let pc = robot_api(&Timing::default())
             .unwrap()
             .new_peer_connection(RTCConfiguration::default())
             .await
