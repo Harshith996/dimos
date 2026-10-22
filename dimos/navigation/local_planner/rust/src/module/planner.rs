@@ -31,11 +31,11 @@ use lcm_msgs::std_msgs::Time;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
-use crate::module::crop::{self, Crop};
 use crate::module::emb;
 use crate::module::ground::{self, Plane};
 use crate::module::msg;
 use crate::module::obstacles::{self, FieldPoints, ObstacleModel};
+use crate::module::region::{Memory, RegionBounds};
 use crate::module::tf_pose::PoseWatch;
 
 /// Mirrors `LocalPlannerNativeConfig` (native.py), which owns every default.
@@ -113,7 +113,7 @@ struct Shared {
     cloud_at: Option<Instant>,
     global_xy: Option<Vec<[f64; 2]>>,
     /// The latest region_bounds, oldest first, for pairing with local_map by stamp.
-    bounds: VecDeque<(Time, Crop)>,
+    bounds: VecDeque<(Time, RegionBounds)>,
 }
 
 #[derive(Module)]
@@ -184,7 +184,7 @@ impl LocalPlanner {
             s.bounds.pop_front();
         }
         s.bounds
-            .push_back((msg.header.stamp.clone(), Crop::of_bounds(&msg)));
+            .push_back((msg.header.stamp.clone(), RegionBounds::of_msg(&msg)));
     }
 
     /// MLS emits an empty path when it finds no route; the next tick clears what was published.
@@ -422,7 +422,7 @@ struct Snapshot {
     cloud_seq: u64,
     age_s: Option<f64>,
     route: Option<Vec<[f64; 2]>>,
-    crop: Option<Crop>,
+    bounds: Option<RegionBounds>,
 }
 
 impl Worker {
@@ -434,7 +434,7 @@ impl Worker {
 
         let mut gate = StaleGate::default();
         let mut watch = PoseWatch::new(self.config.max_map_age_s);
-        let mut points: Option<(u64, Arc<Vec<[f32; 3]>>)> = None;
+        let mut memory = Memory::default();
         // The (cloud, carrot) the published plan was made from.
         let mut planned: Option<(u64, (f64, f64))> = None;
         // The published plan; the search keeps it unless a fresh one earns the switch.
@@ -473,6 +473,7 @@ impl Worker {
                     // and the incumbent, a route held across a dead link is unvalidated.
                     planned = None;
                     incumbent = None;
+                    memory = Memory::default();
                     let pose = pose.expect("Hold implies a pose");
                     let held = hold_stub(
                         pose,
@@ -487,6 +488,7 @@ impl Worker {
                     info!("planner_path is empty, clearing the local plan");
                     planned = None;
                     incumbent = None;
+                    memory = Memory::default();
                     published = false;
                     let empty =
                         msg::build_path(&[], &[], msg::now_secs(), &self.config.world_frame, 0.0);
@@ -527,9 +529,9 @@ impl Worker {
                         let pts = self.points(
                             &cloud,
                             snap.cloud_seq,
-                            snap.crop.as_ref(),
+                            snap.bounds.as_ref(),
                             (pose.0, pose.1),
-                            &mut points,
+                            &mut memory,
                         )?;
                         let body = body_z.unwrap_or(0.0);
                         let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
@@ -594,52 +596,39 @@ impl Worker {
 
     fn snapshot(&self, now: Instant) -> Snapshot {
         let s = self.shared.lock().expect("shared mutex");
-        let crop = s.cloud.as_ref().and_then(|c| {
+        let bounds = s.cloud.as_ref().and_then(|c| {
             let stamp = &c.header.stamp;
             s.bounds
                 .iter()
                 .rev()
                 .find(|(t, _)| t.sec == stamp.sec && t.nsec == stamp.nsec)
-                .map(|(_, crop)| *crop)
+                .map(|(_, b)| *b)
         });
         Snapshot {
             cloud: s.cloud.clone(),
             cloud_seq: s.cloud_seq,
             age_s: s.cloud_at.map(|t| now.duration_since(t).as_secs_f64()),
             route: s.global_xy.clone(),
-            crop,
+            bounds,
         }
     }
 
-    /// The latest cloud as xyz points, extracted once per arrival, with the points last
-    /// seen outside its crop kept out to the planning reach. Without paired bounds the
-    /// cloud stands alone.
+    /// The latest cloud's points with the remembered ones, extracted once per arrival.
     fn points(
         &self,
         cloud: &PointCloud2,
         seq: u64,
-        crop: Option<&Crop>,
+        bounds: Option<&RegionBounds>,
         robot: (f64, f64),
-        cache: &mut Option<(u64, Arc<Vec<[f32; 3]>>)>,
+        memory: &mut Memory,
     ) -> Option<Arc<Vec<[f32; 3]>>> {
-        if let Some((cached_seq, pts)) = cache {
-            if *cached_seq == seq {
-                return Some(Arc::clone(pts));
-            }
+        if let Some(pts) = memory.cached(seq) {
+            return Some(pts);
         }
         match msg::extract_xyz(cloud) {
             Ok(fresh) => {
-                let pts = match (crop, cache.as_ref()) {
-                    (Some(crop), Some((_, kept))) => {
-                        let reach =
-                            self.config.goal_lookahead_m + self.emb.length.max(self.emb.width);
-                        crop::merge(kept, fresh, crop, robot, reach)
-                    }
-                    _ => fresh,
-                };
-                let pts = Arc::new(pts);
-                *cache = Some((seq, Arc::clone(&pts)));
-                Some(pts)
+                let reach = self.config.goal_lookahead_m + self.emb.length.max(self.emb.width);
+                Some(memory.update(seq, fresh, bounds, robot, reach))
             }
             Err(e) => {
                 warn_throttled!(
