@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -69,6 +70,8 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     config: LocalPlannerNativeConfig
 
     local_map: In[PointCloud2]
+    # The cylinder each local_map covers. Outside it the planner keeps what it last saw.
+    region_bounds: In[PoseStamped]
     planner_path: In[Path]
     # IO, not In: rust `#[tf]` subscribes and publishes, and refuses to start on a mismatch.
     tf: IO[TFMessage]

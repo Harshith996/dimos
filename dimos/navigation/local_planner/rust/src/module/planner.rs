@@ -17,17 +17,21 @@
 //! along `planner_path`, pulled back along it to where the body fits. A refusal or a stale
 //! map publishes a one-pose hold stub.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::planner::{plan_explored, step_reach, Emb, Terrain, COMMIT_MARGIN};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
+use lcm_msgs::geometry_msgs::PoseStamped;
 use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::PointCloud2;
+use lcm_msgs::std_msgs::Time;
 use tracing::{debug, info, warn};
 use validator::ValidationError;
 
+use crate::module::crop::{self, Crop};
 use crate::module::emb;
 use crate::module::ground::{self, Plane};
 use crate::module::msg;
@@ -97,6 +101,8 @@ struct Shared {
     /// Arrival time, not `msg.ts`: the mapper's clock is not the robot's.
     cloud_at: Option<Instant>,
     global_xy: Option<Vec<[f64; 2]>>,
+    /// The latest region_bounds, oldest first, for pairing with local_map by stamp.
+    bounds: VecDeque<(Time, Crop)>,
 }
 
 #[derive(Module)]
@@ -107,6 +113,10 @@ pub struct LocalPlanner {
 
     #[input(decode = Path::decode, handler = on_planner_path)]
     planner_path: Input<Path>,
+
+    /// The cylinder each local_map covers, stamped like it.
+    #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
+    region_bounds: Input<PoseStamped>,
 
     #[output(encode = Path::encode)]
     path: Output<Path>,
@@ -155,6 +165,15 @@ impl LocalPlanner {
         s.cloud = Some(Arc::new(msg));
         s.cloud_seq = s.cloud_seq.wrapping_add(1);
         s.cloud_at = Some(Instant::now());
+    }
+
+    async fn on_region_bounds(&mut self, msg: PoseStamped) {
+        let mut s = self.shared.lock().expect("shared mutex");
+        if s.bounds.len() == BOUNDS_KEPT {
+            s.bounds.pop_front();
+        }
+        s.bounds
+            .push_back((msg.header.stamp.clone(), Crop::of_bounds(&msg)));
     }
 
     /// MLS emits an empty path when it finds no route; the next tick clears what was published.
@@ -346,6 +365,9 @@ pub fn plan_once(
     msg::build_path(&states, &ts, t0, &config.world_frame, ground.z)
 }
 
+/// Bounds held for pairing. The ray tracer publishes them beside each local_map.
+const BOUNDS_KEPT: usize = 8;
+
 /// Owns the replan cadence and the publishing, off the dispatch loop.
 struct Worker {
     shared: Arc<Mutex<Shared>>,
@@ -363,6 +385,7 @@ struct Snapshot {
     cloud_seq: u64,
     age_s: Option<f64>,
     route: Option<Vec<[f64; 2]>>,
+    crop: Option<Crop>,
 }
 
 impl Worker {
@@ -464,7 +487,13 @@ impl Worker {
                     // The search is synchronous; block_in_place keeps it off the async
                     // workers, hence the module's 2 threads.
                     let produced = tokio::task::block_in_place(|| {
-                        let pts = self.points(&cloud, snap.cloud_seq, &mut points)?;
+                        let pts = self.points(
+                            &cloud,
+                            snap.cloud_seq,
+                            snap.crop.as_ref(),
+                            (pose.0, pose.1),
+                            &mut points,
+                        )?;
                         let body = body_z.unwrap_or(0.0);
                         let ground = ground::read(&pts, pose.0, pose.1, body, &self.emb);
                         let path = plan_once(
@@ -496,19 +525,32 @@ impl Worker {
 
     fn snapshot(&self, now: Instant) -> Snapshot {
         let s = self.shared.lock().expect("shared mutex");
+        let crop = s.cloud.as_ref().and_then(|c| {
+            let stamp = &c.header.stamp;
+            s.bounds
+                .iter()
+                .rev()
+                .find(|(t, _)| t.sec == stamp.sec && t.nsec == stamp.nsec)
+                .map(|(_, crop)| *crop)
+        });
         Snapshot {
             cloud: s.cloud.clone(),
             cloud_seq: s.cloud_seq,
             age_s: s.cloud_at.map(|t| now.duration_since(t).as_secs_f64()),
             route: s.global_xy.clone(),
+            crop,
         }
     }
 
-    /// The latest cloud as xyz points, extracted once per arrival.
+    /// The latest cloud as xyz points, extracted once per arrival, with the points last
+    /// seen outside its crop kept out to the planning reach. Without paired bounds the
+    /// cloud stands alone.
     fn points(
         &self,
         cloud: &PointCloud2,
         seq: u64,
+        crop: Option<&Crop>,
+        robot: (f64, f64),
         cache: &mut Option<(u64, Arc<Vec<[f32; 3]>>)>,
     ) -> Option<Arc<Vec<[f32; 3]>>> {
         if let Some((cached_seq, pts)) = cache {
@@ -517,7 +559,15 @@ impl Worker {
             }
         }
         match msg::extract_xyz(cloud) {
-            Ok(pts) => {
+            Ok(fresh) => {
+                let pts = match (crop, cache.as_ref()) {
+                    (Some(crop), Some((_, kept))) => {
+                        let reach =
+                            self.config.goal_lookahead_m + self.emb.length.max(self.emb.width);
+                        crop::merge(kept, fresh, crop, robot, reach)
+                    }
+                    _ => fresh,
+                };
                 let pts = Arc::new(pts);
                 *cache = Some((seq, Arc::clone(&pts)));
                 Some(pts)
