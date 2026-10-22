@@ -21,7 +21,7 @@ use crate::voxel_ray_tracer::{
     partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
     SeedRegion,
 };
-use crate::wire::{decode_tf, encode, encode_tf, extract_xyz};
+use crate::wire::extract_xyz;
 use dimos_generated_messages::builtin_interfaces::msg::time::Time;
 use dimos_generated_messages::dimos_msgs::msg::{
     point_cloud_region::PointCloudRegion, region_bounds::RegionBounds,
@@ -31,6 +31,8 @@ use dimos_generated_messages::sensor_msgs::msg::{
     point_cloud2::PointCloud2, point_field::PointField,
 };
 use dimos_generated_messages::std_msgs::msg::header::Header;
+use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+use dimos_module::cdr;
 use dimos_module::{
     debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
 };
@@ -69,30 +71,30 @@ pub struct RayTracingVoxelMap {
     #[tf(decode = decode_tf, encode = encode_tf)]
     tf: Tf,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     global_map: Output<PointCloud2>,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     local_map: Output<PointCloud2>,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     local_map_fine: Output<PointCloud2>,
 
     // Explicit cylinder dimensions, stamped like local_map so consumers pair them.
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     region_bounds: Output<RegionBounds>,
 
     // The map for viewers, one region cell per message with the cell packed in
     // the explicit region_id.
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     map_regions: Output<PointCloudRegion>,
 
     // One region of a seeded map as it lands, gated like local_map. seed_bounds
     // carries its cylinder like region_bounds.
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     seed_map: Output<PointCloudRegion>,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     seed_bounds: Output<RegionBounds>,
 
     #[config]
