@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos.message_utils.image import image_to_bgr
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_to_bgr
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import resolve_named_path

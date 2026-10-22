@@ -27,13 +27,13 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.experimental.temporal_memory.clip_filter import _get_image_data
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
 from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (

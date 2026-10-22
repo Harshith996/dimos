@@ -11,8 +11,8 @@ This complete CPU example uses the project's sample image and model assets
 (downloaded on first use). It performs detection without a robot or API key:
 
 ```python
-from dimos.msgs.image import image_from_file
-from dimos.msgs.time import header_now
+from dimos.message_utils.image import image_from_file
+from dimos.message_utils.time import header_now
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.utils.data import get_data
 
@@ -37,7 +37,7 @@ complete, select the explicit CDR transport when wiring these ports; see
 the cloud frame into the optical frame. Cloud filters preserve all selected
 point records, including extra fields and source nanoseconds. Generated
 messages do not acquire `.ts` or NumPy/Open3D methods: use the helpers in
-`dimos.msgs.image`, `dimos.msgs.pointcloud` and `dimos.msgs.geometry`.
+`dimos.message_utils.image`, `dimos.message_utils.pointcloud` and `dimos.message_utils.geometry`.
 
 The real Go2 regression fixture is a small canonical CDR selection from
 `unitree_go2_lidar_corrected`. Its manifest records the original archive OID,
@@ -57,8 +57,8 @@ With the existing ML dependencies, the same generated image can be embedded:
 
 ```python
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.image import image_from_file
-from dimos.msgs.time import header_now
+from dimos.message_utils.image import image_from_file
+from dimos.message_utils.time import header_now
 from dimos.utils.data import get_data
 
 image = image_from_file(get_data("cafe.jpg"), header=header_now("camera_optical"))
@@ -88,8 +88,8 @@ import numpy as np
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 
 pixels = np.full((400, 400), 255, dtype=np.uint8)

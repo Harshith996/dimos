@@ -23,13 +23,13 @@ from reactivex.subject import Subject
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
+from dimos.message_utils.image import image_sharpness
+from dimos.message_utils.time import to_seconds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.image import image_sharpness
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D

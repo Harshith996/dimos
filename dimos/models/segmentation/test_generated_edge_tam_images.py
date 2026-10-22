@@ -19,8 +19,8 @@ import cv2
 import numpy as np
 import torch
 
+from dimos.message_utils.image import image_from_array
 from dimos.models.segmentation import edge_tam
-from dimos.msgs.image import image_from_array
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
 

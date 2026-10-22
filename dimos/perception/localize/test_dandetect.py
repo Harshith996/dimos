@@ -22,13 +22,13 @@ import numpy as np
 import pytest
 
 from dimos.memory.store.memory import MemoryStore
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.embedding.base import Embedding
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.localize import dandetect
 from dimos.perception.localize.dandetect import DanDetector, NoSegmenter, Option
 from dimos.perception.localize.localize import embed_index

@@ -38,15 +38,15 @@ from dimos.hardware.sensors.camera.zed.messages import (
     tracking_to_base,
     transform_from_arrays,
 )
+from dimos.message_utils.camera_info import camera_info_with_stamp
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_rgbd, voxel_downsample_cloud
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.camera_info import camera_info_with_stamp
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_from_rgbd, voxel_downsample_cloud
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 

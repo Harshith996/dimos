@@ -22,10 +22,10 @@ import cv2
 import cv2.aruco
 import numpy as np
 
+from dimos.message_utils.geometry import quaternion_from_matrix
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import quaternion_from_matrix
 
 _FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
 

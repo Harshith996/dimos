@@ -16,10 +16,10 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.pointcloud import pointcloud_rgb
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.pointcloud import pointcloud_rgb
 
 
 @pytest.mark.parametrize("bigendian", [False, True])

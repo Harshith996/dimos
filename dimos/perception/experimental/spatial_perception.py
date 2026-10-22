@@ -30,11 +30,11 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.message_utils.geometry import pose_from_transform, quaternion_euler
+from dimos.message_utils.image import image_to_bgr
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import pose_from_transform, quaternion_euler
-from dimos.msgs.image import image_to_bgr
 from dimos.perception.experimental.image_embedding import ImageEmbeddingProvider
 from dimos.perception.experimental.spatial_vector_db import SpatialVectorDB
 from dimos.perception.experimental.visual_memory import VisualMemory

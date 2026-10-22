@@ -18,6 +18,8 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -29,8 +31,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.protocol.tf.tf import TF
 

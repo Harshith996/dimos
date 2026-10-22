@@ -25,10 +25,10 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import WebRTCVideoTransport
+from dimos.message_utils.image import image_from_array
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
 

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING
 
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.time import to_seconds
 
 if TYPE_CHECKING:
     from dimos.messages.sensor_msgs.msg import Image

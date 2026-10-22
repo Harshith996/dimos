@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.pointcloud import select_points
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.pointcloud import select_points
+from dimos.message_utils.time import to_seconds
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.detection.type.imageDetections import ImageDetections
 

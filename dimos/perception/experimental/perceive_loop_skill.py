@@ -30,11 +30,11 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.message_utils.image import image_sharpness, image_to_bgr, image_to_jpeg
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.create import create
 from dimos.models.vl.types import VlModelName
-from dimos.msgs.image import image_sharpness, image_to_bgr, image_to_jpeg
-from dimos.msgs.time import to_seconds
 from dimos.types.timestamped import TimestampedBufferCollection, TimestampedData
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure

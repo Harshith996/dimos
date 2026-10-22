@@ -36,9 +36,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.image import image_from_array, image_to_bgr, image_to_rgb, image_view
+from dimos.message_utils.time import header_now
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_from_array, image_to_bgr, image_to_rgb, image_view
-from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

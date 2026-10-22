@@ -15,10 +15,10 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
+from dimos.message_utils.image import image_from_array, image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2D, Detection2DArray
-from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint

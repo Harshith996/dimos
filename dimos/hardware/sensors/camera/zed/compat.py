@@ -16,7 +16,7 @@
 
 from pathlib import Path
 
-from dimos.msgs.camera_info import CalibrationProvider
+from dimos.message_utils.camera_info import CalibrationProvider
 
 try:
     import pyzed.sl  # noqa: F401

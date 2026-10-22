@@ -15,7 +15,7 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
-from dimos.msgs.time import (
+from dimos.message_utils.time import (
     duration_from_nanoseconds,
     duration_from_seconds,
     header_now,
@@ -60,7 +60,7 @@ def test_invalid_ros_fraction_is_rejected():
 
 
 def test_now_reads_integer_clock_and_preserves_frame(monkeypatch):
-    monkeypatch.setattr("dimos.msgs.time.time.time_ns", lambda: 1_700_000_000_123_456_789)
+    monkeypatch.setattr("dimos.message_utils.time.time.time_ns", lambda: 1_700_000_000_123_456_789)
 
     header = header_now("camera")
 

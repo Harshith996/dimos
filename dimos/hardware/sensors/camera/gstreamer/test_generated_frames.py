@@ -22,9 +22,9 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.image import image_view
+from dimos.message_utils.time import to_nanoseconds
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_view
-from dimos.msgs.time import to_nanoseconds
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 gi = pytest.importorskip("gi", reason="GStreamer acceptance requires the optional GI binding")

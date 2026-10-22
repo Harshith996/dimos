@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from dimos.msgs.image import image_from_file
+from dimos.message_utils.image import image_from_file
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 

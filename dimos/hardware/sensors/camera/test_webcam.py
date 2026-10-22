@@ -17,11 +17,11 @@ import numpy as np
 import pytest
 
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.message_utils.camera_info import camera_info_from_fov
+from dimos.message_utils.image import image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import camera_info_from_fov
-from dimos.msgs.image import image_view
 
 
 def test_webcam_without_intrinsics_reports_a_nominal_pinhole() -> None:
@@ -69,7 +69,7 @@ def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker)
     capture = mocker.Mock()
     capture.read.return_value = (True, pixels)
     mocker.patch.object(camera, "_capture", capture)
-    mocker.patch("dimos.msgs.time.time.time_ns", return_value=1700000000123456789)
+    mocker.patch("dimos.message_utils.time.time.time_ns", return_value=1700000000123456789)
     try:
         message = cdr_decode(cdr_encode(camera.capture_frame()), Image)
     finally:

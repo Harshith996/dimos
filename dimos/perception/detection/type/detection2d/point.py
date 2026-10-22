@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.message_utils.image import image_from_array, image_view
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos.messages.vision_msgs.msg import (
     BoundingBox2D,
@@ -28,7 +29,6 @@ from dimos.messages.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
-from dimos.msgs.image import image_from_array, image_view
 from dimos.perception.detection.type.detection2d.base import Detection2D
 
 if TYPE_CHECKING:

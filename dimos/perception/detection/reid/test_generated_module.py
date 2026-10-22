@@ -22,14 +22,14 @@ import pytest
 from reactivex.subject import Subject
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
 from dimos.perception.detection.person_tracker import (
     PersonTracker,
     _align_images_and_detections as align_person,

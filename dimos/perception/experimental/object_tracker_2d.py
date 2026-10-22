@@ -25,6 +25,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.image import image_from_array, image_to_rgb
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -39,8 +41,6 @@ from dimos.messages.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
-from dimos.msgs.image import image_from_array, image_to_rgb
-from dimos.msgs.time import time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)

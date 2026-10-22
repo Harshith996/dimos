@@ -21,6 +21,20 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.geometry import (
+    compose_transforms,
+    inverse_transform,
+    pose_from_matrix,
+    pose_from_transform,
+    pose_matrix,
+    quaternion_euler,
+    quaternion_from_euler,
+    transform_from_odometry,
+    transform_from_pose,
+    transform_matrix,
+    translate_pose_local,
+    yaw,
+)
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -36,20 +50,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.nav_msgs.msg import Odometry
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import (
-    compose_transforms,
-    inverse_transform,
-    pose_from_matrix,
-    pose_from_transform,
-    pose_matrix,
-    quaternion_euler,
-    quaternion_from_euler,
-    transform_from_odometry,
-    transform_from_pose,
-    transform_matrix,
-    translate_pose_local,
-    yaw,
-)
 
 
 @pytest.mark.parametrize("seconds,nanoseconds", [(0, 0), (-1, 500000000), (1700000000, 123456789)])

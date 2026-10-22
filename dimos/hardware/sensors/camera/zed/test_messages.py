@@ -24,10 +24,10 @@ from dimos.hardware.sensors.camera.zed.messages import (
     tracking_to_base,
     transform_from_arrays,
 )
+from dimos.message_utils.geometry import quaternion_from_euler, transform_matrix
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
 from dimos.messages.geometry_msgs.msg import Transform, Vector3
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import quaternion_from_euler, transform_matrix
-from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
 
 
 @pytest.mark.parametrize("ns", [0, -1, 1700000000123456789])

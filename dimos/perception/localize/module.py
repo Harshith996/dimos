@@ -50,6 +50,8 @@ from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
+from dimos.message_utils.pointcloud import pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -61,8 +63,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.pointcloud import pointcloud_xyz
-from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.rig import (

@@ -33,10 +33,10 @@ import numpy as np
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry import inverse_transform, vector_array
-from dimos.msgs.image import image_brightness, image_sharpness
-from dimos.msgs.pointcloud import pointcloud_xyz
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.geometry import inverse_transform, vector_array
+from dimos.message_utils.image import image_brightness, image_sharpness
+from dimos.message_utils.pointcloud import pointcloud_xyz
+from dimos.message_utils.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (

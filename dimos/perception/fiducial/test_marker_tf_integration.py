@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -34,7 +35,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.protocol.tf.tf import TF
 

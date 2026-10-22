@@ -26,10 +26,10 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import duration_from_seconds, time_from_nanoseconds, to_nanoseconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import duration_from_seconds, time_from_nanoseconds, to_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 # Add system path for gi module if needed

@@ -24,15 +24,15 @@ import pytest
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.project import _world_to_optical, sees
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.association import Groups
@@ -268,11 +268,11 @@ from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.geometry import inverse_transform
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import time_from_seconds
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.geometry import inverse_transform
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import time_from_seconds
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.localize import LocalizeTrace

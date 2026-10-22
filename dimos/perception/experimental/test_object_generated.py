@@ -17,6 +17,10 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz_rgb, pointcloud_rgb, pointcloud_xyz
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -30,10 +34,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection3D
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_from_xyz_rgb, pointcloud_rgb, pointcloud_xyz
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.experimental.object import Object, aggregate_pointclouds, to_detection3d_array

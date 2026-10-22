@@ -22,13 +22,9 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import (
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import (
     concatenate_clouds,
     pointcloud_from_rgbd,
     pointcloud_from_xyz,
@@ -41,6 +37,10 @@ from dimos.msgs.pointcloud import (
     transform_cloud,
     voxel_downsample_cloud,
 )
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
+from dimos.messages.std_msgs.msg import Header
 
 
 @pytest.fixture(params=[False, True], ids=["little-endian", "big-endian"])

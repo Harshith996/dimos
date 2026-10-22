@@ -22,10 +22,7 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import (
+from dimos.message_utils.image import (
     image_brightness,
     image_from_array,
     image_from_file,
@@ -34,7 +31,10 @@ from dimos.msgs.image import (
     image_to_rgb,
     image_view,
 )
-from dimos.msgs.time import time_from_nanoseconds
+from dimos.message_utils.time import time_from_nanoseconds
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 def test_padded_image_view_retains_owner_and_is_readonly() -> None:

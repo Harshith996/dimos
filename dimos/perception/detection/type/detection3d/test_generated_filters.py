@@ -16,12 +16,12 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_view
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     height_filter,

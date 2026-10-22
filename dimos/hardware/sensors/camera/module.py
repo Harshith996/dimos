@@ -26,13 +26,13 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.message_utils.image import image_sharpness
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.image import image_sharpness
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.spec import perception
 from dimos.utils.reactive import quality_barrier
 from dimos.visualization.vis_module import vis_module

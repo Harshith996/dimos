@@ -18,8 +18,8 @@ from typing import Any
 
 import numpy as np
 
+from dimos.message_utils.image import image_to_rgb
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_to_rgb
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -27,14 +27,14 @@ from dimos_cdrgen.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.camera_info import camera_info_from_yaml
+from dimos.message_utils.geometry import transform_from_pose
+from dimos.message_utils.time import to_nanoseconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.camera_info import camera_info_from_yaml
-from dimos.msgs.geometry import transform_from_pose
-from dimos.msgs.time import to_nanoseconds
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule

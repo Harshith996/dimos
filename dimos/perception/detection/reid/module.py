@@ -18,9 +18,9 @@ from reactivex.observable import Observable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
+from dimos.message_utils.time import to_nanoseconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.time import to_nanoseconds
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

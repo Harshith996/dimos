@@ -19,6 +19,7 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.message_utils.time import to_seconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -30,7 +31,6 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC

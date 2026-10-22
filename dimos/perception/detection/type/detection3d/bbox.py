@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.message_utils.geometry import point_distance
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -37,7 +38,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.geometry import point_distance
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 

@@ -22,11 +22,11 @@ import torch
 import torch.nn.functional as functional
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
+from dimos.message_utils.image import image_to_rgb
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.image import image_to_rgb
-from dimos.msgs.time import to_seconds
 
 
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):

@@ -21,10 +21,10 @@ import warnings
 import numpy as np
 from openai import OpenAI
 
+from dimos.message_utils.image import image_from_array, image_to_jpeg
+from dimos.message_utils.time import header_now
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.image import image_from_array, image_to_jpeg
-from dimos.msgs.time import header_now
 
 # Must be a model that returns ABSOLUTE pixel coordinates. The qwen3-vl-* models return
 # normalized 0-1000 coordinates and ignore prompts asking for pixels, which silently breaks

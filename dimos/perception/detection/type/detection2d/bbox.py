@@ -31,6 +31,8 @@ import numpy as np
 from rich.console import Console
 from rich.text import Text
 
+from dimos.message_utils.image import image_from_array, image_to_bgr, image_view
+from dimos.message_utils.time import to_seconds
 from dimos.messages.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -39,8 +41,6 @@ from dimos.messages.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
-from dimos.msgs.image import image_from_array, image_to_bgr, image_view
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.utils.decorators.decorators import simple_mcache
 

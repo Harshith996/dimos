@@ -20,6 +20,9 @@ from reactivex import operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.image import image_from_array, image_to_rgb, image_view
+from dimos.message_utils.time import to_seconds
 
 # Generated detection values
 from dimos.messages.builtin_interfaces.msg import Time
@@ -43,9 +46,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.image import image_from_array, image_to_rgb, image_view
-from dimos.msgs.time import to_seconds
 from dimos.perception.experimental.object_tracker_2d import ObjectTracker2D
 from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.logging_config import setup_logger

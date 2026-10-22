@@ -10,7 +10,7 @@ chain then places those points in the robot or world frame.
 The CDR proposal uses generated `TransformStamped`, `PoseStamped` and
 `TFMessage` values from `dimos.messages`. Frame names and source time live in
 `header.frame_id` and `header.stamp`; the destination frame is `child_frame_id`.
-Geometry operations live in `dimos.msgs.geometry`.
+Geometry operations live in `dimos.message_utils.geometry`.
 
 ## Define a mount
 
@@ -39,7 +39,7 @@ receive them.
 Compose connected edges in parent-to-child order. Inversion swaps the frames.
 
 ```python
-from dimos.msgs.geometry import compose_transforms, inverse_transform
+from dimos.message_utils.geometry import compose_transforms, inverse_transform
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 first, second = frames_to_edge_transforms([

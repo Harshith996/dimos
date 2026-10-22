@@ -20,8 +20,8 @@ import numpy as np
 from numpy.typing import NDArray
 import torch
 
+from dimos.message_utils.image import image_to_bgr
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_to_bgr
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data

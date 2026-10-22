@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from sortedcontainers import SortedDict  # type: ignore[import-untyped]
 
+from dimos.message_utils.geometry import compose_transforms, inverse_transform, pose_from_transform
+from dimos.message_utils.time import time_from_seconds, to_nanoseconds, to_seconds
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -34,8 +36,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import compose_transforms, inverse_transform, pose_from_transform
-from dimos.msgs.time import time_from_seconds, to_nanoseconds, to_seconds
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 

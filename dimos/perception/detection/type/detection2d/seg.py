@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 
 if TYPE_CHECKING:

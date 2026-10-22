@@ -20,9 +20,9 @@ import pytest
 
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.message_utils.geometry import transform_matrix
 from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import transform_matrix
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 

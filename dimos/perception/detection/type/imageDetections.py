@@ -22,9 +22,9 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
+from dimos.message_utils.image import image_from_array, image_to_bgr
+from dimos.message_utils.time import to_seconds
 from dimos.messages.vision_msgs.msg import Detection2DArray
-from dimos.msgs.image import image_from_array, image_to_bgr
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:

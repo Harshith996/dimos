@@ -23,11 +23,11 @@ import torch
 import torch.nn.functional as functional
 from torchreid import utils as torchreid_utils
 
+from dimos.message_utils.image import image_to_bgr
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
-from dimos.msgs.image import image_to_bgr
-from dimos.msgs.time import to_seconds
 from dimos.utils.data import get_data
 
 

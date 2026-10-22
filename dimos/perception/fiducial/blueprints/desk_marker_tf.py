@@ -27,15 +27,15 @@ from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.message_utils.camera_info import camera_info_from_yaml
+from dimos.message_utils.geometry import quaternion_from_euler
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection3DArray
-from dimos.msgs.camera_info import camera_info_from_yaml
-from dimos.msgs.geometry import quaternion_from_euler
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.perception.fiducial.marker_detection_stream_module import MarkerDetectionStreamModule
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 

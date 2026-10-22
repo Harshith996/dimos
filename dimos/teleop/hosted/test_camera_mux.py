@@ -26,10 +26,10 @@ import json
 import numpy as np
 import pytest
 
+from dimos.message_utils.image import image_from_array, image_to_rgb, image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array, image_to_rgb, image_view
 from dimos.teleop.hosted.blueprints.cloudflare import (
     teleop_hosted_go2_multicam,
     teleop_hosted_go2_transport,

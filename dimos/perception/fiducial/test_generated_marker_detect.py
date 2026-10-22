@@ -19,12 +19,12 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
+from dimos.message_utils.image import image_from_array
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection3D
-from dimos.msgs.image import image_from_array
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 
 

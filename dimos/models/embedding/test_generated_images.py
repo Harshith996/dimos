@@ -20,13 +20,13 @@ import torch
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
+from dimos.message_utils.image import image_from_array, image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.dino import DINOModel
 from dimos.models.embedding.siglip import SigLIPModel
 from dimos.models.embedding.siglip2 import SigLIP2Model
-from dimos.msgs.image import image_from_array, image_view
 
 
 @pytest.mark.parametrize("model_type", [CLIPModel, DINOModel, SigLIPModel, SigLIP2Model])

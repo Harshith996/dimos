@@ -19,6 +19,8 @@ import pytest
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_view, pointcloud_xyz
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Quaternion,
@@ -28,8 +30,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_view, pointcloud_xyz
 from dimos.perception.detection.module3D import _timed_cloud
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

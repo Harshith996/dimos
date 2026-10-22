@@ -23,10 +23,10 @@ import numpy as np
 from PIL import Image as PILImage
 import torch
 
+from dimos.message_utils.image import image_to_rgb
+from dimos.message_utils.time import to_nanoseconds, to_seconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.msgs.image import image_to_rgb
-from dimos.msgs.time import to_nanoseconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 

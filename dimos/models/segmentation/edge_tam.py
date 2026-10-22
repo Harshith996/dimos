@@ -27,9 +27,9 @@ from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 
+from dimos.message_utils.image import image_to_bgr, image_to_jpeg
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import default_torch_device
-from dimos.msgs.image import image_to_bgr, image_to_jpeg
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

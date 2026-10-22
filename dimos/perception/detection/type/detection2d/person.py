@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.utils.decorators.decorators import simple_mcache
 

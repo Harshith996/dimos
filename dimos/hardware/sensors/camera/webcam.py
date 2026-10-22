@@ -24,12 +24,12 @@ from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
+from dimos.message_utils.camera_info import camera_info_from_fov
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import header_now
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import camera_info_from_fov
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import header_now
 from dimos.utils.reactive import backpressure
 
 

@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.msgs.pointcloud import pointcloud_from_xyz
-from dimos.msgs.time import to_nanoseconds
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils.time import to_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

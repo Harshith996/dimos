@@ -23,18 +23,18 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.tf import StreamTF
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import inverse_transform, pose_from_transform, vector_array
-from dimos.msgs.image import image_view
-from dimos.msgs.pointcloud import (
+from dimos.message_utils.geometry import inverse_transform, pose_from_transform, vector_array
+from dimos.message_utils.image import image_view
+from dimos.message_utils.pointcloud import (
     pointcloud_from_rgbd,
     pointcloud_from_xyz,
     pointcloud_xyz,
     transform_cloud,
 )
-from dimos.msgs.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,

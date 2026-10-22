@@ -21,6 +21,18 @@ import uuid
 
 import numpy as np
 
+from dimos.message_utils.geometry import quaternion_from_matrix, transform_matrix
+from dimos.message_utils.image import image_to_rgb, image_view
+from dimos.message_utils.pointcloud import (
+    concatenate_clouds,
+    pointcloud_from_xyz,
+    pointcloud_from_xyz_rgb,
+    pointcloud_rgb,
+    pointcloud_to_open3d,
+    pointcloud_xyz,
+    voxel_downsample_cloud,
+)
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -40,18 +52,6 @@ from dimos.messages.vision_msgs.msg import (
     ObjectHypothesis,
     ObjectHypothesisWithPose,
 )
-from dimos.msgs.geometry import quaternion_from_matrix, transform_matrix
-from dimos.msgs.image import image_to_rgb, image_view
-from dimos.msgs.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_xyz,
-    pointcloud_from_xyz_rgb,
-    pointcloud_rgb,
-    pointcloud_to_open3d,
-    pointcloud_xyz,
-    voxel_downsample_cloud,
-)
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
 

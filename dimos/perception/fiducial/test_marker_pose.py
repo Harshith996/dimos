@@ -15,10 +15,10 @@
 import cv2
 import numpy as np
 
+from dimos.message_utils.image import image_from_array
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_from_array
 from dimos.perception.fiducial.marker_pose import (
     camera_optical_frame_id,
     estimate_marker_pose,

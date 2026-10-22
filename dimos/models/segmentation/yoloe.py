@@ -23,8 +23,8 @@ import numpy as np
 from numpy.typing import NDArray
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
+from dimos.message_utils.image import image_to_bgr
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_to_bgr
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

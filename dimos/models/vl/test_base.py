@@ -20,9 +20,9 @@ import numpy as np
 from openai.types.chat import ChatCompletion
 import pytest
 
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import header_now
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import header_now
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 # Captured actual response from Qwen API for cafe.jpg with query "humans"

@@ -47,19 +47,23 @@ import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import (
+from dimos.message_utils.geometry import (
     inverse_transform,
     pose_from_transform,
     pose_matrix,
     transform_matrix,
     vector_array,
 )
-from dimos.msgs.image import image_from_array, image_to_bgr, image_to_rgb
-from dimos.msgs.pointcloud import pointcloud_from_xyz, pointcloud_xyz, voxel_downsample_cloud
-from dimos.msgs.time import time_from_seconds
+from dimos.message_utils.image import image_from_array, image_to_bgr, image_to_rgb
+from dimos.message_utils.pointcloud import (
+    pointcloud_from_xyz,
+    pointcloud_xyz,
+    voxel_downsample_cloud,
+)
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import LocalizeTrace, embed_index

@@ -22,16 +22,16 @@ import numpy as np
 import pytest
 import yaml
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CameraInfo
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import (
+from dimos.message_utils.camera_info import (
     camera_info_from_fov,
     camera_info_from_intrinsics,
     camera_info_from_yaml,
     camera_info_with_stamp,
     intrinsic_matrix,
 )
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos.messages.std_msgs.msg import Header
 
 _CALIBRATION = Path(__file__).parents[1] / "robot/unitree/go2/front_camera_720.yaml"
 

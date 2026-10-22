@@ -27,15 +27,15 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.image import image_from_array, image_view
+from dimos.message_utils.pointcloud import pointcloud_from_xyz, transform_cloud
+from dimos.message_utils.time import to_seconds
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection2DArray, Detection3DArray
 from dimos.models.segmentation.edge_tam import BoxPromptImageSegmenter
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
-from dimos.msgs.image import image_from_array, image_view
-from dimos.msgs.pointcloud import pointcloud_from_xyz, transform_cloud
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object import (

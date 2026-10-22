@@ -29,8 +29,8 @@ from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTr
 import av
 import numpy as np
 
+from dimos.message_utils.image import image_to_rgb, image_view
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
-from dimos.msgs.image import image_to_rgb, image_view
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 

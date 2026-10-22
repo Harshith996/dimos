@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from dimos.msgs.image import image_view
+from dimos.message_utils.image import image_view
 
 
 @pytest.mark.self_hosted

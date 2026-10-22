@@ -33,11 +33,11 @@ from dimos.memory.module import StreamModule, stream_to_port
 from dimos.memory.store.null import NullStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
+from dimos.message_utils.image import image_sharpness
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection3DArray
-from dimos.msgs.image import image_sharpness
-from dimos.msgs.time import to_seconds
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame

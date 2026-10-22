@@ -21,15 +21,15 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry import (
+from dimos.message_utils.geometry import (
     compose_transforms,
     inverse_transform,
     transform_matrix,
 )
-from dimos.msgs.image import image_view
-from dimos.msgs.time import time_from_seconds
+from dimos.message_utils.image import image_view
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
 if TYPE_CHECKING:

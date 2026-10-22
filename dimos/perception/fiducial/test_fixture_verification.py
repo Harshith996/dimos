@@ -18,12 +18,12 @@ import cv2
 import numpy as np
 import pytest
 
+from dimos.message_utils.camera_info import camera_info_from_intrinsics
+from dimos.message_utils.geometry import transform_matrix
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.camera_info import camera_info_from_intrinsics
-from dimos.msgs.geometry import transform_matrix
-from dimos.msgs.image import image_from_array
-from dimos.msgs.time import time_from_seconds
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.fiducial.fixture_verification import (
     BoardLayout,

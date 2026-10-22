@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.pointcloud import pointcloud_xyz, voxel_downsample_cloud
+from dimos.message_utils.pointcloud import pointcloud_xyz, voxel_downsample_cloud
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

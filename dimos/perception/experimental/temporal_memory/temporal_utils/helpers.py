@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.msgs.image import image_to_rgb
+from dimos.message_utils.image import image_to_rgb
 
 if TYPE_CHECKING:
     from dimos.perception.experimental.temporal_memory.frame_window_accumulator import Frame

@@ -37,12 +37,12 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.image import image_sharpness
+from dimos.message_utils.time import header_now
 from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos.messages.geometry_msgs.msg import Point, PoseStamped
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel
-from dimos.msgs.image import image_sharpness
-from dimos.msgs.time import header_now
 from dimos.perception.experimental.temporal_memory.clip_filter import (
     CLIP_AVAILABLE,
     adaptive_keyframes,

@@ -19,11 +19,11 @@ from unittest.mock import MagicMock
 import numpy as np
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
+from dimos.message_utils.image import image_from_array, image_to_bgr
+from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
-from dimos.msgs.image import image_from_array, image_to_bgr
-from dimos.msgs.time import time_from_seconds, to_seconds
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg

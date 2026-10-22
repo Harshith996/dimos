@@ -14,8 +14,8 @@
 
 import pytest
 
-from dimos.msgs.geometry import transform_matrix
-from dimos.msgs.time import to_seconds
+from dimos.message_utils.geometry import transform_matrix
+from dimos.message_utils.time import to_seconds
 
 pytestmark = pytest.mark.self_hosted
 

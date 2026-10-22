@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.message_utils.image import image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import (
@@ -29,7 +30,6 @@ from dimos.messages.vision_msgs.msg import (
     Point2D,
     Pose2D,
 )
-from dimos.msgs.image import image_view
 from dimos.perception.experimental.object_tracker_2d import ObjectTracker2D
 from dimos.perception.experimental.object_tracker_3d import ObjectTracker3D
 

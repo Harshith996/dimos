@@ -57,7 +57,7 @@ and recording:
 
 ```python
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.msgs.image import image_view
+from dimos.message_utils.image import image_view
 
 
 def mean_red(image: Image) -> float:

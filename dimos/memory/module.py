@@ -35,9 +35,9 @@ from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
+from dimos.message_utils.time import to_seconds
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.time import to_seconds
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 

@@ -19,11 +19,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from dimos.hardware.sensors.camera.spec import OPTICAL_ROTATION
+from dimos.message_utils.geometry import compose_transforms, inverse_transform
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry import compose_transforms, inverse_transform
 
 
 def transform_from_arrays(
