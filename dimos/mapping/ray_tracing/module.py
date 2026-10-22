@@ -98,6 +98,7 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
     tf: IO[TFMessage]
+    tf_static: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]

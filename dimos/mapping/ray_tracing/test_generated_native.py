@@ -107,6 +107,7 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
             "lidar",
             "loaded_map",
             "tf",
+            "tf_static",
             "global_map",
             "local_map",
             "local_map_fine",
@@ -152,6 +153,20 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
             header = Header(frame_id="odom", stamp=time_from_nanoseconds(epoch + sequence))
             source_stamps.add(epoch + sequence)
             sequence += 1
+            wires["tf_static"].publish(
+                TFMessage(
+                    transforms=[
+                        TransformStamped(
+                            header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)),
+                            child_frame_id="lidar",
+                            transform=Transform(
+                                translation=Vector3(x=0, y=0, z=0),
+                                rotation=Quaternion(x=0, y=0, z=0, w=1),
+                            ),
+                        )
+                    ]
+                )
+            )
             wires["tf"].publish(
                 TFMessage(
                     transforms=[
@@ -163,7 +178,7 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
                                 rotation=Quaternion(x=0, y=0, z=0, w=1),
                             ),
                         )
-                        for child, x in [("lidar", 0), ("map", 1)]
+                        for child, x in [("map", 1)]
                     ]
                 )
             )

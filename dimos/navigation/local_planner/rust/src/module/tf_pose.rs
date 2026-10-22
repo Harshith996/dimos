@@ -18,8 +18,8 @@
 
 use std::time::Instant;
 
-use dimos_module::nalgebra::{Isometry3, Translation3};
-use dimos_module::{Tf, Transform};
+use dimos_module::nalgebra::Isometry3;
+use dimos_module::{Tf, TransformStamped};
 
 use crate::module::msg::{yaw_of, State};
 
@@ -90,10 +90,10 @@ impl PoseWatch {
     }
 }
 
-fn edge_of(t: Transform) -> Option<(i64, Isometry3<f64>)> {
+fn edge_of(t: TransformStamped) -> Option<(i64, Isometry3<f64>)> {
     Some((
-        t.stamp_nanoseconds()?,
-        Isometry3::from_parts(Translation3::from(t.translation()), t.rotation()),
+        dimos_module::tf::nanoseconds(&t.header.stamp).ok()?,
+        dimos_module::tf::isometry(&t).ok()?,
     ))
 }
 
@@ -113,7 +113,7 @@ pub fn state_of(iso: &Isometry3<f64>) -> State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dimos_module::nalgebra::UnitQuaternion;
+    use dimos_module::nalgebra::{Translation3, UnitQuaternion};
     use std::time::Duration;
 
     fn body_at(x: f64, yaw: f64, ts: f64) -> Option<(f64, Isometry3<f64>)> {
@@ -197,14 +197,24 @@ mod tests {
         let mut watch = PoseWatch::new(2.5);
         let now = Instant::now();
         let ns = 1_700_000_000_123_456_789;
-        let first = Transform::from_nanoseconds("world", "base", ns, Isometry3::identity());
+        let first = dimos_module::tf::from_isometry(
+            "world",
+            "base",
+            dimos_module::tf::time_from_nanoseconds(ns).unwrap(),
+            Isometry3::identity(),
+        );
         assert!(watch
             .observe_nanoseconds(edge_of(first.clone()), now)
             .is_some());
         assert!(watch
             .observe_nanoseconds(edge_of(first), now + Duration::from_secs(3))
             .is_none());
-        let fresh = Transform::from_nanoseconds("world", "base", ns + 1, Isometry3::identity());
+        let fresh = dimos_module::tf::from_isometry(
+            "world",
+            "base",
+            dimos_module::tf::time_from_nanoseconds(ns + 1).unwrap(),
+            Isometry3::identity(),
+        );
         assert!(watch
             .observe_nanoseconds(edge_of(fresh), now + Duration::from_secs(3))
             .is_some());

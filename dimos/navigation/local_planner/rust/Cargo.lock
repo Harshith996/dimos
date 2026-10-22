@@ -614,7 +614,6 @@ name = "dimos-local-planner"
 version = "0.1.0"
 dependencies = [
  "dimos-generated-messages",
- "dimos-message-adapters",
  "dimos-module",
  "serde",
  "serde_json",
@@ -625,21 +624,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "dimos-message-adapters"
-version = "0.1.0"
-dependencies = [
- "dimos-generated-messages",
- "dimos-module",
- "nalgebra",
-]
-
-[[package]]
 name = "dimos-module"
 version = "0.2.0"
 dependencies = [
  "cdr",
  "dimos-lcm",
  "dimos-module-macros",
+ "dimos-tf-messages",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -648,6 +639,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "transforms",
  "url",
  "validator",
  "zenoh",
@@ -661,6 +653,17 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "dimos-tf-messages"
+version = "0.1.0"
+dependencies = [
+ "cdr",
+ "heapless",
+ "ros2msg",
+ "serde",
+ "serde-big-array",
 ]
 
 [[package]]
@@ -1044,6 +1047,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heapless"
@@ -3298,6 +3306,18 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transforms"
+version = "2.2.0"
+source = "git+https://github.com/TomCC7/transforms?rev=76cf9022173d5764814544082f2b518a9df1934b#76cf9022173d5764814544082f2b518a9df1934b"
+dependencies = [
+ "approx",
+ "hashbrown 0.17.1",
+ "libm",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

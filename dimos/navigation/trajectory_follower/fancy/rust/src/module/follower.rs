@@ -130,7 +130,7 @@ pub struct TrajectoryFollower {
     #[config]
     config: Config,
 
-    #[tf(decode = dimos_message_adapters::tf::decode, encode = dimos_message_adapters::tf::encode)]
+    #[tf]
     tf: Tf,
 
     shared: Arc<Mutex<Shared>>,
