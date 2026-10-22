@@ -40,6 +40,7 @@ from dimos.messages.geometry_msgs.msg import (
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
@@ -52,18 +53,19 @@ class MemoryRPC(LCMRPC):
 
 
 def test_native_follower_declares_canonical_generated_port_identities():
-    module = TrajectoryFollowerNative(rpc_transport=MemoryRPC)
+    module = TrajectoryFollowerNative(rpc_transport=MemoryRPC, embodiment=GO2)
     try:
         assert module.path.type is Path and module.tf.type is TFMessage
+        assert module.tf_static.type is TFMessage
         assert module.nav_cmd_vel.type is Twist and module.goal_reached.type is Bool
     finally:
         module.stop()
 
 
+@pytest.mark.native_e2e
 def test_actual_native_follower_cdr_drive_arrival_new_goal_and_empty_stop(monkeypatch):
     executable = os.environ.get("DIMOS_NATIVE_FOLLOWER_BINARY")
-    if not executable:
-        pytest.skip("Set DIMOS_NATIVE_FOLLOWER_BINARY to the compiled trajectory_follower")
+    assert executable, "Build and set the native follower binary before running native_e2e"
     binary = FilePath(executable).resolve()
     assert binary.is_file()
     monkeypatch.setattr(global_config, "transport", "zenoh")
@@ -91,13 +93,14 @@ def test_actual_native_follower_cdr_drive_arrival_new_goal_and_empty_stop(monkey
         )
         module = TrajectoryFollowerNative(
             rpc_transport=MemoryRPC,
+            embodiment=GO2,
             executable=str(binary),
             source_dir=None,
             build_command=None,
             session=session,
         )
         wires = {}
-        for name in ["path", "tf", "nav_cmd_vel", "goal_reached"]:
+        for name in ["path", "tf", "tf_static", "nav_cmd_vel", "goal_reached"]:
             port = getattr(module, name)
             wire = ZenohTransport(
                 ZenohTopic("native/follower/" + name, port.type), **session.model_dump()
