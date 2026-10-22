@@ -323,30 +323,27 @@ class TestZenohPubSubBase:
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert b"wildcard" in received
 
-    def test_subscribe_all_hears_a_domain_and_keys_its_channel(self, pubsub, retry_until) -> None:
+    def test_subscribe_all_hears_a_domain_reliable_channel(self, pubsub, retry_until) -> None:
         topic = Topic("dimos-domains/r1/test/domain/cells")
-        keyed: list[bytes] = []
+        got: list[bytes] = []
         event = threading.Event()
-
-        def key(msg: bytes) -> bytes:
-            keyed.append(msg)
-            return msg
 
         def callback(msg: bytes, t: Topic) -> None:
             if t.topic == topic.topic:
+                got.append(msg)
                 event.set()
 
-        pubsub.subscribe_all(callback, keyed={"test/domain/cells": key})
+        pubsub.subscribe_all(callback, reliable=["test/domain/cells"])
         retry_until(event, lambda: pubsub.publish(topic, b"cell"))
-        assert b"cell" in keyed
+        assert b"cell" in got
 
-    def test_subscribe_all_keeps_every_key_of_a_keyed_channel(
+    def test_subscribe_all_keeps_every_message_of_a_reliable_channel(
         self, pubsub, retry_until, wait_until
     ) -> None:
-        keyed = Topic("dimos/test/keyed/cells")
-        plain = Topic("dimos/test/keyed/plain")
-        probe = Topic("dimos/test/keyed/probe")
-        got: dict[str, list[bytes]] = {keyed.topic: [], plain.topic: []}
+        reliable = Topic("dimos/test/reliable/cells")
+        plain = Topic("dimos/test/reliable/plain")
+        probe = Topic("dimos/test/reliable/probe")
+        got: dict[str, list[bytes]] = {reliable.topic: [], plain.topic: []}
         live = threading.Event()
 
         def callback(msg: bytes, t: Topic) -> None:
@@ -355,21 +352,21 @@ class TestZenohPubSubBase:
             elif t.topic in got:
                 got[t.topic].append(msg)
 
-        pubsub.subscribe_all(callback, keyed={"test/keyed/cells": lambda msg: msg[:1]})
+        pubsub.subscribe_all(callback, reliable=["test/reliable/cells"])
         retry_until(live, lambda: pubsub.publish(probe, b"probe"))
         sent = [bytes([i]) for i in range(30)]
         for msg in sent:
-            pubsub.publish(keyed, msg)
+            pubsub.publish(reliable, msg)
             pubsub.publish(plain, msg)
-        wait_until(lambda: len(got[keyed.topic]) == len(sent), timeout=5.0, interval=0.01)
+        wait_until(lambda: len(got[reliable.topic]) == len(sent), timeout=5.0, interval=0.01)
         wait_until(lambda: got[plain.topic][-1:] == sent[-1:], timeout=5.0, interval=0.01)
 
-        assert got[keyed.topic] == sent
+        assert got[reliable.topic] == sent
 
-    def test_subscribe_all_keeps_the_latest_per_key_behind_a_held_drain(
+    def test_subscribe_all_keeps_a_reliable_channel_behind_a_held_drain(
         self, pubsub, retry_until, wait_until
     ) -> None:
-        keyed = Topic("dimos/test/held/cells")
+        reliable = Topic("dimos/test/held/cells")
         probe = Topic("dimos/test/held/probe")
         got: list[bytes] = []
         blocked = threading.Event()
@@ -377,27 +374,23 @@ class TestZenohPubSubBase:
 
         def callback(msg: bytes, t: Topic) -> None:
             if t.topic == probe.topic:
-                # Hold the drain here so the keyed channel piles up behind it.
+                # Hold the drain here so the reliable channel piles up behind it.
                 blocked.set()
                 release.wait(timeout=10.0)
-            elif t.topic == keyed.topic:
+            elif t.topic == reliable.topic:
                 got.append(msg)
 
-        pubsub.subscribe_all(callback, keyed={"test/held/cells": lambda msg: msg[:2]})
+        pubsub.subscribe_all(callback, reliable=["test/held/cells"])
         retry_until(blocked, lambda: pubsub.publish(probe, b"probe"))
         cells = [i.to_bytes(2, "big") for i in range(1000)]
         try:
-            for version in (b"a", b"b"):
-                for cell in cells:
-                    pubsub.publish(keyed, cell + version)
+            for cell in cells:
+                pubsub.publish(reliable, cell)
         finally:
             release.set()
-        newest = {cell: b"b" for cell in cells}
 
-        def last_values() -> dict[bytes, bytes]:
-            return {msg[:2]: msg[2:] for msg in list(got)}
-
-        wait_until(lambda: last_values() == newest, timeout=5.0, interval=0.01)
+        wait_until(lambda: len(got) == len(cells), timeout=5.0, interval=0.01)
+        assert got == cells
         assert len(got) < 2 * len(cells)
 
     def test_subscribe_after_stop_does_not_track(self, pubsub) -> None:

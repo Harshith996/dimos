@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from functools import lru_cache
 import re
@@ -241,31 +241,31 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     def subscribe_all(
         self,
         callback: Callable[[bytes, Topic], Any],
-        keyed: Mapping[str, Callable[[bytes], Hashable]] | None = None,
+        reliable: Collection[str] = (),
     ) -> Callable[[], None]:
         """Subscribe to all dimos topics of every domain, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
-        A channel in `keyed` delivers the latest message per key instead, in the order
-        each key first arrived, so a burst of distinct keys loses none of them.
+        A channel in `reliable` delivers every message, in order: for streams where each
+        message is a different entity (map tiles, mesh chunks) and dropping one loses it.
         """
         latest: dict[str, tuple[bytes, Topic]] = {}
-        pending: dict[tuple[str, Hashable], tuple[bytes, Topic]] = {}
-        key_of = {name.strip("/"): key for name, key in (keyed or {}).items()}
+        pending: list[tuple[bytes, Topic]] = []
+        reliable_names = {name.strip("/") for name in reliable}
         lock = threading.Lock()
         wake = threading.Event()
         stop = threading.Event()
 
         def collect(msg: bytes, topic: Topic) -> None:
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
-            # or per key on a keyed channel.
+            # or every message of a reliable channel.
             name = topic.topic
-            key = key_of.get(KEY_PREFIX.sub("", name)) if isinstance(name, str) else None
+            keep_all = isinstance(name, str) and KEY_PREFIX.sub("", name) in reliable_names
             with lock:
-                if key is None:
-                    latest[str(topic)] = (msg, topic)
+                if keep_all:
+                    pending.append((msg, topic))
                 else:
-                    pending[(str(topic), key(msg))] = (msg, topic)
+                    latest[str(topic)] = (msg, topic)
             wake.set()
 
         def drain() -> None:
@@ -273,7 +273,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 wake.wait()
                 wake.clear()
                 with lock:
-                    batch = list(pending.values())
+                    batch = list(pending)
                     pending.clear()
                     batch.extend(latest.values())
                     latest.clear()

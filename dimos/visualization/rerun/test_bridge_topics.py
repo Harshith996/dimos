@@ -21,7 +21,7 @@ the bytes arrive.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator
 from functools import partial
 from typing import Any
 from unittest.mock import patch
@@ -38,8 +38,8 @@ from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
     is_rerun_multi,
-    keyed_by_seq,
     region_entity,
+    reliable,
 )
 
 
@@ -49,15 +49,15 @@ class FakeZenoh(Zenoh):
     def __init__(self) -> None:
         self.keys: list[str] = []
         self.subscribed_all = False
-        self.keyed: list[str] = []
+        self.reliable: list[str] = []
 
     def subscribe(self, topic: Any, callback: Any) -> Any:
         self.keys.append(topic.key_expr)
         return lambda: None
 
-    def subscribe_all(self, callback: Any, keyed: Mapping[str, Any] | None = None) -> Any:
+    def subscribe_all(self, callback: Any, reliable: Collection[str] = ()) -> Any:
         self.subscribed_all = True
-        self.keyed = list(keyed or {})
+        self.reliable = list(reliable)
         return lambda: None
 
 
@@ -107,13 +107,13 @@ def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModu
     make_bridge()._subscribe(pubsub)
     assert pubsub.subscribed_all
     assert pubsub.keys == []
-    assert pubsub.keyed == []
+    assert pubsub.reliable == []
 
 
-def test_the_firehose_takes_keyed_renderers_per_seq(
+def test_the_firehose_takes_reliable_renderers(
     make_bridge: Callable[..., RerunBridgeModule],
 ) -> None:
-    @keyed_by_seq
+    @reliable
     def by_cell(msg: PointCloud2) -> None:
         return None
 
@@ -125,13 +125,13 @@ def test_the_firehose_takes_keyed_renderers_per_seq(
             "world/local_map": lambda msg: None,
         },
     )._subscribe(pubsub)
-    assert sorted(pubsub.keyed) == ["map_regions", "surface_map"]
+    assert sorted(pubsub.reliable) == ["map_regions", "surface_map"]
 
     pubsub = FakeZenoh()
     make_bridge(entity_prefix="hall", visual_override={"hall/surface_map": by_cell})._subscribe(
         pubsub
     )
-    assert pubsub.keyed == ["surface_map"]
+    assert pubsub.reliable == ["surface_map"]
 
 
 def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
+from dimos.visualization.rerun.bridge import RerunEntry, region_entity, reliable
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -59,7 +59,7 @@ def render_voxel_map(
     return voxel_map_points(msg.points_f32(), voxel_size, height_range)
 
 
-@keyed_by_seq
+@reliable
 def render_map_region(
     msg: PointCloud2,
     voxel_size: float,

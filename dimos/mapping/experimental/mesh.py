@@ -381,7 +381,7 @@ class MeshColours:
     ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
     """
 
-    keyed_by_seq = True
+    reliable = True
 
     def __init__(
         self,

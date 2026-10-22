@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import field
 import functools
-from operator import attrgetter
 import os
 import shutil
 import signal
@@ -137,10 +136,10 @@ else:
 
 
 @runtime_checkable
-class KeyedRenderer(Protocol):
-    """A renderer whose entities are keyed by the message's header seq."""
+class ReliableRenderer(Protocol):
+    """A renderer whose topic must deliver every message (one entity per message)."""
 
-    keyed_by_seq: bool
+    reliable: bool
 
     def __call__(self, *args: object, **kwargs: object) -> object: ...
 
@@ -148,17 +147,17 @@ class KeyedRenderer(Protocol):
 RendererT = TypeVar("RendererT", bound=Callable[..., object])
 
 
-def keyed_by_seq(renderer: RendererT) -> RendererT:
-    """Mark a renderer whose topic carries one message per seq, delivered latest per seq."""
-    renderer.keyed_by_seq = True  # type: ignore[attr-defined]
+def reliable(renderer: RendererT) -> RendererT:
+    """Mark a renderer whose topic carries one entity per message, so none may be dropped."""
+    renderer.reliable = True  # type: ignore[attr-defined]
     return renderer
 
 
-def is_keyed_by_seq(renderer: object) -> bool:
-    """Whether a renderer, or the function under a partial, is marked keyed."""
+def is_reliable(renderer: object) -> bool:
+    """Whether a renderer, or the function under a partial, is marked reliable."""
     while isinstance(renderer, functools.partial):
         renderer = renderer.func
-    return isinstance(renderer, KeyedRenderer) and renderer.keyed_by_seq
+    return isinstance(renderer, ReliableRenderer) and renderer.reliable
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
@@ -418,13 +417,13 @@ class RerunBridgeModule(Module):
         self._override_cache[entity_path] = composed
         return composed
 
-    def _keyed_topics(self) -> list[str]:
-        """Channels whose renderer keys entities by seq, so every seq must arrive."""
+    def _reliable_topics(self) -> list[str]:
+        """Channels whose renderer needs every message, so none may be conflated away."""
         prefix = f"{self.config.entity_prefix}/"
         return [
             str(path).removeprefix(prefix)
             for path, renderer in self.config.visual_override.items()
-            if is_keyed_by_seq(renderer)
+            if is_reliable(renderer)
         ]
 
     def _get_entity_path(self, topic: Any) -> str:
@@ -603,8 +602,7 @@ class RerunBridgeModule(Module):
         """
         if not self.config.topics:
             if isinstance(pubsub, Zenoh):
-                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
-                return pubsub.subscribe_all(self._on_message, keyed=keyed)
+                return pubsub.subscribe_all(self._on_message, reliable=self._reliable_topics())
             return pubsub.subscribe_all(self._on_message)
 
         if not isinstance(pubsub, Zenoh):
