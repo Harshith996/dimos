@@ -58,7 +58,7 @@ async def recordings() -> dict[str, Any]:
 @router.get("/{runId}", response_model=responses.PastRunDetail)
 async def past_run(state: GatewayState, run_id: RunId) -> dict[str, Any]:
     runs = await asyncio.to_thread(logs.history, state.dimos_dir)
-    wanted = runs[:1] if run_id == "latest" else [r for r in runs if r["runId"] == run_id]
+    wanted = runs[:1] if run_id == "latest" else [run for run in runs if run["runId"] == run_id]
     found = wanted[0] if wanted else None
     file = await asyncio.to_thread(logs.find, state.dimos_dir, found["runId"]) if found else None
     if found is None or file is None:

@@ -58,7 +58,9 @@ def parse_line(line: str) -> dict[str, Any] | None:
         "logger": _text(data.get("logger")),
         "event": _text(data.get("event")),
         "extra": {
-            k: v for k, v in data.items() if k not in ("timestamp", "level", "logger", "event")
+            key: value
+            for key, value in data.items()
+            if key not in ("timestamp", "level", "logger", "event")
         },
         "raw": line,
     }
@@ -74,7 +76,7 @@ def find(dimos_dir: Path, run_id: str) -> Path | None:
     from dimos.core.run_registry import list_runs
 
     if run_id != "latest":
-        entry = next((e for e in list_runs(alive_only=False) if e.run_id == run_id), None)
+        entry = next((run for run in list_runs(alive_only=False) if run.run_id == run_id), None)
         if entry is not None and (Path(entry.log_dir) / "main.jsonl").exists():
             return Path(entry.log_dir) / "main.jsonl"
     found = sorted(
@@ -91,8 +93,8 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
     """Every run with a log, newest first, with its blueprint and start when the run registry knows them."""
     from dimos.core.run_registry import list_runs
 
-    known = {e.run_id: e for e in list_runs(alive_only=False)}
-    alive = {e.run_id for e in list_runs(alive_only=True)}
+    known = {run.run_id: run for run in list_runs(alive_only=False)}
+    alive = {run.run_id for run in list_runs(alive_only=True)}
     ids = {
         path.name
         for root in logs_dirs(dimos_dir)
@@ -100,7 +102,9 @@ def history(dimos_dir: Path) -> list[dict[str, Any]]:
         for path in root.iterdir()
         if (path / "main.jsonl").exists()
     }
-    ids |= {i for i, e in known.items() if (Path(e.log_dir) / "main.jsonl").exists()}
+    ids |= {
+        known_id for known_id, run in known.items() if (Path(run.log_dir) / "main.jsonl").exists()
+    }
     return [
         {
             "runId": run_id,

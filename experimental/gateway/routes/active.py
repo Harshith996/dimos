@@ -126,7 +126,7 @@ async def blueprint(state: GatewayState) -> dict[str, Any]:
     return {
         "name": now["blueprint"],
         "config": launch["config"] if ours else {"global": {}, "modules": {}},
-        "modules": [m["id"] for m in modules],
+        "modules": [live_module["id"] for live_module in modules],
     }
 
 
@@ -175,7 +175,7 @@ async def module_streams(state: GatewayState, id: str) -> dict[str, Any]:
 @router.get("/skills", response_model=responses.Skills)
 async def skills(state: GatewayState) -> dict[str, Any]:
     found = await asyncio.to_thread(state.live.modules, state.scanner.cache())
-    return {"skills": [r for m in found for r in m["rpcs"] if r["skill"]]}
+    return {"skills": [rpc for live_module in found for rpc in live_module["rpcs"] if rpc["skill"]]}
 
 
 @router.get("/streams", response_model=responses.LiveStreams)

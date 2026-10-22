@@ -71,7 +71,9 @@ def create_app(state: State, background: bool = True) -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def bad_request(_: Request, error: RequestValidationError) -> JSONResponse:
-        problems = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in error.errors())
+        problems = "; ".join(
+            f"{'.'.join(map(str, problem['loc']))}: {problem['msg']}" for problem in error.errors()
+        )
         return JSONResponse({"error": f"bad request: {problems}"}, status_code=400)
 
     @app.exception_handler(StatusError)

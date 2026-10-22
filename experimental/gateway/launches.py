@@ -74,12 +74,14 @@ class LaunchConfig:
 
     @staticmethod
     def from_json(value: dict[str, Any]) -> LaunchConfig:
-        parsed = ov.parse({k: value[k] for k in ("global", "modules", "secrets") if k in value})
+        parsed = ov.parse(
+            {key: value[key] for key in ("global", "modules", "secrets") if key in value}
+        )
         return LaunchConfig(
             parsed.global_,
             parsed.modules,
             parsed.secrets,
-            [str(a) for a in value.get("args") or []],
+            [str(arg) for arg in value.get("args") or []],
             bool(value.get("exact")),
         )
 
@@ -119,16 +121,16 @@ class RunSource:
 
 def run_source(run_id: str) -> RunSource | None:
     """Where a run's dimos came from (None when it isn't a checkout, as for a pip install)."""
-    entry = next((e for e in list_runs(alive_only=True) if e.run_id == run_id), None)
+    entry = next((run for run in list_runs(alive_only=True) if run.run_id == run_id), None)
     if entry is None:
         return None
     try:
         command = psutil.Process(entry.pid).cmdline()
     except psutil.Error:
         command = []
-    paths = [Path(p) for p in [*entry.original_argv[:1], *command[:2]] if p.startswith("/")]
+    paths = [Path(arg) for arg in [*entry.original_argv[:1], *command[:2]] if arg.startswith("/")]
     for path in [*paths, Path(entry.log_dir)]:
-        root = next((p for p in path.parents if store.checkout_version(p)[0]), None)
+        root = next((parent for parent in path.parents if store.checkout_version(parent)[0]), None)
         if root is not None:
             ran_on = command[0] if command else ""
             is_python = ran_on.startswith("/") and Path(ran_on).name.startswith("python")
@@ -172,7 +174,9 @@ def _tail(path: Path, size: int) -> str:
 
 def _record() -> dict[str, Any] | None:
     record = store.read_json(launch_file())
-    ok = isinstance(record, dict) and all(k in record for k in ("pid", "blueprint", "started_at"))
+    ok = isinstance(record, dict) and all(
+        key in record for key in ("pid", "blueprint", "started_at")
+    )
     return record if ok else None
 
 

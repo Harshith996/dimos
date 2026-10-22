@@ -95,8 +95,8 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
     monkeypatch.delenv("DESKTOP_DIMOS_RANGE", raising=False)
     info = client.get("/info").json()
     assert {
-        k: info[k]
-        for k in (
+        key: info[key]
+        for key in (
             "dir",
             "found",
             "installed",
@@ -255,9 +255,11 @@ def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestCl
     go2 = client.get("/catalog/robots").json()["robots"]["go2"]
     assert "unitree-go2" in go2["blueprints"]
     found = client.get("/catalog/blueprints?fields=blueprints.name,blueprints.recommended_config")
-    bp = next(b for b in found.json()["blueprints"] if b["name"] == "unitree-go2")
+    bp = next(
+        blueprint for blueprint in found.json()["blueprints"] if blueprint["name"] == "unitree-go2"
+    )
     assert set(bp) == {"name", "recommended_config"}
-    assert any(s["kind"] == "pick" for s in bp["recommended_config"])
+    assert any(setting["kind"] == "pick" for setting in bp["recommended_config"])
 
 
 def test_annotations_name_registered_blueprints_and_real_fields() -> None:

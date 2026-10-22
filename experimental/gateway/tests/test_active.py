@@ -225,10 +225,13 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     (home / "logs" / "20260101-110000-old" / "main.jsonl").write_text("")
     page = client.get("/history/latest/logs").json()
     assert page["runId"] == "20260101-120000-demo"
-    assert [r["event"] for r in page["records"]] == ["hello", "boom"]
+    assert [record["event"] for record in page["records"]] == ["hello", "boom"]
     assert page["loggers"] == ["a", "b"]
     past = client.get("/history").json()["runs"]
-    assert [r["runId"] for r in past] == ["20260101-120000-demo", "20260101-110000-old"]
+    assert [past_run["runId"] for past_run in past] == [
+        "20260101-120000-demo",
+        "20260101-110000-old",
+    ]
     assert past[0]["endedAt"] == "2026-01-01T12:00:02" and not past[0]["running"]
     # neither is in the registry: the blueprint comes from the id, the start from the log
     assert (past[0]["blueprint"], past[0]["startedAt"]) == ("demo", "2026-01-01T12:00:01")
@@ -236,7 +239,7 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     assert client.get("/history/latest").json()["logDir"] == str(run)
     assert client.get("/history/20990101-000000-nope").status_code == 404
     errors = client.get("/history/20260101-120000-demo/logs?level=error").json()
-    assert [r["event"] for r in errors["records"]] == ["boom"]
+    assert [record["event"] for record in errors["records"]] == ["boom"]
     assert client.get("/history/20990101-000000-nope/logs").status_code == 404
     RunEntry(
         run_id="20260101-120000-demo",
@@ -248,7 +251,7 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
     with (run / "main.jsonl").open("a") as handle:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
     tail = client.get(f"/active/log?after={page['offset']}").json()
-    assert [r["event"] for r in tail["records"]] == ["later"]
+    assert [record["event"] for record in tail["records"]] == ["later"]
     assert client.get("/history").json()["runs"][0]["running"]
 
 

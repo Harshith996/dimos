@@ -64,7 +64,7 @@ class Dog(Module):
 
 
 def test_a_modules_own_rpcs_are_listed_with_a_skill_flag() -> None:
-    found = {r["name"]: r for r in rpcs(Dog)}
+    found = {record["name"]: record for record in rpcs(Dog)}
     assert set(found) == {"bark", "trick"}  # not every Module's start, stop, ...
     assert (
         not found["bark"]["skill"]
