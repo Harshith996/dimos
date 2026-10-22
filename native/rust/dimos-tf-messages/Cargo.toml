@@ -1,0 +1,13 @@
+[package]
+name = "dimos-tf-messages"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+[workspace]
+[dependencies]
+serde = {version = "1", features = ["derive"]}
+serde-big-array = "=0.5.1"
+cdr = { version = "=0.2.4", git = "https://github.com/TomCC7/cdr-rs", rev = "38a4368255d408faf374726653b39d4a4e9735cb" }
+heapless = {version = "=0.8.0", features = ["serde"]}
+[build-dependencies]
+ros2msg = "=0.5.3"
