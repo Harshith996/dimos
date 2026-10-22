@@ -31,6 +31,7 @@ import json, os, pathlib, sys, time
 print("args", *sys.argv[1:], flush=True)
 print("secret", os.environ.get("AGENT__API_KEY"), flush=True)
 print("dtop", os.environ.get("DTOP"), flush=True)
+print("gossip", os.environ.get("ZENOH_GOSSIP"), flush=True)
 if "fail" in sys.argv:
     print("ValueError: no robot answered", flush=True)
     sys.exit(1)
@@ -52,7 +53,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("FAKE_REGISTRY_DIR", str(tmp_path / "state" / "runs"))
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.delenv("DIMOS_ZENOH_NAMESPACE", raising=False)
+    # no ~/.dimos/config.yaml of the machine running the tests
+    monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "dimos_home"))
     return tmp_path
 
 

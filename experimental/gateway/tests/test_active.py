@@ -258,7 +258,11 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
 def test_recordings_is_the_standard_directory(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("DIMOS_RECORDINGS_DIR", str(tmp_path / "recs"))
+    assert client.get("/history/recordings").json() == {"path": str(launches.store.RECORDINGS_DIR)}
+    (tmp_path / "dimos_home").mkdir(exist_ok=True)
+    (tmp_path / "dimos_home" / "config.yaml").write_text(
+        f"recordings:\n  dir: {tmp_path / 'recs'}\n"
+    )
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
 
 
@@ -272,3 +276,25 @@ def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
     launches._save({"blueprint": "demo", "started_at": "x", "pid": os.getpid(), "pid_started": 0.0})
     assert launches.current_launch()["phase"] == "failed"
+
+
+def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
+    client: TestClient, launched: None, tmp_path: Path
+) -> None:
+    from experimental.gateway import events, store
+
+    assert (events.resolve_namespace(None), store.setting("dimos-gateway", "socket")) == (
+        None,
+        None,
+    )
+    (tmp_path / "dimos_home").mkdir(exist_ok=True)
+    (tmp_path / "dimos_home" / "config.yaml").write_text(
+        "zenoh: {namespace: desk1, connect: 'tcp/10.0.0.2:7447', gossip: false}\n"
+        "dimos-gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
+    )
+    assert events.resolve_namespace(None) == "desk1"
+    assert events.resolve_namespace("given") == "given"
+    assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
+    assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    client.post("/active/launch", json={"blueprint": "demo"})
+    until(output_has(client, "gossip false"))
