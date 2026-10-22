@@ -37,7 +37,7 @@ use dimos_generated_messages::sensor_msgs::msg::compressed_image::CompressedImag
 use dimos_generated_messages::sensor_msgs::msg::point_cloud2::PointCloud2;
 use dimos_generated_messages::sensor_msgs::msg::point_field::PointField;
 use dimos_generated_messages::std_msgs::msg::header::Header;
-use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+
 use dimos_module::cdr;
 use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{native_config, warn_throttled, Input, Module, Output, Tf};
@@ -101,9 +101,6 @@ pub struct Config {
     /// Lidar points farther than this from the camera are not anchors.
     #[validate(range(min = 0.1, max = 200.0))]
     max_anchor_range_m: f64,
-    /// Largest gap between a stamp and the transform used for it.
-    #[validate(range(min = 0.0, max = 5.0))]
-    tf_tolerance_s: f64,
     /// Frames and scans wait this long for their transform before they are dropped.
     #[validate(range(min = 0.0, max = 2.0))]
     max_tf_lag_s: f64,
@@ -157,7 +154,7 @@ pub struct Depth2DepthCloud {
     #[input(decode = cdr::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
 
-    #[tf(decode = decode_tf, encode = encode_tf)]
+    #[tf]
     tf: Tf,
 
     #[output(encode = cdr::encode)]
@@ -379,7 +376,13 @@ impl Worker {
             let newest = self.shared.frames.lock().unwrap().back().map(|image| {
                 let frame_id =
                     resolve_frame_id(&cfg.frame_id, &info.header.frame_id, &image.header.frame_id);
-                (frame_id.to_string(), seconds(&image.header.stamp))
+                (
+                    frame_id.to_string(),
+                    dimos_module::tf::Time {
+                        sec: image.header.stamp.sec,
+                        nanosec: image.header.stamp.nanosec,
+                    },
+                )
             });
             let Some((frame_id, stamp)) = newest else {
                 frame_arrived.await;
@@ -388,13 +391,13 @@ impl Worker {
             let wait = Duration::from_secs_f64(cfg.max_tf_lag_s);
             let lookup = |target: &str| {
                 let tf = self.tf.clone();
-                let (target, frame_id) = (target.to_string(), frame_id.clone());
+                let (target, frame_id, stamp) =
+                    (target.to_string(), frame_id.clone(), stamp.clone());
                 async move {
                     target.is_empty()
                         || tf
                             .lookup(&target, &frame_id)
-                            .at(stamp)
-                            .tolerance(cfg.tf_tolerance_s)
+                            .at(stamp.clone())
                             .within(wait)
                             .await
                             .is_some()
@@ -411,7 +414,7 @@ impl Worker {
                             .frames
                             .lock()
                             .unwrap()
-                            .retain(|image| seconds(&image.header.stamp) > stamp);
+                            .retain(|image| (image.header.stamp.sec, image.header.stamp.nanosec) > (stamp.sec, stamp.nanosec));
                     }
                 }
             }
@@ -586,18 +589,22 @@ impl Worker {
                 scan_arrived.await;
                 continue;
             };
-            let stamp = seconds(&msg.header.stamp);
+            let query_stamp = dimos_module::tf::Time {
+                sec: msg.header.stamp.sec,
+                nanosec: msg.header.stamp.nanosec,
+            };
             let Some(world_from_lidar) = self
                 .tf
                 .lookup(&cfg.world_frame, &msg.header.frame_id)
-                .at(stamp)
-                .tolerance(cfg.tf_tolerance_s)
+                .at(query_stamp)
                 .within(Duration::from_secs_f64(cfg.max_tf_lag_s))
                 .await
             else {
                 continue;
             };
-            let pose = isometry(&world_from_lidar);
+            let Ok(pose) = dimos_module::tf::isometry(&world_from_lidar) else {
+                continue;
+            };
             let points = match extract_xyz(&msg) {
                 Ok(points) => points,
                 Err(error) => {
@@ -613,6 +620,7 @@ impl Worker {
                     [p.x as f32, p.y as f32, p.z as f32]
                 })
                 .collect();
+            let stamp = seconds(&msg.header.stamp);
             let mut history = self.shared.history.lock().unwrap();
             history.push_back(Scan { stamp, points });
             let newest = history.iter().map(|scan| scan.stamp).fold(stamp, f64::max);
@@ -630,7 +638,13 @@ impl Worker {
                     &info.header.frame_id,
                     &image.header.frame_id,
                 );
-                let poses = self.poses(frame_id, seconds(&image.header.stamp))?;
+                let poses = self.poses(
+                    frame_id,
+                    dimos_module::tf::Time {
+                        sec: image.header.stamp.sec,
+                        nanosec: image.header.stamp.nanosec,
+                    },
+                )?;
                 Some((i, (frame_id.to_string(), poses)))
             })?;
         let image = frames.drain(..=index).next_back()?;
@@ -642,15 +656,10 @@ impl Worker {
         })
     }
 
-    fn poses(&self, frame_id: &str, stamp: f64) -> Option<Poses> {
+    fn poses(&self, frame_id: &str, stamp: dimos_module::tf::Time) -> Option<Poses> {
         let pose = |target: &str| {
-            let transform = self
-                .tf
-                .lookup(target, frame_id)
-                .at(stamp)
-                .tolerance(self.config.tf_tolerance_s)
-                .get()?;
-            Some(isometry(&transform))
+            let transform = self.tf.lookup(target, frame_id).at(stamp.clone()).get()?;
+            dimos_module::tf::isometry(&transform).ok()
         };
         let optional = |target: &str| match target {
             "" => Some(None),
@@ -765,10 +774,6 @@ fn make_cloud(points: &[[f32; 3]], source: &Header, frame_id: String) -> PointCl
     }
 }
 
-fn isometry(transform: &dimos_module::tf::Transform) -> Isometry3<f64> {
-    Isometry3::from_parts(transform.translation().into(), transform.rotation())
-}
-
 /// A configured size, or the derived one when it is 0.
 fn or_derived(configured: usize, derived: usize) -> usize {
     if configured > 0 {
@@ -871,52 +876,6 @@ mod tests {
             assert_eq!(received.header.stamp.nanosec, stamp.nanosec);
             assert_eq!(received.header.frame_id, "optical");
             assert_eq!(extract_xyz(&received).unwrap(), vec![[1., 2., 3.]]);
-        }
-    }
-
-    #[test]
-    fn cdr_tf_adapter_preserves_frames_and_rejects_wrong_encoding() {
-        let transform = dimos_module::tf::Transform::new(
-            "world",
-            "camera",
-            -0.25,
-            Isometry3::translation(1., 2., 3.),
-        );
-        let decoded = decode_tf(&encode_tf(&[transform]).unwrap()).unwrap();
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].parent, "world");
-        assert_eq!(decoded[0].child, "camera");
-        assert_eq!(decoded[0].ts, -0.25);
-        assert_eq!(decoded[0].translation(), nalgebra::Vector3::new(1., 2., 3.));
-        assert!(decode_tf(&[0, 3, 0, 0]).is_err());
-    }
-
-    #[test]
-    fn tf_cdr_source_stamps_survive_epoch_nanoseconds_and_negative_times() {
-        use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-        for ns in [0, -1, 1_700_000_000_123_456_789] {
-            let value = dimos_module::tf::Transform::from_nanoseconds(
-                "world",
-                "camera",
-                ns,
-                Isometry3::translation(1., 2., 3.),
-            );
-            let message: TFMessage = cdr::decode(&encode_tf(&[value]).unwrap()).unwrap();
-            assert_eq!(
-                message.transforms[0].header.stamp.sec as i64,
-                ns.div_euclid(1_000_000_000)
-            );
-            assert_eq!(
-                message.transforms[0].header.stamp.nanosec as i64,
-                ns.rem_euclid(1_000_000_000)
-            );
-            for little in [false, true] {
-                let bytes = cdr::encode_endian(&message, little).unwrap();
-                let decoded = decode_tf(&bytes).unwrap();
-                assert_eq!(decoded[0].stamp_nanoseconds(), Some(ns));
-                let output: TFMessage = cdr::decode(&encode_tf(&decoded).unwrap()).unwrap();
-                assert_eq!(output, message);
-            }
         }
     }
 

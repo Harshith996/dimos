@@ -72,6 +72,7 @@ class LocalPlannerNative(NativeModule, spec.MapLocalPlanner):
     planner_path: In[Path]
     # IO, not In: rust `#[tf]` subscribes and publishes, and refuses to start on a mismatch.
     tf: IO[TFMessage]
+    tf_static: In[TFMessage]
 
     path: Out[Path]
     # The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.

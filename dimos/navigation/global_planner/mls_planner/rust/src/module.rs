@@ -37,7 +37,7 @@ use dimos_generated_messages::{
     sensor_msgs::msg::{point_cloud2::PointCloud2, point_field::PointField},
     std_msgs::msg::header::Header,
 };
-use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+
 use dimos_module::cdr;
 use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
@@ -261,7 +261,7 @@ pub struct MlsPlanner {
     #[input(decode = dimos_module::cdr::decode, handler = on_goal)]
     goal: Input<PointStamped>,
 
-    #[tf(decode = decode_tf, encode = encode_tf)]
+    #[tf]
     tf: Tf,
 
     #[output(encode = cdr::encode)]
@@ -677,7 +677,8 @@ impl Worker {
         let t = self
             .tf
             .get_latest(&self.config.world_frame, &self.config.base_frame)?
-            .translation();
+            .transform
+            .translation;
         Some((t.x as f32, t.y as f32, t.z as f32))
     }
 

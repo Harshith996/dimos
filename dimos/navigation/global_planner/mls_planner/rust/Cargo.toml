@@ -29,6 +29,7 @@ seed_map = "dimos_msgs/msg/PointCloudRegion"
 seed_bounds = "dimos_msgs/msg/RegionBounds"
 goal = "geometry_msgs/msg/PointStamped"
 tf = "tf2_msgs/msg/TFMessage"
+tf_static = "tf2_msgs/msg/TFMessage"
 
 [package.metadata.dimos.module.mls_planner.outputs]
 surface_map = "dimos_msgs/msg/PointCloudRegion"
@@ -37,8 +38,7 @@ node_edges = "dimos_msgs/msg/LineSegments3DRegion"
 path = "nav_msgs/msg/Path"
 
 [dependencies]
-dimos-module = { path = "../../../../../native/rust/dimos-module", features = ["cdr"] }
-dimos-message-adapters = { path = "../../../../../native/rust/dimos-message-adapters" }
+dimos-module = { path = "../../../../../native/rust/dimos-module" }
 dimos-generated-messages = { path = "../../../../../build/message-source/rust" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }

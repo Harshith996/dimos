@@ -17,8 +17,8 @@
 
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sdkArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/8101c8db4a50043f1dbd0127fd00220ec9b5a37a";
-          sha256 = "fcee2041d31c9368b77b803140f976b5a5d044f48f9423fea298afe372568361";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/c9a13b72c31bf2d7ebc80b6789cb64ebb2b1d9f8";
+          sha256 = "8d9ef10dbc0277fd2354149d009a27209f719d6b6b19d39a4e6116f19efea9cf";
         };
         sdkSource = pkgs.runCommand "dimos-local-planner-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -32,19 +32,16 @@
           cp -r ${moduleSource} $out
           chmod -R u+w $out
           mkdir -p $out/sdk
-          cp -r ${sdkSource}/native/rust/dimos-module ${sdkSource}/native/rust/dimos-module-macros ${sdkSource}/native/rust/dimos-message-adapters $out/sdk/
+          cp -r ${sdkSource}/native/rust/dimos-module ${sdkSource}/native/rust/dimos-module-macros ${sdkSource}/native/rust/dimos-tf-messages $out/sdk/
           cp -r ${messageSource}/rust $out/messages
-          substituteInPlace $out/sdk/dimos-message-adapters/Cargo.toml \
-            --replace-fail '../../../build/message-source/rust' '../../messages'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
-            --replace-fail '../../../../native/rust/dimos-message-adapters' 'sdk/dimos-message-adapters' \
             --replace-fail '../../../../build/message-source/rust' 'messages'
         '';
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
+        ours = [ name "dimos-module" "dimos-module-macros" "dimos-tf-messages" ];
         callWith = mode: import generated {
           inherit pkgs;
           rootFeatures = if mode == null then [ "module" ] else [ "module" "test-bodies" ];

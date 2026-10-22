@@ -36,13 +36,15 @@ jobs:
         run: uv sync --frozen --group tests
       - name: Test SDK and build native consumers
         run: |
-          cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml --features cdr
-          cargo test --locked --manifest-path native/rust/dimos-message-adapters/Cargo.toml
+          cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml
+          cargo test --locked --manifest-path native/rust/dimos-module-macros/Cargo.toml
           cargo test --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --lib
           cargo test --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --lib
           cargo test --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module,test-bodies
           cargo test --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module
           cargo test --locked --manifest-path dimos/hardware/sensors/camera/v4l2/rust/Cargo.toml --lib
+          cargo check --locked --manifest-path dimos/perception/depth2depth_cloud/rust/Cargo.toml --lib
+          cargo check --locked --manifest-path dimos/hardware/sensors/camera/realsense/rust/Cargo.toml --all-targets --features docs-only
           cargo build --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --bin voxel_ray_tracing
           cargo build --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --bin mls_planner
           cargo build --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module --bin local_planner
