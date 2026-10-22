@@ -48,6 +48,7 @@ jobs:
           cargo build --locked --manifest-path dimos/mapping/ray_tracing/rust/Cargo.toml --bin voxel_ray_tracing
           cargo build --locked --manifest-path dimos/navigation/global_planner/mls_planner/rust/Cargo.toml --bin mls_planner
           cargo build --locked --manifest-path dimos/navigation/local_planner/rust/Cargo.toml --features module --bin local_planner
+          cargo build --locked --manifest-path dimos/navigation/trajectory_follower/fancy/rust/Cargo.toml --features module --bin trajectory_follower
       - name: Prepare DimSim dependencies
         working-directory: misc/DimSim/cli
         run: deno install --node-modules-dir=auto --entrypoint bridge/cdr_test.ts
@@ -56,9 +57,13 @@ jobs:
           export DIMOS_NATIVE_RAY_TRACING_BINARY="$CARGO_TARGET_DIR/debug/voxel_ray_tracing"
           export DIMOS_NATIVE_MLS_BINARY="$CARGO_TARGET_DIR/debug/mls_planner"
           export DIMOS_NATIVE_LOCAL_PLANNER_BINARY="$CARGO_TARGET_DIR/debug/local_planner"
+          export DIMOS_NATIVE_FOLLOWER_BINARY="$CARGO_TARGET_DIR/debug/trajectory_follower"
           export DIMOS_DIMSIM_DENO="$(command -v deno)"
           uv run --no-sync pytest --noconftest --import-mode=importlib -o addopts='' -q \
             dimos/mapping/ray_tracing/test_generated_native.py \
             dimos/navigation/global_planner/mls_planner/test_generated_native.py \
             dimos/navigation/local_planner/test_generated_native.py \
-            dimos/robot/unitree/test_dimsim_connection.py
+            dimos/robot/unitree/test_dimsim_connection.py \
+            dimos/navigation/trajectory_follower/fancy/test_generated_native.py \
+            dimos/hardware/sensors/camera/realsense/test_camera.py \
+            dimos/perception/depth2depth_cloud/test_depth2depth_cloud_config.py
