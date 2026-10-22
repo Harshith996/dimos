@@ -110,6 +110,10 @@ print(answer.x, answer.y, answer.z)
 
 正式实现支持多种 LCM 类型时，在统一的 LCM 扩展中增加类型标识，通过注册表选择 decoder。上述 encode_lcm/decode_lcm 收进统一 codec，业务函数无需处理编码。
 
+可运行的小脚本：[demo_rpc_encoding.py](/docs/development/examples/demo_rpc_encoding.py)。它在 LCM 扩展中加入类型名，并逐步打印编码、类型标识、服务端调用和结果恢复；收发在内存中模拟。
+
+在仓库根目录执行 `uv run --no-sync --with msgpack python docs/development/examples/demo_rpc_encoding.py`。最终输出为 `Vector3(2.0, 4.0, 6.0)`。
+
 ## 需要改哪里
 
 1. **新增统一 codec。** 提供 encode/decode，集中处理上述类型，首版采用 msgpack-python。请求、返回值和异常都经过它。
