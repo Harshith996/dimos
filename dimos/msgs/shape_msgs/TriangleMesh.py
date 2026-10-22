@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A triangle mesh with per-vertex normals, one chunk of a larger mesh keyed by ``key``."""
+"""A triangle mesh with per-vertex normals and optional RGB, one chunk of a larger mesh keyed by ``key``."""
 
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ class TriangleMesh(Timestamped):
         normals: NDArray[np.float32] | None = None,
         key: tuple[int, int, int] = (0, 0, 0),
         ts: float | None = None,
+        colors: NDArray[np.uint8] | None = None,
     ) -> None:
         self.vertices = np.ascontiguousarray(vertices, dtype=np.float32).reshape(-1, 3)
         self.faces = np.ascontiguousarray(faces, dtype=np.uint32).reshape(-1, 3)
@@ -51,10 +52,16 @@ class TriangleMesh(Timestamped):
         )
         self.key = key
         self.ts = time.time() if ts is None else ts
+        # per-vertex sRGB; None leaves colouring to the renderer
+        self.colors = (
+            None if colors is None else np.ascontiguousarray(colors, dtype=np.uint8).reshape(-1, 3)
+        )
 
     def lcm_encode(self) -> bytes:
         header = _HEADER.pack(self.ts, *self.key, len(self.vertices), len(self.faces))
-        return header + self.vertices.tobytes() + self.normals.tobytes() + self.faces.tobytes()
+        body = header + self.vertices.tobytes() + self.normals.tobytes() + self.faces.tobytes()
+        # colours trail the faces, so a message without them is the old layout
+        return body if self.colors is None else body + self.colors.tobytes()
 
     @classmethod
     def lcm_decode(cls, data: bytes, **kwargs: object) -> TriangleMesh:
@@ -63,7 +70,9 @@ class TriangleMesh(Timestamped):
         v = np.frombuffer(data, np.float32, nv * 3, o)
         n = np.frombuffer(data, np.float32, nv * 3, o + nv * 12)
         f = np.frombuffer(data, np.uint32, nf * 3, o + nv * 24)
-        return cls(v, f, n, (i, j, k), ts)
+        end = o + nv * 24 + nf * 12
+        c = np.frombuffer(data, np.uint8, nv * 3, end) if len(data) > end else None
+        return cls(v, f, n, (i, j, k), ts, c)
 
     def to_rerun(self) -> Archetype:
         import rerun as rr
@@ -75,4 +84,5 @@ class TriangleMesh(Timestamped):
             vertex_positions=self.vertices,
             vertex_normals=self.normals,
             triangle_indices=self.faces,
+            vertex_colors=self.colors,
         )

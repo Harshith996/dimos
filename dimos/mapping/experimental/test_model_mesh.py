@@ -31,6 +31,8 @@ def _model_dir(tmp_path: Path) -> Path:
     scene = trimesh.Scene()
     wall = trimesh.creation.box((4.0, 2.0, 0.2))
     wall.apply_translation((0.0, 1.0, 0.0))
+    red = trimesh.visual.material.PBRMaterial(baseColorFactor=[255, 0, 0, 255])
+    wall.visual = trimesh.visual.TextureVisuals(material=red)
     scene.add_geometry(wall, node_name="walls/wall", geom_name="wall")
     ceiling = trimesh.creation.box((4.0, 0.1, 4.0))
     ceiling.apply_translation((0.0, 3.0, 0.0))
@@ -55,11 +57,12 @@ def test_model_paths_takes_a_directory_or_a_pair(tmp_path: Path) -> None:
 
 
 def test_glb_is_y_up_and_layers_can_be_skipped(tmp_path: Path) -> None:
-    v, n, f = load_glb(_model_dir(tmp_path) / "model.glb", skip_layers=("ceilings",))
+    v, n, f, rgb = load_glb(_model_dir(tmp_path) / "model.glb", skip_layers=("ceilings",))
     assert len(f) == 12  # the wall box only
     np.testing.assert_allclose(v.min(0), [-2.0, -0.1, 0.0], atol=1e-6)  # gltf z -> dimos -y
     np.testing.assert_allclose(v.max(0), [2.0, 0.1, 2.0], atol=1e-6)  # gltf y -> dimos z
     assert np.allclose(np.linalg.norm(n, axis=1), 1.0)
+    assert (rgb == [255, 0, 0]).all()  # the material's base colour on every vertex
 
 
 def test_a_fix_places_the_model_mesh_in_world_frame(tmp_path: Path) -> None:
@@ -81,6 +84,9 @@ def test_a_fix_places_the_model_mesh_in_world_frame(tmp_path: Path) -> None:
         np.testing.assert_allclose(v.min(0), [9.9, -2.0, -0.4], atol=1e-5)
         np.testing.assert_allclose(v.max(0), [10.1, 2.0, 1.6], atol=1e-5)
         assert sum(len(msg.faces) for msg in published) == 12
+        assert all(
+            msg.colors is not None and (msg.colors == [255, 0, 0]).all() for msg in published
+        )
     finally:
         for d in disposables:
             d.dispose()

@@ -377,6 +377,7 @@ MESH_ENTITY = "world/mesh"
 class MeshColours:
     """Rerun entries for each mesh chunk, turbo by height over the mesh's own range.
 
+    A chunk that carries its own colours keeps them and stays out of the range.
     Once the range moves ``recolour_m``, every chunk is recoloured (colours only).
     ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
     """
@@ -399,7 +400,7 @@ class MeshColours:
 
     def __call__(self, msg: TriangleMesh) -> list[RerunEntry]:
         out = [RerunEntry(_chunk_path(msg.key), msg.to_rerun(), self.static)]
-        if len(msg.faces) == 0:
+        if len(msg.faces) == 0 or msg.colors is not None:
             self._heights.pop(msg.key, None)
             return out
         self._heights[msg.key] = msg.vertices[:, 2].copy()

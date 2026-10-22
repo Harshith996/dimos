@@ -19,7 +19,8 @@
 matched against the recorded map like any premap: ``world_frame -> map`` fixes on ``tf``, the recorded map on
 ``loaded_map`` for the ray tracer. A clean model matches a live scan poorly (no clutter, no outdoors, surfaces
 off by 10-30 cm), so it is never matched; it rides on the fix at a static ``model_pose`` in the map frame and goes
-out on ``mesh`` in ``world_frame``, chunked like :class:`Mesh` so it replaces the lidar mesh in a viewer.
+out on ``mesh`` in ``world_frame`` with its material colours, chunked like :class:`Mesh` so it replaces the
+lidar mesh in a viewer.
 """
 
 from __future__ import annotations
@@ -63,12 +64,15 @@ def model_paths(spec: str) -> tuple[Path, Path]:
 
 def load_glb(
     path: Path, skip_layers: tuple[str, ...] = ()
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.int64]]:
-    """Vertices, normals, faces of every node baked to world, z-up; nodes are named ``<layer>/<material>``."""
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.int64], NDArray[np.uint8]]:
+    """Vertices, normals, faces, sRGB colours of every node baked to world, z-up.
+
+    Nodes are named ``<layer>/<material>``; a vertex takes its material's base colour.
+    """
     import trimesh
 
     scene = trimesh.load_scene(path, process=False)
-    vs, ns, fs, n = [], [], [], 0
+    vs, ns, fs, cs, n = [], [], [], [], 0
     for name in scene.graph.nodes_geometry:
         if name.partition("/")[0] in skip_layers:
             continue
@@ -78,10 +82,20 @@ def load_glb(
         vs.append(np.asarray(geo.vertices) @ GLTF_TO_ZUP.T)
         ns.append(np.asarray(geo.vertex_normals) @ GLTF_TO_ZUP.T)
         fs.append(np.asarray(geo.faces, dtype=np.int64) + n)
+        cs.append(np.tile(_base_colour(geo), (len(geo.vertices), 1)))
         n += len(geo.vertices)
     if not vs:
         raise ValueError(f"{path}: no mesh outside {skip_layers}")
-    return np.concatenate(vs), np.concatenate(ns), np.concatenate(fs)
+    return np.concatenate(vs), np.concatenate(ns), np.concatenate(fs), np.concatenate(cs)
+
+
+def _base_colour(geo: Any) -> NDArray[np.uint8]:
+    """The material's glTF base colour (linear) as sRGB bytes, grey without one."""
+    factor = getattr(getattr(geo.visual, "material", None), "baseColorFactor", None)
+    c = np.asarray(factor if factor is not None else [200, 200, 200, 255], np.float64)[:3]
+    c = c / 255 if c.max() > 1 else c
+    srgb = np.where(c <= 0.0031308, 12.92 * c, 1.055 * c ** (1 / 2.4) - 0.055)
+    return np.round(np.clip(srgb, 0, 1) * 255).astype(np.uint8)
 
 
 def chunk_mesh(
@@ -132,17 +146,23 @@ class ModelMesh(LocalMapRelocalization):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._chunks: list[
-            tuple[tuple[int, int, int], NDArray[np.float64], NDArray[np.float64], NDArray[np.int64]]
+            tuple[
+                tuple[int, int, int],
+                NDArray[np.float64],
+                NDArray[np.float64],
+                NDArray[np.int64],
+                NDArray[np.uint8],
+            ]
         ] = []
 
     def _load_premap(self, map_file: str) -> None:
         cloud, glb = model_paths(map_file)
         super()._load_premap(str(cloud))
-        v, n, f = load_glb(glb, self.config.skip_layers)
+        v, n, f, rgb = load_glb(glb, self.config.skip_layers)
         P = pose_matrix(*self.config.model_pose)
         v, n = v @ P[:3, :3].T + P[:3, 3], n @ P[:3, :3].T
         self._chunks = [
-            (key, v[ids], n[ids], local)
+            (key, v[ids], n[ids], local, rgb[ids])
             for key, ids, local in chunk_mesh(v, f, self.config.chunk_m)
         ]
         self.register_disposable(
@@ -154,8 +174,8 @@ class ModelMesh(LocalMapRelocalization):
         T = fix.to_matrix()
         R, t = T[:3, :3], T[:3, 3]
         return [
-            TriangleMesh(v @ R.T + t, f.astype(np.uint32), n @ R.T, key, ts)
-            for key, v, n, f in self._chunks
+            TriangleMesh(v @ R.T + t, f.astype(np.uint32), n @ R.T, key, ts, rgb)
+            for key, v, n, f, rgb in self._chunks
         ]
 
     def _emit(self, fix: Transform) -> None:

@@ -71,3 +71,18 @@ def test_an_emptied_chunk_clears_below_min_change() -> None:
     assert q.update(7, _region(140, 150), 0.0)  # 20 changes, 10 voxels left
     q.take()
     assert q.update(7, _region(0, 0), 0.0)  # the last 10 go
+
+
+def test_a_chunk_with_its_own_colours_keeps_them() -> None:
+    from dimos.mapping.experimental.mesh import MeshColours
+    from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 1]], np.float32)
+    rgb = np.array([[10, 20, 30]] * 3, np.uint8)
+    colours = MeshColours()
+    assert (
+        len(colours(TriangleMesh(v, np.array([[0, 1, 2]], np.uint32), key=(0, 0, 0), colors=rgb)))
+        == 1
+    )
+    # a height-coloured chunk arriving later does not repaint it
+    assert len(colours(TriangleMesh(v + 5, np.array([[0, 1, 2]], np.uint32), key=(1, 0, 0)))) == 2
