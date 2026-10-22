@@ -34,7 +34,7 @@ from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
 from experimental.gateway.uploads import Uploads
 
-API_VERSION = "7.0.0"
+API_VERSION = "8.0.0"
 
 
 @dataclass
