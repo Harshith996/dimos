@@ -7,11 +7,10 @@ license = "Apache-2.0"
 
 [workspace]
 
-[features]
-cdr = ["dep:cdr"]
-
 [dependencies]
-cdr = { version = "=0.2.4", git = "https://github.com/TomCC7/cdr-rs", rev = "38a4368255d408faf374726653b39d4a4e9735cb", optional = true }
+dimos-tf-messages = { path = "../dimos-tf-messages" }
+transforms = { version = "=2.2.0", git = "https://github.com/TomCC7/transforms", rev = "76cf9022173d5764814544082f2b518a9df1934b" }
+cdr = { version = "=0.2.4", git = "https://github.com/TomCC7/cdr-rs", rev = "38a4368255d408faf374726653b39d4a4e9735cb" }
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "04d78e8622500244123ba9cefa4c51b4cb454549" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "04d78e8622500244123ba9cefa4c51b4cb454549" }
