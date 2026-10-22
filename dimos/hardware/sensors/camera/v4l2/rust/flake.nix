@@ -35,6 +35,7 @@
           mkdir -p $out/native/rust $out/build/message-source $out/dimos/hardware/sensors/camera/v4l2/rust
           cp -r ${sharedSource}/native/rust/dimos-module $out/native/rust/
           cp -r ${sharedSource}/native/rust/dimos-module-macros $out/native/rust/
+          cp -r ${sharedSource}/native/rust/dimos-tf-messages $out/native/rust/
           cp -r ${messages.source}/rust $out/build/message-source/rust
           cp -r ${cameraSource}/. $out/dimos/hardware/sensors/camera/v4l2/rust/
         '';

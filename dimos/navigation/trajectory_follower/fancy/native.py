@@ -70,6 +70,7 @@ class TrajectoryFollowerNative(NativeModule, spec.TrajectoryFollower):
 
     path: In[Path]
     tf: IO[TFMessage]  # IO, not In: see planner_native.py
+    tf_static: In[TFMessage]
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]

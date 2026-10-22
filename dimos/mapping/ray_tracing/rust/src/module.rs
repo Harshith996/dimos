@@ -31,10 +31,10 @@ use dimos_generated_messages::sensor_msgs::msg::{
     point_cloud2::PointCloud2, point_field::PointField,
 };
 use dimos_generated_messages::std_msgs::msg::header::Header;
-use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+
 use dimos_module::cdr;
 use dimos_module::{
-    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
+    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, TransformStamped,
 };
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -68,7 +68,7 @@ pub struct RayTracingVoxelMap {
     #[input(decode = dimos_module::cdr::decode, handler = on_loaded_map)]
     loaded_map: Input<PointCloud2>,
 
-    #[tf(decode = decode_tf, encode = encode_tf)]
+    #[tf]
     tf: Tf,
 
     #[output(encode = cdr::encode)]
@@ -369,19 +369,23 @@ impl Worker {
 
     /// Fold one lidar frame into the map and publish whatever is due.
     async fn ingest_frame(&self, state: &mut State, msg: PointCloud2, received: Instant) {
-        // Register with the transform nearest the cloud stamp, waiting briefly
+        // Register with the transform at the cloud stamp, waiting briefly
         // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
         let tolerance = self.config.tf_match_tolerance_s;
         let lookup = self
             .tf
             .lookup(&self.config.world_frame, &msg.header.frame_id)
-            .at(stamp)
-            .tolerance(tolerance);
+            .at(dimos_module::tf::Time {
+                sec: msg.header.stamp.sec,
+                nanosec: msg.header.stamp.nanosec,
+            });
         let latest = self
             .tf
             .get_latest(&self.config.world_frame, &msg.header.frame_id)
-            .map(|latest| latest.ts);
+            .map(|latest| {
+                latest.header.stamp.sec as f64 + latest.header.stamp.nanosec as f64 * 1e-9
+            });
         if is_stale(stamp, latest, self.config.max_cloud_age_s) {
             warn_throttled!(Duration::from_secs(5), cloud_frame = %msg.header.frame_id, "Skipped a cloud older than max_cloud_age_s: the map is behind and catching up.");
             return;
@@ -398,7 +402,7 @@ impl Worker {
                 stamp,
                 world_frame = %self.config.world_frame,
                 cloud_frame = %msg.header.frame_id,
-                "No transform within tolerance of the cloud stamp, dropped a cloud.",
+                "TF history cannot resolve the cloud stamp, dropped a cloud.",
             );
             return;
         };
@@ -706,16 +710,20 @@ async fn publish_bounds(out: &Output<RegionBounds>, msg: &RegionBounds) {
 }
 
 /// The f32 pose of a transform, for registering clouds.
-fn tf_to_pose(t: &Transform) -> Pose {
-    let translation = t.translation().cast::<f32>();
-    let rotation = t.rotation().cast::<f32>();
+fn tf_to_pose(t: &TransformStamped) -> Pose {
+    let translation = &t.transform.translation;
+    let rotation = &t.transform.rotation;
     Pose {
-        position: (translation.x, translation.y, translation.z),
+        position: (
+            translation.x as f32,
+            translation.y as f32,
+            translation.z as f32,
+        ),
         orientation: (
-            rotation.coords.x,
-            rotation.coords.y,
-            rotation.coords.z,
-            rotation.coords.w,
+            rotation.x as f32,
+            rotation.y as f32,
+            rotation.z as f32,
+            rotation.w as f32,
         ),
     }
 }
@@ -855,7 +863,12 @@ mod tests {
             Translation3::new(10.0, 0.0, 0.0),
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
-        let t = Transform::new("odom", "map", 0.0, iso);
+        let t = dimos_module::tf::from_isometry(
+            "odom",
+            "map",
+            dimos_module::tf::Time { sec: 0, nanosec: 0 },
+            iso,
+        );
         let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time { sec: 0, nanosec: 0 });
 
         let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0), 4.0)

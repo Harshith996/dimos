@@ -34,13 +34,12 @@ use dimos_generated_messages::sensor_msgs::msg::{
     point_field::PointField, region_of_interest::RegionOfInterest,
 };
 use dimos_generated_messages::std_msgs::msg::header::Header;
-use dimos_generated_messages::tf2_msgs::msg::tf_message::TFMessage;
-use dimos_message_adapters::tf::{decode as decode_cdr_tf, encode as encode_cdr_tf};
+
 use dimos_module::cdr;
 use dimos_module::nalgebra::{
     Isometry3, Matrix3, Quaternion, Rotation3, Translation3, UnitQuaternion, Vector3,
 };
-use dimos_module::{native_config, run_with_transport, Module, Output, Tf, Transform};
+use dimos_module::{native_config, run_with_transport, Module, Output, Tf};
 use realsense_rust::base::{Rs2Extrinsics, Rs2Intrinsics};
 use realsense_rust::config::Config as RsConfig;
 use realsense_rust::context::Context;
@@ -248,7 +247,7 @@ struct RealSense {
     infrared_left_camera_info: Output<CameraInfo>,
     #[output(encode = cdr::encode)]
     infrared_right_camera_info: Output<CameraInfo>,
-    #[tf(decode = decode_cdr_tf, encode = encode_cdr_tf)]
+    #[tf]
     tf: Tf,
     #[config]
     config: Config,
@@ -822,7 +821,16 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         if let Some(ts) = latest {
             let mut transforms = Vec::with_capacity(mount_edges.len());
             for (parent, child, iso) in &mount_edges {
-                transforms.push(Transform::new(parent.clone(), child.clone(), ts, *iso));
+                let stamp = header(parent, ts).stamp;
+                transforms.push(dimos_module::tf::from_isometry(
+                    parent.clone(),
+                    child.clone(),
+                    dimos_module::tf::Time {
+                        sec: stamp.sec,
+                        nanosec: stamp.nanosec,
+                    },
+                    *iso,
+                ));
             }
             let _ = handle.block_on(outs.tf.publish(&transforms));
         }
@@ -1366,52 +1374,6 @@ mod tests {
                 .write_all(&cdr::encode(value).unwrap())
                 .unwrap();
         }
-    }
-
-    #[test]
-    fn canonical_tf_preserves_frames_math_and_normalized_time_in_both_endians() {
-        for ts in [3.25, -0.25, 1.0 - 1e-12] {
-            let transform =
-                Transform::new("map", "camera", ts, Isometry3::translation(1.0, 2.0, 3.0));
-            let bytes = encode_cdr_tf(&[transform]).unwrap();
-            assert_eq!(&bytes[..4], &[0, 1, 0, 0]);
-            let message: TFMessage = cdr::decode(&bytes).unwrap();
-            assert!(message.transforms[0].header.stamp.nanosec < 1_000_000_000);
-            for payload in [bytes, cdr::encode_endian(&message, false).unwrap()] {
-                let decoded = decode_cdr_tf(&payload).unwrap();
-                assert_eq!(decoded.len(), 1);
-                assert_eq!(decoded[0].parent, "map");
-                assert_eq!(decoded[0].child, "camera");
-                assert!((decoded[0].ts - ts).abs() <= 1e-9);
-                assert_eq!(decoded[0].translation(), Vector3::new(1.0, 2.0, 3.0));
-            }
-        }
-        let bytes =
-            encode_cdr_tf(&[Transform::new("map", "camera", 3.25, Isometry3::identity())]).unwrap();
-        export_fixture("tf.cdr", &cdr::decode::<TFMessage>(&bytes).unwrap());
-        assert!(decode_cdr_tf(b"legacy or malformed bytes").is_err());
-    }
-
-    #[test]
-    fn canonical_tf_rejects_message_when_one_quaternion_is_invalid() {
-        let bytes =
-            encode_cdr_tf(&[Transform::new("map", "camera", 3.25, Isometry3::identity())]).unwrap();
-        let mut message: TFMessage = cdr::decode(&bytes).unwrap();
-        let mut invalid = message.transforms[0].clone();
-        invalid.child_frame_id = "invalid".into();
-        invalid.transform.rotation = QuaternionMsg {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-            w: 0.0,
-        };
-        message.transforms.push(invalid);
-        assert_eq!(
-            decode_cdr_tf(&cdr::encode(&message).unwrap())
-                .unwrap_err()
-                .kind(),
-            std::io::ErrorKind::InvalidData
-        );
     }
 
     #[test]
