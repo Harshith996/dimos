@@ -47,6 +47,9 @@ const COST_STEP: f64 = FINE;
 /// Gait cost (m) a shortcut chord may add over the raw span it replaces.
 const GAIT_SLACK: f64 = 0.05;
 
+/// A plan end this far from the carrot falls short of it (m), past the lattice's snap.
+pub const SHORT_M: f64 = CELL * std::f64::consts::SQRT_2;
+
 /// Cost advantage (m) a fresh route needs before it replaces the incumbent.
 pub const COMMIT_MARGIN: f64 = 3.0;
 
@@ -2206,8 +2209,7 @@ pub fn plan_explored(
         // A refusal, a carrot pulled short or a long detour may be a gap the coarse
         // lattice cannot land in. The refining lattice gets one look at it.
         let carrot = *approach.last()?;
-        let short =
-            (goal.0 - carrot[0]).hypot(goal.1 - carrot[1]) > CELL * std::f64::consts::SQRT_2;
+        let short = (goal.0 - carrot[0]).hypot(goal.1 - carrot[1]) > SHORT_M;
         let strays = fresh
             .as_ref()
             .is_some_and(|f| stray(f, approach) > refine.detour_m);

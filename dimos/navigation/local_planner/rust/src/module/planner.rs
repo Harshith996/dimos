@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::planner::{plan_explored, step_reach, Emb, Refine, Terrain, COMMIT_MARGIN};
+use crate::planner::{plan_explored, step_reach, Emb, Refine, Terrain, COMMIT_MARGIN, SHORT_M};
 use crate::{clearance, stamps};
 use dimos_module::{debug_throttled, native_config, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::PoseStamped;
@@ -232,9 +232,8 @@ pub fn approach_along(
     Some(route[i..].to_vec())
 }
 
-/// Should a plan ending at `end` be held? It falls short of the `carrot`, by more than the
-/// lattice's snap mid-route or by more than `hold_m` at the route's end, and the robot is
-/// within `hold_m` of it: the follower would read arriving there as reaching the goal.
+/// Whether a plan ending short of the carrot, near the robot, must be held so the follower
+/// does not read it as arrival.
 pub fn short_hold(
     end: (f64, f64),
     carrot: (f64, f64),
@@ -250,9 +249,6 @@ pub fn short_hold(
     };
     d(end, carrot) > short && d(end, robot) < hold_m
 }
-
-/// A plan end this far from the carrot falls short of it (m), past the lattice's snap.
-const SHORT_M: f64 = 0.17;
 
 /// Has an input the plan depends on moved? The route enters only through the
 /// carrot, so that is what is compared.
@@ -310,21 +306,42 @@ pub fn hold_stub(pose: (f64, f64, f64), frame_id: &str, ts: f64, ground_z: f64) 
     msg::build_path(&[[pose.0, pose.1, pose.2]], &[ts], ts, frame_id, ground_z)
 }
 
-/// Edge trigger so a dead map warns once per spell, not `replan_hz` times a second.
-#[derive(Default)]
-pub struct StaleGate {
-    stale: bool,
+/// A hold stub in place of `path` when it ends short of the carrot near the robot.
+fn short_stub(
+    path: &Path,
+    carrot: (f64, f64),
+    route_end: (f64, f64),
+    pose: (f64, f64, f64),
+    ground_z: f64,
+    config: &Config,
+) -> Option<Path> {
+    let end = &path.poses.last()?.pose.position;
+    let short = path.poses.len() >= 2
+        && short_hold(
+            (end.x, end.y),
+            carrot,
+            route_end,
+            (pose.0, pose.1),
+            config.hold_short_m,
+        );
+    short.then(|| hold_stub(pose, &config.world_frame, msg::now_secs(), ground_z))
 }
 
-impl StaleGate {
-    /// True on the first tick of a stale spell.
+/// Edge trigger so a lasting condition logs once per spell, not `replan_hz` times a second.
+#[derive(Default)]
+pub struct SpellGate {
+    on: bool,
+}
+
+impl SpellGate {
+    /// True on the first tick of a spell.
     pub fn enter(&mut self) -> bool {
-        !std::mem::replace(&mut self.stale, true)
+        !std::mem::replace(&mut self.on, true)
     }
 
     /// True on the first tick after one ends.
     pub fn recover(&mut self) -> bool {
-        std::mem::replace(&mut self.stale, false)
+        std::mem::replace(&mut self.on, false)
     }
 }
 
@@ -432,7 +449,8 @@ impl Worker {
         // A tick lost to an overrunning replan is gone; a burst afterwards makes the next late.
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        let mut gate = StaleGate::default();
+        let mut gate = SpellGate::default();
+        let mut short = SpellGate::default();
         let mut watch = PoseWatch::new(self.config.max_map_age_s);
         let mut memory = Memory::default();
         // The (cloud, carrot) the published plan was made from.
@@ -474,6 +492,7 @@ impl Worker {
                     planned = None;
                     incumbent = None;
                     memory = Memory::default();
+                    short = SpellGate::default();
                     let pose = pose.expect("Hold implies a pose");
                     let held = hold_stub(
                         pose,
@@ -489,6 +508,7 @@ impl Worker {
                     planned = None;
                     incumbent = None;
                     memory = Memory::default();
+                    short = SpellGate::default();
                     published = false;
                     let empty =
                         msg::build_path(&[], &[], msg::now_secs(), &self.config.world_frame, 0.0);
@@ -549,34 +569,26 @@ impl Worker {
                     });
                     let route_end = route[route.len() - 1];
                     let produced = produced.map(|(path, support)| {
-                        let end = path
-                            .poses
-                            .last()
-                            .map(|p| (p.pose.position.x, p.pose.position.y));
-                        let short = path.poses.len() >= 2
-                            && end.is_some_and(|e| {
-                                short_hold(
-                                    e,
-                                    goal,
-                                    (route_end[0], route_end[1]),
-                                    (pose.0, pose.1),
-                                    self.config.hold_short_m,
-                                )
-                            });
-                        if short {
-                            debug_throttled!(
-                                Duration::from_secs(5),
-                                "plan ends short of the carrot at the robot, holding"
-                            );
-                            let held = hold_stub(
-                                pose,
-                                &self.config.world_frame,
-                                msg::now_secs(),
-                                body_z.unwrap_or(0.0),
-                            );
-                            (held, support)
-                        } else {
-                            (path, support)
+                        match short_stub(
+                            &path,
+                            goal,
+                            (route_end[0], route_end[1]),
+                            pose,
+                            body_z.unwrap_or(0.0),
+                            &self.config,
+                        ) {
+                            Some(held) => {
+                                if short.enter() {
+                                    info!("plan ends short of the carrot at the robot, holding");
+                                }
+                                (held, support)
+                            }
+                            None => {
+                                if short.recover() {
+                                    info!("plan no longer ends short of the carrot, resuming");
+                                }
+                                (path, support)
+                            }
                         }
                     });
                     if let Some((produced, support)) = produced {
@@ -783,8 +795,8 @@ mod tests {
     }
 
     #[test]
-    fn the_stale_gate_fires_once_per_spell() {
-        let mut gate = StaleGate::default();
+    fn the_spell_gate_fires_once_per_spell() {
+        let mut gate = SpellGate::default();
         assert!(gate.enter());
         assert!(!gate.enter());
         assert!(!gate.enter());
