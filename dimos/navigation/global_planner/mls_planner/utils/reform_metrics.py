@@ -37,6 +37,7 @@ usage: reform_metrics.py run --db <recording.db> --name <name> --out <dir> [--no
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 from pathlib import Path
 import signal
@@ -129,6 +130,7 @@ def run(db: Path, name: str, out: Path, closures: bool) -> None:
         "dimos",
         "run",
         BLUEPRINT,
+        "--build-native",
         "--replay",
         "--replay-db",
         str(db),
@@ -356,6 +358,8 @@ def lockstep(
     start_ts: float | None = None,
     scan_stride: int = 1,
     with_planner: bool = True,
+    on_scan: Callable[[float, np.ndarray, np.ndarray, VoxelRayMapper], None] | None = None,
+    on_closure: Callable[[float, np.ndarray, VoxelRayMapper], None] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[dict]]:
     """Every scan in order through the module code with no timing or drops.
 
@@ -367,7 +371,9 @@ def lockstep(
     Returns the ray tracer's healthy voxel centers, the planner's surface and the
     closure reports. For a fast look at one window: start_ts skips the scans before it (closures
     before it only move the pose offset), until_ts stops after the scans up to then,
-    scan_stride keeps every Nth scan, with_planner False skips the planner.
+    scan_stride keeps every Nth scan, with_planner False skips the planner. on_scan(ts, world
+    points, origin, tracer) sees each scan as placed; on_closure(ts, records, tracer) each
+    closure after it is applied (for exporting the replay).
     """
     from dimos.mapping.ray_tracing.reform_module import ReformRayTracingVoxelMapConfig
     from dimos.navigation.global_planner.mls_planner.mls_reform_planner_native import (
@@ -449,6 +455,8 @@ def lockstep(
                         thin_cell_m=planner_params.reform_thin_cell_m,
                     )
                 )
+                if on_closure is not None:
+                    on_closure(closures[next_closure - 1][0], records, tracer)
                 reports.append(
                     {
                         "ts": closures[next_closure - 1][0],
@@ -494,6 +502,8 @@ def lockstep(
                 origin = rotation.apply(t_near) + translation
             tracer.set_clock(obs.ts)
             tracer.add_frame_world(corrected, tuple(map(float, origin)))
+            if on_scan is not None:
+                on_scan(obs.ts, corrected, np.asarray(origin, np.float64), tracer)
             cx, cy, radius, z_min, z_max = tracer.take_local_bounds()
             local = tracer.local_map((cx, cy, float(origin[2])), radius, z_min, z_max)
             if with_planner:
@@ -552,9 +562,12 @@ def lockstep_score(db: Path, name: str, out: Path) -> dict:
 
 def agreement(rebuilt: np.ndarray, reformed: np.ndarray, voxel: float) -> dict[str, float]:
     """For each rebuilt voxel, the distance to the nearest reformed one: Euclidean,
-    and in grid steps (the 26 neighbors are one step away)."""
+    and in grid steps (the 26 neighbors are one step away). And the other way: the
+    share of reformed voxels with no rebuilt one within a step, e.g. a ghost wall a
+    closure left behind."""
     distances, _ = cKDTree(reformed).query(rebuilt, workers=2)
     steps, _ = cKDTree(reformed).query(rebuilt, p=np.inf, workers=2)
+    extra_steps, _ = cKDTree(rebuilt).query(reformed, p=np.inf, workers=2)
     return {
         "rebuilt": len(rebuilt),
         "reformed": len(reformed),
@@ -562,6 +575,7 @@ def agreement(rebuilt: np.ndarray, reformed: np.ndarray, voxel: float) -> dict[s
         "within_1_voxel": float(np.mean(distances <= voxel * 1.001)),
         "median_offset_steps": float(np.median(steps) / voxel),
         "within_1_step": float(np.mean(steps <= voxel * 1.001)),
+        "reformed_unbacked": float(np.mean(extra_steps > voxel * 1.001)),
     }
 
 
