@@ -250,6 +250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdr"
+version = "0.2.4"
+source = "git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb#38a4368255d408faf374726653b39d4a4e9735cb"
+dependencies = [
+ "byteorder",
+ "serde",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -582,7 +591,7 @@ dependencies = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=04d78e8622500244123ba9cefa4c51b4cb454549#04d78e8622500244123ba9cefa4c51b4cb454549"
 dependencies = [
  "byteorder",
  "socket2 0.5.10",
@@ -593,6 +602,7 @@ dependencies = [
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
+ "cdr",
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
@@ -1385,7 +1395,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 [[package]]
 name = "lcm-msgs"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=04d78e8622500244123ba9cefa4c51b4cb454549#04d78e8622500244123ba9cefa4c51b4cb454549"
 dependencies = [
  "byteorder",
 ]
