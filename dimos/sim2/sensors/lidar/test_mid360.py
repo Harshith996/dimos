@@ -36,8 +36,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor, FrameField, FrameLayout, make_channel_descriptor
-from dimos.sim2.ipc.channel import FrameMetadata, RobotChannel
+from dimos.sim2.messages import FrameMetadata, StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.imu.spec import Imu
@@ -48,6 +47,7 @@ from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
+from dimos.sim2.streams import SimStream
 from dimos.sim2.world.runtime import STATE
 
 
@@ -175,33 +175,21 @@ def history(tmp_path, request):
     model.opt.timestep = timestep
     data = mujoco.MjData(model)
     nstate = mujoco.mj_stateSize(model, STATE)
-    desc = replace(
-        make_channel_descriptor(
-            sim_id="history",
-            robot_id="world",
-            generation="test",
-            shm_name=f"mid360-{uuid4().hex[:16]}",
-            actuator_modes=(),
-            position_gains=(),
-            joint_names=(),
-            dof=0,
-            physics_dt=timestep,
-            control_decimation=1,
-        ),
-        observation_layout=FrameLayout(
-            (
-                FrameField("state", "<f8", (nstate,), 48),
-                FrameField("wall_time", "<f8", (1,), 48 + nstate * 8),
-            ),
-            ((56 + nstate * 8 + 63) // 64) * 64,
-        ),
+    desc = StreamDescriptor(
+        sim_id="history",
+        robot_id="world",
+        generation=uuid4().hex,
+        physics_dt=timestep,
         observation_slots=64,
     )
     path = tmp_path / "world.mjb"
     mujoco.mj_saveModel(model, str(path), None)
-    with RobotChannel.create(desc) as writer:
+    with ExitStack() as stack:
+        writer = SimStream.create(desc)
+        stack.callback(writer.close)
         writer.set_lifecycle("ready")
         reader = WorldReader({"model": str(path), "snapshot": desc.to_dict()})
+        stack.callback(reader.close)
 
         def publish(t, x=0, wall_x=5, episode=1, quat=(1, 0, 0, 0), omega=0, wall_jitter=0):
             data.time = t
@@ -211,17 +199,14 @@ def history(tmp_path, request):
             data.mocap_pos[0] = (wall_x, 0, 0)
             state = np.empty(nstate)
             mujoco.mj_getState(model, data, state, STATE)
-            writer.set_episode(episode)
+            if writer.episode_id != episode:
+                writer.set_episode(episode)
             writer.publish_observation(
                 {"state": state, "wall_time": [1000 + t + wall_jitter]},
                 FrameMetadata(0, episode, round(t / timestep), 0, t),
             )
 
-        try:
-            yield reader, writer, publish
-        finally:
-            reader.close()
-            writer.unlink()
+        yield reader, writer, publish
 
 
 @pytest.fixture
@@ -260,9 +245,9 @@ def test_bounded_history_retains_order_after_wrap(history):
     for tick in range(100):
         publish(tick * 0.005, x=tick)
     frames = reader.channel.read_observations()
-    assert len(frames) == 63
-    assert [f.metadata.sequence for f in frames] == list(range(38, 101))
-    assert frames[0].metadata.sim_time == pytest.approx(37 * 0.005)
+    assert len(frames) == 64
+    assert [f.metadata.sequence for f in frames] == list(range(37, 101))
+    assert frames[0].metadata.sim_time == pytest.approx(36 * 0.005)
     assert frames[-1].metadata.sim_time == pytest.approx(99 * 0.005)
     assert writer.read_observation().metadata.sequence == 100
 
@@ -433,25 +418,6 @@ def test_imu_decimation_restarts_after_reset_without_old_samples(history, scanne
             1000 + 10 * episode + np.arange(len(samples)) / rate
         )
         assert module.sensor_status()["dropped_imu_samples"] == 0
-
-
-def test_contended_imu_history_is_retried_without_losing_samples(history, scanner, mocker):
-    reader, _, publish = history
-    module, _, _ = scanner
-    module.config.sensor = replace(module.config.sensor, imu=Imu("lidar_imu", "mid360_link"))
-    module.open()
-    output = mocker.patch.object(module.imu_raw, "publish")
-    publish(0)
-    publish(0.005)
-    assert reader.update()
-    frames = reader.channel.read_observations()
-    mocker.patch.object(
-        reader.channel, "read_observations", side_effect=[BlockingIOError("busy"), frames]
-    )
-    module.capture()
-    output.assert_not_called()
-    module.capture()
-    assert [call.args[0].ts for call in output.call_args_list] == pytest.approx([1000, 1000.005])
 
 
 @pytest.mark.parametrize("history", [0.002], indirect=True)
@@ -649,7 +615,7 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
         sim = coordinator.get_instance(SimulationModule)
         lidar = coordinator.get_instance("stage_lidar")
         assert ready.wait(30), f"Point-LIO did not initialize: {lidar.sensor_status()}"
-        descriptor = ChannelDescriptor.from_dict(sim.describe()["robots"]["stage"])
+        descriptor = StreamDescriptor.from_dict(sim.describe()["robots"]["stage"])
         client = stack.enter_context(SimRobotClient(descriptor, writable=True))
         before = sim.status()
         first_imu, first_scan, first_image = len(imu_times), len(raw_times), len(camera_ages)

@@ -29,17 +29,15 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.sim2.ipc.abi import (
-    ABI_VERSION,
-    ChannelDescriptor,
-    FrameField,
-    FrameLayout,
-    channel_name,
+from dimos.sim2.messages import (
+    FrameMetadata,
+    MotorFrame,
+    StreamDescriptor,
     robot_descriptor,
 )
-from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.spec import RobotConfig, WorldConfig
+from dimos.sim2.streams import SimStream
 from dimos.sim2.world.scene import describe_scene, load_scene
 from dimos.sim2.world.scene_types import EntityState, RegionState, SceneState, SceneUpdate
 
@@ -49,7 +47,7 @@ STATE = mujoco.mjtState.mjSTATE_INTEGRATION
 @dataclass
 class RobotBinding:
     config: RobotConfig
-    channel: RobotChannel
+    channel: SimStream
     qpos: NDArray[np.int32]
     dofs: NDArray[np.int32]
     actuators: NDArray[np.int64]
@@ -61,7 +59,7 @@ class RobotBinding:
     hold_kp: NDArray[np.float64]
     hold_kd: NDArray[np.float64]
     enabled: bool = True
-    action: ChannelFrame | None = None
+    action: MotorFrame | None = None
     command_active: bool = False
     applied_action_sequence: int = 0
 
@@ -123,27 +121,15 @@ class SimulationRuntime:
         snapshot_slots = max(
             2, math.ceil(history_seconds / (self._snapshot_stride * config.timestep)) + 2
         )
-        self.snapshot_descriptor = ChannelDescriptor(
-            abi_version=ABI_VERSION,
+        self.snapshot_descriptor = StreamDescriptor(
             sim_id=sim_id,
             robot_id="world",
             generation=self.world_id,
-            shm_name=channel_name(sim_id, "world", self.world_id),
-            dof=0,
-            capabilities=(),
             physics_dt=config.timestep,
             control_decimation=self._snapshot_stride,
-            action_layout=FrameLayout((), 64),
-            observation_layout=FrameLayout(
-                (
-                    FrameField("state", "<f8", (nstate,), 48),
-                    FrameField("wall_time", "<f8", (1,), 48 + nstate * 8),
-                ),
-                ((56 + nstate * 8 + 63) // 64) * 64,
-            ),
             observation_slots=snapshot_slots,
         )
-        self.snapshots = RobotChannel.create(self.snapshot_descriptor)
+        self.snapshots = SimStream.create(self.snapshot_descriptor)
         try:
             for robot_id, instance in config.robots.items():
                 definition = instance.config
@@ -176,7 +162,7 @@ class SimulationRuntime:
                 ]
                 self.robots[robot_id] = RobotBinding(
                     definition,
-                    RobotChannel.create(
+                    SimStream.create(
                         robot_descriptor(sim_id, robot_id, self.world_id, instance, config.timestep)
                     ),
                     self.model.jnt_qposadr[joints],
@@ -374,6 +360,7 @@ class SimulationRuntime:
         with self.lock:
             self._require_live()
             if self.paused:
+                self._publish(force_snapshot=True)
                 return
             if self.tick == 0 and self.waiting_for_control:
                 self._clock_origin = time.time() - float(self.data.time)
@@ -388,15 +375,14 @@ class SimulationRuntime:
                 self._publish(force_snapshot=True)
                 return
             mujoco.mj_step(self.model, self.data)
+            # mj_step integrates qpos/qvel last. Refresh derived poses and sensors
+            # before publishing a sample labelled with that post-step time.
+            mujoco.mj_forward(self.model, self.data)
             self.tick += 1
             self._publish()
 
     def _apply(self, b: RobotBinding) -> None:
-        try:
-            b.action = b.channel.read_action()
-        except BlockingIOError:
-            # A contended slot is not a physics failure. The previous frame still expires.
-            pass
+        b.action = b.channel.read_action()
         action = b.action
         q = self.data.qpos[b.qpos]
         dq = self.data.qvel[b.dofs]
@@ -496,7 +482,6 @@ class SimulationRuntime:
         self._closed = True
         for channel in [*(b.channel for b in self.robots.values()), self.snapshots]:
             channel.set_lifecycle("closed")
-            channel.unlink()
             channel.close()
 
     def __enter__(self) -> SimulationRuntime:

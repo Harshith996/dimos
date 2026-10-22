@@ -22,8 +22,8 @@ from typing import Any
 import mujoco
 import numpy as np
 
-from dimos.sim2.ipc.abi import ChannelDescriptor
-from dimos.sim2.ipc.channel import ChannelFrame, RobotChannel
+from dimos.sim2.messages import StateFrame, StreamDescriptor
+from dimos.sim2.streams import SimStream
 from dimos.sim2.world.runtime import STATE
 
 
@@ -31,20 +31,17 @@ class WorldReader:
     def __init__(self, description: dict[str, Any]) -> None:
         self.model = mujoco.MjModel.from_binary_path(description["model"])
         self.data = mujoco.MjData(self.model)
-        self.channel = RobotChannel.attach(ChannelDescriptor.from_dict(description["snapshot"]))
+        self.channel = SimStream.attach(StreamDescriptor.from_dict(description["snapshot"]))
         self.sequence = -1
         self.timestamp = 0.0
         self.episode = -1
-        self._history: tuple[ChannelFrame, ...] = ()
+        self._history: tuple[StateFrame, ...] = ()
         self._next: mujoco.MjData | None = None
 
     def update(self) -> bool:
         if self.channel.lifecycle != "ready":
             return False
-        try:
-            frame = self.channel.read_observation()
-        except BlockingIOError:
-            return False
+        frame = self.channel.read_observation()
         if frame is None:
             return False
         changed = frame.metadata.sequence != self.sequence
@@ -53,7 +50,7 @@ class WorldReader:
         self.episode = frame.metadata.episode_id
         return changed
 
-    def restore(self, frame: ChannelFrame) -> None:
+    def restore(self, frame: StateFrame) -> None:
         """Restore an exact observation, including MuJoCo's mounted IMU readings."""
         mujoco.mj_setState(self.model, self.data, frame.values["state"], STATE)
         mujoco.mj_forward(self.model, self.data)
@@ -61,11 +58,7 @@ class WorldReader:
 
     def history(self, start: float, end: float) -> bool:
         """Pin a complete interval from this episode; never invent missing motion."""
-        try:
-            frames = self.channel.read_observations()
-        except BlockingIOError:
-            self._history = ()
-            return False
+        frames = self.channel.read_observations()
         self._history = tuple(f for f in frames if f.metadata.episode_id == self.episode)
         times = np.array([f.metadata.sim_time for f in self._history])
         first = max(0, bisect_right(times, start) - 1)

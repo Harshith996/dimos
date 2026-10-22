@@ -161,22 +161,23 @@ def test_expired_motor_command_stops_using_feedforward(worlds, clients, mocker):
     assert world.data.ctrl[binding.actuators[0]] == pytest.approx(-velocity)
 
 
-def test_transient_channel_contention_does_not_kill_physics(worlds, clients, mocker):
-    world = worlds()
-    client = clients(world, writable=True)
-    client.write_motors(
-        MotorCommandArray(q=[0.1, 850], kp=[0, 0], kd=[0, 0], tau=[2, 0]),
-        observed=client.read(),
+def test_post_step_snapshot_and_derived_robot_pose_are_the_same_tick(worlds, clients, world_config):
+    instance = world_config.robots["left"]
+    robot = replace(instance.config, floating=True)
+    robot.model.write_text(
+        robot.model.read_text().replace('<body name="base">', '<body name="base"><freejoint/>')
     )
+    world = worlds(config=replace(world_config, robots={"left": replace(instance, config=robot)}))
+    client = clients(world)
+    root_joint = world.model.body("left/base").jntadr[0]
+    qpos = world.model.jnt_qposadr[root_joint]
+    dof = world.model.jnt_dofadr[root_joint]
+    world.data.qvel[dof] = 1.0
     world.step()
-    channel = world.robots["left"].channel
-    mocker.patch.object(channel, "read_action", side_effect=BlockingIOError("busy"))
-
-    world.step()
-
-    assert world.tick == 2
-    assert channel.lifecycle == "ready"
-    assert world.data.ctrl[world.robots["left"].actuators[0]] == pytest.approx(2)
+    sample = client.read()
+    assert world.data.qpos[qpos] > 0
+    assert sample.values["root_position"][0] == pytest.approx(world.data.qpos[qpos])
+    assert sample.metadata.sim_time == world.data.time
 
 
 @pytest.mark.parametrize("disabled", [False, True])

@@ -29,7 +29,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.device import CameraDevice
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
@@ -142,17 +142,6 @@ def test_reader_observes_reset_generation_without_recompiling(reader):
     assert observer.update()
     assert observer.episode == generation + 1
     assert observer.model is model
-
-
-def test_busy_snapshot_is_skipped_without_stopping_sensor(reader, mocker):
-    world, observer = reader
-    frame = world.snapshots.read_observation()
-    mocker.patch.object(
-        observer.channel, "read_observation", side_effect=[BlockingIOError("busy"), frame]
-    )
-    assert not observer.update()
-    assert observer.update()
-    assert observer.sequence == frame.metadata.sequence
 
 
 def test_composition_contains_one_world_and_no_public_sim_connections(world_config):
@@ -389,13 +378,12 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
             assert len(depth_clouds[0].pointcloud.points) > 100
         assert sim.status()["running"]
         assert sim.status()["steps"] > 0
-        descriptor = ChannelDescriptor.from_dict(sim.describe()["robots"]["left"])
+        descriptor = StreamDescriptor.from_dict(sim.describe()["robots"]["left"])
         with SimRobotClient(descriptor) as client:
             before = client.read()
             sim.reset()
             after = client.read()
             assert after.metadata.episode_id == before.metadata.episode_id + 1
 
-    with pytest.raises(FileNotFoundError):
-        with SimRobotClient(descriptor):
-            pytest.fail("shutdown left a live robot channel")
+    with pytest.raises(TimeoutError):
+        SimRobotClient(descriptor).connect(timeout=0.1)
