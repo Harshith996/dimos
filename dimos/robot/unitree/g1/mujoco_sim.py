@@ -24,6 +24,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -45,7 +46,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.time import time_from_seconds
 from dimos.robot.unitree.g1.connection import G1ConnectionBase, _driver_twist
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry

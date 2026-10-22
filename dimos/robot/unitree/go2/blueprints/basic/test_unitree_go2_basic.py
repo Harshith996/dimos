@@ -16,12 +16,12 @@
 
 import numpy as np
 
+from dimos.message_utils.occupancy import occupancy_from_array
+from dimos.message_utils.pointcloud import pointcloud_from_xyz
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.occupancy import occupancy_from_array
-from dimos.msgs.pointcloud import pointcloud_from_xyz
 from dimos.robot.unitree.go2.blueprints.basic import unitree_go2_basic as view
 from dimos.robot.unitree.go2.connection import GO2Connection
 

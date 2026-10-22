@@ -43,12 +43,12 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
+from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.time import time_from_nanoseconds, time_from_seconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

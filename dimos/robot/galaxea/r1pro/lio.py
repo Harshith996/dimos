@@ -23,6 +23,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.message_utils.time import to_seconds
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose as CdrPoseValue,
@@ -38,7 +39,6 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.time import to_seconds
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL

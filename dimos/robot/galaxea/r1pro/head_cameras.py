@@ -41,10 +41,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.sensor_msgs.msg import CameraInfo as CdrCameraInfo
 from dimos.msgs.driver import camera_info_message
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

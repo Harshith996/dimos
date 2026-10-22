@@ -20,12 +20,12 @@ from typing import Any
 
 import numpy as np
 
+from dimos.message_utils.occupancy import occupancy_view
+from dimos.message_utils.time import to_seconds
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPose
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.occupancy import occupancy_view
-from dimos.msgs.time import to_seconds
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,

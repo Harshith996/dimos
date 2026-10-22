@@ -16,9 +16,9 @@
 
 import math
 
+from dimos.message_utils.geometry import inverse_transform, quaternion_euler, rotate_vector
 from dimos.messages.geometry_msgs.msg import Vector3 as CdrVector3
 from dimos.msgs.driver import transform_message
-from dimos.msgs.geometry import inverse_transform, quaternion_euler, rotate_vector
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.tf.tf import MultiTBuffer

@@ -27,11 +27,11 @@ from reactivex import Subject
 
 from dimos.core.module import Module
 from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.message_utils.image import image_view
+from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.msgs.driver import transform_message
-from dimos.msgs.image import image_view
-from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.msgs.sensor_msgs.Image import Image as DriverImage, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as DriverCloud
 from dimos.robot.unitree.g1.connection import G1Connection
@@ -163,7 +163,7 @@ def test_hardware_module_command_decodes_cdr_before_mocked_sdk(mocker, backend):
 
 @pytest.mark.asyncio
 async def test_mount_publisher_emits_canonical_transforms_with_one_exact_epoch_stamp(mocker):
-    mocker.patch("dimos.msgs.time.time.time_ns", return_value=1_789_654_321_000_000_001)
+    mocker.patch("dimos.message_utils.time.time.time_ns", return_value=1_789_654_321_000_000_001)
     with ExitStack() as cleanup:
         publisher = G1TfPublisher()
         cleanup.callback(publisher.stop)

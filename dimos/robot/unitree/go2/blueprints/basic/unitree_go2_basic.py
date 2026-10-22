@@ -23,9 +23,9 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.message_utils.occupancy import occupancy_view
 from dimos.msgs.geometry_msgs.Pose import Pose as NumericalPose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as NumericalGrid
-from dimos.msgs.occupancy import occupancy_view
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, generated_archetypes
 from dimos.visualization.vis_module import vis_module

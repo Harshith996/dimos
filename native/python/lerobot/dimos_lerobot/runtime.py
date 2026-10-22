@@ -45,10 +45,10 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     RolloutStatus,
 )
+from dimos.message_utils.image import image_view
+from dimos.message_utils.time import to_seconds
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import UInt32
-from dimos.msgs.image import image_view
-from dimos.msgs.time import to_seconds
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons

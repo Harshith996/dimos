@@ -33,9 +33,9 @@ import numpy as np
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
+from dimos.message_utils.time import header_now
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.msgs.time import header_now
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -44,6 +44,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
+from dimos.message_utils.time import time_from_nanoseconds
 from dimos.messages.geometry_msgs.msg import (
     Point as CdrPoint,
     Pose as CdrPoseValue,
@@ -73,7 +74,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import time_from_nanoseconds
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,

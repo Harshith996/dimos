@@ -27,11 +27,11 @@ import numpy as np
 import pytest
 
 from dimos.core import transport as transport_module
+from dimos.message_utils.image import image_view
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2, PointField
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_view
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree import dimsim_connection
 from dimos.robot.unitree.dimsim_connection import DimSimConnection, _odom_to_tf
@@ -176,6 +176,8 @@ def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose
     with ExitStack() as cleanup:
         connection = DimSimConnection(config, transport="lcm")
         cleanup.callback(connection.stop)
+        odom_stop = mocker.spy(connection._odom_transport, "stop")
+        tf_stop = mocker.spy(connection._tf_transport, "stop")
         observed = []
         cleanup.callback(connection._tf_transport.subscribe(observed.append))
         process.start.side_effect = lambda: connection._odom_transport.publish(sample)
@@ -194,8 +196,8 @@ def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose
         assert transforms[1].transform.translation.x == 0.3
         q = transforms[2].transform.rotation
         assert (q.x, q.y, q.z, q.w) == (-0.5, 0.5, -0.5, 0.5)
-    assert connection._odom_transport._pubsub is None
-    assert connection._tf_transport._pubsub is None
+    odom_stop.assert_called_once_with()
+    tf_stop.assert_called_once_with()
     process.stop.assert_called_once_with()
 
 

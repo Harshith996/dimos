@@ -22,14 +22,14 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.message_utils.image import image_view
+from dimos.message_utils.occupancy import occupancy_from_array
+from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.image import image_view
-from dimos.msgs.occupancy import occupancy_from_array
-from dimos.msgs.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as InternalCameraInfo
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import _g1_nav_path
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override

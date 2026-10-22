@@ -38,6 +38,9 @@ from dimos.core import transport as transport_module
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport_factory import make_transport
+from dimos.message_utils.image import image_view
+from dimos.message_utils.pointcloud import pointcloud_view
+from dimos.message_utils.time import to_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped as CdrPoseStamped,
@@ -48,12 +51,9 @@ from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.image import image_view
-from dimos.msgs.pointcloud import pointcloud_view
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DriverCameraInfo
 from dimos.msgs.sensor_msgs.Image import Image as DriverImage, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import to_seconds
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.unitree.go2 import connection as go2_conn

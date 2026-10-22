@@ -23,9 +23,9 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry import vector_array
+from dimos.message_utils.geometry import vector_array
+from dimos.message_utils.time import to_seconds
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.time import to_seconds
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 

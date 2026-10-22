@@ -21,8 +21,8 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
+from dimos.message_utils.time import header_now
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.msgs.time import header_now
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,

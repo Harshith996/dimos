@@ -18,6 +18,8 @@ from copy import deepcopy
 
 import numpy as np
 
+from dimos.message_utils.image import image_from_array
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Quaternion,
@@ -35,12 +37,10 @@ from dimos.messages.sensor_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.image import image_from_array
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.time import time_from_seconds
 
 
 def camera_info_message(info: CameraInfo) -> CdrCameraInfo:

@@ -24,8 +24,8 @@ import threading
 from typing import Any
 
 from dimos.core.transport_factory import make_transport
+from dimos.message_utils.geometry import quaternion_euler
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
-from dimos.msgs.geometry import quaternion_euler
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
