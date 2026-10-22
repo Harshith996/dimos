@@ -100,10 +100,10 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
     assert manipulation["world_frame"] == "world"
     assert "floor_z" not in manipulation
     assert manipulation["static_transforms"][0].child_frame_id == "camera_link"
-    assert _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs == {
-        "planning_frame": "world",
-        "pregrasp_offset": 0.05,
-    }
+    pick = _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs
+    assert pick["planning_frame"] == "world"
+    assert pick["pregrasp_offset"] == 0.05
+    assert pick["grasp_verification"].empty_epsilon == pytest.approx(0.035)
     overhead = next(
         atom
         for atom in dual_openyam_grasp.active_blueprints
