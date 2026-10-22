@@ -13,8 +13,11 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from contextlib import suppress
 import json
+import os
 from pathlib import Path
+import signal
 import sys
 from typing import Any
 
@@ -55,6 +58,10 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
     # no ~/.dimos/config.yaml of the machine running the tests
     monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "dimos_home"))
+    # nor its DTOP, which a launch passes on
+    monkeypatch.delenv(launches.DTOP_ENV, raising=False)
+    # nor a git repo the temp dir happens to be inside
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     return tmp_path
 
 
@@ -81,6 +88,20 @@ def state(checkout: Path, sent: list[tuple[str, Any]]) -> State:
 
 
 @pytest.fixture
-def client(state: State) -> Iterator[TestClient]:
+def client(state: State, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    spawned: list[tuple[int, float | None]] = []
+    spawn = launches._spawn
+
+    def remembered(*args: Any) -> int:
+        pid = spawn(*args)
+        spawned.append((pid, launches.started_time(pid)))
+        return pid
+
+    monkeypatch.setattr(launches, "_spawn", remembered)
     with TestClient(create_app(state, background=False)) as test_client:
         yield test_client
+    # what a test launched dies with it (the fake dimos sleeps a minute), unless its pid now names another process
+    for pid, started in spawned:
+        if launches.started_time(pid) == started:
+            with suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
