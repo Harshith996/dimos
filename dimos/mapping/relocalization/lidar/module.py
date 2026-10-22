@@ -142,7 +142,7 @@ class LidarWindowRelocalization(CloudRelocalization):
 
 class LocalMapConfig(LidarConfig):
     # Smaller carved local maps are too small a patch to match
-    min_local_points: int = 20_000
+    min_local_points: int = 10_000
 
 
 class LocalMapRelocalization(CloudRelocalization):
