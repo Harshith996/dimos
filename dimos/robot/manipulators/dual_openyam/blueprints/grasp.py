@@ -35,6 +35,7 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
+from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -225,7 +226,13 @@ def dual_openyam_grasp_modules(
         ),
         ManipulationSkills.blueprint(),
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
-        PickAndPlaceModule.blueprint(planning_frame="world", pregrasp_offset=0.05),
+        PickAndPlaceModule.blueprint(
+            planning_frame="world",
+            pregrasp_offset=0.05,
+            # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
+            # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
+            grasp_verification=GraspVerificationConfig(empty_epsilon=0.035),
+        ),
         grasp_provider or HeuristicGraspModule.blueprint(),
         # The D405 has no 848x480 at 15 fps mode.
         RealSenseCamera.blueprint(
