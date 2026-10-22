@@ -16,6 +16,7 @@
 
 from contextlib import ExitStack
 from copy import deepcopy
+import time
 from uuid import uuid4
 
 import pytest
@@ -40,6 +41,12 @@ def local_transport(request, mocker):
         "self_hosted"
     ):
         return
+    # A manually stepped world does not age while the test constructs its clients.
+    # Deadline tests advance this clock explicitly; native tests keep real clocks.
+    clock = mocker.Mock(wraps=time)
+    clock.monotonic.return_value = time.monotonic()
+    for module in ("client", "streams", "world.runtime"):
+        mocker.patch(f"dimos.sim2.{module}.time", clock)
     bus = Memory()
     methods = {}
 
