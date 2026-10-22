@@ -20,8 +20,8 @@
         # Keep this flake self-contained: shared SDK/configuration arrive through
         # one fixed-hash project source, rather than paths outside this directory.
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/8101c8db4a50043f1dbd0127fd00220ec9b5a37a";
-          sha256 = "fcee2041d31c9368b77b803140f976b5a5d044f48f9423fea298afe372568361";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/c9a13b72c31bf2d7ebc80b6789cb64ebb2b1d9f8";
+          sha256 = "8d9ef10dbc0277fd2354149d009a27209f719d6b6b19d39a4e6116f19efea9cf";
         };
         sharedSource = pkgs.runCommand "dimos-cdr-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
