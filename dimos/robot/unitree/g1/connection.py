@@ -32,6 +32,7 @@ from dimos.control.contract.description import Limits
 from dimos.control.contract.ports import MotorPort, TwistPort
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -50,7 +51,7 @@ from dimos.robot.unitree.g1.model.config import G1_URDF_PATH
 from dimos.robot.unitree.g1.model.joints import g1_joints
 from dimos.robot.unitree.g1.model.simulation import g1_definition
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.spec import RobotInstance
 from dimos.sim2.world.scene import scene_robot
@@ -134,6 +135,7 @@ class G1Connection(ConnectionModule):
         self._device_lock = threading.RLock()
         self._feedback: dict[str, float] = {}
         self._feedback_at = 0.0
+        self._imu_at = 0.0
         self._sequence = -1
         self._estopped = False
         self._move_timer: threading.Timer | None = None
@@ -186,7 +188,7 @@ class G1Connection(ConnectionModule):
                 raise RuntimeError("G1 simulated device requires the collected SimulationModule")
             robot_id = self.config.instance_name or self.name
             descriptor = self._simulation.describe()["robots"][robot_id]
-            self._sim = SimRobotClient(ChannelDescriptor.from_dict(descriptor), writable=True)
+            self._sim = SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True)
             self._sim.connect()
         elif self.config.g.simulation:
             raise ValueError("G1Connection only supports real hardware or MuJoCo")
@@ -213,13 +215,20 @@ class G1Connection(ConnectionModule):
     def _receive_imu(self, msg: Imu) -> None:
         with self._device_lock:
             self._feedback.update(imu_to_values(msg, f"{self.config.source}/imu"))
+            self._imu_at = msg.ts
 
-    def read_state(self) -> dict[str, float]:
+    def read_state(self) -> dict[str, float] | ControlValues:
         with self._device_lock:
             if self._sim is None:
-                if time.time() - self._feedback_at > self.config.motors.feedback_timeout_seconds:
+                acquired = min(self._feedback_at, self._imu_at)
+                if time.time() - acquired > self.config.motors.feedback_timeout_seconds:
                     return {}
-                return dict(self._feedback)
+                return ControlValues(
+                    self.config.source,
+                    acquired,
+                    interface_names=list(self._feedback),
+                    values=list(self._feedback.values()),
+                )
             frame = self._sim.read()
             if frame.metadata.sequence == self._sequence:
                 return {}
@@ -260,12 +269,20 @@ class G1Connection(ConnectionModule):
                     )
                 )
             )
-            return {
+            values = {
                 **joint_state_to_values(joints, JOINT_STATE_FIELDS),
                 **imu_to_values(imu, f"{self.config.source}/imu"),
             }
+            return ControlValues(
+                self.config.source,
+                ts,
+                frame.metadata.episode_id,
+                frame.metadata.sequence,
+                list(values),
+                list(values.values()),
+            )
 
-    def write(self, values: dict[str, float]) -> None:
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
         if self.config.controller == "stock":
             self.move(
                 Twist(
@@ -283,7 +300,12 @@ class G1Connection(ConnectionModule):
             for field in ("position", "velocity", "kp", "kd", "effort")
         ]
         command = MotorCommandArray(
-            q=fields[0], dq=fields[1], kp=fields[2], kd=fields[3], tau=fields[4]
+            q=fields[0],
+            dq=fields[1],
+            kp=fields[2],
+            kd=fields[3],
+            tau=fields[4],
+            timestamp=source_ts,
         )
         with self._device_lock:
             if self._estopped:

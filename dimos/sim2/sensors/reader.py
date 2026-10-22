@@ -22,8 +22,8 @@ from typing import Any
 import mujoco
 import numpy as np
 
-from dimos.sim2.ipc.abi import ChannelDescriptor
-from dimos.sim2.ipc.channel import ChannelFrame, RobotChannel
+from dimos.sim2.messages import StateFrame, StreamDescriptor
+from dimos.sim2.streams import SimStream
 from dimos.sim2.world.runtime import STATE
 
 
@@ -31,11 +31,11 @@ class WorldReader:
     def __init__(self, description: dict[str, Any]) -> None:
         self.model = mujoco.MjModel.from_binary_path(description["model"])
         self.data = mujoco.MjData(self.model)
-        self.channel = RobotChannel.attach(ChannelDescriptor.from_dict(description["snapshot"]))
+        self.channel = SimStream.attach(StreamDescriptor.from_dict(description["snapshot"]))
         self.sequence = -1
         self.timestamp = 0.0
         self.episode = -1
-        self._history: tuple[ChannelFrame, ...] = ()
+        self._history: tuple[StateFrame, ...] = ()
         self._next: mujoco.MjData | None = None
 
     def update(self) -> bool:
@@ -53,7 +53,7 @@ class WorldReader:
         self.episode = frame.metadata.episode_id
         return changed
 
-    def restore(self, frame: ChannelFrame) -> None:
+    def restore(self, frame: StateFrame) -> None:
         """Restore an exact observation, including MuJoCo's mounted IMU readings."""
         mujoco.mj_setState(self.model, self.data, frame.values["state"], STATE)
         mujoco.mj_forward(self.model, self.data)

@@ -18,18 +18,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import math
-from pathlib import Path
-import tempfile
 import threading
 import time
 from typing import Any
 
-from filelock import FileLock, Timeout as FileLockTimeout
 import numpy as np
 
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.sim2.ipc.abi import ChannelDescriptor
-from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, RobotChannel
+from dimos.sim2.messages import FrameMetadata, StateFrame, StreamDescriptor
+from dimos.sim2.streams import SimStream
 
 
 class SimRobotClient:
@@ -42,7 +39,7 @@ class SimRobotClient:
 
     def __init__(
         self,
-        descriptor: ChannelDescriptor,
+        descriptor: StreamDescriptor,
         *,
         writable: bool = False,
         feedback_timeout: float = 0.25,
@@ -55,18 +52,10 @@ class SimRobotClient:
         self.descriptor = descriptor
         self.feedback_timeout = feedback_timeout
         self.command_timeout = command_timeout
-        self._channel: RobotChannel | None = None
-        self._last_observation: ChannelFrame | None = None
+        self._channel: SimStream | None = None
+        self._last_observation: StateFrame | None = None
         self._lock = threading.RLock()
-        self._writer = (
-            FileLock(
-                Path(tempfile.gettempdir()) / f"{descriptor.shm_name}.writer.lock",
-                timeout=0,
-                thread_local=False,
-            )
-            if writable
-            else None
-        )
+        self._writable = writable
 
     def connect(self, timeout: float = 30.0) -> None:
         if not math.isfinite(timeout) or timeout < 0:
@@ -75,39 +64,29 @@ class SimRobotClient:
             if self._channel is not None:
                 raise RuntimeError("sim2 client is already connected")
             try:
-                if self._writer is not None:
-                    try:
-                        self._writer.acquire()
-                    except FileLockTimeout as error:
-                        raise RuntimeError(
-                            f"robot {self.descriptor.robot_id!r} already has a command owner"
-                        ) from error
-                self._channel = RobotChannel.attach(self.descriptor)
-                deadline = time.monotonic() + timeout
-                while self._channel.lifecycle == "starting":
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("sim2 robot did not become ready")
-                    time.sleep(0.01)
+                self._channel = SimStream.attach(
+                    self.descriptor, writable=self._writable, timeout=timeout
+                )
                 self.read()
             except BaseException:
                 self.close()
                 raise
 
-    def _require_channel(self) -> RobotChannel:
+    def _require_channel(self) -> SimStream:
         if self._channel is None:
             raise RuntimeError("sim2 client is disconnected")
         if self._channel.lifecycle != "ready":
             raise RuntimeError(f"sim2 robot is {self._channel.lifecycle}")
         return self._channel
 
-    def _validate_observation(self, frame: ChannelFrame, channel: RobotChannel) -> None:
+    def _validate_observation(self, frame: StateFrame, channel: SimStream) -> None:
         if frame.metadata.episode_id != channel.episode_id:
             raise RuntimeError("sim2 robot was reset; read a new observation before commanding")
         age = time.monotonic() - float(frame.values["monotonic_time"][0])
         if not 0 <= age <= self.feedback_timeout:
             raise TimeoutError("sim2 robot feedback is stale")
 
-    def read(self) -> ChannelFrame:
+    def read(self) -> StateFrame:
         """Read one coherent joint/IMU/base sample; never mix separate physics ticks."""
         with self._lock:
             channel = self._require_channel()
@@ -118,7 +97,7 @@ class SimRobotClient:
             self._last_observation = frame
             return frame
 
-    def write_motors(self, command: MotorCommandArray, *, observed: ChannelFrame) -> int:
+    def write_motors(self, command: MotorCommandArray, *, observed: StateFrame) -> int:
         """Write complete PD/feedforward targets in descriptor joint order."""
         values = np.asarray([command.q, command.dq, command.kp, command.kd, command.tau])
         if values.shape != (5, self.descriptor.dof) or not np.isfinite(values).all():
@@ -135,9 +114,12 @@ class SimRobotClient:
             dict(position=q, velocity=dq, kp=kp, kd=kd, effort=effort),
             observed,
             enabled=True,
+            source_ts=command.timestamp,
         )
 
-    def write_positions(self, positions: Sequence[float], *, observed: ChannelFrame) -> int:
+    def write_positions(
+        self, positions: Sequence[float], *, observed: StateFrame, source_ts: float | None = None
+    ) -> int:
         """Write native joint targets, including grippers in their declared units."""
         q = np.asarray(positions, dtype=np.float64)
         if q.shape != (self.descriptor.dof,) or not np.isfinite(q).all():
@@ -154,9 +136,10 @@ class SimRobotClient:
             dict(position=q, velocity=np.zeros_like(q), kp=kp, kd=kd, effort=np.zeros_like(q)),
             observed,
             enabled=True,
+            source_ts=source_ts,
         )
 
-    def disable(self, *, observed: ChannelFrame) -> int:
+    def disable(self, *, observed: StateFrame) -> int:
         """Disable effort outputs; native position servos hold their current position.
 
         This is device control, not a promise that a floating robot remains upright.
@@ -169,17 +152,28 @@ class SimRobotClient:
         values.update(kp=np.zeros(self.descriptor.dof), kd=np.zeros(self.descriptor.dof))
         return self._write(values, observed, enabled=False)
 
-    def _write(self, values: dict[str, Any], observed: ChannelFrame, *, enabled: bool) -> int:
+    def _write(
+        self,
+        values: dict[str, Any],
+        observed: StateFrame,
+        *,
+        enabled: bool,
+        source_ts: float | None = None,
+    ) -> int:
         with self._lock:
             channel = self._require_channel()
-            if self._writer is None or not self._writer.is_locked:
+            if not self._writable:
                 raise PermissionError("sim2 client is read-only")
             if observed is not self._last_observation:
                 raise ValueError("command must use this client's latest observation")
             self._validate_observation(observed, channel)
-            values.update(
-                enabled=[int(enabled)], expires_at=[time.monotonic() + self.command_timeout]
-            )
+            issued = time.time() if source_ts is None else source_ts
+            if not math.isfinite(issued) or issued < observed.reset_at:
+                raise RuntimeError("sim2 command predates reset")
+            remaining = self.command_timeout - max(0.0, time.time() - issued)
+            if remaining <= 0:
+                raise TimeoutError("sim2 command is stale")
+            values.update(enabled=[int(enabled)], expires_at=[time.monotonic() + remaining])
             return channel.publish_action(
                 values,
                 FrameMetadata(
@@ -189,6 +183,7 @@ class SimRobotClient:
                     0,
                     observed.metadata.sim_time,
                 ),
+                source_ts=issued,
             )
 
     def close(self) -> None:
@@ -197,8 +192,6 @@ class SimRobotClient:
                 self._channel.close()
                 self._channel = None
                 self._last_observation = None
-            if self._writer is not None:
-                self._writer.release()
 
     def __enter__(self) -> SimRobotClient:
         self.connect()

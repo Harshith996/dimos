@@ -20,7 +20,8 @@ dimos/sim2/
   module.py              SimulationModule and scene RPCs
   client.py              Robot-side command/feedback client
   world/                 MuJoCo assembly, stepping, scene state, viewer, run evidence
-  ipc/                   Private shared-memory layout and channel implementation
+  messages.py            Robot endpoint description, timed commands and samples
+  streams.py             DimOS Zenoh pub/sub and bounded local sample history
   sensors/
     spec.py              Shared mounts and acquisition requirements
     composition.py       Supported sensor families and integrated attachments
@@ -150,14 +151,14 @@ Do not reconstruct it from a robot name or reuse it after restarting the world.
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.ipc.abi import ChannelDescriptor
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.spec import WorldConfig
 
 app = ModuleCoordinator.build(simulation(world=WorldConfig(scene_path, robot_instances)))
 try:
     world = app.get_instance(SimulationModule)
-    descriptor = ChannelDescriptor.from_dict(world.describe()["robots"]["arm"])
+    descriptor = StreamDescriptor.from_dict(world.describe()["robots"]["arm"])
     with SimRobotClient(descriptor, writable=True) as device:
         observed = device.read()
         device.write_positions(target_positions, observed=observed)
@@ -286,10 +287,27 @@ conditions; it is not a portable bundle or deterministic replay of asynchronous
 commands. Record those command streams through the existing DimOS recorder.
 The initial record does not include later scene mutations or controller resets.
 
-Motor IO and world snapshots retain private shared memory. Ordinary image,
-point-cloud and scene-truth streams use the configured DimOS transport. Only the
-world steps physics; sensing workers restore snapshots into their own model/data.
-This extraction does not change process placement or DimOS transport behavior.
+Motor commands, robot feedback and world snapshots use DimOS `pZenohTransport`.
+Startup uses the existing `ZenohRPC` to obtain a first sample and acquire the
+robot's command ownership. It is not called for each command or physics tick.
+The world accepts one writer per robot; commands and ownership expire if it
+stops sending. A newly attached writer has a 30-second startup allowance.
+Closing the writer releases it immediately. A killed writer cannot leave a
+shared-memory segment or file lock behind.
+
+Every command names its observation epoch and retains its original issue time.
+Reset discards held commands and rejects delayed pre-reset messages. A client
+reads cached feedback without waiting; stale feedback raises rather than being
+restamped. Source timestamps are Unix seconds; expiry uses the same host's
+monotonic clock. Remote physics/clients are not yet supported.
+
+Snapshots carry the complete MuJoCo integration state. Each sensor keeps a
+bounded local history, clears it on reset, and refuses to interpolate over a
+missing interval. Only the world steps physics; sensing workers restore the
+snapshots into their own model/data. `mj_forward` refreshes derived poses and
+sensor readings after integration, before publishing the post-step sample.
+Zenoh's native SHM optimization remains at the repository default. This code
+does not require or claim zero-copy delivery.
 
 ```bash
 uv run pytest dimos/sim2
