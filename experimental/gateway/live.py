@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import importlib
 import threading
 from typing import Any
 
@@ -31,6 +32,7 @@ class NothingRunningError(ApiError):
 def instance_id(remote_name: str) -> str:
     """The coordinator's key for an instance, `/` written as `:` so it is one path segment: `robot0:go2connection`."""
     # a namespaced instance's RPC name is its key; an un-namespaced one's is its class name (key = lowercase class)
+    # TODO(core): list_modules could publish the coordinator's key itself, instead of the gateway rebuilding it
     return remote_name.replace("/", ":") if "/" in remote_name else remote_name.lower()
 
 
@@ -45,6 +47,12 @@ def connect_dimos() -> Any:
     transport = launch.get("config", {}).get("global", {}).get("transport")
     global_config.update(transport=transport or GlobalConfig().transport)
     return Dimos.connect(timeout=1.0)
+
+
+def load_class(path: str) -> Any:
+    """A module class from its class path (what Dimos.restart and Dimos.unload take)."""
+    module, name = path.rsplit(".", 1)
+    return getattr(importlib.import_module(module), name)
 
 
 def live_run_id() -> str | None:
@@ -164,16 +172,19 @@ class Live:
             encoded = str(result)
         return {"ok": True, "result": encoded, "error": None}
 
+    # TODO(core): Dimos.restart and Dimos.unload take a module class, so with several namespaced copies of one class
+    # (robot0:go2connection, robot1:go2connection) they refuse ("Multiple instances"). Doing this cleanly needs them
+    # to take an instance name: the coordinator already has restart_module_by_name, but unloading by name has no RPC.
     def restart(self, id_: str) -> dict[str, Any]:
-        return self._try(lambda app: app.restart(id_.replace(":", "/")), id_)
+        return self._try(lambda app, cls: app.restart(cls), id_)
 
     def unload(self, id_: str) -> dict[str, Any]:
-        return self._try(lambda app: app.unload(id_.replace(":", "/")), id_)
+        return self._try(lambda app, cls: app.unload(cls), id_)
 
-    def _try(self, action: Callable[[Any], None], id_: str) -> dict[str, Any]:
-        self.module(None, id_)
+    def _try(self, action: Callable[[Any, Any], None], id_: str) -> dict[str, Any]:
+        module = self.module(None, id_)
         try:
-            action(self.app())
+            action(self.app(), load_class(module["catalogId"]))
         except Exception as error:
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
         return {"ok": True, "error": None}

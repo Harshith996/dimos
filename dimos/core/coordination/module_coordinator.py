@@ -157,7 +157,6 @@ class ModuleCoordinator(Resource):
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
             "unload_module_by_class_name": self.unload_module_by_class_name,
-            "unload_module": self.unload_module,
             "shutdown": self.shutdown,
         }
 
