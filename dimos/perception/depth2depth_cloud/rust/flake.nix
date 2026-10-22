@@ -34,8 +34,8 @@
         name = "dimos-depth2depth-cloud";
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/c9a13b72c31bf2d7ebc80b6789cb64ebb2b1d9f8";
-          sha256 = "8d9ef10dbc0277fd2354149d009a27209f719d6b6b19d39a4e6116f19efea9cf";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/f7723ad4d5b9aa5dfe63614b6b537d1ccc2d212e";
+          sha256 = "f90af8fa794a34d53ee9481c6d0bdb63138853b30f851d92960fd34224ff62b2";
         };
         sharedSource = pkgs.runCommand "dimos-depth-cloud-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
