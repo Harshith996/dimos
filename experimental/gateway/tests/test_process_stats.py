@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from experimental.gateway import process_stats
+from dimos.core import run_registry
 from experimental.gateway.process_stats import ProcessStats
 from experimental.gateway.state import State
 
@@ -86,15 +86,16 @@ def test_it_subscribes_on_the_first_ask_and_keeps_cpu_history() -> None:
     assert len(made) == 1, "one subscriber, however often it's asked"
 
 
-def test_nobody_asking_drops_the_subscriber(monkeypatch: Any) -> None:
+def test_the_subscriber_drops_when_nothing_runs(monkeypatch: Any) -> None:
     made: list[FakeTransport] = []
     stats = ProcessStats(lambda topic: made.append(FakeTransport(topic)) or made[-1])
     stats.snapshot()
     made[0].send(stats_message(5.0))
-    stats.stop_if_idle()
-    assert not made[0].stopped, "asked just now"
-    monkeypatch.setattr(process_stats, "IDLE_S", -1.0)
-    stats.stop_if_idle()
+    monkeypatch.setattr(run_registry, "get_most_recent", lambda alive_only: object())
+    stats.stop_if_nothing_runs()
+    assert not made[0].stopped, "a run is alive"
+    monkeypatch.setattr(run_registry, "get_most_recent", lambda alive_only: None)
+    stats.stop_if_nothing_runs()
     assert made[0].stopped
     assert stats.snapshot()["up"] is False and len(made) == 2
 
