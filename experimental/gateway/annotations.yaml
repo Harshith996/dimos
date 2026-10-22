@@ -207,6 +207,9 @@ robots:
         go2-nav-viewer-mesh:
           title: 'Go2: nav viewer (meshed map)'
           description: 'The go2-nav viewer, meshing the map regions on this machine''s GPU.'
+        go2-nav-hosted:
+          title: 'Go2: navigation across hosts'
+          description: 'go2-nav split over dimos hosts: the stack on the Go2''s host, the mesher on the GPU host, the viewer here.'
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
