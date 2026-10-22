@@ -58,10 +58,10 @@ def test_native_mapper_declares_canonical_cloud_and_region_ports():
         module.stop()
 
 
+@pytest.mark.native_e2e
 def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(monkeypatch):
     executable = os.environ.get("DIMOS_NATIVE_RAY_TRACING_BINARY")
-    if not executable:
-        pytest.skip("Set DIMOS_NATIVE_RAY_TRACING_BINARY to the compiled voxel_ray_tracing")
+    assert executable, "Build and set the native binary before running native_e2e"
     binary = Path(executable).resolve()
     assert binary.is_file()
     monkeypatch.setattr(global_config, "transport", "zenoh")

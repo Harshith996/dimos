@@ -22,7 +22,6 @@ use crate::mls_planner::{
 };
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey};
-use crate::wire::{decode_tf, encode, encode_tf};
 use dimos_generated_messages::{
     builtin_interfaces::msg::time::Time,
     dimos_msgs::msg::{
@@ -38,6 +37,8 @@ use dimos_generated_messages::{
     sensor_msgs::msg::{point_cloud2::PointCloud2, point_field::PointField},
     std_msgs::msg::header::Header,
 };
+use dimos_message_adapters::tf::{decode as decode_tf, encode as encode_tf};
+use dimos_module::cdr;
 use dimos_module::pointcloud::{extract_xyz_rows, ExtractError};
 use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -263,17 +264,17 @@ pub struct MlsPlanner {
     #[tf(decode = decode_tf, encode = encode_tf)]
     tf: Tf,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     surface_map: Output<PointCloudRegion>,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     nodes: Output<PointCloud2>,
 
     // Canonical weighted segments with an explicit viewer-region key.
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     node_edges: Output<LineSegments3DRegion>,
 
-    #[output(encode = encode)]
+    #[output(encode = cdr::encode)]
     path: Output<Path>,
 
     #[config]

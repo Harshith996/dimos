@@ -108,17 +108,17 @@ pub struct LocalPlanner {
     #[input(decode = dimos_module::cdr::decode, handler = on_planner_path)]
     planner_path: Input<Path>,
 
-    #[output(encode = msg::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     path: Output<Path>,
 
     /// The floor voxels the ground plane was fit to, moved onto it. Empty while the body height stands in.
-    #[output(encode = msg::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     ground_support: Output<PointCloud2>,
 
     #[config]
     config: Config,
 
-    #[tf(decode = msg::decode_tf,encode = msg::encode_tf)]
+    #[tf(decode = dimos_message_adapters::tf::decode, encode = dimos_message_adapters::tf::encode)]
     tf: Tf,
 
     shared: Arc<Mutex<Shared>>,

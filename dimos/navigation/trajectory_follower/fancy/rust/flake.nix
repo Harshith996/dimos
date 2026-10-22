@@ -17,8 +17,8 @@
 
         own = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         plannerArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/62cfd6281dd985a49b7654af38c9d2d9939c1d65";
-          sha256 = "92f116815a1dd0dfc6f63320af34c3a643d4dae1c488319d0f9e093e7f2089f3";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/937e53e824b7a26bd52421ba46687d211f9e1e7b";
+          sha256 = "e7db5c2d0cc13a9e6dd76d90e4ee444fa99840f9ab0bf4c16139ba12673b1109";
         };
         plannerSource = pkgs.runCommand "dimos-follower-planner-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -32,22 +32,26 @@
           chmod -R u+w $out
           mkdir -p $out/sdk
           cp -r ${plannerSource}/dimos/navigation/local_planner/rust $out/local-planner
-          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros $out/sdk/
+          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros ${plannerSource}/native/rust/dimos-message-adapters $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-message-adapters/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           # The source artifacts own workspace roots; do not make them automatic members.
           substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
-          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
+          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-message-adapters", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../local_planner/rust' 'local-planner' \
             --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
+            --replace-fail '../../../../../native/rust/dimos-message-adapters' 'sdk/dimos-message-adapters' \
             --replace-fail '../../../../../build/message-source/rust' 'messages'
           substituteInPlace $out/local-planner/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' '../sdk/dimos-module' \
+            --replace-fail '../../../../native/rust/dimos-message-adapters' '../sdk/dimos-message-adapters' \
             --replace-fail '../../../../build/message-source/rust' '../messages'
         '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" ];
+        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
         callWith = mode: import generated {
           inherit pkgs;
           rootFeatures = [ "module" ];
