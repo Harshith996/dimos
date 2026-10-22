@@ -75,7 +75,7 @@ class MockConnectionModule(ConnectionModule):
     def read_state(self) -> dict[str, float]:
         return dict(self._readings)
 
-    def write(self, values: dict[str, float]) -> None:
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
         self.writes.append(dict(values))
         # Replaced whole, so the reading thread never sees it half-changed.
         # Only keys it reports are kept, so its readings stay valid.

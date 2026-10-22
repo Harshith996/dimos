@@ -37,6 +37,7 @@ from dimos.control.contract.ports import JointPort, MotorPort, TwistPort
 from dimos.control.contract.validate import DescriptionError
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.stream import In, Out
+from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -179,14 +180,14 @@ class SlowWrite(MockConnectionModule):
         self.inside = threading.Event()
         self.release = threading.Event()
 
-    def write(self, values: dict[str, float]) -> None:
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
         self.inside.set()
         self.release.wait(5.0)
-        super().write(values)
+        super().write(values, source_ts=source_ts)
 
 
 class FailingWrite(MockConnectionModule):
-    def write(self, values: dict[str, float]) -> None:
+    def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
         raise RuntimeError("motor said no")
 
 
@@ -280,6 +281,26 @@ def test_the_description_comes_from_the_config_and_the_ports() -> None:
 
 def test_the_mock_blueprint_needs_no_arguments() -> None:
     assert isinstance(MockConnectionModule.blueprint(), Blueprint)
+
+
+def test_acquisition_timestamp_survives_publication(rig):
+    r = rig(PushedBodyAndBase)
+    values = dict.fromkeys(r.module.description.state_keys(), 0.0)
+    values["g1/imu/qw"] = 1.0
+    stamp = time.time() - 0.125
+    r.module.publish_state(ControlValues("g1", stamp, 1, 2, list(values), list(values.values())))
+    assert r.sent("joint_state")[-1].ts == stamp
+    assert r.sent("imu")[-1].ts == stamp
+    assert r.module.status().last_state_time == stamp
+
+
+def test_command_timestamp_reaches_driver_unchanged(rig, mocker):
+    r = rig()
+    write = mocker.spy(r.module, "write")
+    stamp = time.time() - 0.025
+    r.send("position_command", JointState(ts=stamp, name=["mock/joint1"], position=[0.2]))
+    assert wait_until(lambda: bool(write.call_count))
+    write.assert_called_once_with({JOINT1: 0.2}, source_ts=stamp)
 
 
 def test_readings_go_out_as_joint_states_at_about_the_state_rate(
@@ -491,18 +512,27 @@ def test_commands_for_other_robots_do_not_feed_the_deadman(rig: Callable[..., Ri
     assert r.module.halts == 1
 
 
-def test_any_accepted_command_feeds_the_one_deadman(rig: Callable[..., Rig]) -> None:
+def test_any_accepted_command_feeds_the_one_deadman(rig: Callable[..., Rig], mocker) -> None:
     """Base commands keep the module alive after the body's stop."""
     r = rig(BodyAndBase)
+    loop = r.module._loop
+    assert loop is not None
+    # Advance the timer's clock only after each command reaches the driver.
+    # A slow producer thread must not turn this into a real deadline miss.
+    clock = mocker.patch.object(loop, "time", return_value=loop.time())
     body = MotorCommandArray(q=[0.1, 0.2], dq=[0, 0], kp=[1, 1], kd=[1, 1], tau=[0, 0])
     forward = Twist(Vector3(0.1, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
     r.send("motor_command", body)
-    deadline = time.monotonic() + 4 * DEADMAN_S
-    while time.monotonic() < deadline:
+    assert wait_until(lambda: len(writes(r)) == 1)
+    for count in range(2, 7):
+        clock.return_value += DEADMAN_S * 0.75
         r.send("base_command", forward)
-        time.sleep(DEADMAN_S / 5)
-    assert r.module.halts == 0
-    assert wait_until(lambda: r.module.status().deadman_fired and r.module.halts == 1)
+        assert wait_until(lambda expected=count: len(writes(r)) == expected)
+        assert r.module.halts == 0
+
+    clock.return_value += DEADMAN_S * 1.01
+    loop.call_soon_threadsafe(lambda: None)
+    assert wait_until(lambda: r.module.status().deadman_fired)
     assert r.module.halts == 1
 
 
