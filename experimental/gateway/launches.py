@@ -571,6 +571,22 @@ def start_copy(blueprint: str, copy: dict[str, Any]) -> dict[str, Any]:
         return started
 
 
+def kill_starting(launch: dict[str, Any]) -> str:
+    """SIGKILL a launch that hasn't registered yet: its whole process group, as it may have spawned workers."""
+    with suppress(ProcessLookupError, PermissionError):
+        os.killpg(launch["pid"], signal.SIGKILL)
+    return f"Killed {launch['blueprint']} (PID {launch['pid']}) while it was starting"
+
+
+def wait_for_exit(pid: int) -> None:
+    """Until `pid`'s process group is gone, so a launch started next finds the gateway idle."""
+    deadline = time.monotonic() + constants.KILLED_LAUNCH_EXIT_WAIT_S
+    while alive(pid):
+        if time.monotonic() > deadline:
+            raise StillRunningError(f"pid {pid} was killed but hasn't exited yet")
+        time.sleep(constants.KILLED_LAUNCH_POLL_S)
+
+
 def stop() -> str:
     """Exactly `dimos stop`: SIGTERM the newest run, SIGKILL after 5 s. A launch that hasn't registered yet is killed."""
     entry = get_most_recent(alive_only=True)
@@ -579,9 +595,7 @@ def stop() -> str:
         launch = current_launch()
         if launch is None or launch["phase"] != "starting":
             raise ApiError(409, "nothing running")
-        with suppress(ProcessLookupError, PermissionError):
-            os.killpg(launch["pid"], signal.SIGKILL)
-        return f"Killed {launch['blueprint']} (PID {launch['pid']}) while it was starting"
+        return kill_starting(launch)
     if record is not None and int(record["pid"]) == entry.pid:
         _save({**record, "stopping": True})
     message, _ = stop_entry(entry)
@@ -601,6 +615,10 @@ def relaunch(dimos_dir: Path) -> dict[str, Any]:
         raise ApiError(409, "nothing running, and the gateway hasn't launched anything to relaunch")
     if entry is not None:
         stop()
+    elif (launch := current_launch()) is not None and launch["phase"] == "starting":
+        # a stuck or slow startup: start()'s idle check would refuse while it lives
+        kill_starting(launch)
+        wait_for_exit(int(launch["pid"]))
     blueprint = str(request["blueprint"])
     if "copy" in request:
         return start_copy(blueprint, request["copy"])
