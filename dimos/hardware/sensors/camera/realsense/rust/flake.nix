@@ -18,8 +18,8 @@
         # Keep this flake self-contained: shared SDK/configuration arrive through
         # one fixed-hash project source, rather than paths outside this directory.
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/62b899b2d3b0d315988df7db25664264391fb4ea";
-          sha256 = "8d920aba91b51ba63f18e4cd88cdfff95ff4f3aa2dfbb34f2ef209a59182c75c";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/937e53e824b7a26bd52421ba46687d211f9e1e7b";
+          sha256 = "e7db5c2d0cc13a9e6dd76d90e4ee444fa99840f9ab0bf4c16139ba12673b1109";
         };
         sharedSource = pkgs.runCommand "dimos-cdr-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -33,6 +33,7 @@
           mkdir -p $out/native/rust $out/build/message-source $out/dimos/hardware/sensors/camera/realsense/rust
           cp -r ${sharedSource}/native/rust/dimos-module $out/native/rust/
           cp -r ${sharedSource}/native/rust/dimos-module-macros $out/native/rust/
+          cp -r ${sharedSource}/native/rust/dimos-message-adapters $out/native/rust/
           cp -r ${messages.source}/rust $out/build/message-source/rust
           cp -r ${cameraSource}/. $out/dimos/hardware/sensors/camera/realsense/rust/
         '';
@@ -50,7 +51,7 @@
           dimos-realsense = needsLibrealsense;
         };
 
-        ours = [ name "dimos-module" "dimos-module-macros" ];
+        ours = [ name "dimos-module" "dimos-module-macros" "dimos-message-adapters" ];
         callWith = mode: import generated {
           inherit pkgs;
           buildRustCrateForPkgs = cratePkgs:

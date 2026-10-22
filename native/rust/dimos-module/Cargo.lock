@@ -226,20 +226,6 @@ name = "bytemuck"
 version = "1.25.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
-dependencies = [
- "bytemuck_derive",
-]
-
-[[package]]
-name = "bytemuck_derive"
-version = "1.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.5",
-]
 
 [[package]]
 name = "byteorder"
@@ -261,6 +247,15 @@ checksum = "a3eb0f42d6c360dc3f8a821f6bf2fdea7f72bfd36b3076eb0e6d1e9e0752fff4"
 dependencies = [
  "find-msvc-tools",
  "shlex",
+]
+
+[[package]]
+name = "cdr"
+version = "0.2.4"
+source = "git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb#38a4368255d408faf374726653b39d4a4e9735cb"
+dependencies = [
+ "byteorder",
+ "serde",
 ]
 
 [[package]]
@@ -607,12 +602,12 @@ dependencies = [
 name = "dimos-module"
 version = "0.1.0"
 dependencies = [
+ "cdr",
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
  "nalgebra",
  "rayon",
- "re_cdr",
  "serde",
  "serde_json",
  "tokio",
@@ -2177,18 +2172,6 @@ dependencies = [
  "time",
  "x509-parser",
  "yasna",
-]
-
-[[package]]
-name = "re_cdr"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba10c21433b597481f366b978cdf2617e56785b38cb0dcc3833c6b8ad7e061a"
-dependencies = [
- "bytemuck",
- "byteorder",
- "serde",
- "thiserror",
 ]
 
 [[package]]

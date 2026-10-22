@@ -12,42 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! XCDR1 transport framing around the upstream Serde CDR codec.
-use re_cdr::{BigEndian, LittleEndian};
+//! SDK error and message-boundary adapter for the upstream complete CDR codec.
+use ::cdr::{CdrBe, CdrLe, Infinite};
 use serde::{de::DeserializeOwned, Serialize};
-use std::io;
+use std::io::{self, Cursor};
 
 pub fn encode<T: Serialize>(message: &T) -> io::Result<Vec<u8>> {
     encode_endian(message, true)
 }
 
 pub fn encode_endian<T: Serialize>(message: &T, little_endian: bool) -> io::Result<Vec<u8>> {
-    let body = if little_endian {
-        re_cdr::to_vec::<_, LittleEndian>(message)
+    if little_endian {
+        ::cdr::serialize::<_, _, CdrLe>(message, Infinite)
     } else {
-        re_cdr::to_vec::<_, BigEndian>(message)
+        ::cdr::serialize::<_, _, CdrBe>(message, Infinite)
     }
-    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
-    let mut bytes = Vec::with_capacity(4 + body.len());
-    bytes.extend_from_slice(&[0, u8::from(little_endian), 0, 0]);
-    bytes.extend(body);
-    Ok(bytes)
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> io::Result<T> {
-    if bytes.len() < 4 || bytes[0] != 0 || bytes[1] > 1 || bytes[2] != 0 || bytes[3] != 0 {
+    // The SDK accepts standalone plain XCDR1, not parameter lists or other DDS representations.
+    if !matches!(bytes.get(..4), Some([0, 0 | 1, 0, 0])) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Expected plain CDR/XCDR1 encapsulation",
         ));
     }
-    let (value, consumed) = if bytes[1] == 1 {
-        re_cdr::from_bytes::<T, LittleEndian>(&bytes[4..])
-    } else {
-        re_cdr::from_bytes::<T, BigEndian>(&bytes[4..])
-    }
-    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    if consumed != bytes.len() - 4 {
+    let mut reader = Cursor::new(bytes);
+    let value = ::cdr::deserialize_from(&mut reader, ::cdr::Bounded(bytes.len() as u64))
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if reader.position() != bytes.len() as u64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Trailing bytes after CDR message",
@@ -79,9 +73,43 @@ mod tests {
     }
 
     #[test]
+    fn serialization_failure_is_an_error() {
+        struct Unencodable;
+        impl Serialize for Unencodable {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("invalid message"))
+            }
+        }
+        assert_eq!(
+            encode(&Unencodable).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn oversized_or_unterminated_strings_fail_at_the_library_boundary() {
+        for bytes in [
+            vec![0, 1, 0, 0, 255, 255, 255, 255],
+            vec![0, 1, 0, 0, 0, 0, 0, 0],
+            vec![0, 1, 0, 0, 2, 0, 0, 0, b'a', b'b'],
+        ] {
+            assert_eq!(
+                decode::<String>(&bytes).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+        assert_eq!(
+            decode::<String>(&encode(&"相机/café").unwrap()).unwrap(),
+            "相机/café"
+        );
+    }
+
+    #[test]
     fn reject_wrong_encapsulation_truncation_and_trailing_bytes() {
         for bytes in [
             vec![],
+            vec![1, 1, 0, 0, 42, 0, 0, 0],
+            vec![0, 1, 1, 0, 42, 0, 0, 0],
             vec![0, 1, 0, 0, 42],
             vec![0, 3, 0, 0, 42, 0, 0, 0],
             vec![0, 1, 0, 0, 42, 0, 0, 0, 0],

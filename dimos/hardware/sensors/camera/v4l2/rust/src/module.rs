@@ -28,10 +28,6 @@ use crate::capture::{fourcc, Capture};
 use crate::clock::{driver_clocks, wall_s, CaptureClock};
 use crate::jpeg::encode_packed_422;
 
-fn encode_cdr(message: &CompressedImage) -> Vec<u8> {
-    cdr::encode(message).expect("serialize a valid compressed camera frame")
-}
-
 #[cfg(test)]
 mod cdr_tests {
     use super::*;
@@ -50,7 +46,7 @@ mod cdr_tests {
             format: "jpeg".into(),
             data: vec![0xff, 0xd8, 0xff, 0xd9],
         };
-        let payload = encode_cdr(&message);
+        let payload = cdr::encode(&message).unwrap();
         assert_eq!(&payload[..4], &[0, 1, 0, 0]);
         assert_eq!(cdr::decode::<CompressedImage>(&payload).unwrap(), message);
         if let Some(path) = std::env::var_os("DIMOS_CAMERA_CDR_FIXTURE") {
@@ -95,7 +91,7 @@ pub struct Config {
 #[derive(Module)]
 #[module(name = "v4l2_camera", setup = start)]
 pub struct V4L2Camera {
-    #[output(encode = encode_cdr)]
+    #[output(encode = cdr::encode)]
     jpeg_out: Output<CompressedImage>,
 
     #[config]

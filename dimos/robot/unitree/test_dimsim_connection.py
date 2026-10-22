@@ -73,10 +73,7 @@ def test_dimsim_schema_artifact_is_exactly_the_canonical_package_output():
 @pytest.fixture(scope="module")
 def typescript_results(tmp_path_factory):
     deno = os.environ.get("DIMOS_DIMSIM_DENO")
-    if not deno:
-        pytest.skip(
-            "Set DIMOS_DIMSIM_DENO after preparing DimSim dependencies; CI requires this acceptance gate"
-        )
+    assert deno, "Set DIMOS_DIMSIM_DENO before running native_e2e"
     assert Path(deno).is_file(), "configured Deno must exist"
     folder = tmp_path_factory.mktemp("dimsim-cdr")
     fixtures = folder / "input.json"
@@ -104,7 +101,7 @@ def typescript_results(tmp_path_factory):
             "test",
             "--no-prompt",
             "--cached-only",
-            "--node-modules-dir=manual",
+            "--node-modules-dir=auto",
             "--config",
             str(_DIMSIM / "cli/deno.json"),
             "--allow-read",
@@ -128,6 +125,7 @@ def typescript_results(tmp_path_factory):
     return json.loads(output.read_text())
 
 
+@pytest.mark.native_e2e
 def test_actual_typescript_browser_image_outputs_decode_with_exact_pixels_and_clock(
     typescript_results,
 ):
@@ -145,6 +143,7 @@ def test_actual_typescript_browser_image_outputs_decode_with_exact_pixels_and_cl
         )
 
 
+@pytest.mark.native_e2e
 def test_actual_rapier_pose_deadman_and_lidar_keep_ros_coordinates(typescript_results):
     pose = decode(bytes.fromhex(typescript_results["pose"]), PoseStamped)
     stopped = decode(bytes.fromhex(typescript_results["stoppedPose"]), PoseStamped)
