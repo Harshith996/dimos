@@ -154,7 +154,7 @@ const one = await (await fetch("../../dimos-gateway/catalog/modules/go2connectio
 
 Desktop starts it (dimos.yaml `start:`), but it also runs on its own from a dimos checkout:
 
-```sh
+```sh skip
 .venv/bin/python -m experimental.gateway --detach      # in the background, on its unix socket
 .venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
 ```
