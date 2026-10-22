@@ -1,9 +1,9 @@
 # Dimos gateway: how do I...?
 
-The dimos gateway (`experimental/gateway`, experimental) is the HTTP API dimOS Desktop, apps and agents use: the
-catalog of what could run (blueprints, modules, RPCs, robots, config schemas), what is running (`/active`: launch,
-stop, its module instances, their RPCs and streams) and what ran (`/history`: logs and recordings). It saves no
-config: the caller sends all of a launch's config with the launch. `GET /openapi.json` lists every route.
+The stable API for building apps on top of dimos. It covers the catalog of what could run (blueprints, modules, RPCs,
+robots, config schemas), what is running (`/active`: launch, stop, its module instances, their RPCs and streams) and
+what ran (`/history`: logs and recordings). It saves no config: the caller sends all of a launch's config with the
+launch. It's versioned (`GET /info` `api`, the `desktop-gateway-v` tags); `GET /openapi.json` lists every route.
 
 Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos-gateway/` is the gateway
 (Desktop serves it under `/dimos-gateway`; the gateway's own routes have no prefix). An app's `dimos.yaml` lists
