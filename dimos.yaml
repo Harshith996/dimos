@@ -271,11 +271,13 @@ provides:
       get:
         description: >-
           The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks
+      delete:
+        summary: Log out (forget the stored key); a cloud-account event follows
     /cloud/login:
       post:
-        summary: 'Start a device login: open the answer''s url and enter its code'
+        summary: 'Start a device login: open the answer''s url and enter its code (cloud-login events follow it)'
       delete:
-        summary: Cancel the device login in progress; with none in progress, log out
+        summary: Cancel the device login in progress (with none, does nothing)
     /cloud/uploads:
       get:
         description: >-

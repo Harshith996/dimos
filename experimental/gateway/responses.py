@@ -574,7 +574,6 @@ class Upload(Body):
     notice: str | None
     error: str | None
     errorCode: str | None
-    log: str | None
     createdAt: int
     startedAt: int | None
     finishedAt: int | None
