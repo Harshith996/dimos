@@ -138,10 +138,7 @@ class LidarDevice(SensorDevice[Lidar]):
         imu = self.sensor.imu
         if imu is None:
             return
-        try:
-            observations = self.reader.channel.read_observations()
-        except BlockingIOError:
-            return
+        observations = self.reader.channel.read_observations()
         frames = [
             frame
             for frame in observations
