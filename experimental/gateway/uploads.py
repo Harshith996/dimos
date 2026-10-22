@@ -39,9 +39,7 @@ from experimental.gateway.events import Bus
 logger = setup_logger()
 
 FINISHED = ("done", "failed", "cancelled")
-WARMUP_S = 1.0
 TAU_S = 6.0
-ACCOUNT_TTL_S = 20.0
 IDLE_LOGIN: dict[str, Any] = {
     "state": "idle",
     **dict.fromkeys(("url", "urlComplete", "code", "expiresAt", "email", "error")),
@@ -73,7 +71,9 @@ class Rate:
             self.at, self.done = at, done
 
     def eta(self, remaining: int) -> float | None:
-        if not self.bps or self.at - self.since < WARMUP_S:
+        if (
+            not self.bps or self.at - self.since < 1.0
+        ):  # no ETA in the first second, the rate is noise
             return None
         return max(remaining / self.bps, 1.0 if remaining > 0 else 0.0)
 
@@ -353,7 +353,9 @@ class Uploads:
 
     async def account(self, fresh: bool) -> dict[str, Any]:
         cached = self.account_cache
-        if not fresh and cached and time.monotonic() - cached[0] < ACCOUNT_TTL_S:
+        if (
+            not fresh and cached and time.monotonic() - cached[0] < 20.0
+        ):  # the account is re-checked at most every 20 s
             return cached[1]
         value = await asyncio.to_thread(account)
         self.account_cache = (time.monotonic(), value)
