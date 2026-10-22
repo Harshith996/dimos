@@ -51,7 +51,6 @@ dimos/robot/unitree/g1/
   assets/                            Robot MJCF and URDF
   devices/                           DDS motors, fault checks, stock SDK/WebRTC
   controllers/groot/                 Gains, coordinator host, control composition
-  controllers/sonic/                 Inference, runtime, policy Module, model setup
   manipulation/                      Planning groups, arm IK, ready pose
   sensors/                           Real sensor transforms and recording
   visualization/                     G1 Rerun configuration
@@ -60,9 +59,10 @@ dimos/robot/unitree/g1/
 ```
 
 The GR00T coordinator task remains in `control/tasks/g1_groot_wbc_task/`, where
-the coordinator discovers tasks. SONIC does not use that task mechanism: its
-G1-specific runtime and inference live together under `controllers/sonic/`.
-Changing a policy does not require moving or duplicating the robot description.
+the coordinator discovers tasks. SONIC is maintained in the independent G1
+PRs #4304, #4305 and #3557; this stack does not include its implementation or
+sim2 integration. Changing a policy does not require moving or duplicating
+the robot description.
 
 Go2 follows the same ownership: `controllers/locomotion/` contains policy
 inference, while `simulation/` contains the simulated device, physical model
