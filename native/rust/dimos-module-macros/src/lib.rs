@@ -194,9 +194,7 @@ enum FieldKind {
         handler: Ident,
     },
     Config,
-    Tf {
-        codecs: Option<(Path, Path)>,
-    },
+    Tf,
     State,
 }
 
@@ -335,12 +333,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote!(#name: builder.io(#name_str, #decode, #encode))
             }
             FieldKind::Config => quote!(#name: config),
-            FieldKind::Tf { codecs: None } => quote!(#name: builder.tf()),
-            FieldKind::Tf {
-                codecs: Some((decode, encode)),
-            } => {
-                quote!(#name: builder.tf_with_codec(#decode, #encode))
-            }
+            FieldKind::Tf => quote!(#name: builder.tf()),
             FieldKind::State => quote!(#name: ::core::default::Default::default()),
         }
     });
@@ -458,23 +451,36 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             // goes: bake has to put the topic in the host's map or the module
             // refuses to start. It lists under `inputs` because the graph has
             // no io kind and a host mostly consumes tf.
-            FieldKind::Tf { .. } => want_input,
+            FieldKind::Tf => want_input,
             _ => false,
         })
-        .map(|f| PortDecl {
-            name: f.name.to_string(),
-            // `Tf` carries no generic payload. The port is TFMessage by
-            // construction.
-            // An explicit `msg` wins: a view type's wire payload and the dimos
-            // message it stands for are allowed to differ.
-            ty: match f.kind {
-                FieldKind::Tf { .. } => TF_PAYLOAD_TYPE.to_string(),
-                _ => f
-                    .msg
-                    .clone()
-                    .or_else(|| port_payload_type(f.ty))
-                    .unwrap_or_default(),
-            },
+        .flat_map(|f| {
+            let port = PortDecl {
+                name: f.name.to_string(),
+                // `Tf` carries no generic payload. The port is TFMessage by
+                // construction.
+                // An explicit `msg` wins: a view type's wire payload and the dimos
+                // message it stands for are allowed to differ.
+                ty: match f.kind {
+                    FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
+                    _ => f
+                        .msg
+                        .clone()
+                        .or_else(|| port_payload_type(f.ty))
+                        .unwrap_or_default(),
+                },
+            };
+            if matches!(f.kind, FieldKind::Tf) {
+                vec![
+                    port,
+                    PortDecl {
+                        name: "tf_static".into(),
+                        ty: TF_PAYLOAD_TYPE.into(),
+                    },
+                ]
+            } else {
+                vec![port]
+            }
         })
         .collect()
 }
@@ -656,31 +662,13 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));
             }
-            let codecs = if matches!(&attr.meta, syn::Meta::Path(_)) {
-                None
-            } else {
-                let mut decode: Option<Path> = None;
-                let mut encode: Option<Path> = None;
-                attr.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("decode") {
-                        decode = Some(meta.value()?.parse()?);
-                    } else if meta.path.is_ident("encode") {
-                        encode = Some(meta.value()?.parse()?);
-                    } else {
-                        return Err(meta.error("expected `decode = ...` or `encode = ...`"));
-                    }
-                    Ok(())
-                })?;
-                Some((
-                    decode.ok_or_else(|| {
-                        syn::Error::new_spanned(attr, "#[tf] requires both decode and encode")
-                    })?,
-                    encode.ok_or_else(|| {
-                        syn::Error::new_spanned(attr, "#[tf] requires both decode and encode")
-                    })?,
-                ))
-            };
-            found = Some(FieldKind::Tf { codecs });
+            if !matches!(&attr.meta, syn::Meta::Path(_)) {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "#[tf] uses standard ROS TF messages and takes no codec arguments",
+                ));
+            }
+            found = Some(FieldKind::Tf);
         }
     }
 
@@ -769,10 +757,7 @@ mod tests {
 
     #[test]
     fn tf_accepts_legacy_or_explicit_codec_pair_and_keeps_registry_type() {
-        for field in [
-            parse_quote!(#[tf] tf: Tf),
-            parse_quote!(#[tf(decode = wire::decode, encode = wire::encode)] tf: Tf),
-        ] {
+        for field in [parse_quote!(#[tf] tf: Tf)] {
             let attr = super::classify_field(&field, &parse_quote!(tf)).expect("valid TF field");
             let ty: syn::Type = parse_quote!(Tf);
             let name = parse_quote!(tf);
@@ -783,8 +768,9 @@ mod tests {
                 msg: attr.msg,
             }];
             let ports = super::port_decls(&fields, true);
-            assert_eq!(ports.len(), 1);
+            assert_eq!(ports.len(), 2);
             assert_eq!(ports[0].ty, "TFMessage");
+            assert_eq!(ports[1].name, "tf_static");
         }
     }
 
