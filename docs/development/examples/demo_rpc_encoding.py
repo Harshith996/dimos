@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""演示 MessagePack + LCM 的 RPC 数据往返, 在内存中模拟收发。
+"""Demonstrate an RPC round trip with MessagePack + LCM, using in-memory transport.
 
-从仓库根目录运行:
+Run from the repository root:
     uv run --no-sync --with msgpack python docs/development/examples/demo_rpc_encoding.py
 """
 
@@ -24,17 +24,17 @@ import msgpack
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-LCM_EXT = 1  # 示例约定: 这个扩展编号表示 LCM 消息。
+LCM_EXT = 1  # This example reserves extension code 1 for LCM messages.
 VECTOR3_TYPE = "geometry_msgs.Vector3"
 
 
 def calculate(vector: Vector3, scale: float) -> Vector3:
-    """业务函数只处理解码后的 Python 值。"""
+    """The business function only handles decoded Python values."""
     return Vector3(vector.x * scale, vector.y * scale, vector.z * scale)
 
 
 def encode_lcm(value: Any) -> msgpack.ExtType:
-    """MessagePack 遇到 Vector3 时, 保存类型名和完整 LCM bytes。"""
+    """Store the type name and full LCM bytes when MessagePack encounters a Vector3."""
     if type(value) is not Vector3:
         raise TypeError(f"Unsupported type: {type(value).__name__}")
     content = msgpack.packb({"type": VECTOR3_TYPE, "data": value.lcm_encode()}, use_bin_type=True)
@@ -42,7 +42,7 @@ def encode_lcm(value: Any) -> msgpack.ExtType:
 
 
 def decode_lcm(code: int, data: bytes) -> Vector3:
-    """按双方约定的扩展编号和类型名选择 decoder。"""
+    """Select the decoder using the agreed extension code and type name."""
     if code != LCM_EXT:
         raise ValueError(f"Unknown extension: {code}")
     content = msgpack.unpackb(data, raw=False)
@@ -63,42 +63,42 @@ def unpack(payload: bytes) -> Any:
 
 
 def handle_calculate(request: bytes) -> bytes:
-    """服务端只接收和返回 bytes; 真实场景由 Zenoh 搬运。"""
+    """The server receives and returns bytes; Zenoh would transport them in a real RPC."""
     params = unpack(request)
     vector = params["args"][0]
     scale = params["kwargs"]["scale"]
     assert type(vector) is Vector3
     assert type(scale) is float
-    print(f"3. 服务端解码: {type(vector).__name__}{vector.as_tuple}, scale={scale}")
+    print(f"3. Server decodes: {type(vector).__name__}{vector.as_tuple}, scale={scale}")
 
     result = calculate(*params["args"], **params["kwargs"])
-    print(f"4. 执行 calculate: Vector3{result.as_tuple}")
+    print(f"4. Execute calculate: Vector3{result.as_tuple}")
     reply = pack(result)
-    print(f"5. 服务端编码返回值: {len(reply)} bytes")
+    print(f"5. Server encodes the return value: {len(reply)} bytes")
     return reply
 
 
 def main() -> None:
-    print("内存演示: 真实 RPC 中由 Zenoh 传输 request 和 reply 两份 bytes。")
-    print("1. 客户端调用: calculate(Vector3(1, 2, 3), scale=2.0)")
+    print("In-memory demo: in a real RPC, Zenoh transports the request and reply bytes.")
+    print("1. Client call: calculate(Vector3(1, 2, 3), scale=2.0)")
     request = pack({"args": [Vector3(1, 2, 3)], "kwargs": {"scale": 2.0}})
-    print(f"2. 客户端编码请求: {len(request)} bytes")
-    print(f"   请求的十六进制表示: {request.hex()}")
+    print(f"2. Client encodes the request: {len(request)} bytes")
+    print(f"   Request in hex: {request.hex()}")
 
-    # 暂时不使用 ext_hook, 观察普通 MessagePack decoder 能识别哪些信息。
+    # Omit ext_hook to inspect what a standard MessagePack decoder can recognize.
     wire = msgpack.unpackb(request, raw=False)
     extension = wire["args"][0]
     assert isinstance(extension, msgpack.ExtType)
     content = msgpack.unpackb(extension.data, raw=False)
-    print(f"   普通 MessagePack 解码: args[0] 是 ExtType, 编号={extension.code}")
-    print(f"   扩展内部: type={content['type']}, data={len(content['data'])} LCM bytes")
-    print(f"   普通参数: scale={wire['kwargs']['scale']}, 无需 LCM decoder")
+    print(f"   Standard MessagePack decoding: args[0] is ExtType, code={extension.code}")
+    print(f"   Extension content: type={content['type']}, data={len(content['data'])} LCM bytes")
+    print(f"   Regular argument: scale={wire['kwargs']['scale']}, no LCM decoder needed")
 
     reply = handle_calculate(request)
     answer = unpack(reply)
     assert type(answer) is Vector3
     assert answer.as_tuple == (2.0, 4.0, 6.0)
-    print(f"6. 客户端解码: {type(answer).__name__}{answer.as_tuple}")
+    print(f"6. Client decodes: {type(answer).__name__}{answer.as_tuple}")
 
 
 if __name__ == "__main__":
