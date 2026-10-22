@@ -38,7 +38,7 @@ def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
 def recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "run.mcap"
     path.write_bytes(b"x" * 100)
-    monkeypatch.setattr("dimos.cloud.data.kind_of", lambda p: "recording")
+    monkeypatch.setattr("dimos.cloud.data.kind_of", lambda path: "recording")
     return path
 
 
@@ -66,7 +66,11 @@ def work(client: TestClient) -> None:
 
 
 def state_of(client: TestClient, id: str) -> str:
-    return next(u["state"] for u in client.get("/cloud/uploads").json()["uploads"] if u["id"] == id)
+    return next(
+        upload["state"]
+        for upload in client.get("/cloud/uploads").json()["uploads"]
+        if upload["id"] == id
+    )
 
 
 def test_an_upload_goes_through_the_queue(
@@ -196,7 +200,7 @@ def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_rate_gives_a_time_left_after_warming_up() -> None:
-    rate = uploads.Rate(since=0.0, t=0.0, done=0)
+    rate = uploads.Rate(since=0.0, at=0.0, done=0)
     rate.tick(0.5, 50)
     assert rate.eta(50) is None
     rate.tick(2.0, 200)

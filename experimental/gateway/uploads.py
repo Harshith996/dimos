@@ -61,19 +61,19 @@ class Rate:
     """Bytes per second, a moving average over about TAU_S seconds."""
 
     since: float
-    t: float
+    at: float
     done: int
     bps: float | None = None
 
-    def tick(self, t: float, done: int) -> None:
-        if t > self.t:
-            instant = (done - self.done) / (t - self.t)
-            alpha = 1.0 - math.exp(-(t - self.t) / TAU_S)
+    def tick(self, at: float, done: int) -> None:
+        if at > self.at:
+            instant = (done - self.done) / (at - self.at)
+            alpha = 1.0 - math.exp(-(at - self.at) / TAU_S)
             self.bps = instant if self.bps is None else self.bps + alpha * (instant - self.bps)
-            self.t, self.done = t, done
+            self.at, self.done = at, done
 
     def eta(self, remaining: int) -> float | None:
-        if not self.bps or self.t - self.since < WARMUP_S:
+        if not self.bps or self.at - self.since < WARMUP_S:
             return None
         return max(remaining / self.bps, 1.0 if remaining > 0 else 0.0)
 
@@ -126,7 +126,9 @@ def causes(error: BaseException | None) -> Iterator[BaseException]:
 
 def classify(error: BaseException) -> tuple[str, str]:
     chain = list(causes(error))
-    status = next((e.code for e in chain if isinstance(e, urllib.error.HTTPError)), None)
+    status = next(
+        (cause.code for cause in chain if isinstance(cause, urllib.error.HTTPError)), None
+    )
     text = str(error) or type(error).__name__
     if isinstance(error, FileNotFoundError):
         return "file_missing", f"The file is gone: {error.filename or text}"
@@ -134,7 +136,9 @@ def classify(error: BaseException) -> tuple[str, str]:
         return "not_logged_in", "Not logged in to Dimensional cloud (or the login was revoked)."
     if status in (402, 413, 507):
         return "quota", f"Your Dimensional cloud storage quota doesn't allow this upload: {text}"
-    if any(isinstance(e, TimeoutError | ConnectionError | urllib.error.URLError) for e in chain):
+    if any(
+        isinstance(cause, TimeoutError | ConnectionError | urllib.error.URLError) for cause in chain
+    ):
         return "network", f"Couldn't reach Dimensional cloud: {text}"
     return "failed", text
 
@@ -224,7 +228,10 @@ class Uploads:
                 self.uploaded_by_path.setdefault(done["path"], done)
             if upload["state"] == "uploading":
                 upload.update(state="queued", phase=None, rateBps=None, etaSeconds=None)
-        self.next = max((int(u["id"][1:]) for u in self.items if u["id"][1:].isdigit()), default=0)
+        self.next = max(
+            (int(upload["id"][1:]) for upload in self.items if upload["id"][1:].isdigit()),
+            default=0,
+        )
         self.waiting_for_login = False
         self.rates: dict[str, Rate] = {}
         self.wake = asyncio.Event()
@@ -236,7 +243,7 @@ class Uploads:
         self.stopping = False
 
     def get(self, id: str) -> dict[str, Any] | None:
-        return next((u for u in self.items if u["id"] == id), None)
+        return next((upload for upload in self.items if upload["id"] == id), None)
 
     def update(self, id: str, **change: Any) -> dict[str, Any] | None:
         """Change an upload, clearing its progress once it isn't uploading; returns a copy."""
@@ -257,7 +264,11 @@ class Uploads:
             store.write_atomic(self.file, json.dumps(self.items, indent=2))
 
     def uploaded(self) -> dict[str, Any]:
-        return {"byPath": {p: checked(e) for p, e in sorted(self.uploaded_by_path.items())}}
+        return {
+            "byPath": {
+                path: checked(entry) for path, entry in sorted(self.uploaded_by_path.items())
+            }
+        }
 
     def uploaded_one(self, path: str) -> dict[str, Any] | None:
         entry = self.uploaded_by_path.get(str(Path(path.strip()).expanduser()))
@@ -325,7 +336,7 @@ class Uploads:
         return dict(upload)
 
     def clear_finished(self) -> dict[str, Any]:
-        self.items = [u for u in self.items if u["state"] not in FINISHED]
+        self.items = [upload for upload in self.items if upload["state"] not in FINISHED]
         self.save()
         self.emit_waiting(cleared=True)
         return self.listing()
@@ -425,8 +436,8 @@ class Uploads:
     async def work(self) -> None:
         self.loop = asyncio.get_running_loop()
         while not self.stopping:
-            uploading = any(u["state"] == "uploading" for u in self.items)
-            queued = next((u for u in self.items if u["state"] == "queued"), None)
+            uploading = any(upload["state"] == "uploading" for upload in self.items)
+            queued = next((upload for upload in self.items if upload["state"] == "queued"), None)
             if queued and not uploading and not self.waiting_for_login:
                 await self.upload(queued)
             else:
@@ -434,7 +445,7 @@ class Uploads:
                 self.wake.clear()
 
     def record_progress(
-        self, id: str, phase: str, done: int, total: int, t: float
+        self, id: str, phase: str, done: int, total: int, at: float
     ) -> dict[str, Any] | None:
         upload = self.get(id)
         if upload is None or upload["state"] != "uploading":
@@ -447,9 +458,9 @@ class Uploads:
             )
         rate = self.rates.get(id)
         if rate is None or done < rate.done:
-            rate = self.rates[id] = Rate(since=t, t=t, done=done)
+            rate = self.rates[id] = Rate(since=at, at=at, done=done)
         else:
-            rate.tick(t, done)
+            rate.tick(at, done)
         eta = rate.eta(max(total - done, 0))
         if phase == "upload" and done >= total:
             phase, eta = "finishing", None
