@@ -51,10 +51,10 @@ for those use the tray square instead, place_at {left_tray} for the left arm or 
 place_at {right_tray} for the right arm, and say so.
 """
 
-# Drop point inside the yellow bin on each arm's side. The bin stands at x 0.12 to 0.44,
+# Drop point at the yellow bin's centre, reached by either arm. The bin stands at x 0.12 to 0.44,
 # y -0.10 to +0.13 (rim 7 cm up); a 13 cm drop keeps an object grasped 4 cm above the
 # table clear of the rim, and the 5 cm pre-place at 18 cm is the fingers-down reach ceiling.
-DUAL_OPENYAM_DROP_POSES = {"left": (0.28, 0.05, 0.13), "right": (0.28, -0.05, 0.13)}
+DUAL_OPENYAM_DROP_POSES = {"left": (0.28, 0.0, 0.13), "right": (0.28, 0.0, 0.13)}
 # Tray square on each arm's side for objects grasped higher than 4 cm, which would hit the rim.
 DUAL_OPENYAM_TRAY_POSES = {"left": (0.26, 0.20, 0.05), "right": (0.26, -0.20, 0.05)}
 

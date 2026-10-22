@@ -129,8 +129,8 @@ def test_recorded_stream_names_are_valid_identifiers() -> None:
 def test_agent_prompt_names_both_groups_and_their_drop_poses() -> None:
     prompt = dual_openyam_agent_prompt()
     assert "left_manipulator when the object's Y is positive" in prompt
-    assert "place_at 0.28 0.05 0.13 left_manipulator" in prompt
-    assert "place_at 0.28 -0.05 0.13 right_manipulator" in prompt
+    assert "place_at 0.28 0.0 0.13 left_manipulator" in prompt
+    assert "place_at 0.28 0.0 0.13 right_manipulator" in prompt
     assert "place_at 0.26 0.2 0.05 left_manipulator" in prompt
     assert "place_at 0.26 -0.2 0.05 right_manipulator" in prompt
     assert {HeuristicGraspModule, ManipulationModule} <= _modules(dual_openyam_grasp_agent)
