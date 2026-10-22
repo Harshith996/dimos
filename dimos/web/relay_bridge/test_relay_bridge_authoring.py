@@ -33,14 +33,14 @@ import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
@@ -82,16 +82,6 @@ class _ImageProducer(Module):
     color_image: Out[Image]
 
 
-class _CostmapProducer(Module):
-    config: _EmptyConfig
-    global_costmap: Out[OccupancyGrid]
-
-
-class _TwistConsumer(Module):
-    config: _EmptyConfig
-    tele_cmd_vel: In[Twist]
-
-
 class _BareModule(Module):
     config: _EmptyConfig
 
@@ -101,36 +91,7 @@ def test_composition_adds_relay_to_non_visual_blueprint() -> None:
     relay_atoms = [atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule]
 
     assert len(relay_atoms) == 1
-    assert relay_atoms[0].kwargs["available_channels"] == ("color_image",)
-
-
-def test_composition_includes_costmap_producer() -> None:
-    blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _CostmapProducer.blueprint())
-    )
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
-
-    assert relay_atom.kwargs["available_channels"] == ("color_image", "global_costmap")
-
-
-def test_composition_derives_tx_channels_from_consumers() -> None:
-    # A MovementManager-like consumer of tele_cmd_vel makes the tx channel
-    # available (Out transports exist regardless of wiring, so consumers are
-    # the availability signal).
-    blueprint = with_relay_bridge(
-        autoconnect(_ImageProducer.blueprint(), _TwistConsumer.blueprint())
-    )
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
-
-    assert relay_atom.kwargs["available_channels"] == ("color_image", "tele_cmd_vel")
-
-
-def test_composition_ignores_disabled_producers() -> None:
-    source = _ImageProducer.blueprint().disabled_modules(_ImageProducer)
-    blueprint = with_relay_bridge(source)
-    relay_atom = next(atom for atom in blueprint.blueprints if atom.module is RelayBridgeModule)
-
-    assert relay_atom.kwargs["available_channels"] == ()
+    assert relay_atoms[0].kwargs == {}
 
 
 def test_composition_preserves_existing_relay() -> None:
@@ -851,3 +812,80 @@ def test_map2d_click_and_stop_publish(map_bridge) -> None:
     nack = clients[0].control_frames[2]
     assert isinstance(nack, PubNack) and nack.code == "decode_failed"
     assert len(points) == 1
+
+
+def test_inventory_refresh_preserves_authored_channels_and_retires_subscriptions(
+    monkeypatch, mocker
+):
+    blueprint = cockpit(
+        Video("color_image", max_hz=7.0, quality=39),
+        channels=[
+            Channel("status", dict, max_hz=3.0, params={"unit": "C"}, resend_on_subscribe=True),
+            Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
+        ],
+    )
+    module, clients = start_authored(monkeypatch, blueprint, wire=("status",))
+    try:
+        authored = module._manifest
+        status = transport_of(module, "status")
+        status.publish({"value": 1})
+        source = mocker.Mock(remote_name="Source")
+        source.get_stream_descriptors.return_value = [
+            StreamDescriptor(
+                "Source",
+                "counter",
+                "out",
+                "builtins.int",
+                "/remapped/counter",
+                pickle.dumps((int, FakeTransport())),
+            )
+        ]
+        own = mocker.Mock(remote_name=type(module).__name__)
+        module.on_system_modules([source, own])
+        own.get_stream_descriptors.assert_not_called()
+        source.stop_rpc_client.assert_called_once_with()
+        own.stop_rpc_client.assert_called_once_with()
+        assert clients[0].close_count == 1
+        assert len(status.subscribers) == 1
+        assert module._last_msg == {}
+        assert module._manifest == {
+            **authored,
+            "channels": [
+                *authored["channels"],
+                {
+                    "ch": "Source.counter",
+                    "dir": "rx",
+                    "encoding": "json.v1",
+                    "delivery": "reliable",
+                    "maxHz": 10.0,
+                    "params": {},
+                    "publish": "none",
+                    "requiredScope": None,
+                },
+            ],
+        }
+        status.publish({"value": 2})
+        module.on_system_modules([source, own])
+        assert len(clients) == 2
+        push(module, clients[-1], Subs(chs=["status", "Source.counter"], n=1))
+        counter = module.inputs["Source.counter"].transport
+        assert wait_until(lambda: counter.subscribers)
+        counter.publish(17)
+        assert wait_until(lambda: len(clients[-1].frames) == 2)
+        assert {ch: json.loads(payload) for ch, payload, _, _ in clients[-1].frames} == {
+            "status": {"value": 2},
+            "Source.counter": 17,
+        }
+        module.on_system_modules([])
+        assert module._manifest == authored
+        assert counter.subscribers == []
+        assert len(status.subscribers) == 1
+        assert module._last_msg == {}
+        seen = []
+        module.human_input.subscribe(seen.append)
+        push(module, clients[-1], _pub_frame(json.dumps("still connected").encode()))
+        assert wait_until(lambda: seen == ["still connected"])
+        assert wait_until(lambda: clients[-1].control_frames)
+        assert isinstance(clients[-1].control_frames[0], PubAck)
+    finally:
+        stop_module(module)

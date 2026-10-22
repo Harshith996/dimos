@@ -87,12 +87,12 @@ class RelayBridgeConfig(ModuleConfig):
     costmap_max_hz: float = Field(default=5.0, gt=0.0)
     """Full-grid zlib frames; the go2 mapper publishes at ~7.6 Hz."""
     available_channels: tuple[str, ...] | None = None
-    """Composition-provided channel allowlist for the no-manifest (auto)
-    mode; None derives from bound inputs. Ignored when `manifest` is set."""
+    """Initial built-in channel allowlist before runtime inventory arrives.
+    None derives from bound inputs. Ignored when `manifest` is set."""
     manifest: dict[str, Any] | None = None
     """Full manifest-v1 dict (see dimos.web.cockpit): defines the advertised
-    channels/panels/layout verbatim, with per-channel rates (maxHz) and jpeg
-    quality (params) overriding the flat rate/quality fields above. None:
+    channels/panels/layout, with discovered outputs appended. Rates (maxHz) and jpeg
+    quality (params) override the flat rate/quality fields above. None:
     default_manifest() builds one at start from the available inputs and
     those fields."""
     channels: tuple[RuntimeChannelSpec, ...] | None = None

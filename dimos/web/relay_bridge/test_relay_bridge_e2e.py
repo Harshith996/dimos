@@ -46,6 +46,11 @@ from cryptography.x509.oid import NameOID
 import numpy as np
 import pytest
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -57,14 +62,18 @@ from dimos.web.relay_bridge.e2e_support import (
     arm_teleop,
     attach_viewer,
     collect_until,
+    next_control,
     stop_module,
 )
 from dimos.web.relay_bridge.module_test_support import wait_until
 from dimos.web.relay_bridge.protocol import (
+    Manifest,
     Stop as WireStop,
+    Sub,
     TeleopStart,
     Twist as WireTwist,
     Unsub,
+    Watch,
 )
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.relay_process import RelayProcess
@@ -787,3 +796,124 @@ def test_start_waits_out_robot_id_conflict_on_relay(monkeypatch: pytest.MonkeyPa
         if not first_stopped:
             stop_module(first)
         relay.stop()
+
+
+class RuntimeStreams(Module):
+    status: Out[dict]
+    opaque: Out[bytes]
+
+    @rpc
+    def emit(self, revision: int) -> None:
+        self.status.publish({"source": "initial", "revision": revision})
+
+
+class LateStreams(Module):
+    status: Out[dict]
+
+    @rpc
+    def emit(self, revision: int) -> None:
+        self.status.publish({"source": "late", "revision": revision})
+
+
+def test_runtime_channels_preserve_viewer_across_coordinator_lifecycle(unused_tcp_port) -> None:
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator.start()
+    try:
+        coordinator.load_module(RuntimeStreams)
+        coordinator.load_blueprint(
+            RelayBridgeModule.blueprint(
+                instance_name="runtime/relay",
+                local_port=unused_tcp_port,
+                web_build=False,
+                robot_id=ROBOT_ID,
+                open_browser=False,
+            )
+        )
+
+        async def exercise():
+            url = f"http://127.0.0.1:{unused_tcp_port}/"
+            info = await fetch_relay_info(url)
+            async with await RelayClient.connect(info.wt_url, "viewer", insecure=True) as viewer:
+                await viewer.hello()
+                subscribed = set()
+                revision = 0
+
+                async def observe(sources, producers=()):
+                    nonlocal revision
+                    revision += 1
+                    expected = {
+                        ch: {"source": source, "revision": revision}
+                        for ch, source in sources.items()
+                    }
+                    assert not viewer.is_closed
+                    assert await fetch_relay_info(url) == info
+                    deadline = time.monotonic() + 10.0
+                    message = None
+                    while time.monotonic() < deadline:
+                        viewer.send_control(Watch(robotId=ROBOT_ID))
+                        message = await next_control(viewer, 0.5)
+                        if isinstance(message, Manifest) and {
+                            ch["ch"] for ch in message.manifest["channels"]
+                        } == set(expected):
+                            break
+                    assert isinstance(message, Manifest)
+                    channels = {ch["ch"]: ch for ch in message.manifest["channels"]}
+                    assert set(channels) == set(expected)
+                    assert {ch["encoding"] for ch in channels.values()} == (
+                        {"json.v1"} if expected else set()
+                    )
+                    if not producers:
+                        return
+
+                    async def publish():
+                        while True:
+                            for ch in set(expected) - subscribed:
+                                viewer.send_control(Sub(ch=ch))
+                            for producer in producers:
+                                await asyncio.to_thread(producer.emit, revision)
+                            await asyncio.sleep(0.05)
+
+                    def received(frames):
+                        return {
+                            frame.header.ch: json.loads(frame.payload)
+                            for frame in frames
+                            if json.loads(frame.payload).get("revision") == revision
+                        }
+
+                    task = asyncio.create_task(publish())
+                    try:
+                        frames = await collect_until(
+                            viewer, lambda items: received(items) == expected
+                        )
+                    finally:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                    assert received(frames) == expected
+                    subscribed.update(expected)
+
+                initial = coordinator.get_instance(RuntimeStreams)
+                expected = {"RuntimeStreams.status": "initial"}
+                await observe(expected, (initial,))
+                await asyncio.to_thread(
+                    coordinator.load_blueprint,
+                    LateStreams.blueprint().remappings([(LateStreams, "status", "late_status")]),
+                )
+                late = coordinator.get_instance(LateStreams)
+                expanded = {**expected, "LateStreams.status": "late"}
+                await observe(expanded, (initial, late))
+                late = await asyncio.to_thread(
+                    coordinator.restart_module, LateStreams, reload_source=False
+                )
+                await observe(expanded, (initial, late))
+                await asyncio.to_thread(coordinator.unload_module, LateStreams)
+                await observe(expected, (initial,))
+                await asyncio.to_thread(coordinator.unload_module, RuntimeStreams)
+                await observe({})
+
+            await asyncio.to_thread(coordinator.unload_module, "runtime/relay")
+            with pytest.raises(OSError):
+                await fetch_relay_info(url)
+
+        asyncio.run(exercise())
+    finally:
+        coordinator.stop()

@@ -48,22 +48,27 @@ from dataclasses import dataclass, field, replace
 import functools
 import importlib.util
 from pathlib import Path
+import pickle
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeVar
 import webbrowser
 
-from reactivex.disposable import Disposable
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.core import rpc
+from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
-from dimos.web.codecs import EncodedPayload, encoder_definition
+from dimos.web.cockpit import Channel, _request_of
+from dimos.web.codecs import EncodedPayload, encoder_definition, resolve_encoder
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
@@ -227,6 +232,8 @@ class RelayBridgeModule(Module):
     # subscribes any handle_<input> eagerly at start(), defeating lazy encode.
 
     def __init__(self, **kwargs: Any) -> None:
+        self._runtime_inputs: dict[str, In[Any]] = {}
+        self._lifecycle_lock = threading.Lock()
         super().__init__(**kwargs)
         self._relay: RelayProcess | None = None
         self._build_cancel: threading.Event | None = None
@@ -263,9 +270,130 @@ class RelayBridgeModule(Module):
         # start (main() fills it once the manifest resolves).
         self.encoded: dict[str, int] = {}
         self._rtc_unavailable_logged = False
+        self._inventory: tuple[StreamDescriptor, ...] | None = None
+        self._stopping = False
+
+    @property
+    def inputs(self) -> dict[str, In[Any]]:
+        return {**super().inputs, **self._runtime_inputs}
+
+    @rpc
+    def stop(self) -> None:
+        # Coordinator unload stops through both RPC and worker teardown.
+        with self._lifecycle_lock:
+            self._stopping = True
+            self._stop_main()
+        super().stop()
+
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Refresh discovery after coordinator startup, load, unload, or restart."""
+        own_name = self.config.rpc_name or self.config.instance_name or type(self).__name__
+        # The coordinator holds its lifecycle lock while calling this hook.
+        # Read the supplied proxies directly, excluding our own RPC endpoint.
+        with self._lifecycle_lock:
+            try:
+                if self._module_closed or self._stopping:
+                    return
+                inventory = tuple(
+                    sorted(
+                        descriptor._replace(module=module.remote_name)
+                        for module in modules
+                        if module.remote_name != own_name
+                        for descriptor in module.get_stream_descriptors()
+                    )
+                )
+            finally:
+                # RPC deserialization creates owned clients for this notification.
+                for module in modules:
+                    module.stop_rpc_client()
+            if inventory == self._inventory:
+                return
+            self._stop_main()
+            self._inventory = inventory
+            self._start_main()
+
+    def _available_channels(self) -> tuple[str, ...]:
+        if self._inventory is not None:
+            producers = {d.transport for d in self._inventory if d.direction != "in"}
+            consumers = {d.transport for d in self._inventory if d.direction != "out"}
+            return tuple(
+                b.ch
+                for b in BUILTIN_CHANNELS
+                if pickle.dumps((self.inputs[b.ch].type, self.inputs[b.ch].transport)) in producers
+            ) + tuple(
+                ch
+                for ch, _, _ in TX_CHANNELS
+                if pickle.dumps((self.outputs[ch].type, self.outputs[ch].transport)) in consumers
+            )
+        allowed = self.config.available_channels
+        return tuple(
+            b.ch
+            for b in BUILTIN_CHANNELS
+            if (allowed is None or b.ch in allowed) and self.inputs[b.ch].transport is not None
+        ) + tuple(ch for ch, _, _ in TX_CHANNELS if allowed is not None and ch in allowed)
+
+    def _discover_channels(self, manifest: RobotManifest) -> None:
+        ports: list[In[Any] | Out[Any]] = [self.inputs[s.ch] for s in self._channel_specs]
+        ports.extend(self.outputs[w["ch"]] for w in manifest["channels"] if w["dir"] == "tx")
+        covered = {
+            pickle.dumps((port.type, port.transport))
+            for port in ports
+            if port.transport is not None
+        }
+        ids = {wire["ch"] for wire in manifest["channels"]}
+        specs = list(self._channel_specs)
+        for descriptor in self._inventory or ():
+            if descriptor.direction == "in" or descriptor.transport in covered:
+                continue
+            ch = f"{descriptor.module}.{descriptor.name}"
+            if ch in ids:
+                logger.warning(f"relay discovery skipped conflicting channel {ch!r}")
+                continue
+            message_type, transport = pickle.loads(descriptor.transport)
+            try:
+                request = _request_of(
+                    Channel(
+                        ch,
+                        message_type,
+                        encoding="jpeg.v1" if message_type is Image else None,
+                        delivery="latest" if message_type is Image else "reliable",
+                    )
+                )
+                codec = resolve_encoder(request.encoding, message_type)
+                if codec.check_params is not None:
+                    codec.check_params(request.params)
+            except (TypeError, ValueError):
+                continue  # No supported codec for this output.
+            spec = RuntimeChannelSpec(
+                ch=ch,
+                message_type=message_type,
+                dir="rx",
+                encoding=request.encoding,
+                delivery=request.delivery,
+                max_hz=request.max_hz,
+                params=dict(request.params),
+                encoder=codec.encode,
+                encoder_takes_params=codec.takes_params,
+            )
+            specs.append(spec)
+            manifest["channels"].append(
+                ChannelSpec(
+                    ch=ch,
+                    dir="rx",
+                    encoding=spec.encoding,
+                    delivery=spec.delivery,
+                    maxHz=spec.max_hz,
+                    params=spec.params,
+                ).model_dump()
+            )
+            self._runtime_inputs[ch] = In(message_type, ch, self, transport)
+            ids.add(ch)
+        self._channel_specs = tuple(specs)
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
+        raw_subscriptions = CompositeDisposable()
         try:
             self._robot_info = resolve_robot_info(self.config)
             manifest_data = self.config.manifest
@@ -274,24 +402,7 @@ class RelayBridgeModule(Module):
                     "channels runtime specs require a manifest; author both through cockpit()"
                 )
             if manifest_data is None:
-                allowed = (
-                    None
-                    if self.config.available_channels is None
-                    else frozenset(self.config.available_channels)
-                )
-                available = tuple(
-                    b.ch
-                    for b in BUILTIN_CHANNELS
-                    if (allowed is None or b.ch in allowed)
-                    and self.inputs[b.ch].transport is not None
-                )
-                # tx side: an Out gets a transport whether or not anything
-                # consumes it, so availability comes from the composition
-                # (with_relay_bridge scans the blueprint's consumers).
-                available += tuple(
-                    ch for ch, _, _ in TX_CHANNELS if allowed is not None and ch in allowed
-                )
-                manifest_data = default_manifest(self.config, available)
+                manifest_data = default_manifest(self.config, self._available_channels())
             # The domain parser is the authority: an invalid manifest fails
             # module start instead of poisoning the relay.
             manifest = parse_manifest(manifest_data)
@@ -301,6 +412,9 @@ class RelayBridgeModule(Module):
                 self._channel_specs, pub_specs = self._adopt_authored_specs(manifest.channels)
             else:
                 self._channel_specs = self._resolve_builtin_specs(rx_wire)
+            manifest_data = manifest.model_dump()
+            self._discover_channels(manifest_data)
+            manifest = parse_manifest(manifest_data)
             self._publish = PublishHandler(self._robot_info.id, pub_specs, self.outputs)
             self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
             self.encoded = {s.ch: 0 for s in self._channel_specs}
@@ -318,9 +432,7 @@ class RelayBridgeModule(Module):
                     )
                 if spec.ch == "tele_cmd_vel":
                     self._teleop = Teleop(resolve_teleop_params(spec), self.tele_cmd_vel.publish)
-            # No runtime stream probing: an authored channel whose input got
-            # no transport stays advertised (its panel shows "waiting for
-            # data"); _reconcile just never subscribes it.
+            # Authored channels stay advertised even without a wired input.
             unwired = sorted(
                 s.ch for s in self._channel_specs if self.inputs[s.ch].transport is None
             )
@@ -334,7 +446,7 @@ class RelayBridgeModule(Module):
                     # Always-on raw cache: grids published before the first
                     # viewer, or while nobody watches, must still be
                     # replayable on the next 0->1 subscribe.
-                    self.register_disposable(
+                    raw_subscriptions.add(
                         Disposable(
                             self.inputs[s.ch].subscribe(functools.partial(self._cache_input, s))
                         )
@@ -356,6 +468,12 @@ class RelayBridgeModule(Module):
                     )
                 if not Path(self.config.rtc_file).is_file():
                     raise RuntimeError(f"rtc_file does not exist: {self.config.rtc_file}")
+            if self._url is None and self._relay is not None:
+                if self._relay.is_running():
+                    assert self._relay.info is not None
+                    self._url = self._relay.info.open_url
+                else:
+                    await _blocking_call(self._relay.stop)
             if self._url is None:
                 # Probe before the (expensive) build: a start that will lose
                 # the port must not rewrite the dist a running relay serves.
@@ -368,7 +486,9 @@ class RelayBridgeModule(Module):
                     except Exception:
                         logger.exception("web build failed; continuing with the relay only")
                 self._url = await _blocking_call(
-                    self._spawn_relay, self.config.open_browser, self._serve_dir
+                    self._spawn_relay,
+                    self.config.open_browser and self._inventory is None,
+                    self._serve_dir,
                 )
             # Startup retries transient discovery/connection failures a few
             # times, and waits longer only for a robot id the relay still holds.
@@ -382,17 +502,27 @@ class RelayBridgeModule(Module):
             )
             yield
         finally:
+            raw_subscriptions.dispose()
             try:
                 await _cancel_task(supervisor, "supervisor")
                 await self._disconnect()
             finally:
-                if self._relay is not None:
+                if self._relay is not None and (self._stopping or supervisor is None):
                     try:
                         await _blocking_call(self._relay.stop)
                     except Exception:
                         # An orphaned Deno child would outlive this process holding
                         # its port (it has no PDEATHSIG), so surface cleanup failure.
                         logger.exception("relay bridge: stopping the local relay failed")
+
+                for port in self._runtime_inputs.values():
+                    port.stop()
+                    port.owner = None
+                self._runtime_inputs.clear()
+                self._last_msg.clear()
+                self._next_due.clear()
+                self._encode_error_logged.clear()
+                self._teleop = None
 
     def _resolve_serve_dir(self) -> Path | None:
         """Validated config.serve_dir; a clean labeled error beats the
@@ -993,7 +1123,7 @@ class RelayBridgeModule(Module):
             return
         assert sender is not None
         encoded = self._run_encoder(spec, msg)
-        if encoded is None:
+        if encoded is None or session.retired.is_set():
             return
         payload, meta = encoded
         self.encoded[spec.ch] += 1
@@ -1076,7 +1206,7 @@ class RelayBridgeModule(Module):
 
 
 def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
-    """Append a relay bridge wired to the blueprint's channel producers."""
+    """Append a relay bridge that discovers channels from the running modules."""
     # An external or explicitly composed blueprint may already own a customized
     # relay bridge (possibly a generated subclass with custom channel ports).
     # Preserve that atom rather than overriding its kwargs.
@@ -1086,37 +1216,4 @@ def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     ):
         return blueprint
 
-    producer_keys: set[tuple[str, type]] = set()
-    consumer_keys: set[tuple[str, type]] = set()
-    for atom in blueprint.active_blueprints:
-        for stream in atom.streams:
-            effective_name = blueprint.remapping_map.get((atom.name, stream.name), stream.name)
-            if not isinstance(effective_name, str):
-                continue
-            keys = producer_keys if stream.direction == "out" else consumer_keys
-            keys.add((effective_name, stream.type))
-
-    bridge_atom = RelayBridgeModule.blueprint().blueprints[0]
-    bridge_input_types = {
-        stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "in"
-    }
-    # Every declared Out gets a transport whether or not a counterparty
-    # exists, so tx availability is derived from the blueprint's consumers
-    # (mirroring the producer scan above), not from bound transports.
-    bridge_output_types = {
-        stream.name: stream.type for stream in bridge_atom.streams if stream.direction == "out"
-    }
-    available_channels = tuple(
-        channel.ch
-        for channel in BUILTIN_CHANNELS
-        if (channel_type := bridge_input_types.get(channel.ch)) is not None
-        and (channel.ch, channel_type) in producer_keys
-    ) + tuple(
-        ch
-        for ch, _, _ in TX_CHANNELS
-        if (tx_type := bridge_output_types.get(ch)) is not None and (ch, tx_type) in consumer_keys
-    )
-    return autoconnect(
-        blueprint,
-        RelayBridgeModule.blueprint(available_channels=available_channels),
-    )
+    return autoconnect(blueprint, RelayBridgeModule.blueprint())

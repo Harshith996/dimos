@@ -11,7 +11,7 @@ uv run dimos --replay run unitree-go2 --local-relay
 uv run dimos --replay run unitree-go2 --relay-url http://localhost:7780
 ```
 
-Or the blueprint composes `cockpit(...)` itself, as the Go2 cockpit blueprints do. Then the bridge is part of the blueprint with exactly the panels and channels declared, and the flags only choose the relay. Without `--relay-url` such a blueprint starts a local relay by itself.
+Or the blueprint composes `cockpit(...)` itself, as the Go2 cockpit blueprints do. The bridge preserves the declared panels and channel settings, discovers additional outputs at runtime, and uses the flags to choose the relay. Without `--relay-url` such a blueprint starts a local relay by itself.
 
 The default cockpit is built from the streams the blueprint has: a video panel when a module publishes `color_image`, a map when one publishes `global_costmap` (with the pose marker when `odom` exists too), and teleop when a module consumes `tele_cmd_vel`.
 
@@ -49,7 +49,11 @@ A channel is one stream crossing the wire in one direction with one encoding. `r
 | `global_costmap` | `OccupancyGrid` | `costmap.zlib.v1` | latest, the last grid is replayed to a new viewer |
 | `tele_cmd_vel` (tx) | `Twist` | `twist.json.v1` | latest |
 
-Every other stream needs a `Channel` declaration. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Map3D, Chat and Stats panels declare the channels for their own extra streams (`path`, `click`, `stop`, `cloud`, the chat streams, `resource_stats`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
+The bridge also discovers supported outputs from running modules, including modules loaded later. Discovered channels use `module.port` IDs and the producer's actual transport, including remappings. `Image` outputs use `jpeg.v1`. Other supported types use the existing default LCM or JSON encoder. Outputs without a supported default encoder are ignored. Discovery adds channels without changing authored panels, layouts, rates, params, or publish settings. An output already covered by an authored channel on the same transport and message type is not duplicated.
+
+Inventory changes reconnect the bridge with an updated manifest. The local relay and viewer connections stay open, and existing subscriptions resume after a brief pause in data. Viewers can request the updated manifest through the existing `watch` message. Removed discovered channels lose their subscriptions and cached data. Explicitly authored channels remain advertised.
+
+A `Channel` declaration gives a stream an explicit name and encoding. It becomes a port typed with the declared message type and wired by `autoconnect` like any module port. The Map2D, Map3D, Chat and Stats panels declare the channels for their own extra streams (`path`, `click`, `stop`, `cloud`, the chat streams, `resource_stats`). A Video panel, or a Map2D costmap or pose, on a stream that is not a built-in port needs a `Channel` from you, see [Panels](/docs/web/cockpit.md#panels) on the cockpit page.
 
 The relay keeps the bridge informed of which channels have at least one subscribed viewer. The bridge encodes and sends a channel only while that holds: it subscribes to the stream when the first viewer arrives and unsubscribes when the last one leaves. Replayable channels (`resend_on_subscribe`, and the built-in `global_costmap`) also keep a raw-message cache, so they stay subscribed to their stream without viewers, but nothing is encoded for them. Two settings shape what crosses the wire:
 
