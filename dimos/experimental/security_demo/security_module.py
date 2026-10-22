@@ -120,7 +120,13 @@ def _create_router(robot_width: float) -> PatrolRouter:
 def _create_visual_servo(
     config: SecurityModuleConfig, global_config: GlobalConfig
 ) -> VisualServoing2D:
-    return VisualServoing2D(config.camera_info, bool(global_config.simulation))
+    camera_info = config.camera_info
+    if global_config.simulation:
+        from dimos.robot.unitree.mujoco_connection import MujocoConnection
+
+        camera_info = MujocoConnection.camera_info_static
+
+    return VisualServoing2D(camera_info, bool(global_config.simulation))
 
 
 class SecurityModule(Module):
@@ -136,7 +142,6 @@ class SecurityModule(Module):
     global_costmap: In[OccupancyGrid]
     goal_reached: In[Bool]
     color_image: In[Image]
-    camera_info: In[CameraInfo]
     depth_image: Out[Image]
     detection: Out[Image]
     tracking_image: Out[Image]
@@ -177,11 +182,6 @@ class SecurityModule(Module):
         )
         self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self.register_disposable(Disposable(self.camera_info.subscribe(self._on_camera_info)))
-
-    def _on_camera_info(self, info: CameraInfo) -> None:
-        with self._lock:
-            self._visual_servo = VisualServoing2D(info, bool(self.config.g.simulation))
 
     @rpc
     def stop(self) -> None:

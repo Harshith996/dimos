@@ -15,6 +15,7 @@
 from collections.abc import Callable, Iterator
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from pydantic import TypeAdapter
 import pytest
@@ -103,3 +104,22 @@ def test_a_component_without_an_address_runs_its_mock_stand_in(
     # Without a stand-in the physical adapter keeps its missing address.
     needs_address = coordinator._resolve_component(xarm7_hardware("other"))
     assert (needs_address.adapter_type, needs_address.address) == ("xarm", None)
+
+
+def test_simulation_keeps_the_simulated_adapter_and_takes_the_sim_modules_scene(
+    make_coordinator: Callable[[str], ControlCoordinator],
+) -> None:
+    coordinator = make_coordinator("mujoco")
+    component = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+    assert (component.adapter_type, component.address) == ("sim_mujoco", None)
+
+    with pytest.raises(RuntimeError, match="no MujocoSimModule"):
+        coordinator._resolve_component(component)
+    coordinator._mujoco_sim = SimpleNamespace(scene_path=lambda: "/scenes/table.xml")
+    resolved = coordinator._resolve_component(component)
+
+    assert (resolved.adapter_type, resolved.address) == ("sim_mujoco", "/scenes/table.xml")
+    explicit = coordinator._resolve_component(
+        make_xarm_hardware("arm", 7, adapter_type="sim_mujoco", address="/own.xml")
+    )
+    assert explicit.address == "/own.xml"

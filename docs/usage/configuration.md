@@ -104,7 +104,7 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 | `mcp_timeout` | `McpAdapter(timeout=...)` or `dimos mcp call --timeout ...`; `McpClient.timeout` remains independent |
 | `robot_id`, `relay_ca`, `relay_key` | `relaybridgemodule` config, with the same field names |
 | `xarm7_ip`, `xarm6_ip`, `lite6_ip`, `can_port`, `device_path` | `controlcoordinator.addresses`, keyed by hardware id (see below) |
-| `scene_package` | sim2 scene name or robot-free MJCF path; its sidecar defines robot mounts |
+| `mujoco_scene` | `mujocosimmodule.address`; the coordinator's simulated arm attaches to that scene |
 | `dimos_cloud_url`, `dimos_api_key`, `dimos_http_timeout`, `dimos_upload_*`, `dimos_staging_dir` | [`CloudConfig`](/dimos/cloud/config.py): `url`, `api_key`, `http_timeout`, `upload_*`, `staging_dir`; environment prefix `DIMOS_CLOUD_` |
 
 For example, `UNITREE_AES_128_KEY` becomes `GO2CONNECTION__AES_128_KEY`, and `RERUN_OPEN` becomes `RERUNBRIDGEMODULE__RERUN_OPEN`. Configure each connection separately when a stack has multiple robot connections. The legacy websocket dashboard follows the Rerun bridge's `web` or `both` mode by default; `websocketvismodule.open_browser` and `show_rerun_dashboard` override that behavior independently.
@@ -132,6 +132,6 @@ dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 The coordinator settles each component when it starts, once the execution mode is known:
 
 - On hardware, a component takes its address from `addresses`. A component left without one runs the mock adapter when its blueprint allows that (`mock_without_address` in the robot's config helper), and otherwise fails to connect.
-- Migrated xArm and Piper blueprints use public connection modules, not coordinator-owned adapters. Set `--xarmconnection.address` or `--piperconnection.address` for hardware. With `--simulation mujoco`, these connections attach to the single sim2 world. Select its robot-free scene using `--scene-package`; the authored mount is also used by the planner.
+- With `--simulation`, the blueprint's simulated adapters stay and `addresses` is ignored. A simulated arm attaches to the `MujocoSimModule` in its blueprint, so a custom scene is set once, as `mujocosimmodule.address`.
 
 The robot config helpers (`xarm7_hardware`, `piper_hardware`, `a1z_hardware`, `a750_hardware`, ...) also take an explicit `address=` for a blueprint of your own. OpenYAM selects its CAN device with `openyam_hardware(bus_devices={"openyam": "can1"})`; that lands in `adapter_kwargs.runtime_config.bus_devices`, not in `addresses`. A JSON or environment override of `hardware` itself replaces the entire list.

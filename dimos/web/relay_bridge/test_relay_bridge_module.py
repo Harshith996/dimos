@@ -48,6 +48,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.e2e_support import stop_module
@@ -231,11 +232,10 @@ def test_encode_paths_and_max_hz_gate(bridge) -> None:
     assert wait_until(lambda: module.encoded["odom"] == count + 2)
 
 
-@pytest.mark.parametrize("fps", [10, 20])
-def test_default_image_gate_preserves_camera_video_rate(fps) -> None:
+def test_default_image_gate_preserves_mujoco_video_rate() -> None:
     config = RelayBridgeConfig()
     next_due: dict[str, float] = {}
-    times = [100.0 + frame / fps for frame in range(fps)]
+    times = [100.0 + frame / VIDEO_FPS for frame in range(VIDEO_FPS)]
     accepted = [
         now
         for now in times

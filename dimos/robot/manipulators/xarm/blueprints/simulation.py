@@ -29,16 +29,19 @@ from dimos.robot.manipulators.common.blueprints import (
     trajectory_task,
 )
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
-from dimos.robot.manipulators.common.sim import arm_scene, arm_world
 from dimos.robot.manipulators.xarm.config import (
+    XARM7_SIM_PATH,
     make_xarm7_sim_hardware,
+    make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
 from dimos.robot.raw_robot_bridge import RawRobotBridge
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
 _xarm7_sim_hw = make_xarm7_sim_hardware()
+_xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
@@ -49,7 +52,7 @@ xarm_perception_sim = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    arm_world(arm_scene()),
+    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",
@@ -69,11 +72,16 @@ xarm_perception_sim = autoconnect(
         ],
     ),
     RerunBridgeModule.blueprint(),
-).global_config(simulation="mujoco")
+)
 
 # Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
 xarm_sim = autoconnect(
-    arm_world(arm_scene()),
+    MujocoSimModule.blueprint(
+        **{
+            **_xarm7_sim_kwargs,
+            "base_frame_id": "world",
+        }
+    ),
     coordinator(
         hardware=[_xarm7_sim_hw],
         tasks=[
@@ -95,9 +103,9 @@ xarm_sim = autoconnect(
         publish_frame_poses=True,
     ),
     RawRobotBridge.blueprint(
-        camera_frame="arm_connection/wrist_camera_optical",
+        camera_frame="wrist_camera_color_optical_frame",
         ee_frame="link_tcp",
         gripper_joint="arm/gripper",
-        gripper_range=(0.0, 850.0),
+        gripper_range=(0.0, 0.85),
     ),
-).global_config(simulation="mujoco")
+)

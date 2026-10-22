@@ -22,6 +22,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 WHITELIST = [
     # Pure threading-logic test; a real engine would need a MuJoCo model
     # compile and the `mujoco` marker, dropping it from the default CI lane.
+    ("dimos/simulation/engines/test_mujoco_sim_module.py", "object.__new__(MujocoEngine)"),
 ]
 
 

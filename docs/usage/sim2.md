@@ -1,46 +1,12 @@
-# sim2
+# sim2 core
 
 sim2 owns a MuJoCo world and independently scheduled camera/lidar workers.
 Robot connections and policy hosts use `SimRobotClient` for internal motor IO.
 The core does not choose a locomotion policy or create public robot connections.
 
-The migrated G1, Go2, xArm6/7 and Piper blueprints use this world through their
-ordinary robot connection. DimSim and replay remain separate, unchanged modes.
-The previous MuJoCo engines and their private control adapters are removed.
-
-## Run
-
-```bash
-uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-groot-wbc
-uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-sonic-wbc --g1sonicpolicymodule.cpu-simulation=true
-uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-go2
-uv run dimos --simulation mujoco --transport zenoh run xarm7-planner-coordinator
-uv run dimos --simulation mujoco --transport zenoh run coordinator-piper
-uv run dimos --transport zenoh run go2-sim
-```
-
-SONIC's CPU mode is for simulation; real hardware still requires CUDA.
-Use `--scene-package kitchen` before `run`, or pass a robot-free MJCF path.
-Set `--simulationmodule.viewer=false` after the blueprint name for headless
-operation. The procedural `go2-sim` blueprint uses rolling Mid360 and preserves
-its existing odometry/contact/scene topics through a read-only telemetry worker.
-
-| Public connection | Controller | Internal device |
-| --- | --- | --- |
-| `G1Connection` | Stock firmware on hardware, GR00T coordinator task, or standalone SONIC | WebRTC, `G1MotorDevice` (DDS), or `SimRobotClient` |
-| `GO2Connection` | Stock firmware on hardware; existing ONNX/FREE walking policy in sim | WebRTC/replay/DimSim, or internal `Go2SimDevice` using `SimRobotClient` |
-| `XArmConnection` / `PiperConnection` | Existing coordinator/planner | Existing vendor adapter or `SimRobotClient` |
-
-There is no public sim-specific connection. G1's `cmd_vel: Twist` / `move()`
-routes intent to the selected controller, which returns `MotorCommandArray`.
-The connection owns motor IO and publishes measured `motor_states: JointState`
-and `imu: Imu`. Arms expose `position_command` and `velocity_command`
-(`JointState`) and measured `joint_state`. xArm gripper units remain 0..850;
-Piper's aperture remains metres.
-
-Stock G1 sport firmware is not simulated. Go2's walking policy does not provide
-vendor tricks or lie-down. Lite6 has no matching simulation asset and is
-explicitly rejected rather than loading xArm6 geometry.
+This branch extracts the existing emulator onto current main. Robot blueprint
+migrations are subsequent work; existing MuJoCo blueprints have not been
+switched by this core change.
 
 ## Ownership
 
@@ -104,17 +70,6 @@ bindings, and measured physics fit. Its synchronous `simulation/reference.py`
 is retained for calibration/regression rollouts, not used by sim2's live loop.
 Small xArm/Piper packages keep `connection.py`, `config.py`, and `simulation.py`
 alongside `blueprints/`; they do not need empty policy/device directories.
-
-Go2's procedural scene and telemetry are in `go2/simulation/scene.py`. Shared
-procedural geometry stays in `simulation/scenes/`; DimSim and Habitat retain
-their existing packages. Mid360's rolling model, firing pattern and measured
-return/occlusion parameters live together in `sim2/sensors/lidar/models/mid360/`.
-
-Eval integrations stay outside the emulator: `evals/environments/mujoco_sim.py`
-owns launch/reset/recording, `evals/environments/runtime/` holds shared process
-and recorded-pose helpers, and `evals/benchmarks/` holds manifest-to-case
-conversion and smoke exports. Scene conversion stays in
-`experimental/scene_cooking/`. These are consumers of sim2, not parts of physics.
 
 | Component | Owns |
 | --- | --- |
@@ -247,44 +202,11 @@ before a reset cannot command the new generation, including a reset racing with
 command publication. Application-level reset must also stop/reset controllers,
 maps and policy history; physics reset alone does not do that.
 
-## Rolling Mid360
-
-Use `Mid360` as a `Lidar.model` and attach its IMU to the same named site:
-
-```python skip
-from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
-from dimos.sim2.sensors.imu.spec import Imu
-from dimos.sim2.sensors.lidar.spec import Lidar
-
-lidar = Lidar(
-    "lidar", "mid360_link", Mid360,
-    imu=Imu("lidar_imu", "mid360_link"),
-    self_occlusion=True,
-    truth_outputs=False,
-)
-```
-
-`raw_pointcloud` carries sensor-frame returns, nanosecond offsets and channel
-IDs. `imu_raw` is in SI units, at 200 Hz by default. Wire these to current
-`PointLio.lidar_raw` and `PointLio.imu_raw`; use zero extrinsic translation when
-the simulated IMU and laser are colocated. Do not connect ground-truth pose or
-the corrected `pointcloud` to the estimator. Point-LIO does not yet expose a
-filter reset: restart it after resetting, teleporting or pausing its robot.
-Resume preserves the physical state and motor-enable state but begins a new
-observation generation, discarding pre-pause commands and acquisition history.
-
-The scanner fires 200,000 points/s continuously across scan boundaries.
-`downsample` retains complete four-channel groups and their original timestamps.
-Range noise and grazing-angle dropout can be disabled independently without
-changing the firing pattern. Those returns are an approximation, not a measured
-reflectivity/material model. Ray casting uses moving scene/robot geometry at
-acquisition time; raw scans retain motion distortion. Missing snapshot intervals
-drop a scan rather than replacing it with an instantaneous one.
-
-The Fourier implementation is shared with main's Mid360 model. The small
-`mid360_pattern` LFS asset retains the earlier G1-capture frequencies, which
-differ from the Go2 fit in `go2_sim`. The Go2 empirical mount-occlusion mask is
-not applied to arbitrary robots.
+`SceneState.episode` counts physical resets. `SceneState.generation` also
+advances for an edit or resume, invalidating pending control and sensor work
+without starting a new task episode. Graders must retain both, plus simulation
+time, rather than treating every scene edit as another trial. Internal transport
+`FrameMetadata.episode_id` carries that invalidation generation.
 
 ## Transport and tests
 
@@ -360,25 +282,8 @@ uv run pytest -m self_hosted dimos/sim2  # Requires a working native OpenGL rend
 uv run mypy --follow-imports=silent dimos/sim2
 ```
 
-Default tests use small generated MJCFs without asset downloads. Coverage includes two
+Tests use small generated MJCFs without asset downloads. Coverage includes two
 robots, complete PD commands, gripper units, exclusive writers, spawned and
 independent-process readers, stale feedback/commands, reset races, scene edits,
 RGB-D/raycast output, and a real headless DimOS deployment using Zenoh.
 These are core integration checks, not robot-policy or loaded-performance results.
-
-The explicit native canary builds current main's Point-LIO binary and drives a
-0.6 m linear stage from the ordinary device client. It checks the estimator
-against independently read truth, with and without a 640x480 RGB-D worker:
-
-```bash
-cargo build --release --locked --bin pointlio_native \
-  --manifest-path dimos/hardware/sensors/lidar/pointlio/rust/Cargo.toml
-uv run pytest dimos/sim2/sensors/lidar/test_mid360.py -m native_e2e \
-  -o junit_family=legacy --junitxml=/tmp/sim2-mid360-native.xml
-```
-
-This requires the calibration asset and native OpenGL for the camera case.
-Set `SIM2_POINTLIO_BINARY` for an externally built executable. The JUnit
-`sim2_mid360_evidence` property records rates, frame age and pose errors.
-This synthetic-room check is not validation of G1/Go2 locomotion, hardware
-sensor equivalence, or a complex-scene performance claim.

@@ -14,13 +14,13 @@
 
 """LIBERO-PRO smoke: ``data/libero_pro/manifest.json`` → EvalCases.
 
-python -m dimos.evals.benchmarks.export --libero-pro PATH
+python -m dimos.evals.environments.lib.export_benchmark_scenes --libero-pro PATH
 dimos evals run dimos.evals.suites.libero_pro_smoke --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations
 
-from dimos.evals.benchmarks.manifest import cases_from_manifest, load_manifest
+from dimos.evals.environments.lib.benchmark_scenes import cases_from_manifest, load_manifest
 from dimos.evals.types import Suite
 
 SUITE: Suite = cases_from_manifest(load_manifest("libero_pro"), extra_tags=("smoke",))

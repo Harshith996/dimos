@@ -14,8 +14,6 @@
 
 """Go2's physical device definition and the existing compiled-model dynamics fit."""
 
-from typing import Literal
-
 import mujoco
 import numpy as np
 
@@ -25,7 +23,6 @@ from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
-from dimos.sim2.sensors.lidar.models.mid360.model import Mid360
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import Joint, RobotConfig
@@ -60,7 +57,6 @@ def go2_definition(
     *,
     camera: bool = True,
     lidar: bool = True,
-    lidar_model: Literal["ideal", "mid360"] = "ideal",
 ) -> RobotConfig:
     sensors: list[Sensor] = [Imu("imu", Mount("base"))]
     if camera:
@@ -72,35 +68,17 @@ def go2_definition(
             )
         )
     if lidar:
-        if lidar_model == "mid360":
-            mount = Mount("base", (0.29515, -0.00003, 0.16297), (0, np.pi / 3, 0))
-            sensors.append(
-                Lidar(
-                    "lidar",
-                    mount,
-                    Mid360,
-                    model_kwargs={"calibration": "go2", "mount_occlusion": True},
-                    output_frame="sensor",
-                    self_occlusion=True,
-                    imu=Imu("lidar_imu", mount),
-                )
+        sensors.append(
+            Lidar(
+                "lidar",
+                Mount("base", xyz=(0.2, 0, 0.15)),
+                Fibonacci,
+                model_kwargs={"ray_count": 15000},
+                maximum_world_elevation=0,
             )
-        else:
-            sensors.append(
-                Lidar(
-                    "lidar",
-                    Mount("base", xyz=(0.2, 0, 0.15)),
-                    Fibonacci,
-                    model_kwargs={"ray_count": 15000},
-                    maximum_world_elevation=0,
-                )
-            )
+        )
     return RobotConfig(
-        model=LfsPath(
-            "go2_sim/unitree_go2/go2_mid360.xml"
-            if lidar and lidar_model == "mid360"
-            else "go2_sim/unitree_go2/go2.xml"
-        ),
+        model=LfsPath("go2_sim/unitree_go2/go2.xml"),
         root_body="base",
         floating=True,
         spawn_height=0.335,

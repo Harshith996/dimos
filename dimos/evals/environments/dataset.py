@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.base import Environment, EnvironmentConfig
-from dimos.evals.environments.runtime.launch import launched_mcp_url, validate_blueprints
+from dimos.evals.environments.lib.launch import launched_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
 from dimos.memory.cli.dataset import open_dataset, resolve_dataset
 from dimos.memory.store.base import Store

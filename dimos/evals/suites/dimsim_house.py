@@ -30,7 +30,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dimos.e2e_tests.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
@@ -72,6 +71,7 @@ def _explore_house(sim: DimSimClient) -> None:
 
     from dimos.core.transport import LCMTransport
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
     # dimsim spawns the robot well after MCP is up — wait for odom before driving
     seen: list[PoseStamped] = []

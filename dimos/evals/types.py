@@ -165,13 +165,6 @@ def recording(o: Outcome) -> Store:
     return SqliteStore(path=str(o.artifacts["recording"]), must_exist=True)
 
 
-def truth_recording(o: Outcome) -> Store:
-    """Privileged simulator observations, not part of the agent's recording."""
-    from dimos.memory.store.sqlite import SqliteStore
-
-    return SqliteStore(path=str(o.artifacts["truth"]), must_exist=True)
-
-
 @dataclass(frozen=True, kw_only=True)
 class EvalCase:
     id: str

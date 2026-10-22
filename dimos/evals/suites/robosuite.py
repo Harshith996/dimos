@@ -31,7 +31,8 @@ def environment(scene: str, bodies: tuple[str, ...]) -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
         disable=PERCEPTION_MODULES,
-        scene=LfsPath(f"robosuite/{scene}/world.xml"),
+        scene=LfsPath(f"robosuite/{scene}/scene.xml"),
+        base_height=0.912,
         tracked_bodies=bodies,
     )
 

@@ -184,10 +184,9 @@ print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 The prompt set includes a `green ring` fallback because the tape loses
 its category silhouette in the wrist camera's top-down view.
 
-A failed grasp can knock free-body targets out of place. sim2's
-`SimulationModule.reset()` restores their authored poses, but does not clear
-planner or perception history. Restart the blueprint between pick attempts
-that need a completely fresh scene and application state.
+A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset()`
+does not respawn them. Restart the blueprint between pick attempts that need a
+pristine scene.
 
 The generic `PointCloudSelfFilter` handles streams and point fields; subclasses
 supply a capture-time keep mask. The xArm blueprint selects

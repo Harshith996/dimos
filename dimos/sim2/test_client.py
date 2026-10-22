@@ -496,7 +496,7 @@ def test_independent_reader_exit_does_not_stop_the_world(worlds, clients):
         timeout=15,
         check=True,
     )
-    assert result.stdout.strip() == str(world.episode)
+    assert result.stdout.strip() == str(world.generation)
     assert "resource_tracker" not in result.stderr
     world.step()
     assert clients(world).read().metadata.physics_tick == 1

@@ -25,7 +25,6 @@ import json
 from pathlib import Path
 import threading
 import time
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -50,64 +49,6 @@ from dimos.sim2.client import SimRobotClient
 from dimos.sim2.messages import FrameMetadata, StateFrame
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.world.scene import scene_path
-
-
-def test_sim_policy_expires_velocity_and_invalid_input_preserves_previous_command(mocker):
-    device = Go2SimDevice()
-    mocker.patch.object(device, "check_health")
-    now = [0.0]
-    mocker.patch(
-        "dimos.robot.unitree.go2.simulation.device.time.monotonic", side_effect=lambda: now[0]
-    )
-    mocker.patch.object(device._stop, "wait")
-    commands = []
-    policy = mocker.Mock()
-    policy.kp = np.ones(12)
-    policy.kd = np.ones(12)
-    policy.joint_names = tuple(f"joint_{i}" for i in range(12))
-    mocker.patch("dimos.robot.unitree.go2.simulation.device.load_policy", return_value=policy)
-    thread = mocker.patch("dimos.robot.unitree.go2.simulation.device.Thread").return_value
-    thread.is_alive.return_value = False
-
-    def act(state, command):
-        commands.append(command.copy())
-        return np.zeros(12)
-
-    policy.act.side_effect = act
-    device._client = mocker.Mock()
-    device._client.descriptor.joint_names = policy.joint_names
-    device._client.read.return_value = SimpleNamespace(
-        metadata=SimpleNamespace(episode_id=0),
-        values={
-            "imu_gyroscope": np.zeros(3),
-            "imu_quaternion": np.array([1, 0, 0, 0]),
-            "position": np.zeros(12),
-            "velocity": np.zeros(12),
-            "root_quaternion": np.array([1, 0, 0, 0]),
-            "root_position": np.zeros(3),
-            "wall_time": np.array([1.0]),
-        },
-    )
-
-    def tick(*args, **kwargs):
-        now[0] += 0.1
-        if len(commands) == 20:
-            device._stop.set()
-
-    device._client.write_motors.side_effect = tick
-    try:
-        device.start()
-        assert device.move(Twist(linear=Vector3(0.12, 0, 0)), duration=0.25)
-        with pytest.raises(ValueError, match="finite"):
-            device.move(Twist(linear=Vector3(float("nan"), 0, 0)))
-        device._run()
-        assert device._error is None
-        assert len(commands) == 20
-        assert commands[0][0] > 0
-        assert max(command[0] for command in commands) <= 0.12
-        assert commands[-1] == pytest.approx([0, 0, 0])
-    finally:
-        device.stop()
 
 
 @pytest.fixture

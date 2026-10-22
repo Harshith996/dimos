@@ -14,25 +14,27 @@
 
 """Smoke-export LIBERO-PRO / RoboCasa textures into DimOS ``data/`` MJCF packs.
 
-    python -m dimos.evals.benchmarks.export \\
+    python -m dimos.evals.environments.lib.export_benchmark_scenes \\
         --libero-pro /path/to/LIBERO-PRO --robocasa /path/to/robocasa
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import os
 from pathlib import Path
 import shutil
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from dimos.evals.benchmarks.manifest import write_manifest
-from dimos.utils.data import get_data_dir
+from dimos.evals.environments.lib.benchmark_scenes import write_manifest
+from dimos.utils.data import get_data, get_data_dir
 
+# Three free bodies so included xarm7.xml home keyframe nq still matches.
 # Attribute values are filled via ElementTree (not str.format).
 _SCENE = """\
 <mujoco>
+  <include file="xarm7.xml"/>
   <statistic center="0.3 0 0.4" extent=".65"/>
   <visual>
     <headlight diffuse="0.7 0.7 0.7" ambient="0.4 0.4 0.4" specular="0 0 0"/>
@@ -80,6 +82,24 @@ def _copy(src: Path, dest: Path) -> None:
     shutil.copy2(src, dest)
 
 
+def _xarm_root(data_dir: Path | None) -> Path:
+    if data_dir is not None:
+        xarm = data_dir / "xarm7"
+        if not xarm.is_dir():
+            raise FileNotFoundError(f"missing {xarm}")
+        return xarm
+    return get_data("xarm7")
+
+
+def _link_xarm(pack: Path, data_dir: Path | None) -> None:
+    xarm = _xarm_root(data_dir)
+    for name in ("xarm7.xml", "assets"):
+        dest = pack / name
+        if dest.exists() or dest.is_symlink():
+            dest.unlink()
+        dest.symlink_to(Path(os.path.relpath(xarm / name, start=pack)))
+
+
 def _find_png(root: Path, names: list[str]) -> Path:
     for name in names:
         hits = list(root.rglob(name))
@@ -125,26 +145,12 @@ def _write_scene(
     geom_el.set("type", geom)
     geom_el.set("size", size)
     (pack / "scene.xml").write_text(ET.tostring(root, encoding="unicode") + "\n")
-    (pack / "scene.json").write_text(
-        json.dumps(
-            {
-                "format": "dimos.scene.v1",
-                "id": model,
-                "entities": {
-                    name: {"body": name, "label": name, "kind": "object", "movable": True}
-                    for name in (body, "filler_a", "filler_b")
-                },
-                "spawns": {"workbench": {"position": [0, 0, 0.12], "orientation": [0, 0, 0, 1]}},
-            },
-            indent=2,
-        )
-        + "\n"
-    )
 
 
 def _write_pack(
     out_root: Path,
     *,
+    data_dir: Path | None,
     model: str,
     floor_src: Path,
     table_src: Path,
@@ -161,6 +167,7 @@ def _write_pack(
 ) -> Path:
     pack = out_root / "smoke"
     pack.mkdir(parents=True, exist_ok=True)
+    _link_xarm(pack, data_dir)
     _copy(floor_src, pack / "textures" / floor_name)
     _copy(table_src, pack / "textures" / table_name)
     _write_scene(
@@ -181,7 +188,7 @@ def _write_pack(
     return out_root
 
 
-def export_libero_pro(source: Path, out_root: Path) -> Path:
+def export_libero_pro(source: Path, out_root: Path, *, data_dir: Path | None = None) -> Path:
     textures = source / "libero" / "libero" / "assets" / "textures"
     if not textures.is_dir():
         raise FileNotFoundError(textures)
@@ -189,6 +196,7 @@ def export_libero_pro(source: Path, out_root: Path) -> Path:
     table = textures / "table_light_wood.png"
     return _write_pack(
         out_root,
+        data_dir=data_dir,
         model="libero_pro_smoke",
         floor_src=floor,
         table_src=table,
@@ -215,12 +223,13 @@ def export_libero_pro(source: Path, out_root: Path) -> Path:
     )
 
 
-def export_robocasa(source: Path, out_root: Path) -> Path:
+def export_robocasa(source: Path, out_root: Path, *, data_dir: Path | None = None) -> Path:
     assets = source / "robocasa" / "models" / "assets"
     table = _find_png(assets, ["marble.png", "light_wood.png", "wood.png", "ceramic.png"])
     # Reuse one texture for floor + counter in the smoke pack.
     return _write_pack(
         out_root,
+        data_dir=data_dir,
         model="robocasa_smoke",
         floor_src=table,
         table_src=table,

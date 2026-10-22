@@ -83,7 +83,7 @@ def cook_scene_package(
     The package contains browser artifacts (visual + collision GLBs,
     semantic ``objects.json``), per-entity GLBs, and a scene-only MuJoCo
     wrapper. Robots are attached at runtime via ``MjSpec.attach()`` inside
-    ``sim2.world.scene.load_scene``; the cooker never touches robot MJCFs.
+    ``MujocoSimModule.start``; the cooker never touches robot MJCFs.
     """
     source = Path(source_path).expanduser().resolve()
     if not source.exists():

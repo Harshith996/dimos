@@ -23,8 +23,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.benchmarks.export import export_libero_pro, export_robocasa
-from dimos.evals.benchmarks.manifest import (
+from dimos.evals.environments.lib.benchmark_scenes import (
     BenchmarkCase,
     GradeSpec,
     cases_from_manifest,
@@ -33,6 +32,7 @@ from dimos.evals.benchmarks.manifest import (
     write_manifest,
     xarm_table_env,
 )
+from dimos.evals.environments.lib.export_benchmark_scenes import export_libero_pro, export_robocasa
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 
 
@@ -58,6 +58,22 @@ def _write_png(path: Path) -> None:
     )
 
 
+def _fake_xarm7(root: Path) -> Path:
+    """Minimal xarm pack so export/load tests never pull LFS."""
+    xarm = root / "xarm7"
+    (xarm / "assets").mkdir(parents=True)
+    (xarm / "xarm7.xml").write_text(
+        '<mujoco model="xarm7">\n'
+        "  <worldbody>\n"
+        '    <body name="link_base" pos="0 0 0.12">\n'
+        '      <geom type="cylinder" size="0.05 0.05" rgba="0.8 0.8 0.8 1"/>\n'
+        "    </body>\n"
+        "  </worldbody>\n"
+        "</mujoco>\n"
+    )
+    return xarm
+
+
 def _fake_libero(root: Path) -> Path:
     textures = root / "libero" / "libero" / "assets" / "textures"
     _write_png(textures / "tile_grigia_caldera_porcelain_floor.png")
@@ -72,19 +88,24 @@ def _fake_robocasa(root: Path) -> Path:
 
 @pytest.fixture
 def data_root(tmp_path: Path) -> Path:
+    _fake_xarm7(tmp_path)
     return tmp_path
 
 
 @pytest.fixture
 def exported(data_root: Path) -> Path:
-    export_libero_pro(_fake_libero(data_root / "upstream_libero"), data_root / "libero_pro")
-    export_robocasa(_fake_robocasa(data_root / "upstream_robocasa"), data_root / "robocasa")
+    export_libero_pro(
+        _fake_libero(data_root / "upstream_libero"), data_root / "libero_pro", data_dir=data_root
+    )
+    export_robocasa(
+        _fake_robocasa(data_root / "upstream_robocasa"), data_root / "robocasa", data_dir=data_root
+    )
     return data_root
 
 
 def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "dimos.evals.benchmarks.manifest.get_data",
+        "dimos.evals.environments.lib.benchmark_scenes.get_data",
         lambda name: exported / name,
     )
     for root, body in (("libero_pro", "akita_black_bowl"), ("robocasa", "apple")):
@@ -93,9 +114,6 @@ def test_export_loadable_and_autogen(exported: Path, monkeypatch: pytest.MonkeyP
         model = mujoco.MjModel.from_xml_path(str(scene))
         names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i) for i in range(model.nbody)}
         assert body in names
-        assert "link_base" not in names
-        assert model.nu == 0
-        assert scene.with_suffix(".json").is_file()
 
         suite = cases_from_manifest(manifest)
         assert len(suite) == 1
@@ -109,7 +127,7 @@ def test_scene_flag(exported: Path) -> None:
     proc = DimosCliCall()
     xarm_table_env(scene, ("akita_black_bowl",)).configure_launch(proc)
     assert proc.simulator == "mujoco"
-    assert proc.global_args[-2:] == ["--scene-package", str(scene.resolve())]
+    assert proc.extra_env["MUJOCOSIMMODULE__ADDRESS"] == str(scene.resolve())
 
 
 def test_grade_body_is_tracked_when_manifest_omits_it() -> None:
@@ -156,7 +174,7 @@ def test_local_manifest_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         },
     )
     monkeypatch.setattr(
-        "dimos.evals.benchmarks.manifest.get_data",
+        "dimos.evals.environments.lib.benchmark_scenes.get_data",
         lambda name: tmp_path / name,
     )
     suite = cases_from_manifest(load_manifest("fixture_bench"))
