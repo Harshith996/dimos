@@ -37,20 +37,19 @@ async def account(state: GatewayState, fresh: FreshQuery = False) -> dict[str, A
     return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
 
 
-@router.delete("/cloud/account", response_model=responses.Account)
-async def logout(state: GatewayState) -> dict[str, Any]:
-    return {**await state.uploads.logout(), "login": state.uploads.login_state()}
-
-
 @router.post("/cloud/login", response_model=responses.Login)
 async def start_login(state: GatewayState) -> dict[str, Any]:
     return await state.uploads.start_login()
 
 
 @router.delete("/cloud/login", response_model=responses.Account)
-async def cancel_login(state: GatewayState) -> dict[str, Any]:
-    state.uploads.cancel_login()
-    return {**await state.uploads.account(False), "login": state.uploads.login_state()}
+async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
+    if state.uploads.login_state()["state"] in ("starting", "pending"):
+        state.uploads.cancel_login()
+        answer = await state.uploads.account(False)
+    else:
+        answer = await state.uploads.logout()
+    return {**answer, "login": state.uploads.login_state()}
 
 
 @router.get("/cloud/uploads", response_model=responses.Uploads)

@@ -165,7 +165,6 @@ def test_device_login_then_logout(
     approved.set()
     until(lambda: client.get("/cloud/account").json()["login"]["state"] == "approved")
     assert stored == ["key"]
-    assert client.delete("/cloud/login").json()["loggedIn"]
     forgot: list[int] = []
 
     def forget() -> None:
@@ -173,7 +172,7 @@ def test_device_login_then_logout(
         stored.clear()
 
     monkeypatch.setattr(cloud, "_forget", forget)
-    logged_out = client.delete("/cloud/account").json()
+    logged_out = client.delete("/cloud/login").json()
     assert logged_out["loggedIn"] is False and logged_out["login"]["state"] == "idle"
     assert forgot == [1]
     account_events = [
