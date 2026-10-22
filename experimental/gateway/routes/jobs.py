@@ -64,7 +64,7 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
     )
 
     def then() -> None:
-        state.cache.forget("packages")
+        state.cache.forget(state.introspect_key(["packages"]))
 
     title = f"Install extras: {', '.join(wanted)}"
     job = state.jobs.start(title, "extras", command, state.dimos_dir, env, then)

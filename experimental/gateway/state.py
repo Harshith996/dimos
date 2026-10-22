@@ -53,11 +53,16 @@ class State:
     started_at: int = field(default_factory=lambda: int(time.time()))
     background: list[asyncio.Task[Any]] = field(default_factory=list)
 
+    @staticmethod
+    def introspect_key(args: list[str], stdin: Any = None, source: RunSource | None = None) -> str:
+        """The cache key of one introspection, for introspected() and for forgetting its answer."""
+        return " ".join(args) + (repr(stdin) if stdin is not None else "") + repr(source or "")
+
     async def introspected(
         self, args: list[str], stdin: Any = None, source: RunSource | None = None
     ) -> Any:
         """Introspect the gateway's checkout, or the one a run's dimos came from."""
-        key = " ".join(args) + (repr(stdin) if stdin is not None else "") + repr(source or "")
+        key = self.introspect_key(args, stdin, source)
         dimos_dir, python = (source.checkout, source.python) if source else (self.dimos_dir, None)
         try:
             return await self.cache.get(
