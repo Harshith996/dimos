@@ -37,3 +37,6 @@ with TemporaryDirectory() as temporary:
         languages=("rust",),
     )
     shutil.copytree(output / "rust", crate, dirs_exist_ok=True)
+    generated_lib = crate / "src/lib.rs"
+    license_header = (crate / "build.rs").read_text().split("use ros2msg", 1)[0]
+    generated_lib.write_text(license_header + generated_lib.read_text())
