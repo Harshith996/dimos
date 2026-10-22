@@ -17,8 +17,8 @@
 
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/c9a13b72c31bf2d7ebc80b6789cb64ebb2b1d9f8";
-          sha256 = "8d9ef10dbc0277fd2354149d009a27209f719d6b6b19d39a4e6116f19efea9cf";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/d1bab1f625964f52e0281dbd2c128ee2bcd57631";
+          sha256 = "a97f672cf3ac45a3f51585465f0aca062927667a1a32a708969875eac9a93132";
         };
         sharedSource = pkgs.runCommand "dimos-ray-tracing-cdr-source-input" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
