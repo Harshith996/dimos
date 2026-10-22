@@ -1,6 +1,7 @@
 {
   "imports": {
-    "dimos-react": "jsr:@robotics/dimos-react@^0.2.1"
+    "dimos-react": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/index.ts",
+    "dimos-react/graph": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.3.1/src/graph.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
