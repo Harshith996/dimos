@@ -562,6 +562,9 @@ class Uploads:
             result = await asyncio.to_thread(
                 self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
             )
+            # TODO(core): CloudData.upload should take a cancel signal through completion and preview
+            if cancel.is_set():
+                raise CancelledUploadError(result.get("upload_id"))
             quota: dict[str, Any] = result.get("quota") or {}
             quota_state = quota.get("state")
             updated = self.update(
@@ -576,8 +579,17 @@ class Uploads:
                 else None,
                 finishedAt=now_ms(),
             )
-        except CancelledUploadError:
-            updated = self.update(id, state="cancelled", finishedAt=now_ms())
+        except CancelledUploadError as cancelled:
+            sent_upload_id = cancelled.args[0] if cancelled.args else None
+            updated = self.update(
+                id,
+                state="cancelled",
+                uploadId=sent_upload_id or upload["uploadId"],
+                notice="Cancelled after every byte was sent: Dimensional cloud may still keep this copy."
+                if sent_upload_id
+                else None,
+                finishedAt=now_ms(),
+            )
         except PermissionError:
             updated = self.wait_for_login(
                 id, "Not logged in to Dimensional cloud. Log in, then retry."

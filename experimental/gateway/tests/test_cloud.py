@@ -120,6 +120,31 @@ def test_a_recording_that_grows_during_its_upload_reads_as_changed(
     assert entry["size"] == 100 and entry["changed"] is True
 
 
+def test_an_upload_cancelled_after_its_last_part_ends_cancelled(
+    client: TestClient, recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_completion = threading.Event()
+
+    def completes_without_progress(
+        path: str, robot_id: Any, kind: Any, tick: Callable[..., None]
+    ) -> dict[str, Any]:
+        tick("upload", 100, 100)
+        release_completion.wait(10)
+        return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
+
+    state: State = client.app.state.gateway  # type: ignore[attr-defined]
+    monkeypatch.setattr(state.uploads, "_transfer", completes_without_progress)
+    work(client)
+    upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+    until(lambda: client.get("/cloud/uploads").json()["uploads"][0]["phase"] == "finishing")
+    assert client.delete(f"/cloud/uploads?id={upload['id']}").status_code == 200
+    release_completion.set()
+    until(lambda: state_of(client, upload["id"]) == "cancelled")
+    listing = client.get("/cloud/uploads").json()
+    assert str(recording) not in listing["byPath"]
+    assert listing["uploads"][0]["uploadId"] == "cloud-1" and listing["uploads"][0]["notice"]
+
+
 def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> None:
     assert client.post("/cloud/uploads", json={"path": "relative.mcap"}).status_code == 400
     assert (
