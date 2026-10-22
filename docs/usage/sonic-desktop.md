@@ -1,6 +1,8 @@
 # SONIC in Desktop
 
-Run the existing SONIC blueprint with Zenoh. Desktop's Controller app uses the
+Run the existing SONIC blueprint with Zenoh on a CUDA-enabled host, including
+for simulation. The live policy refuses CPU-only inference on macOS.
+Desktop's Controller app uses the
 running module's RPCs, not a second controller or motor publisher.
 
 ```bash
