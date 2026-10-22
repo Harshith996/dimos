@@ -34,7 +34,10 @@ DUAL_OPENYAM_ADAPTER_TYPE = "dual_openyam_damiao"
 DUAL_OPENYAM_SIDES = ("left", "right")
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
-_ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
+# MIT gains from Mustafa's step sweeps of 2026-10-16 with the fitted gravity model
+# (dual_openyam_calibration_2026-10-15.json, control_gains); stock was 80/5 arm, 10/1.5 wrist.
+# Wrist kd stays near 1.5: 3 and above buzzes at 100 Hz.
+_ARM_KP = (120.0, 120.0, 240.0, 80.0, 80.0, 80.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
 
 

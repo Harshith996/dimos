@@ -124,13 +124,16 @@ z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
 
 ## Model assets
 
-`dual_openyam_workcell_v2`, exported as `DUAL_OPENYAM_MODEL`, is the physical
+`dual_openyam_workcell_v3`, exported as `DUAL_OPENYAM_MODEL`, is the physical
 workcell: the i2rt YAM arm geometry and meshes, the two arm bases and the
-joint 3 zero offsets from the rig calibration of 2026-10-15, joint 1 limits
+joint 3 zero offsets from the rig calibration of 2026-10-15, the link masses
+and centres of mass from the gravity identification of 2026-10-16 (the Damiao
+adapter's gravity feed-forward is built from this model), joint 1 limits
 inside the measured stops, a convex hull collision mesh on every link, boxes
 for each wrist D405 and bracket, and a fixed `workcell` link with the table
 slab, the camera post and the overhead camera. Its zero configuration is the
-folded rest pose on the supports. The package's `SOURCE.md` records where every
+folded rest pose on the supports. The hardware gains in `config.py` are the
+ones chosen by the step sweeps of the same calibration. The package's `SOURCE.md` records where every
 number comes from. A revised model ships under a new package name, because LFS
 extraction caches by directory name.
 
