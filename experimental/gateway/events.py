@@ -27,12 +27,10 @@ from experimental.gateway import launches
 
 logger = setup_logger()
 
-# Desktop sets it for the gateway (its server_env); only the gateway's own event bus uses it
-NAMESPACE_ENV = "DIMOS_ZENOH_NAMESPACE"
-
 
 def resolve_namespace(given: str | None) -> str | None:
-    namespace = given or os.environ.get(NAMESPACE_ENV)
+    # Desktop sets it for the gateway (its server_env); only the gateway's own event bus uses it
+    namespace = given or os.environ.get("DIMOS_ZENOH_NAMESPACE")
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -83,6 +81,7 @@ class Bus:
             self.send({"type": "launch", "launch": launch})
 
 
+# a launch's phase reaches Desktop within a second
 async def watch_launch(bus: Bus, interval: float = 1.0) -> None:
     failure = ""
     while True:
@@ -124,8 +123,8 @@ async def watch_blueprints(
     site_dirs: list[Path],
     relist: Callable[[], Awaitable[list[str]]],
     changed: Callable[[list[str], list[str]], None],
-    poll: float = 2.0,
-    settle: float = 3.0,
+    poll: float = 2.0,  # how often dimos/robot and site-packages are re-walked
+    settle: float = 3.0,  # re-list once the files stop changing for 3 s (a git checkout, a uv sync)
 ) -> None:
     names = await relist()
     seen = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)

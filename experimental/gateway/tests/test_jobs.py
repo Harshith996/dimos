@@ -162,11 +162,11 @@ def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(
         rpc["name"] for rpc in one["rpcs"]
     ] == ["snap"]
     assert client.get("/catalog?module=nope").json()["modules"] == []
-    bp = client.get("/catalog?blueprint=good").json()
-    assert [blueprint["name"] for blueprint in bp["blueprints"]] == ["good"] and [
-        module["name"] for module in bp["modules"]
+    good_only = client.get("/catalog?blueprint=good").json()
+    assert [blueprint["name"] for blueprint in good_only["blueprints"]] == ["good"] and [
+        module["name"] for module in good_only["modules"]
     ] == ["cam"]
-    assert "stale" in bp["scan"] and "age_seconds" in bp["scan"]
+    assert "stale" in good_only["scan"] and "age_seconds" in good_only["scan"]
     assert client.get("/catalog?blueprint=nope").json()["modules"] == []
     names = client.get("/catalog/blueprints?fields=blueprints.name").json()
     assert {blueprint["name"] for blueprint in names["blueprints"]} == set(found)

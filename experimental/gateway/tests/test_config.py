@@ -23,7 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import annotations as annotation_file, overrides as ov
+from experimental.gateway import annotations as annotation_file, overrides
 from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
@@ -135,7 +135,7 @@ def test_global_config_is_its_schema_defaults_and_secret_names(client: TestClien
     shown = client.get("/catalog/config").json()
     assert set(shown) == {"schema", "defaults", "secrets"}
     assert "robot_ip" in shown["schema"]["properties"]
-    assert all(ov.is_secret_name(key) for key in shown["secrets"])
+    assert all(overrides.is_secret_name(key) for key in shown["secrets"])
 
 
 def test_a_blueprints_config_schema_is_global_and_module_fields(
@@ -222,11 +222,11 @@ def test_robots_list_their_blueprints_which_carry_the_annotations(client: TestCl
     go2 = client.get("/catalog/robots").json()["robots"]["go2"]
     assert "unitree-go2" in go2["blueprints"]
     found = client.get("/catalog/blueprints?fields=blueprints.name,blueprints.recommended_config")
-    bp = next(
+    unitree_go2 = next(
         blueprint for blueprint in found.json()["blueprints"] if blueprint["name"] == "unitree-go2"
     )
-    assert set(bp) == {"name", "recommended_config"}
-    assert any(setting["kind"] == "pick" for setting in bp["recommended_config"])
+    assert set(unitree_go2) == {"name", "recommended_config"}
+    assert any(setting["kind"] == "pick" for setting in unitree_go2["recommended_config"])
 
 
 def test_annotations_name_registered_blueprints_and_real_fields() -> None:

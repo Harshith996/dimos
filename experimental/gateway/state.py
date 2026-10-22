@@ -34,7 +34,6 @@ from experimental.gateway.live import Live
 from experimental.gateway.process_stats import ProcessStats
 
 API_VERSION = "7.0.0"
-INTROSPECT_TTL_S = 600.0
 
 
 @dataclass
@@ -60,7 +59,8 @@ class State:
         try:
             return await self.cache.get(
                 key,
-                INTROSPECT_TTL_S,
+                # an answer is reused ten minutes; a blueprint added or removed clears them all
+                600.0,
                 lambda: introspect.run_child(dimos_dir, args, stdin, python=python),
             )
         except introspect.IntrospectError as error:

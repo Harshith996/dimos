@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from experimental.gateway import catalog, introspect, launches, overrides as ov, responses
+from experimental.gateway import catalog, introspect, launches, overrides, responses
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter(prefix="/catalog")
@@ -207,7 +207,7 @@ async def global_config() -> dict[str, Any]:
     return {
         "schema": schema,
         "defaults": defaults,
-        "secrets": sorted({key for key in names if ov.is_secret_name(key)}),
+        "secrets": sorted({key for key in names if overrides.is_secret_name(key)}),
     }
 
 

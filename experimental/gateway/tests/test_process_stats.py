@@ -40,9 +40,9 @@ class FakeTransport:
     def stop(self) -> None:
         self.stopped = True
 
-    def send(self, msg: dict[str, Any]) -> None:
+    def send(self, message: dict[str, Any]) -> None:
         for handler in self.handlers:
-            handler(msg)
+            handler(message)
 
 
 def stats_message(cpu: float) -> dict[str, Any]:
