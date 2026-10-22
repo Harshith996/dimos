@@ -35,6 +35,8 @@ import pytest
 import pytest_mock
 
 from dimos.core.global_config import global_config
+from dimos.core.transport import LCMTransport
+import dimos.core.transport_factory as transport_factory
 from dimos.core.transport_factory import make_transport
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.message_utils.image import image_from_array
@@ -1072,6 +1074,8 @@ def test_control_loop_outputs_canonical_pose_and_buttons_with_exact_source_heade
         "zenoh_scouting": False,
     }.items():
         monkeypatch.setattr(global_config, name, value)
+    if backend == "lcm":
+        monkeypatch.setattr(transport_factory, "LCMTransport", partial(LCMTransport, url="memq://"))
     received = {}
     condition = threading.Condition()
 
@@ -1083,6 +1087,7 @@ def test_control_loop_outputs_canonical_pose_and_buttons_with_exact_source_heade
     with ExitStack() as cleanup:
         for name in ("left_controller_output", "teleop_buttons"):
             transport = make_transport(name, module.outputs[name].type)
+            cleanup.callback(transport.stop)
             module.set_transport(name, transport)
             cleanup.callback(transport.subscribe(partial(receive, name)))
         cleanup.callback(module._stop_control_loop)
