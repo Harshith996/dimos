@@ -187,7 +187,7 @@ class RemoteModuleSource(ModuleSource):
         self._unload("unload_module_by_class_name", class_name)
 
     def unload_module_by_name(self, name: str) -> None:
-        self._unload("unload_module_by_name", name)
+        self._unload("unload_module", name)
 
     def _unload(self, method: str, target: str) -> None:
         self._coord.call(method, target)

@@ -157,7 +157,7 @@ class ModuleCoordinator(Resource):
             "restart_module_by_class_name": self.restart_module_by_class_name,
             "restart_module_by_name": self.restart_module_by_name,
             "unload_module_by_class_name": self.unload_module_by_class_name,
-            "unload_module_by_name": self.unload_module_by_name,
+            "unload_module": self.unload_module,
             "shutdown": self.shutdown,
         }
 
@@ -584,9 +584,6 @@ class ModuleCoordinator(Resource):
     def unload_module_by_class_name(self, class_name: str) -> None:
         with self._modules_lock:
             self.unload_module(self._instance_key_of_class_name(class_name))
-
-    def unload_module_by_name(self, name: str) -> None:
-        self.unload_module(name)
 
     def _instance_key_of_class_name(self, class_name: str) -> str:
         names = [n for n, c in self._instance_classes.items() if c.__name__ == class_name]
