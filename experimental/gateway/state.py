@@ -26,7 +26,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Query, Request
 from pydantic import BeforeValidator
 
-from experimental.gateway import events, introspect, store
+from experimental.gateway import constants, events, introspect, store
 from experimental.gateway.discovery import Jobs, Scanner
 from experimental.gateway.errors import ApiError as ApiError
 from experimental.gateway.launches import RunSource
@@ -61,8 +61,7 @@ class State:
         try:
             return await self.cache.get(
                 key,
-                # an answer is reused ten minutes; a blueprint added or removed clears them all
-                600.0,
+                constants.INTROSPECT_CACHE_S,
                 lambda: introspect.run_child(dimos_dir, args, stdin, python=python),
             )
         except introspect.IntrospectError as error:

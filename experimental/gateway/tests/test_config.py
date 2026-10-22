@@ -23,7 +23,8 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import annotations as annotation_file, overrides
+from experimental.gateway import annotations as annotation_file, constants, launches
+from experimental.gateway.__main__ import serve
 from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
@@ -168,7 +169,7 @@ def test_global_config_is_its_schema_defaults_and_secret_names(client: TestClien
     shown = client.get("/catalog/config").json()
     assert set(shown) == {"schema", "defaults", "secrets"}
     assert "robot_ip" in shown["schema"]["properties"]
-    assert all(overrides.is_secret_name(key) for key in shown["secrets"])
+    assert all(launches.is_secret_name(key) for key in shown["secrets"])
 
 
 def test_a_blueprints_config_schema_is_global_and_module_fields(
@@ -289,3 +290,10 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
         for method in ops
     }
     assert declared == served
+
+
+def test_serve_refuses_a_socket_path_too_long_to_bind(tmp_path: Path) -> None:
+    socket_path = tmp_path / ("s" * constants.UNIX_SOCKET_PATH_LIMIT) / "dimos-gateway.sock"
+    with pytest.raises(SystemExit, match="dimos-gateway.socket"):
+        serve(socket_path, tmp_path, None, constants.DEFAULT_HOST, None, None, False)
+    assert not socket_path.parent.exists()

@@ -27,7 +27,7 @@ import psutil
 import pytest
 
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches, overrides
+from experimental.gateway import launches
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -89,7 +89,7 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(
     assert "k1" not in first and "--run-id" not in first
     assert launch["config"] == {
         "global": config["global"],
-        "modules": {"agent": {"api_key": overrides.HIDDEN}},
+        "modules": {"agent": {"api_key": launches.HIDDEN}},
     }
     assert client.post("/active/launch", json={"blueprint": "demo"}).status_code == 409
     out = client.post("/active/stop")

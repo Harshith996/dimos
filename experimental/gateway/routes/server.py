@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-from experimental.gateway import logs, responses, store
+from experimental.gateway import constants, logs, responses, store
 from experimental.gateway.state import GatewayState
 
 router = APIRouter()
@@ -65,5 +65,5 @@ async def info(state: GatewayState) -> dict[str, Any]:
 @router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
     state.uploads.shutdown()
-    asyncio.get_running_loop().call_later(0.2, state.exit)
+    asyncio.get_running_loop().call_later(constants.SERVER_STOP_DELAY_S, state.exit)
     return {"stopping": True}

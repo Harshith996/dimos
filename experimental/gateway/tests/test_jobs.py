@@ -22,7 +22,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 import pytest
 
-from experimental.gateway import catalog, discovery, introspect
+from experimental.gateway import catalog, constants, discovery, introspect
 from experimental.gateway.state import State
 
 FAKE_SCAN = """
@@ -102,6 +102,21 @@ def test_a_child_dying_right_after_a_record_still_scans_the_rest(
     until(lambda: client.get(f"/jobs/{job}").json()["done"])
     assert client.get(f"/jobs/{job}").json()["ok"]
     assert set(scanned.scanner.cache()["results"]) == {"dies_after", "good", "missing"}
+
+
+def test_a_scan_takes_its_per_blueprint_timeout_from_the_request(
+    client: TestClient, state: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def no_scan(job: discovery.Job) -> None:
+        job.finish(True, None)
+
+    monkeypatch.setattr(state.scanner, "scan", no_scan)
+    job = client.post("/catalog/scan").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert state.scanner.item_timeout_s == constants.SCAN_ITEM_TIMEOUT_S
+    job = client.post("/catalog/scan?timeout=5").json()["job"]
+    until(lambda: client.get(f"/jobs/{job}").json()["done"])
+    assert state.scanner.item_timeout_s == 5
 
 
 def test_the_catalog_answers_from_its_cache_and_only_a_scan_changes_it(

@@ -247,6 +247,7 @@ web = [
     "sse-starlette>=2.2.1",
     "starlette>=0.52",  # McpServer request/response types
     "uvicorn>=0.34.0",
+    "watchfiles>=1.0",  # the dimos gateway's file watchers
     "jinja2>=3.1.6",
     "ffmpeg-python",
     "soundfile",
