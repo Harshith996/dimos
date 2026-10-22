@@ -123,13 +123,13 @@ impl<T> Input<T> {
 #[derive(Clone)]
 pub struct Output<T> {
     pub topic: String,
-    encode: fn(&T) -> Vec<u8>,
+    encode: fn(&T) -> io::Result<Vec<u8>>,
     sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl<T> Output<T> {
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        publish_encoded(&self.sender, (self.encode)(msg)).await
+        publish_encoded(&self.sender, (self.encode)(msg)?).await
     }
 }
 
@@ -140,7 +140,7 @@ impl<T> Output<T> {
 pub struct Io<T> {
     pub topic: String,
     receiver: mpsc::Receiver<T>,
-    encode: fn(&T) -> Vec<u8>,
+    encode: fn(&T) -> io::Result<Vec<u8>>,
     sender: mpsc::Sender<Vec<u8>>,
 }
 
@@ -150,7 +150,7 @@ impl<T> Io<T> {
     }
 
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
-        publish_encoded(&self.sender, (self.encode)(msg)).await
+        publish_encoded(&self.sender, (self.encode)(msg)?).await
     }
 }
 
@@ -386,7 +386,7 @@ impl Builder {
         Input { topic, receiver }
     }
 
-    pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
+    pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> io::Result<Vec<u8>>) -> Output<T> {
         let topic = self.topic_for(port);
         let sender = self.add_publisher(&topic);
         Output {
@@ -401,7 +401,7 @@ impl Builder {
         &mut self,
         port: &str,
         decode: fn(&[u8]) -> io::Result<T>,
-        encode: fn(&T) -> Vec<u8>,
+        encode: fn(&T) -> io::Result<Vec<u8>>,
     ) -> Io<T> {
         let topic = self.topic_for(port);
         let receiver = self.add_route(&topic, decode);
@@ -419,13 +419,35 @@ impl Builder {
     /// The graph fills in the background as `tf` messages arrive. Repeated calls
     /// share one graph.
     pub fn tf(&mut self) -> crate::tf::Tf {
+        self.tf_with_codec(crate::tf::decode_legacy, crate::tf::encode_legacy)
+    }
+
+    /// Select TF wire codecs while retaining the same graph and lookup API.
+    /// Repeated calls share one graph and must select the same codec pair.
+    ///
+    /// # Panics
+    /// Panics if this module already selected a different pair for its TF topic.
+    pub fn tf_with_codec(
+        &mut self,
+        decode: crate::tf::DecodeTransforms,
+        encode: crate::tf::EncodeTransforms,
+    ) -> crate::tf::Tf {
         if let Some(tf) = &self.tf {
+            assert!(
+                tf.uses_codec(decode, encode),
+                "one TF topic cannot mix codec pairs"
+            );
             return tf.clone();
         }
         let topic = self.topic_for("tf");
         let sender = self.add_publisher(&topic);
-        let (tf, route) =
-            crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
+        let (tf, route) = crate::tf::tf_subscription_with_codec(
+            topic.clone(),
+            crate::tf::DEFAULT_TF_WINDOW_SECS,
+            sender,
+            decode,
+            encode,
+        );
         self.routes.entry(topic).or_default().push(route);
         self.tf = Some(tf.clone());
         tf
@@ -942,7 +964,7 @@ mod tests {
     #[test]
     fn output_uses_mapped_topic() {
         let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
-        let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
+        let output = builder.output("cmd_vel", |b: &Vec<u8>| Ok(b.clone()));
         assert_eq!(output.topic, "/robot/cmd_vel");
     }
 
@@ -950,7 +972,7 @@ mod tests {
     fn topics_matching_ports_exactly_pass() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd"), ("odom", "/robot/odom")]);
         builder.input("cmd", |b| Ok(b.to_vec()));
-        builder.output("odom", |b: &Vec<u8>| b.clone());
+        builder.output("odom", |b: &Vec<u8>| Ok(b.clone()));
         builder.enforce_topics_match_ports().expect("exact match");
     }
 
@@ -958,7 +980,7 @@ mod tests {
     fn a_port_the_coordinator_never_sent_is_rejected() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
         builder.input("cmd", |b| Ok(b.to_vec()));
-        builder.output("odom", |b: &Vec<u8>| b.clone());
+        builder.output("odom", |b: &Vec<u8>| Ok(b.clone()));
         let err = builder
             .enforce_topics_match_ports()
             .expect_err("odom has no topic");
@@ -993,14 +1015,14 @@ mod tests {
     #[test]
     fn io_uses_mapped_topic() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
-        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| Ok(b.clone()));
         assert_eq!(io.topic, "/robot/cmd");
     }
 
     #[test]
     fn io_registers_one_route_and_one_publisher_on_the_same_topic() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
-        let _io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        let _io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| Ok(b.clone()));
         assert_eq!(builder.routes.get("/robot/cmd").map(Vec::len), Some(1));
         assert_eq!(builder.outputs.len(), 1);
         assert_eq!(builder.outputs[0].0, "/robot/cmd");
@@ -1009,7 +1031,7 @@ mod tests {
     #[tokio::test]
     async fn io_receives_on_its_route_and_publishes_to_its_queue() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
-        let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| Ok(b.clone()));
 
         builder.routes["/robot/cmd"][0].try_dispatch(b"inbound");
         assert_eq!(io.recv().await.expect("inbound message"), b"inbound");
@@ -1022,7 +1044,7 @@ mod tests {
     #[tokio::test]
     async fn io_publish_errors_when_the_publish_worker_is_gone() {
         let mut builder = builder_with_topics(&[]);
-        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
+        let io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| Ok(b.clone()));
         builder.outputs.clear();
         let err = io
             .publish(&b"x".to_vec())
@@ -1048,6 +1070,116 @@ mod tests {
         assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
     }
 
+    fn encode_tagged_tf(values: &[crate::tf::Transform]) -> io::Result<Vec<u8>> {
+        let mut bytes = b"test-tf:".to_vec();
+        bytes.extend(crate::tf::encode_legacy(values)?);
+        Ok(bytes)
+    }
+
+    fn decode_tagged_tf(bytes: &[u8]) -> io::Result<Vec<crate::tf::Transform>> {
+        crate::tf::decode_legacy(bytes.strip_prefix(b"test-tf:").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "missing test codec prefix")
+        })?)
+    }
+
+    #[derive(crate::Module)]
+    struct TaggedTfModule {
+        #[tf(decode = decode_tagged_tf, encode = encode_tagged_tf)]
+        tf: crate::tf::Tf,
+    }
+
+    #[tokio::test]
+    async fn derived_tf_field_uses_selected_codecs_for_publish_and_receive() {
+        let mut sender = builder_with_topics(&[("tf", "/robot/tf")]);
+        let mut receiver = builder_with_topics(&[("tf", "/robot/tf")]);
+        let producer = TaggedTfModule::build(&mut sender, NoConfig);
+        let consumer = TaggedTfModule::build(&mut receiver, NoConfig);
+        let edge = crate::tf::Transform::new(
+            "map",
+            "camera",
+            3.25,
+            nalgebra::Isometry3::translation(1.0, 2.0, 3.0),
+        );
+        producer.tf.publish(&[edge]).await.unwrap();
+        let bytes = sender.outputs[0].1.recv().await.unwrap();
+        assert!(bytes.starts_with(b"test-tf:"));
+        receiver.routes["/robot/tf"][0].try_dispatch(b"wrong codec");
+        assert!(consumer.tf.get_latest("map", "camera").is_none());
+        receiver.routes["/robot/tf"][0].try_dispatch(&bytes);
+        let found = consumer.tf.get_latest("map", "camera").unwrap();
+        assert_eq!(found.translation(), nalgebra::Vector3::new(1.0, 2.0, 3.0));
+        assert_eq!(found.ts, 3.25);
+        receiver.tf_with_codec(decode_tagged_tf, encode_tagged_tf);
+        assert_eq!(receiver.outputs.len(), 1);
+        assert_eq!(receiver.routes["/robot/tf"].len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "one TF topic cannot mix codec pairs")]
+    fn tf_rejects_mixed_codecs_on_one_topic() {
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        builder.tf_with_codec(decode_tagged_tf, encode_tagged_tf);
+        builder.tf();
+    }
+
+    #[tokio::test]
+    async fn tf_encode_error_does_not_publish_or_change_the_local_graph() {
+        fn reject(_: &[crate::tf::Transform]) -> io::Result<Vec<u8>> {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unencodable transform",
+            ))
+        }
+        let mut builder = builder_with_topics(&[("tf", "/tf")]);
+        let tf = builder.tf_with_codec(decode_tagged_tf, reject);
+        let edge =
+            crate::tf::Transform::new("map", "camera", 3.25, nalgebra::Isometry3::identity());
+        let error = tf
+            .publish(&[edge])
+            .await
+            .expect_err("codec error must reach the caller");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(tf.get_latest("map", "camera").is_none());
+        assert!(matches!(
+            builder.outputs[0].1.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn port_encode_error_does_not_enqueue_or_close_the_port() {
+        fn encode(value: &Vec<u8>) -> io::Result<Vec<u8>> {
+            if value == b"bad" {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "encoding failed",
+                ));
+            }
+            Ok(value.clone())
+        }
+        let mut builder = builder_with_topics(&[("output", "/out"), ("io", "/io")]);
+        let output = builder.output("output", encode);
+        let io = builder.io("io", |bytes| Ok(bytes.to_vec()), encode);
+        assert_eq!(
+            output.publish(&b"bad".to_vec()).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            io.publish(&b"bad".to_vec()).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        for (_, receiver) in &mut builder.outputs {
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ));
+        }
+        output.publish(&b"out".to_vec()).await.unwrap();
+        io.publish(&b"io".to_vec()).await.unwrap();
+        assert_eq!(builder.outputs[0].1.recv().await.unwrap(), b"out");
+        assert_eq!(builder.outputs[1].1.recv().await.unwrap(), b"io");
+    }
+
     // recv/publish concurrency
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1065,7 +1197,7 @@ mod tests {
 
         let mut builder = Builder::new(topics(&[("data", "/data"), ("out", "/out")]));
         let _input = builder.input("data", |b| Ok(b.to_vec()));
-        let output = builder.output("out", |b: &Vec<u8>| b.clone());
+        let output = builder.output("out", |b: &Vec<u8>| Ok(b.clone()));
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
         let transport = Arc::new(transport);
@@ -1115,7 +1247,7 @@ mod tests {
             }
             Ok(b.to_vec())
         });
-        let output = builder.output("out", |b: &Vec<u8>| b.clone());
+        let output = builder.output("out", |b: &Vec<u8>| Ok(b.clone()));
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
         let transport = Arc::new(transport);
@@ -1166,8 +1298,8 @@ mod tests {
         });
 
         let mut builder = Builder::new(topics(&[("block_out", "/block"), ("fast_out", "/fast")]));
-        let block_out = builder.output("block_out", |b: &Vec<u8>| b.clone());
-        let fast_out = builder.output("fast_out", |b: &Vec<u8>| b.clone());
+        let block_out = builder.output("block_out", |b: &Vec<u8>| Ok(b.clone()));
+        let fast_out = builder.output("fast_out", |b: &Vec<u8>| Ok(b.clone()));
         let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // Wedge the block channel, then publish on the fast channel.
@@ -1278,8 +1410,8 @@ mod tests {
             Ok(Msg(bytes.to_vec()))
         }
 
-        fn encode(msg: &Msg) -> Vec<u8> {
-            msg.0.clone()
+        fn encode(msg: &Msg) -> io::Result<Vec<u8>> {
+            Ok(msg.0.clone())
         }
 
         #[derive(crate::Module)]
