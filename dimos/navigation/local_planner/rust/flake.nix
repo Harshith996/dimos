@@ -17,8 +17,8 @@
 
         moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         sdkArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/937e53e824b7a26bd52421ba46687d211f9e1e7b";
-          sha256 = "e7db5c2d0cc13a9e6dd76d90e4ee444fa99840f9ab0bf4c16139ba12673b1109";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/8101c8db4a50043f1dbd0127fd00220ec9b5a37a";
+          sha256 = "fcee2041d31c9368b77b803140f976b5a5d044f48f9423fea298afe372568361";
         };
         sdkSource = pkgs.runCommand "dimos-local-planner-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
