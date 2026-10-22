@@ -299,6 +299,10 @@ class ConnectionSource:
         if not mine:
             return
         now = time.monotonic()
+        source_ts = float(getattr(msg, "ts", time.time()))
+        age = time.time() - source_ts
+        if not math.isfinite(age) or age < -self._description.deadman_timeout_s:
+            return
         with self._lock:
             latest = self._latest
             if any(
@@ -313,8 +317,8 @@ class ConnectionSource:
                 self._drop_holds = True
             # Replaced whole, so the tick loop never sees half of one update.
             self._latest = {**latest, **mine}
-            self._key_received.update((key, now) for key in mine)
-            self._received_at = time.time()
+            self._key_received.update((key, now - max(0.0, age)) for key in mine)
+            self._received_at = source_ts
             self._awaiting_reading = False
 
     def adopt(self, other: ConnectionSource) -> None:
