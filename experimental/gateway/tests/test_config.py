@@ -244,6 +244,17 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
                     assert setting["global"] in GlobalConfig.model_fields
 
 
+def test_every_registered_blueprint_is_annotated() -> None:
+    source = annotation_file.load()
+    annotated = {name for robot in source["robots"].values() for name in robot["blueprints"]}
+    missing = sorted(
+        name
+        for name in all_blueprints
+        if name not in annotated and not annotation_file.HIDDEN_NAME.search(name)
+    )
+    assert not missing, f"add these to experimental/gateway/annotations.yaml: {', '.join(missing)}"
+
+
 def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> None:
     manifest = yaml.safe_load((Path(__file__).parents[3] / "dimos.yaml").read_text())
     assert manifest["provides"]["info"]["version"] == API_VERSION
