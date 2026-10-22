@@ -64,9 +64,10 @@ unitree_go2_mls_reform = autoconnect(
     NormalizeGo2Lidar.blueprint(),
     GscPGO.blueprint(child_frame_id="world"),
     ReformRayTracingVoxelMap.blueprint(
-        **ray_tracing_config.model_copy(update={"world_frame": "map"}).model_dump(
-            exclude_unset=True
-        )
+        **ray_tracing_config.model_copy(
+            # map -> world comes from GSC once per cloud it processes (~0.13 s apart, later when busy).
+            update={"world_frame": "map", "tf_match_tolerance_s": 0.5, "tf_wait_timeout_s": 1.0}
+        ).model_dump(exclude_unset=True)
     ).remappings(
         [
             (ReformRayTracingVoxelMap, "lidar", "cloud"),
