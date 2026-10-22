@@ -6,10 +6,10 @@
 { pkgs }:
 let
   generatorWheel = pkgs.fetchurl {
-    url = "https://files.pythonhosted.org/packages/1a/05/cb085e18549a5eced615840b2f607a9c342a8a49c69012964f0568aa309b/dimos_cdrgen-0.1.1-py3-none-any.whl";
-    sha256 = "f85923440196a3028dbd974a913b0ef9320eb12b57770f722e96bc1645a351a2";
+    url = "https://files.pythonhosted.org/packages/29/9f/a4fe6f8ea4dcafd3001c868ebbc751bb0af83aecb1fe6523765c12cdedba/dimos_cdrgen-0.1.2-py3-none-any.whl";
+    sha256 = "9857c8cc40de58b03f94cb81e7d27ae3caac98101c96cdaa2965413a332e685f";
   };
-  generator = pkgs.runCommand "dimos-cdrgen-0.1.1-source" { nativeBuildInputs = [ pkgs.unzip ]; } ''
+  generator = pkgs.runCommand "dimos-cdrgen-0.1.2-source" { nativeBuildInputs = [ pkgs.unzip ]; } ''
     mkdir -p $out
     unzip -q ${generatorWheel} -d $out
   '';
