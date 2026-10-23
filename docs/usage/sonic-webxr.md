@@ -14,11 +14,14 @@ the simulation dependencies and model release before starting:
 ```bash
 uv sync --extra control --extra sim
 uv run --no-sync dimos-sonic-models
-uv run --no-sync dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-sonic-webxr-teleop
+uv run --no-sync dimos --simulation mujoco --transport zenoh run unitree-g1-sonic-webxr-teleop
 ```
 
 For a CUDA host, use the [SONIC installation instructions](/dimos/robot/unitree/g1/sonic.md)
 before running the same blueprint command.
+
+Use DimOS Desktop's Controller app for cameras and policy controls. This blueprint
+does not launch Rerun.
 
 Open `https://<simulation-host>:8443/teleop` in the enterprise Pico browser.
 Trust the host certificate using the WebXR setup instructions. The page requires

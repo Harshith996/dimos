@@ -592,13 +592,16 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
 @pytest.mark.self_hosted
 def test_webxr_blueprint_serializes_body_and_button_streams(monkeypatch, mocker):
     monkeypatch.setattr(global_config, "simulation", "mujoco")
-    monkeypatch.setattr(global_config, "viewer", "none")
+    monkeypatch.setattr(global_config, "viewer", "rerun")
     monkeypatch.setattr(global_config, "scene_package", None)
     monkeypatch.setattr(global_config, "transport", "zenoh")
     mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
     blueprint = runpy.run_path(
         str(Path(__file__).parent / "blueprints/basic/unitree_g1_sonic_webxr_teleop.py")
     )["unitree_g1_sonic_webxr_teleop"]
+
+    modules = {atom.module.__name__ for atom in blueprint.active_blueprints}
+    assert not {"RerunBridgeModule", "RerunWebSocketServer"} & modules
 
     body = _snapshot()
     body_transport = blueprint.transport_map[("body_tracking", type(body))]
