@@ -103,7 +103,7 @@ R1PRO_MODEL = (
 )
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
 
-# UrdfManager on the R1, for any blueprint: ``UrdfManager.blueprint(**R1PRO_URDF_MANAGER_CONFIG)``.
+# UrdfManagerPointClearing on the R1, for any blueprint: ``UrdfManagerPointClearing.blueprint(**R1PRO_URDF_MANAGER_CONFIG)``.
 R1PRO_URDF_MANAGER_CONFIG: dict[str, Any] = {
     "model": R1PRO_MODEL,
     # Replaying a 10-14 recording, self-hits per scan rose from 13 at 1 cm to 20 at 5 cm and stayed 20 at 10 cm.
