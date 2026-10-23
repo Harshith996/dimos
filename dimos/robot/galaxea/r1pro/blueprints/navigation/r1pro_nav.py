@@ -38,7 +38,7 @@ from dimos.robot.galaxea.r1pro.config import (
 from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
@@ -70,14 +70,14 @@ r1pro_nav = autoconnect(
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans and
     # the head depth (which sees the arms) alike.
-    UrdfManager.blueprint(
+    UrdfManagerPointClearing.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
         tf_tolerance_s=TF_TOLERANCE_S,
         tf_forward_tolerance_s=TF_TOLERANCE_S,
     ).remappings(
         [
-            (UrdfManager, "pointcloud", "lidar_with_robot"),
-            (UrdfManager, "filtered_pointcloud", "lidar"),
+            (UrdfManagerPointClearing, "pointcloud", "lidar_with_robot"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar"),
         ]
     ),
     # Head depth within a voxel of the floor lands in the floor's layer, so it is anchored as floor.
