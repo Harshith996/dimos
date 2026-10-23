@@ -33,6 +33,7 @@ from __future__ import annotations
 from functools import cache
 import os
 from pathlib import Path
+import platform
 from typing import Any, cast
 
 from yourdfpy import URDF  # type: ignore[import-untyped]
@@ -225,6 +226,7 @@ _policy = G1SonicPolicyModule.blueprint(
     decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
     planner_onnx=_SONIC_PLANNER_PATH,
     simulation_address=_simulation_address,
+    cpu_simulation=_simulation_address is not None and platform.system() == "Darwin",
     joint_names=g1_joints,
     tick_rate=_tick_rate,
     auto_arm=_auto_arm,
