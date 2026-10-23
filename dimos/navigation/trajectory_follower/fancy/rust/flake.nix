@@ -32,11 +32,13 @@
           chmod -R u+w $out
           mkdir -p $out/sdk
           cp -r ${plannerSource}/dimos/navigation/local_planner/rust $out/local-planner
-          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros ${plannerSource}/native/rust/dimos-tf-messages $out/sdk/
+          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-module/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           # The source artifacts own workspace roots; do not make them automatic members.
           substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
-          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-tf-messages", "messages"]'
+          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../local_planner/rust' 'local-planner' \
             --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
@@ -47,7 +49,7 @@
         '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" "dimos-tf-messages" ];
+        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {
           inherit pkgs;
           rootFeatures = [ "module" ];

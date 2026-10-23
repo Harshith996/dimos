@@ -50,17 +50,19 @@
           cp -r ${moduleSource} $out
           chmod -R u+w $out
           mkdir -p $out/sdk
-          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros ${sharedSource}/native/rust/dimos-tf-messages $out/sdk/
+          cp -r ${sharedSource}/native/rust/dimos-module ${sharedSource}/native/rust/dimos-module-macros $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-module/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
-          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-tf-messages", "messages"]'
+          exclude = ["sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../../native/rust/dimos-module' 'sdk/dimos-module' \
             --replace-fail '../../../../build/message-source/rust' 'messages'
         '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-module" "dimos-module-macros" "dimos-tf-messages" ];
+        ours = [ name "dimos-module" "dimos-module-macros" ];
         build = mode: features: (import generated {
           inherit pkgs;
           rootFeatures = [ "default" ] ++ features;

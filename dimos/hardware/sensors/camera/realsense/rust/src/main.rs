@@ -825,10 +825,7 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
                 transforms.push(dimos_module::tf::from_isometry(
                     parent.clone(),
                     child.clone(),
-                    dimos_module::tf::Time {
-                        sec: stamp.sec,
-                        nanosec: stamp.nanosec,
-                    },
+                    stamp.clone(),
                     *iso,
                 ));
             }
