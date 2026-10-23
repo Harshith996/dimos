@@ -50,7 +50,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_robot_config,
     xarm7_hardware,
 )
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import UrdfManagerPointClearing
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -193,7 +193,7 @@ def _voxel_mapping() -> tuple[Blueprint, ...]:
     return (
         # The wrist camera sees the arm itself, so the arm's returns must be
         # dropped before mapping.
-        UrdfManager.blueprint(
+        UrdfManagerPointClearing.blueprint(
             # ManipulationModule already publishes the arm's frames.
             publish_joint_tf=False,
             # Filter only the arm; gripper returns may remain in the map.
