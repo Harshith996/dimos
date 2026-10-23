@@ -21,11 +21,10 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import signal
 import time
 
-from dimos.constants import STATE_DIR
+from dimos.constants import LOG_DIR, RECORDINGS_DIR, STATE_DIR
 from dimos.core.config_secrets import SECRET_CONFIG_FIELDS, config_field_name, without_secret_values
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.utils.logging_config import setup_logger
@@ -91,23 +90,37 @@ class RunEntry:
         return cls(**{k: v for k, v in data.items() if k in valid})
 
 
-def generate_run_id(blueprint: str) -> str:
-    """Generate a human-readable run ID: ``<stamp>-<4 hex>-<blueprint>``.
+def generate_run_id(blueprint: str, dirs: tuple[Path, ...] = (LOG_DIR, RECORDINGS_DIR)) -> str:
+    """Generate a human-readable run ID: ``<counter>-<blueprint>``, e.g. ``007-unitree-go2``.
 
-    The token keeps parallel runs of one blueprint, started in the same second,
-    out of each other's recording and log folders.
+    The counter is one past the highest in *dirs*; the ID is claimed by creating
+    its folder in ``dirs[0]``, so parallel runs never share one.
     """
-    ts = time.strftime("%Y%m%d-%H%M%S")
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
-    return f"{ts}-{secrets.token_hex(2)}-{safe_name}"
+    taken = [
+        int(m.group(1))
+        for d in dirs
+        if d.is_dir()
+        for p in d.iterdir()
+        if (m := re.match(r"(\d{3,6})-", p.name))
+    ]
+    n = max(taken, default=0) + 1
+    dirs[0].mkdir(parents=True, exist_ok=True)
+    while True:
+        run_id = f"{n:03d}-{safe_name}"
+        try:
+            (dirs[0] / run_id).mkdir()
+            return run_id
+        except FileExistsError:
+            n += 1
 
 
 def blueprint_from_run_id(run_id: str) -> str | None:
     """The blueprint name in a run ID, or None if it is not one.
 
-    Also reads IDs from before the token, ``<stamp>-<blueprint>``.
+    Also reads the older ``<stamp>-[<4 hex>-]<blueprint>`` IDs.
     """
-    m = re.fullmatch(r"\d{8}-\d{6}-(?:[0-9a-f]{4}-)?(.+)", run_id)
+    m = re.fullmatch(r"(?:\d{8}-\d{6}-(?:[0-9a-f]{4}-)?|\d{3,6}-)(.+)", run_id)
     return m.group(1) if m else None
 
 
