@@ -1,7 +1,7 @@
 # SONIC in Desktop
 
-Run the existing SONIC blueprint with Zenoh on a CUDA-enabled host, including
-for simulation. The live policy refuses CPU-only inference on macOS.
+Run the existing SONIC blueprint with Zenoh. macOS simulation selects CPU
+inference automatically; real hardware still requires CUDA.
 Desktop's Controller app uses the
 running module's RPCs, not a second controller or motor publisher.
 

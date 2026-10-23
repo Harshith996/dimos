@@ -21,6 +21,7 @@ import numpy as np
 import onnxruntime as ort  # type: ignore[import-untyped]
 import pytest
 
+from dimos.control.sonic.sonic_onnx_runtime import create_sonic_session
 from dimos.control.sonic.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
     DEFAULT_HEIGHT,
@@ -37,17 +38,19 @@ from dimos.teleop.webxr.controller_types import Buttons
 
 
 @pytest.fixture
-def velocity_pipeline(mocker: Any) -> Iterator[SonicPipeline]:
+def velocity_pipeline(mocker: Any, request: Any) -> Iterator[SonicPipeline]:
+    cpu_simulation = getattr(request, "param", False)
+    provider = "CPUExecutionProvider" if cpu_simulation else "CUDAExecutionProvider"
     encoder = mocker.MagicMock()
     encoder.get_inputs.return_value = [SimpleNamespace(name="encoder", shape=[1, 1751])]
-    encoder.get_providers.return_value = ["CUDAExecutionProvider"]
+    encoder.get_providers.return_value = [provider]
     encoder.run.return_value = [np.zeros((1, 64), dtype=np.float32)]
     decoder = mocker.MagicMock()
     decoder.get_inputs.return_value = [SimpleNamespace(name="decoder", shape=[1, 994])]
-    decoder.get_providers.return_value = ["CUDAExecutionProvider"]
+    decoder.get_providers.return_value = [provider]
     decoder.run.return_value = [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
     planner = mocker.MagicMock()
-    planner.get_providers.return_value = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    planner.get_providers.return_value = [provider]
     qpos = np.tile(
         np.concatenate(([0.0, 0.0, DEFAULT_HEIGHT, 1.0, 0.0, 0.0, 0.0], DEFAULT_ANGLES_DDS)),
         (1, 44, 1),
@@ -58,9 +61,11 @@ def velocity_pipeline(mocker: Any) -> Iterator[SonicPipeline]:
     mocker.patch.object(
         ort,
         "get_available_providers",
-        return_value=["CUDAExecutionProvider", "CPUExecutionProvider"],
+        return_value=[provider],
     )
-    pipeline = SonicPipeline("encoder.onnx", "decoder.onnx", "planner.onnx")
+    pipeline = SonicPipeline(
+        "encoder.onnx", "decoder.onnx", "planner.onnx", cpu_simulation=cpu_simulation
+    )
     try:
         yield pipeline
     finally:
@@ -534,6 +539,31 @@ def test_cpu_only_runtime_fails_before_loading_models(mocker):
         SonicPipeline("encoder.onnx", "decoder.onnx", "planner.onnx")
 
     load.assert_not_called()
+
+
+@pytest.mark.parametrize("velocity_pipeline", [True], indirect=True)
+def test_explicit_cpu_simulation_loads_all_models_without_cuda(velocity_pipeline):
+    for call in ort.InferenceSession.call_args_list:
+        assert call.kwargs["providers"] == ["CPUExecutionProvider"]
+        assert call.kwargs["sess_options"].intra_op_num_threads == 4
+    ort.preload_dlls.assert_not_called()
+
+    targets = velocity_pipeline.step(
+        DEFAULT_ANGLES_DDS,
+        np.zeros(29),
+        np.array([1.0, 0.0, 0.0, 0.0]),
+        np.zeros(3),
+        np.array([0.0, 0.0, -1.0]),
+    )
+    np.testing.assert_array_equal(targets, DEFAULT_ANGLES_DDS)
+
+
+def test_cuda_session_rejects_silent_cpu_fallback(mocker):
+    session = mocker.patch.object(ort, "InferenceSession").return_value
+    session.get_providers.return_value = ["CPUExecutionProvider"]
+
+    with pytest.raises(RuntimeError, match="did not activate CUDAExecutionProvider"):
+        create_sonic_session("decoder", "decoder.onnx", allow_cpu_shape_ops=False)
 
 
 def test_nonfinite_decoder_output_raises_a_control_fault(velocity_pipeline):

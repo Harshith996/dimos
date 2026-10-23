@@ -528,14 +528,23 @@ class SonicPipeline:
         encoder_path: str | Path,
         decoder_path: str | Path,
         planner_path: str | Path,
+        *,
+        cpu_simulation: bool = False,
     ) -> None:
-        prepare_sonic_onnx_runtime()
-        self._encoder = create_sonic_session("encoder", encoder_path, allow_cpu_shape_ops=False)
-        self._decoder = create_sonic_session("decoder", decoder_path, allow_cpu_shape_ops=False)
+        if not cpu_simulation:
+            prepare_sonic_onnx_runtime()
+        self._encoder = create_sonic_session(
+            "encoder", encoder_path, allow_cpu_shape_ops=False, cpu_simulation=cpu_simulation
+        )
+        self._decoder = create_sonic_session(
+            "decoder", decoder_path, allow_cpu_shape_ops=False, cpu_simulation=cpu_simulation
+        )
         # The released planner contains a small set of shape/index operators
         # unsupported by ORT 1.20's CUDA EP. sonic-doctor profiles and audits
         # that partition before hardware use; the neural planner remains CUDA.
-        self._planner = create_sonic_session("planner", planner_path, allow_cpu_shape_ops=True)
+        self._planner = create_sonic_session(
+            "planner", planner_path, allow_cpu_shape_ops=True, cpu_simulation=cpu_simulation
+        )
         self._encoder_input = self._encoder.get_inputs()[0].name
         self._decoder_input = self._decoder.get_inputs()[0].name
         # Fail loudly on a mismatched checkpoint (e.g. the pre-v1.1 release,

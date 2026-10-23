@@ -7,14 +7,18 @@ There is still one policy controller and one motor-command owner.
 
 ## Start in simulation
 
-SONIC currently requires a CUDA-enabled Linux host, including for simulation.
-The live controller deliberately refuses CPU-only inference on macOS. Install
-the existing SONIC dependencies and model release before starting:
+macOS simulation selects ONNX CPU inference automatically. Hardware still
+requires CUDA; the CPU option is rejected without a simulator. On macOS, install
+the simulation dependencies and model release before starting:
 
 ```bash
-uv run dimos-sonic-models
-uv run dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-sonic-webxr-teleop
+uv sync --extra control --extra sim
+uv run --no-sync dimos-sonic-models
+uv run --no-sync dimos --simulation mujoco --transport zenoh --viewer rerun run unitree-g1-sonic-webxr-teleop
 ```
+
+For a CUDA host, use the [SONIC installation instructions](/dimos/robot/unitree/g1/sonic.md)
+before running the same blueprint command.
 
 Open `https://<simulation-host>:8443/teleop` in the enterprise Pico browser.
 Trust the host certificate using the WebXR setup instructions. The page requires
@@ -53,7 +57,7 @@ full-body reference while WebXR owns it. Stop pose mode first.
 
 In simulation, verify walking, A+X entry, asymmetric arm motion, return to
 walking, headset disconnect/reconnect, recentering, Desktop stop and damping.
-Also inspect the policy and planner timing in `status()` on the intended CUDA
+Also inspect the policy and planner timing in `status()` on the intended
 host. Local synthetic-pose tests are not a headset or physical-robot acceptance
 test. Keep gantry support and a separate physical stop for the later G1 test.
 

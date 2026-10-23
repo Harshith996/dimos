@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+import platform
 import runpy
 
 import numpy as np
@@ -169,6 +170,35 @@ def test_hardware_start_rejects_unlocked_clocks_before_loading_models(
     assert connection.status()["active"] is False
     pipeline.assert_not_called()
     publish.assert_not_called()
+
+
+def test_cpu_simulation_cannot_start_hardware(connection, monkeypatch, mocker):
+    monkeypatch.setattr(connection.config, "simulation_address", None)
+    monkeypatch.setattr(connection.config, "cpu_simulation", True)
+    pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline")
+    publish = mocker.patch.object(connection.motor_command, "publish")
+
+    with pytest.raises(ValueError, match="simulation, not hardware control"):
+        connection.start()
+
+    assert connection.status()["active"] is False
+    pipeline.assert_not_called()
+    publish.assert_not_called()
+
+
+def test_simulation_passes_explicit_cpu_selection_to_inference(connection, monkeypatch, mocker):
+    monkeypatch.setattr(connection.config, "cpu_simulation", True)
+    pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline")
+
+    connection.start()
+
+    pipeline.assert_called_once_with(
+        encoder_path=connection.config.encoder_onnx,
+        decoder_path=connection.config.decoder_onnx,
+        planner_path=connection.config.planner_onnx,
+        cpu_simulation=True,
+    )
+    assert connection.status()["active"] is True
 
 
 @pytest.mark.parametrize("operation", ["arm", "activate", "live", "reactivate"])
@@ -517,12 +547,14 @@ def test_stopping_sonic_latches_damping(connection):
 
 
 @pytest.mark.self_hosted
+@pytest.mark.parametrize("system", ["Darwin", "Linux"])
 @pytest.mark.parametrize(
     "simulation, backend", [("", "G1WholeBodyConnection"), ("mujoco", "MujocoSimModule")]
 )
 def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
-    monkeypatch, mocker, simulation, backend
+    monkeypatch, mocker, simulation, backend, system
 ):
+    mocker.patch.object(platform, "system", return_value=system)
     monkeypatch.setattr(global_config, "simulation", simulation)
     monkeypatch.setattr(global_config, "viewer", "none")
     monkeypatch.setattr(global_config, "scene_package", None)
@@ -534,6 +566,10 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
 
     modules = {atom.module.__name__ for atom in blueprint.active_blueprints}
     assert "G1SonicPolicyModule" in modules
+    policy = next(
+        atom for atom in blueprint.active_blueprints if atom.module is G1SonicPolicyModule
+    )
+    assert policy.kwargs["cpu_simulation"] is (simulation == "mujoco" and system == "Darwin")
     assert "MovementManager" in modules
     assert backend in modules
     assert not {"SonicCoordinator", "ControlCoordinator"} & modules

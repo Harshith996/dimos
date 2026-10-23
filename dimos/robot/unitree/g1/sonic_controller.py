@@ -81,6 +81,7 @@ class SonicControllerConfig(BaseConfig):
         default_factory=lambda: sonic_model_directory() / "planner_sonic.onnx"
     )
     simulation_address: Path | None = None
+    cpu_simulation: bool = False
     joint_names: list[str] = Field(
         default_factory=lambda: make_humanoid_joints("g1"), min_length=29, max_length=29
     )
@@ -180,6 +181,8 @@ class SonicController:
             raise RuntimeError("SONIC damping stop is latched; restart the stack to recover")
         if self._active:
             return False
+        if self.config.cpu_simulation and self.config.simulation_address is None:
+            raise ValueError("SONIC CPU inference is for simulation, not hardware control")
         self._require_hardware_clocks()
         paths = (self.config.encoder_onnx, self.config.decoder_onnx, self.config.planner_onnx)
         missing = [str(path) for path in paths if not path.is_file()]
@@ -189,7 +192,10 @@ class SonicController:
             )
         try:
             self._pipeline = SonicPipeline(
-                encoder_path=paths[0], decoder_path=paths[1], planner_path=paths[2]
+                encoder_path=paths[0],
+                decoder_path=paths[1],
+                planner_path=paths[2],
+                cpu_simulation=self.config.cpu_simulation,
             )
             if self.config.simulation_address is not None:
                 self._adapter = SimMujocoG1WholeBodyAdapter(address=self.config.simulation_address)

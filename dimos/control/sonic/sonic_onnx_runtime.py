@@ -83,10 +83,14 @@ def create_sonic_session(
     *,
     allow_cpu_shape_ops: bool,
     session_options: Any | None = None,
+    cpu_simulation: bool = False,
 ) -> ort.InferenceSession:
-    """Create a CUDA-first SONIC session with an explicit CPU fallback policy."""
+    """Use CUDA for control, or explicitly select CPU for simulation."""
     options = session_options if session_options is not None else cast("Any", ort).SessionOptions()
-    if allow_cpu_shape_ops:
+    if cpu_simulation:
+        options.intra_op_num_threads = 4
+        providers = [CPU_PROVIDER]
+    elif allow_cpu_shape_ops:
         providers = [CUDA_PROVIDER, CPU_PROVIDER]
     else:
         options.add_session_config_entry(_DISABLE_CPU_FALLBACK, "1")
@@ -95,7 +99,7 @@ def create_sonic_session(
     # Orin / JetPack 6 TF32 exceeds the planner's reference accuracy tolerance.
     # Keep full float32 math on that validated runtime, including during control.
     provider_options: list[dict[str, str]] = [{} for _ in providers]
-    if jetson_l4t_major() == 36:
+    if not cpu_simulation and jetson_l4t_major() == 36:
         provider_options[0] = {"use_tf32": "0"}
     session = ort.InferenceSession(
         str(model_path),
@@ -104,10 +108,11 @@ def create_sonic_session(
         provider_options=provider_options,
     )
     active_providers = session.get_providers()
-    if not active_providers or active_providers[0] != CUDA_PROVIDER:
+    expected = CPU_PROVIDER if cpu_simulation else CUDA_PROVIDER
+    if not active_providers or active_providers[0] != expected:
         raise RuntimeError(
-            f"SONIC {model_name} did not activate CUDAExecutionProvider; "
-            f"active providers: {active_providers}. Refusing unsafe CPU inference."
+            f"SONIC {model_name} did not activate {expected}; "
+            f"active providers: {active_providers}. Refusing unintended provider fallback."
         )
     # A later execution-provider failure must reach the control fault handler,
     # rather than rebuilding the session on CPU inside InferenceSession.run().

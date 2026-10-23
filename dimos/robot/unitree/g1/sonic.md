@@ -10,7 +10,21 @@ walking gait selected, zero input idles while preserving that selection. Use
 `set_locomotion_mode` on G1SonicPolicyModule to change modes; `None` restores
 `SLOW_WALK`.
 
-Install the workstation dependencies and NVIDIA assets:
+For local simulation on macOS:
+
+```bash
+uv sync --extra control --extra sim
+uv run --no-sync dimos-sonic-models
+uv run --no-sync dimos --transport zenoh --simulation mujoco --viewer rerun run unitree-g1-sonic-wbc
+```
+
+The simulation blueprint selects ONNX CPU inference on macOS, with four threads
+per model. Hardware still requires CUDA and rejects `cpu_simulation=true`.
+On other hosts simulation uses CUDA by default; CPU-only simulation can be
+selected explicitly with `--g1sonicpolicymodule.cpu_simulation=true` after the
+blueprint name. Policy timing and motor watchdogs are unchanged.
+
+For a CUDA workstation, install the dependencies and NVIDIA assets:
 
 ```bash
 uv sync --extra control --extra cuda --extra sim \
