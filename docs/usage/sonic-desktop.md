@@ -4,9 +4,10 @@ Run the existing SONIC blueprint with Zenoh. macOS simulation selects CPU
 inference automatically; real hardware still requires CUDA.
 Desktop's Controller app uses the
 running module's RPCs, not a second controller or motor publisher.
+The SONIC blueprint does not launch Rerun; no `--viewer` flag is needed.
 
 ```bash
-uv run dimos --simulation mujoco --transport zenoh --viewer none run unitree-g1-sonic-wbc
+uv run dimos --simulation mujoco --transport zenoh run unitree-g1-sonic-wbc
 ```
 
 Use the SONIC-enabled Controller app linked from this PR. It discovers the policy
@@ -48,7 +49,7 @@ only. It has no camera calibration or TF and must not be used as robot perceptio
 Disable it when measuring control timing without viewer overhead.
 
 ```bash
-uv run --no-sync dimos --simulation mujoco --transport zenoh --viewer none \
+uv run --no-sync dimos --simulation mujoco --transport zenoh \
   run unitree-g1-sonic-wbc \
   --mujocosimmodule.enable-color true \
   --mujocosimmodule.camera-name head_color \
