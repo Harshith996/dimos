@@ -428,6 +428,11 @@ class MujocoSimModule(
         return str(self.config.robot_mjcf or self.config.address)
 
     @rpc
+    def timing(self) -> dict[str, Any]:
+        """Physics rate, real-time factor and sensing health over the recent five seconds."""
+        return self._engine.timing() if self._engine is not None else {}
+
+    @rpc
     def start(self) -> None:
         if not self.config.address and not self.config.robot_mjcf:
             raise RuntimeError(
@@ -449,9 +454,7 @@ class MujocoSimModule(
             from dimos.simulation.mujoco.model import get_assets
 
             engine_assets = get_assets()
-        # Compose rendered cameras separately from raycast lidar. Each
-        # rendered camera blocks the sim thread, so MuJoCo lidar does not
-        # register depth cameras here.
+        # Raycast lidar does not need depth-camera rendering.
         cameras_by_name: dict[str, CameraConfig] = {}
         raycast_lidars: list[RaycastLidarConfig] = []
 

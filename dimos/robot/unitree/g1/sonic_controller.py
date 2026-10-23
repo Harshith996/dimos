@@ -832,6 +832,12 @@ class SonicController:
             }
 
         return {
+            "target_hz": self.config.tick_rate / self.config.decimation,
+            "last_step_age_ms": (
+                (time.perf_counter() - self._last_policy_started_at) * 1000.0
+                if self._last_policy_started_at is not None
+                else None
+            ),
             "step_ms": summary(self._policy_durations_ms),
             "start_interval_ms": summary(self._policy_intervals_ms),
         }
