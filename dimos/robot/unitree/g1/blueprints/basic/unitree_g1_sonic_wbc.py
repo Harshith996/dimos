@@ -23,6 +23,8 @@ Usage:
     dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
     dimos --transport zenoh run unitree-g1-sonic-wbc
 
+Use DimOS Desktop for visualization and operator controls.
+
 Real hardware note: SONIC uses armature-derived PD gains (SONIC_KP/KD),
 NOT the GR00T gain table. Never run this blueprint while the C++
 g1_deploy_onnx_ref binary owns rt/lowcmd.
@@ -30,13 +32,10 @@ g1_deploy_onnx_ref binary owns rt/lowcmd.
 
 from __future__ import annotations
 
-from functools import cache
 import os
 from pathlib import Path
 import platform
 from typing import Any, cast
-
-from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
@@ -55,12 +54,9 @@ from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.unitree.g1.config import G1
 from dimos.robot.unitree.g1.control_safety import COMMAND_TIMEOUT_SECONDS
-from dimos.robot.unitree.g1.g1_rerun import g1_costmap
 from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 from dimos.simulation.scenes.catalog import resolve_scene_package
 from dimos.utils.data import LfsPath
-from dimos.visualization.rerun.scene_package import scene_package_static_entities
-from dimos.visualization.vis_module import vis_module
 
 _G1_REAL_NAV_VOXEL_RESOLUTION = 0.08
 _G1_NAV_ROTATION_DIAMETER = 0.8
@@ -239,20 +235,6 @@ def _zenoh_latest_transport(topic: str, msg_type: type) -> ZenohTransport[Any]:
     )
 
 
-@cache
-def _g1_real_ground_z() -> float:
-    """Use GR00T's rest-pose lidar offset and 0.74 m standing pelvis height."""
-    urdf = URDF.load(str(G1.model_path), load_meshes=False)
-    urdf.update_cfg([0.0] * len(urdf.actuated_joint_names))
-    mount_z = float(urdf.get_transform("mid360_link", "pelvis")[2, 3])
-    return -(mount_z + 0.74)
-
-
-def _render_real_costmap(grid: Any) -> Any:
-    return g1_costmap(grid, z_offset=_g1_real_ground_z() + 0.02)
-
-
-_costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _render_real_costmap
 _remappings = [
     *_nav_remap,
     _imu_remap,
@@ -282,25 +264,6 @@ def sonic_wbc_blueprint(*, webxr_enabled: bool = False) -> Blueprint:
             _backend,
             policy,
             _nav_stack,
-            vis_module(
-                viewer_backend=global_config.viewer,
-                rerun_config={
-                    "tf_axes": 0.5,
-                    "static": scene_package_static_entities(
-                        global_config.scene_package
-                        if global_config.simulation == "mujoco"
-                        else None
-                    ),
-                    "visual_override": {
-                        "world/global_costmap": _costmap_renderer,
-                        "world/navigation_costmap": _costmap_renderer,
-                        "world/lidar": None,
-                        "world/pointcloud": None,
-                        "world/local_map": None,
-                        "world/local_map_fine": None,
-                    },
-                },
-            ),
         )
         .remappings(cast("Any", _remappings))
         .transports(
@@ -320,7 +283,7 @@ def sonic_wbc_blueprint(*, webxr_enabled: bool = False) -> Blueprint:
             }
         )
         .requirements(_require_zenoh)
-        .global_config(robot_model="unitree_g1", n_workers=_n_workers)
+        .global_config(robot_model="unitree_g1", n_workers=_n_workers, viewer="none")
     )
 
 

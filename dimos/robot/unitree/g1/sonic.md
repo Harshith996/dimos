@@ -15,7 +15,7 @@ For local simulation on macOS:
 ```bash
 uv sync --extra control --extra sim
 uv run --no-sync dimos-sonic-models
-uv run --no-sync dimos --transport zenoh --simulation mujoco --viewer rerun run unitree-g1-sonic-wbc
+uv run --no-sync dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
 ```
 
 The simulation blueprint selects ONNX CPU inference on macOS, with four threads
@@ -23,6 +23,10 @@ per model. Hardware still requires CUDA and rejects `cpu_simulation=true`.
 On other hosts simulation uses CUDA by default; CPU-only simulation can be
 selected explicitly with `--g1sonicpolicymodule.cpu_simulation=true` after the
 blueprint name. Policy timing and motor watchdogs are unchanged.
+
+Use DimOS Desktop's Controller app for visualization and operator controls.
+SONIC blueprints do not launch Rerun, its WebSocket server, or scene overlays.
+Robot state, camera, point-cloud and navigation streams remain available on Zenoh.
 
 For a CUDA workstation, install the dependencies and NVIDIA assets:
 
@@ -32,7 +36,7 @@ uv sync --extra control --extra cuda --extra sim \
 source .venv/bin/activate
 dimos-sonic-models
 dimos-sonic-models --check
-dimos --transport zenoh --simulation mujoco --viewer none run unitree-g1-sonic-wbc
+dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
 ```
 
 The CPU and GPU ONNX Runtime distributions share the same Python package;
