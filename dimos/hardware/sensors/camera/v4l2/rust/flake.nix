@@ -20,8 +20,8 @@
         # Keep this flake self-contained: shared SDK/configuration arrive through
         # one fixed-hash project source, rather than paths outside this directory.
         sharedArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/f7723ad4d5b9aa5dfe63614b6b537d1ccc2d212e";
-          sha256 = "f90af8fa794a34d53ee9481c6d0bdb63138853b30f851d92960fd34224ff62b2";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/a9365487b4323151ea85041c6a944b509c0c3268";
+          sha256 = "e339487dd2281980fcde7ab03c46dfd2e274491e0f73e66d9c6cbcaeea8902b2";
         };
         sharedSource = pkgs.runCommand "dimos-cdr-sdk-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -35,7 +35,6 @@
           mkdir -p $out/native/rust $out/build/message-source $out/dimos/hardware/sensors/camera/v4l2/rust
           cp -r ${sharedSource}/native/rust/dimos-module $out/native/rust/
           cp -r ${sharedSource}/native/rust/dimos-module-macros $out/native/rust/
-          cp -r ${sharedSource}/native/rust/dimos-tf-messages $out/native/rust/
           cp -r ${messages.source}/rust $out/build/message-source/rust
           cp -r ${cameraSource}/. $out/dimos/hardware/sensors/camera/v4l2/rust/
         '';

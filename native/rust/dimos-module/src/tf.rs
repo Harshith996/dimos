@@ -30,11 +30,11 @@ use transforms::{
     Registry,
 };
 
-pub use dimos_tf_messages::{
+pub use dimos_generated_messages::{
     builtin_interfaces::msg::time::Time, geometry_msgs::msg::transform_stamped::TransformStamped,
     tf2_msgs::msg::tf_message::TFMessage,
 };
-use dimos_tf_messages::{
+use dimos_generated_messages::{
     geometry_msgs::msg::{
         quaternion::Quaternion as WireQuaternion, transform::Transform, vector3::Vector3,
     },
@@ -392,6 +392,11 @@ pub(crate) fn tf_subscription(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dimos_generated_messages::{
+        builtin_interfaces::msg::time::Time as MessageTime,
+        geometry_msgs::msg::transform_stamped::TransformStamped as MessageTransform,
+        tf2_msgs::msg::tf_message::TFMessage as MessageBatch,
+    };
     fn edge(parent: &str, child: &str, ns: i64, x: f64) -> TransformStamped {
         from_isometry(
             parent,
@@ -412,6 +417,29 @@ mod tests {
         let (tf, dynamic, static_route) = tf_subscription(tx, static_tx, Duration::from_secs(10));
         (tf, dynamic, static_route, rx, static_rx)
     }
+    #[tokio::test]
+    async fn generated_messages_pass_through_tf_without_type_conversion() {
+        let stamp = MessageTime {
+            sec: 1_700_000_000,
+            nanosec: 123_456_789,
+        };
+        let batch = MessageBatch {
+            transforms: vec![from_isometry(
+                "map",
+                "camera",
+                stamp.clone(),
+                Isometry3::translation(3., 0., 0.),
+            )],
+        };
+        let (tf, _, _, mut packets, _) = fixture();
+        tf.publish(&batch.transforms).await.unwrap();
+        let wire: MessageBatch = crate::cdr::decode(&packets.recv().await.unwrap()).unwrap();
+        assert_eq!(wire, batch);
+        let result: MessageTransform = tf.lookup_transform("map", "camera", stamp.clone()).unwrap();
+        assert_eq!(result.header.stamp, stamp);
+        assert_eq!(result.transform.translation.x, 3.);
+    }
+
     #[test]
     fn invalid_query_frames_cannot_resolve_to_identity() {
         let (tf, _, _, _, _) = fixture();

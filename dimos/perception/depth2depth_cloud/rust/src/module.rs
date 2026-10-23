@@ -378,10 +378,7 @@ impl Worker {
                     resolve_frame_id(&cfg.frame_id, &info.header.frame_id, &image.header.frame_id);
                 (
                     frame_id.to_string(),
-                    dimos_module::tf::Time {
-                        sec: image.header.stamp.sec,
-                        nanosec: image.header.stamp.nanosec,
-                    },
+                    image.header.stamp.clone(),
                 )
             });
             let Some((frame_id, stamp)) = newest else {
@@ -589,10 +586,7 @@ impl Worker {
                 scan_arrived.await;
                 continue;
             };
-            let query_stamp = dimos_module::tf::Time {
-                sec: msg.header.stamp.sec,
-                nanosec: msg.header.stamp.nanosec,
-            };
+            let query_stamp = msg.header.stamp.clone();
             let Some(world_from_lidar) = self
                 .tf
                 .lookup(&cfg.world_frame, &msg.header.frame_id)
@@ -640,10 +634,7 @@ impl Worker {
                 );
                 let poses = self.poses(
                     frame_id,
-                    dimos_module::tf::Time {
-                        sec: image.header.stamp.sec,
-                        nanosec: image.header.stamp.nanosec,
-                    },
+                    image.header.stamp.clone(),
                 )?;
                 Some((i, (frame_id.to_string(), poses)))
             })?;
@@ -656,7 +647,7 @@ impl Worker {
         })
     }
 
-    fn poses(&self, frame_id: &str, stamp: dimos_module::tf::Time) -> Option<Poses> {
+    fn poses(&self, frame_id: &str, stamp: Time) -> Option<Poses> {
         let pose = |target: &str| {
             let transform = self.tf.lookup(target, frame_id).at(stamp.clone()).get()?;
             dimos_module::tf::isometry(&transform).ok()
