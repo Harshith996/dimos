@@ -376,10 +376,7 @@ impl Worker {
         let lookup = self
             .tf
             .lookup(&self.config.world_frame, &msg.header.frame_id)
-            .at(dimos_module::tf::Time {
-                sec: msg.header.stamp.sec,
-                nanosec: msg.header.stamp.nanosec,
-            });
+            .at(msg.header.stamp.clone());
         let latest = self
             .tf
             .get_latest(&self.config.world_frame, &msg.header.frame_id)
@@ -866,7 +863,7 @@ mod tests {
         let t = dimos_module::tf::from_isometry(
             "odom",
             "map",
-            dimos_module::tf::Time { sec: 0, nanosec: 0 },
+            Time { sec: 0, nanosec: 0 },
             iso,
         );
         let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time { sec: 0, nanosec: 0 });
