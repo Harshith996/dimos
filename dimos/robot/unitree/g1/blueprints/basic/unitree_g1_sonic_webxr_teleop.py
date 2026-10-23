@@ -15,6 +15,8 @@
 """Enterprise Pico WebXR body tracking on the standalone SONIC stack."""
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.transport import pZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sonic_wbc import (
     _zenoh_latest_transport,
     sonic_wbc_blueprint,
@@ -28,8 +30,8 @@ unitree_g1_sonic_webxr_teleop = autoconnect(
     SonicWebXRTeleopModule.blueprint(),
 ).transports(
     {
-        ("body_tracking", BodyTrackingSnapshot): _zenoh_latest_transport(
-            "g1/body_tracking", BodyTrackingSnapshot
+        ("body_tracking", BodyTrackingSnapshot): pZenohTransport(
+            ZenohTopic("dimos/g1/body_tracking", queue_capacity=1, qos=QOS_LATEST_WINS)
         ),
         ("teleop_buttons", Buttons): _zenoh_latest_transport("g1/teleop_buttons", Buttons),
     }

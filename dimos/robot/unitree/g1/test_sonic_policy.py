@@ -585,3 +585,31 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
         "dimos/g1/position_command/sensor_msgs.JointState"
     )
     assert ("joint_command", JointState) not in blueprint.transport_map
+
+
+@pytest.mark.self_hosted
+def test_webxr_blueprint_serializes_body_and_button_streams(monkeypatch, mocker):
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    monkeypatch.setattr(global_config, "viewer", "none")
+    monkeypatch.setattr(global_config, "scene_package", None)
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
+    blueprint = runpy.run_path(
+        str(Path(__file__).parent / "blueprints/basic/unitree_g1_sonic_webxr_teleop.py")
+    )["unitree_g1_sonic_webxr_teleop"]
+
+    body = _snapshot()
+    body_transport = blueprint.transport_map[("body_tracking", type(body))]
+    assert body_transport.channel == "dimos/g1/body_tracking"
+    encoded = body_transport.zenoh.encode(body, None)
+    assert body_transport.zenoh.decode(encoded, None) == body
+
+    buttons = Buttons(
+        data=(1 << Buttons.BITS["left_primary"]) | (1 << Buttons.BITS["right_primary"])
+    )
+    button_transport = blueprint.transport_map[("teleop_buttons", Buttons)]
+    assert button_transport.channel == "dimos/g1/teleop_buttons/std_msgs.UInt32"
+    encoded = button_transport.zenoh.encode(buttons, button_transport.topic)
+    decoded = button_transport.zenoh.decode(encoded, button_transport.topic)
+    assert isinstance(decoded, Buttons)
+    assert decoded.data == buttons.data
