@@ -158,6 +158,7 @@ class TestRunEntryCRUD:
 class TestGenerateRunId:
     def test_counts_up(self, tmp_path: Path):
         (tmp_path / "20261022-205315-7d5d-unitree-go2").mkdir()
+        (tmp_path / "2026-10-22_08-53-15pm-EEST").mkdir()
         assert generate_run_id("unitree-go2", (tmp_path,)) == "001-unitree-go2"
         assert generate_run_id("nav", (tmp_path,)) == "002-nav"
 
@@ -172,6 +173,7 @@ class TestGenerateRunId:
         assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("1234-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("downloads") is None
+        assert blueprint_from_run_id("2026-10-22_08-53-15pm-EEST") is None
 
     def test_sanitizes(self, tmp_path: Path):
         assert generate_run_id("path/to/bp my", (tmp_path,)) == "001-path-to-bp-my"

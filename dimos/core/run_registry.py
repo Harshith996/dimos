@@ -102,7 +102,7 @@ def generate_run_id(blueprint: str, dirs: tuple[Path, ...] = (LOG_DIR, RECORDING
         for d in dirs
         if d.is_dir()
         for p in d.iterdir()
-        if (m := re.match(r"(\d{3,6})-", p.name))
+        if (m := re.match(r"(\d{3,6})-(?!\d)", p.name))
     ]
     n = max(taken, default=0) + 1
     dirs[0].mkdir(parents=True, exist_ok=True)
@@ -120,7 +120,7 @@ def blueprint_from_run_id(run_id: str) -> str | None:
 
     Also reads the older ``<stamp>-[<4 hex>-]<blueprint>`` IDs.
     """
-    m = re.fullmatch(r"(?:\d{8}-\d{6}-(?:[0-9a-f]{4}-)?|\d{3,6}-)(.+)", run_id)
+    m = re.fullmatch(r"(?:\d{8}-\d{6}-(?:[0-9a-f]{4}-)?|\d{3,6}-(?!\d))(.+)", run_id)
     return m.group(1) if m else None
 
 
@@ -153,7 +153,7 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
             entry.remove()
             continue
         entries.append(entry)
-    return entries
+    return sorted(entries, key=lambda e: e.started_at)
 
 
 def cleanup_stale() -> int:
