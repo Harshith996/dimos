@@ -56,6 +56,7 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
 PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
+PIPER_SIM_GRIPPER_REVERSED = False
 PIPER_HOME_JOINTS = [
     0.793,
     1.568186214614724,

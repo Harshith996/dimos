@@ -32,6 +32,7 @@ from dimos.robot.manipulators.common.coordinators import (
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
+    PIPER_SIM_GRIPPER_REVERSED,
     PIPER_SIM_PATH,
     make_piper_hardware,
     make_piper_model_config,
@@ -126,7 +127,11 @@ coordinator_teleop_piper = autoconnect(
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(PIPER_SIM_PATH, arm_dof=6),
+    *mujoco_if_sim(
+        PIPER_SIM_PATH,
+        arm_dof=len(_piper_model.joint_names),
+        gripper_reversed=PIPER_SIM_GRIPPER_REVERSED,
+    ),
 )
 
 _piper_cartesian_hw = make_piper_hardware(

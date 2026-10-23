@@ -63,6 +63,7 @@ def sim_settles_at(command: float) -> float:
     sim = SimpleNamespace(
         _gripper_joint_range=GRIPPER_RANGE,
         _gripper_ctrl_range=GRIPPER_CTRL_RANGE,
+        _gripper_reversed=True,
     )
     ctrl = _WholeBodySimHooks._gripper_joint_to_ctrl(sim, command)
     low, high = GRIPPER_RANGE

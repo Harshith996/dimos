@@ -21,6 +21,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
+    XARM6_DOF,
     XARM6_SIM_PATH,
     XARM7_SIM_PATH,
     lite6_hardware,
@@ -83,7 +84,7 @@ coordinator_xarm7 = autoconnect(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, arm_dof=7),
+    *mujoco_if_sim(XARM7_SIM_PATH, arm_dof=len(_coordinator_xarm7_hw.joints)),
 )
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
@@ -93,7 +94,7 @@ coordinator_xarm6 = autoconnect(
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, arm_dof=6),
+    *mujoco_if_sim(XARM6_SIM_PATH, arm_dof=XARM6_DOF),
 )
 
 _coordinator_lite6_hw = lite6_hardware("arm", gripper=True)

@@ -67,12 +67,16 @@ for name, blueprint in blueprints.items():
         for joint in component.joints
         if joint not in gripper_joints
     ]
-    report[name] = {"sim_dof": sim.kwargs["dof"], "arm_joints": len(arm_joints)}
+    report[name] = {
+        "sim_dof": sim.kwargs["dof"],
+        "arm_joints": len(arm_joints),
+        "gripper_reversed": sim.kwargs["gripper_reversed"],
+    }
 print(json.dumps(report))
 """
 
 
-def test_sim_module_dof_counts_the_arm_joints_without_the_gripper() -> None:
+def test_sim_blueprints_configure_arm_counts_and_gripper_direction() -> None:
     completed = subprocess.run(
         [sys.executable, "-c", _PROBE],
         env={**os.environ, "SIMULATION": "mujoco"},
@@ -85,9 +89,9 @@ def test_sim_module_dof_counts_the_arm_joints_without_the_gripper() -> None:
     report = json.loads(completed.stdout.strip().splitlines()[-1])
 
     assert report == {
-        "coordinator_teleop_xarm7": {"sim_dof": 7, "arm_joints": 7},
-        "coordinator_teleop_xarm6": {"sim_dof": 6, "arm_joints": 6},
-        "coordinator_xarm7": {"sim_dof": 7, "arm_joints": 7},
-        "coordinator_xarm6": {"sim_dof": 6, "arm_joints": 6},
-        "coordinator_teleop_piper": {"sim_dof": 6, "arm_joints": 6},
+        "coordinator_teleop_xarm7": {"sim_dof": 7, "arm_joints": 7, "gripper_reversed": True},
+        "coordinator_teleop_xarm6": {"sim_dof": 6, "arm_joints": 6, "gripper_reversed": True},
+        "coordinator_xarm7": {"sim_dof": 7, "arm_joints": 7, "gripper_reversed": True},
+        "coordinator_xarm6": {"sim_dof": 6, "arm_joints": 6, "gripper_reversed": True},
+        "coordinator_teleop_piper": {"sim_dof": 6, "arm_joints": 6, "gripper_reversed": False},
     }

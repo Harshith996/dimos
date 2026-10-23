@@ -54,8 +54,8 @@ _IMU_FLOATS = 10
 
 _joint_array_size = MAX_JOINTS * _FLOAT_BYTES  # float64 array
 
-# Gripper segment slots: position, target, range_lo, range_hi.
-_GRP_SLOTS = 4
+# Gripper segment slots: position, target, range_lo, range_hi, reversed.
+_GRP_SLOTS = 5
 
 # Element counts for control and sequence arrays.
 _NUM_CTRL_FIELDS = 5  # [ready, stop, command_mode, num_joints, arm_joints]
@@ -70,9 +70,8 @@ _shm_sizes = {
     "eff": _joint_array_size,
     "pos_t": _joint_array_size,
     "vel_t": _joint_array_size,
-    # [gripper_qpos, gripper_target, range_lo, range_hi]. gripper_qpos is the
-    # raw MJCF joint value; gripper_target is in the command coordinate, which
-    # runs the other way (see ManipShmReader.read_gripper_position).
+    # gripper_qpos is the raw MJCF joint value. The reversed flag maps it to
+    # the command coordinate, where the low end always means closed.
     "grp": _GRP_SLOTS * _FLOAT_BYTES,
     # Whole-body additions (unused by manipulator path).
     "imu": _IMU_FLOATS * _FLOAT_BYTES,  # [w,x,y,z, gx,gy,gz, ax,ay,az]
@@ -255,11 +254,14 @@ class ManipShmWriter:
         arr[0] = position
         self._increment_seq(SEQ_GRIPPER_STATE)
 
-    def write_gripper_range(self, low: float, high: float) -> None:
-        """Publish the gripper joint's MJCF range; written once at startup."""
+    def write_gripper_range(
+        self, low: float, high: float, *, gripper_reversed: bool = True
+    ) -> None:
+        """Publish the MJCF range and whether increasing the joint closes the jaws."""
         arr = self._array(self.shm.grp, _GRP_SLOTS, np.float64)
         arr[2] = low
         arr[3] = high
+        arr[4] = float(gripper_reversed)
 
     def read_position_command(self, num_joints: int) -> NDArray[np.float64] | None:
         """Return a copy of position targets if a new command arrived since last call."""
@@ -440,14 +442,12 @@ class ManipShmReader:
     def read_gripper_position(self) -> float:
         """Measured gripper position in the coordinate commands are given in.
 
-        The sim publishes the raw MJCF joint value, which runs opposite to the
-        command coordinate (``MujocoSimModule._gripper_joint_to_ctrl`` inverts),
-        so reflect it about the joint range. Without that reflection a closed
-        gripper reads as the open end of its range.
+        Reflect the raw MJCF value only for grippers that close as the joint
+        value increases, matching the sim's command conversion.
         """
         arr = np.ndarray((_GRP_SLOTS,), dtype=np.float64, buffer=self.shm.grp.buf)
         low, high = float(arr[2]), float(arr[3])
-        if high <= low:
+        if high <= low or not arr[4]:
             return float(arr[0])
         return low + high - float(arr[0])
 

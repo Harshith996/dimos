@@ -146,12 +146,14 @@ class _WholeBodySimHooks:
         gripper_idx: int | None = None,
         gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
         gripper_joint_range: tuple[float, float] = (0.0, 1.0),
+        gripper_reversed: bool = True,
     ) -> None:
         self._shm = shm
         self._dof = dof
         self._gripper_idx = gripper_idx
         self._gripper_ctrl_range = gripper_ctrl_range
         self._gripper_joint_range = gripper_joint_range
+        self._gripper_reversed = gripper_reversed
         self._latest_pd_pos_target: NDArray[np.float64] | None = None
         self._latest_pd_kp: NDArray[np.float64] | None = None
         self._latest_pd_kd: NDArray[np.float64] | None = None
@@ -229,7 +231,9 @@ class _WholeBodySimHooks:
         if jhi == jlo:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
-        return chi - t * (chi - clo)
+        if self._gripper_reversed:
+            t = 1.0 - t
+        return clo + t * (chi - clo)
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
@@ -254,6 +258,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
+    # True when increasing the MJCF gripper joint closes the jaws (e.g. xArm).
+    gripper_reversed: bool = True
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -523,7 +529,9 @@ class MujocoSimModule(
             self._gripper_idx = dof
             self._gripper_ctrl_range = ctrl_range
             self._gripper_joint_range = joint_range
-            self._shm.write_gripper_range(*joint_range)
+            self._shm.write_gripper_range(
+                *joint_range, gripper_reversed=self.config.gripper_reversed
+            )
             logger.info(
                 "MujocoSimModule: gripper detected",
                 idx=dof,
@@ -565,6 +573,7 @@ class MujocoSimModule(
             gripper_idx=self._gripper_idx,
             gripper_ctrl_range=self._gripper_ctrl_range,
             gripper_joint_range=self._gripper_joint_range,
+            gripper_reversed=self.config.gripper_reversed,
         )
         self._engine.set_step_hooks(
             before=self._sim_hooks.pre_step,

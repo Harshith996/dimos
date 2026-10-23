@@ -246,7 +246,7 @@ coordinator_teleop_xarm7 = autoconnect(
         model=_xarm7_teleop_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, arm_dof=7),
+    *mujoco_if_sim(XARM7_SIM_PATH, arm_dof=len(_xarm7_teleop_model.joint_names)),
 )
 
 coordinator_teleop_xarm6 = autoconnect(
@@ -286,5 +286,5 @@ coordinator_teleop_xarm6 = autoconnect(
         model=_xarm6_teleop_model,
         visualization={"backend": "viser"},
     ),
-    *mujoco_if_sim(XARM6_SIM_PATH, arm_dof=6),
+    *mujoco_if_sim(XARM6_SIM_PATH, arm_dof=len(_xarm6_teleop_model.joint_names)),
 )

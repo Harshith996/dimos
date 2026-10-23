@@ -60,6 +60,7 @@ _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
+XARM6_DOF = 6
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
@@ -255,7 +256,7 @@ def xarm6_hardware(
     if global_config.simulation:
         return make_xarm_hardware(
             hw_id,
-            6,
+            XARM6_DOF,
             adapter_type="sim_mujoco",
             gripper=gripper,
             home_joints=home_joints,
@@ -263,7 +264,7 @@ def xarm6_hardware(
         )
     return make_xarm_hardware(
         hw_id,
-        6,
+        XARM6_DOF,
         adapter_type="xarm",
         address=address,
         gripper=gripper,
@@ -332,7 +333,7 @@ def make_xarm_model_config(
 def make_xarm6_model_config(
     **kwargs: Any,
 ) -> RobotModelConfig:
-    return make_xarm_model_config(6, **kwargs)
+    return make_xarm_model_config(XARM6_DOF, **kwargs)
 
 
 def make_xarm7_model_config(
