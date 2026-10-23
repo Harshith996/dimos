@@ -71,8 +71,6 @@ unitree_go2_mls_reform = autoconnect(
     ).remappings(
         [
             (ReformRayTracingVoxelMap, "lidar", "cloud"),
-            (ReformRayTracingVoxelMap, "pose_graph", "pose_graph_records"),
-            (ReformRayTracingVoxelMap, "loop_closure_event", "loop_closure_records"),
         ]
     ),
     MLSReformPlannerNative.blueprint(
@@ -83,8 +81,6 @@ unitree_go2_mls_reform = autoconnect(
     ).remappings(
         [
             (MLSReformPlannerNative, "global_map", "global_map_unused"),
-            (MLSReformPlannerNative, "pose_graph", "pose_graph_records"),
-            (MLSReformPlannerNative, "loop_closure_event", "loop_closure_records"),
         ]
     ),
     BasicPathFollower.blueprint(
