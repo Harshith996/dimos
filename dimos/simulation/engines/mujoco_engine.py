@@ -170,6 +170,7 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        observer_camera: CameraConfig | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -245,6 +246,8 @@ class MujocoEngine(SimulationEngine):
         self._camera_configs = cameras or []
         self._camera_frames: dict[str, CameraFrame] = {}
         self._camera_lock = threading.Lock()
+        self._observer_config = observer_camera
+        self._observer_frame: tuple[NDArray[np.uint8], float] | None = None
         self._raycast_lidar_configs = raycast_lidars or []
         self._raycast_lidar_frames: dict[str, RaycastLidarFrame] = {}
         self._raycast_lidar_lock = threading.Lock()
@@ -610,6 +613,18 @@ class MujocoEngine(SimulationEngine):
         # Camera renderers: created once in the sim thread
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
+        observer_renderer = None
+        observer_camera = mujoco.MjvCamera()  # type: ignore[attr-defined]
+        if self._observer_config is not None:
+            observer_renderer = mujoco.Renderer(
+                self._model,
+                width=self._observer_config.width,
+                height=self._observer_config.height,
+            )
+            mujoco.mjv_defaultFreeCamera(self._model, observer_camera)  # type: ignore[attr-defined]
+            observer_camera.distance = 3.0
+            observer_camera.azimuth = 45.0
+            observer_camera.elevation = -15.0
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
@@ -640,6 +655,8 @@ class MujocoEngine(SimulationEngine):
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
             self._render_cameras(loop_start, cam_renderers)
+            if observer_renderer is not None:
+                self._render_observer(loop_start, observer_renderer, observer_camera)
             self._raycast_lidars(loop_start, lidar_states)
 
             elapsed = time.time() - loop_start
@@ -658,7 +675,34 @@ class MujocoEngine(SimulationEngine):
                     _step_once(sync_viewer=True)
 
         self._close_cam_renderers(cam_renderers)
+        if observer_renderer is not None:
+            observer_renderer.close()
         logger.info("sim loop stopped", cls=self.__class__.__name__)
+
+    def _render_observer(
+        self,
+        now: float,
+        renderer: mujoco.Renderer,
+        camera: mujoco.MjvCamera,  # type: ignore[name-defined]
+    ) -> None:
+        config = self._observer_config
+        if config is None or (
+            self._observer_frame is not None and now - self._observer_frame[1] < 1.0 / config.fps
+        ):
+            return
+        if self._root_qpos_adr is not None:
+            # Follow position, not orientation: head turns and falls remain visible.
+            start = self._root_qpos_adr
+            camera.lookat[:] = self._data.qpos[start : start + 3]
+        renderer.update_scene(self._data, camera=camera)
+        rgb = renderer.render().copy()
+        with self._camera_lock:
+            self._observer_frame = (rgb, now)
+
+    def read_observer(self) -> tuple[NDArray[np.uint8], float] | None:
+        """Latest operator-only third-person image and capture time; no sensor calibration."""
+        with self._camera_lock:
+            return self._observer_frame
 
     @property
     def connected(self) -> bool:
