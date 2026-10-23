@@ -15,18 +15,14 @@
 # limitations under the License.
 
 from collections import deque
-from copy import deepcopy
 from functools import reduce
-import math
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
-
-from sortedcontainers import SortedDict  # type: ignore[import-untyped]
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.message_utils.geometry import compose_transforms, inverse_transform, pose_from_transform
-from dimos.message_utils.time import time_from_seconds, to_nanoseconds, to_seconds
+from dimos.message_utils.time import time_from_seconds
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -36,6 +32,7 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.protocol.tf.buffer import TBuffer
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 
@@ -61,63 +58,6 @@ class TFLookup(Protocol):
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> TransformStamped | None: ...
-
-
-class TBuffer:
-    """A bounded time index of generated transforms, keyed by integer nanoseconds."""
-
-    def __init__(self, buffer_size: float = 10.0) -> None:
-        if math.isnan(buffer_size) or buffer_size <= 0:
-            raise ValueError("buffer_size must be positive")
-        self.buffer_size = buffer_size
-        self._entries: SortedDict = SortedDict()
-
-    def __len__(self) -> int:
-        return len(self._entries)
-
-    def add(self, transform: TransformStamped) -> None:
-        stamp = to_nanoseconds(transform.header.stamp)
-        self._entries[stamp] = deepcopy(transform)
-        if math.isfinite(self.buffer_size):
-            oldest = self._entries.peekitem(-1)[0] - round(self.buffer_size * 1_000_000_000)
-            while self._entries and self._entries.peekitem(0)[0] < oldest:
-                self._entries.popitem(0)
-
-    def first(self) -> TransformStamped | None:
-        return deepcopy(self._entries.peekitem(0)[1]) if self._entries else None
-
-    def last(self) -> TransformStamped | None:
-        return deepcopy(self._entries.peekitem(-1)[1]) if self._entries else None
-
-    def get(
-        self, time_point: float | None = None, time_tolerance: float = 1.0
-    ) -> TransformStamped | None:
-        if time_point is None:
-            return self.last()
-        stamp = to_nanoseconds(time_from_seconds(time_point))
-        if math.isnan(time_tolerance) or time_tolerance < 0:
-            raise ValueError("time_tolerance must be nonnegative")
-        index = self._entries.bisect_left(stamp)
-        candidates = [
-            self._entries.peekitem(i) for i in (index - 1, index) if 0 <= i < len(self._entries)
-        ]
-        if not candidates:
-            return None
-        nearest, result = min(candidates, key=lambda item: (abs(item[0] - stamp), -item[0]))
-        if abs(nearest - stamp) / 1_000_000_000 > time_tolerance:
-            return None
-        return deepcopy(cast("TransformStamped", result))
-
-    def __str__(self) -> str:
-        first, last = self.first(), self.last()
-        if first is None or last is None:
-            return "TBuffer(empty)"
-        start, end = to_seconds(first.header.stamp), to_seconds(last.header.stamp)
-        return (
-            f"TBuffer({first.header.frame_id} -> {first.child_frame_id}, "
-            f"{len(self)} msgs, {end - start:.2f}s "
-            f"[{to_human_readable(start)} - {to_human_readable(end)}])"
-        )
 
 
 # stores multiple transform buffers
