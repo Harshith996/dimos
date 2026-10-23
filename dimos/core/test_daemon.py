@@ -155,28 +155,45 @@ class TestRunEntryCRUD:
         assert loaded.original_argv == ["dimos", "run", "unitree-go2", "--viewer", "none"]
 
 
+@pytest.fixture
+def run_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    for name in ("LOG_DIR", "RECORDINGS_DIR", "REGISTRY_DIR"):
+        monkeypatch.setattr(run_registry, name, tmp_path / name)
+    return tmp_path
+
+
 class TestGenerateRunId:
-    def test_counts_up(self, tmp_path: Path):
-        (tmp_path / "20261022-205315-7d5d-unitree-go2").mkdir()
-        (tmp_path / "2026-10-22_08-53-15pm-EEST").mkdir()
-        assert generate_run_id("unitree-go2", (tmp_path,)) == "001-unitree-go2"
-        assert generate_run_id("nav", (tmp_path,)) == "002-nav"
+    def test_counts_up(self, run_dirs: Path):
+        (run_dirs / "LOG_DIR" / "20261022-205315-7d5d-unitree-go2").mkdir(parents=True)
+        (run_dirs / "RECORDINGS_DIR" / "2026-10-22_08-53-15pm-EEST").mkdir(parents=True)
+        assert generate_run_id("unitree-go2") == "001-unitree-go2"
+        assert generate_run_id("nav") == "002-nav"
 
-    def test_counter_spans_dirs(self, tmp_path: Path):
-        logs, recs = tmp_path / "logs", tmp_path / "recordings"
-        (recs / "041-unitree-go2").mkdir(parents=True)
-        assert generate_run_id("unitree-go2", (logs, recs)) == "042-unitree-go2"
+    def test_counter_spans_dirs(self, run_dirs: Path):
+        (run_dirs / "RECORDINGS_DIR" / "041-unitree-go2").mkdir(parents=True)
+        assert generate_run_id("unitree-go2") == "042-unitree-go2"
 
-    def test_blueprint_round_trips(self, tmp_path: Path):
-        assert blueprint_from_run_id(generate_run_id("unitree-go2", (tmp_path,))) == "unitree-go2"
+    def test_checkouts_share_the_registry(self, run_dirs: Path, monkeypatch: pytest.MonkeyPatch):
+        assert generate_run_id("go2") == "001-go2"
+        monkeypatch.setattr(run_registry, "LOG_DIR", run_dirs / "other_checkout")
+        assert generate_run_id("go2") == "002-go2"
+
+    def test_claim_is_not_a_run(self, run_dirs: Path):
+        generate_run_id("go2")
+        assert list_runs(alive_only=False) == []
+        assert cleanup_stale() == 0
+        assert (run_dirs / "REGISTRY_DIR" / "001-go2.json").exists()
+
+    def test_blueprint_round_trips(self, run_dirs: Path):
+        assert blueprint_from_run_id(generate_run_id("unitree-go2")) == "unitree-go2"
         assert blueprint_from_run_id("20260830-155733-unitree-go2") == "unitree-go2"
         assert blueprint_from_run_id("20260830-155733-a3f1-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("1234-nav-cafe") == "nav-cafe"
         assert blueprint_from_run_id("downloads") is None
         assert blueprint_from_run_id("2026-10-22_08-53-15pm-EEST") is None
 
-    def test_sanitizes(self, tmp_path: Path):
-        assert generate_run_id("path/to/bp my", (tmp_path,)) == "001-path-to-bp-my"
+    def test_sanitizes(self, run_dirs: Path):
+        assert generate_run_id("path/to/bp my") == "001-path-to-bp-my"
 
 
 class TestCleanupStale:

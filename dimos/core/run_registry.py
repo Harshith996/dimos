@@ -90,26 +90,27 @@ class RunEntry:
         return cls(**{k: v for k, v in data.items() if k in valid})
 
 
-def generate_run_id(blueprint: str, dirs: tuple[Path, ...] = (LOG_DIR, RECORDINGS_DIR)) -> str:
+def generate_run_id(blueprint: str) -> str:
     """Generate a human-readable run ID: ``<counter>-<blueprint>``, e.g. ``007-unitree-go2``.
 
-    The counter is one past the highest in *dirs*; the ID is claimed by creating
-    its folder in ``dirs[0]``, so parallel runs never share one.
+    The counter is one past the highest in logs, recordings and the registry. The ID
+    is claimed with an empty registry file, shared by every checkout, so no two live
+    runs share one.
     """
     safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", blueprint)
     taken = [
         int(m.group(1))
-        for d in dirs
+        for d in (LOG_DIR, RECORDINGS_DIR, REGISTRY_DIR)
         if d.is_dir()
         for p in d.iterdir()
         if (m := re.match(r"(\d{3,6})-(?!\d)", p.name))
     ]
     n = max(taken, default=0) + 1
-    dirs[0].mkdir(parents=True, exist_ok=True)
+    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     while True:
         run_id = f"{n:03d}-{safe_name}"
         try:
-            (dirs[0] / run_id).mkdir()
+            (REGISTRY_DIR / f"{run_id}.json").open("x").close()
             return run_id
         except FileExistsError:
             n += 1
@@ -141,6 +142,8 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     entries: list[RunEntry] = []
     for f in sorted(REGISTRY_DIR.glob("*.json")):
+        if not f.stat().st_size:
+            continue  # claimed by generate_run_id, not saved yet
         try:
             entry = RunEntry.load(f)
         except Exception:
@@ -168,6 +171,8 @@ def cleanup_stale() -> int:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     removed = 0
     for f in list(REGISTRY_DIR.glob("*.json")):
+        if not f.stat().st_size:
+            continue  # claimed by generate_run_id, not saved yet
         try:
             entry = RunEntry.load(f)
             if not is_pid_alive(entry.pid):
