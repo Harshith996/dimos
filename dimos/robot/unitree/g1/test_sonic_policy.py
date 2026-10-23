@@ -432,15 +432,16 @@ def test_stopping_sonic_latches_damping(connection):
 
 @pytest.mark.self_hosted
 @pytest.mark.parametrize("system", ["Darwin", "Linux"])
+@pytest.mark.parametrize("viewer", ["none", "rerun"])
 @pytest.mark.parametrize(
     "simulation, backend", [("", "G1WholeBodyConnection"), ("mujoco", "MujocoSimModule")]
 )
 def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
-    monkeypatch, mocker, simulation, backend, system
+    monkeypatch, mocker, simulation, backend, system, viewer
 ):
     mocker.patch.object(platform, "system", return_value=system)
     monkeypatch.setattr(global_config, "simulation", simulation)
-    monkeypatch.setattr(global_config, "viewer", "none")
+    monkeypatch.setattr(global_config, "viewer", viewer)
     monkeypatch.setattr(global_config, "scene_package", None)
     monkeypatch.setattr(global_config, "transport", "zenoh")
     mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
@@ -456,6 +457,7 @@ def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
     assert policy.kwargs["cpu_simulation"] is (simulation == "mujoco" and system == "Darwin")
     assert "MovementManager" in modules
     assert backend in modules
+    assert not {"RerunBridgeModule", "RerunWebSocketServer"} & modules
     assert not {"SonicCoordinator", "ControlCoordinator"} & modules
     assert all(
         not atom.module.__module__.startswith("dimos.sim2") for atom in blueprint.active_blueprints
