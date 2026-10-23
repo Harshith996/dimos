@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, FiniteFloat
@@ -22,6 +23,13 @@ from pydantic import BaseModel, FiniteFloat
 EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
 RecordingState: TypeAlias = Literal["idle", "recording"]
 ExportState: TypeAlias = Literal["idle", "exporting", "done", "failed"]
+DATASET_SUFFIX_MAX_LENGTH = 64
+
+
+def normalize_dataset_suffix(value: str) -> str:
+    """Turn an operator-entered collection label into a safe folder suffix."""
+    suffix = re.sub(r"[^A-Za-z0-9]+", "-", value.strip()).strip("-").lower()
+    return suffix[:DATASET_SUFFIX_MAX_LENGTH].rstrip("-")
 
 
 class EpisodeStatus(BaseModel):

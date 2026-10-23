@@ -42,11 +42,11 @@ const gripHeld = { left: false, right: false };
 // negative). yawDeg turns a side panel in toward the operator; tiltDeg leans a
 // raised panel's face down toward them. height is the image height.
 const PANEL_LAYOUT = {
-    // Egocentric view: large, centered above the workspace.
-    center: { x: 0.0, y: 0.38, z: -1.6, yawDeg: 0, tiltDeg: 10, height: 0.62 },
-    // Wrist views: smaller, beside their arm.
-    left: { x: -1.0, y: 0.24, z: -1.45, yawDeg: 34, tiltDeg: 6, height: 0.42 },
-    right: { x: 1.0, y: 0.24, z: -1.45, yawDeg: -34, tiltDeg: 6, height: 0.42 },
+    // Egocentric view: large, centered above the workspace and within easy view.
+    center: { x: 0.0, y: 0.38, z: -1.2, yawDeg: 0, tiltDeg: 10, height: 0.68 },
+    // Wrist views: slightly smaller, close beside their arm.
+    left: { x: -0.82, y: 0.24, z: -1.1, yawDeg: 34, tiltDeg: 6, height: 0.46 },
+    right: { x: 0.82, y: 0.24, z: -1.1, yawDeg: -34, tiltDeg: 6, height: 0.46 },
 };
 const PANEL_BORDER_METERS = 0.012;
 const PANEL_DEFAULT_ASPECT = 16 / 9;
@@ -84,7 +84,7 @@ const HUD_HEIGHT_PX = 384;
 const HUD_WIDTH_METERS = 0.62;
 const HUD_HEIGHT_METERS = HUD_WIDTH_METERS * HUD_HEIGHT_PX / HUD_WIDTH_PX;
 // Below the center panel, leaning up toward the operator.
-const HUD_LAYOUT = { x: 0.0, y: -0.2, z: -1.35, yawDeg: 0, tiltDeg: -8 };
+const HUD_LAYOUT = { x: 0.0, y: -0.2, z: -1.05, yawDeg: 0, tiltDeg: -8 };
 const HUD_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
 const HUD_COLORS = {
     text: '#f4f7fb',
@@ -103,10 +103,51 @@ const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const canvas = document.getElementById('canvas');
+const datasetLabelForm = document.getElementById('datasetLabelForm');
+const datasetLabelInput = document.getElementById('datasetLabel');
+const datasetLabelBtn = document.getElementById('datasetLabelBtn');
+const datasetLabelStatus = document.getElementById('datasetLabelStatus');
+let selectedDatasetSuffix = null;
 
 function setStatus(msg) {
     statusEl.textContent = msg;
 }
+
+function setDatasetLabelStatus(message, isError = false) {
+    datasetLabelStatus.textContent = message;
+    datasetLabelStatus.classList.toggle('error', isError);
+}
+
+datasetLabelForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const label = datasetLabelInput.value.trim();
+    if (!label) {
+        setDatasetLabelStatus('Enter a collection label first.', true);
+        datasetLabelInput.focus();
+        return;
+    }
+
+    datasetLabelInput.disabled = true;
+    datasetLabelBtn.disabled = true;
+    setDatasetLabelStatus('Saving label...');
+    try {
+        const response = await fetch('/teleop/dataset-label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+        selectedDatasetSuffix = result.suffix;
+        datasetLabelInput.value = result.suffix;
+        setDatasetLabelStatus(`Dataset folder will end in _${result.suffix}`);
+    } catch (error) {
+        setDatasetLabelStatus(error?.message || String(error), true);
+    } finally {
+        datasetLabelInput.disabled = false;
+        datasetLabelBtn.disabled = false;
+    }
+});
 
 async function loadWebXRClientConfig() {
     const response = await fetch('/teleop/config', { cache: 'no-store' });
@@ -920,6 +961,14 @@ window.connect = async function() {
     try {
         connectBtn.disabled = true;
 
+        if (
+            webXRClientConfig?.dataset_label_enabled
+            && datasetLabelInput.value.trim()
+            && datasetLabelInput.value.trim() !== selectedDatasetSuffix
+        ) {
+            throw new Error('Press Set label or Enter before connecting.');
+        }
+
         // Check WebXR support
         if (!navigator.xr) {
             throw new Error('WebXR not supported. Use a WebXR-capable browser.');
@@ -985,6 +1034,15 @@ window.addEventListener('load', async () => {
 
     try {
         webXRClientConfig = await loadWebXRClientConfig();
+        if (webXRClientConfig.dataset_label_enabled) {
+            datasetLabelForm.classList.remove('hidden');
+            datasetLabelInput.maxLength = webXRClientConfig.dataset_suffix_max_length * 2;
+            if (webXRClientConfig.dataset_suffix) {
+                selectedDatasetSuffix = webXRClientConfig.dataset_suffix;
+                datasetLabelInput.value = selectedDatasetSuffix;
+                setDatasetLabelStatus(`Dataset folder will end in _${selectedDatasetSuffix}`);
+            }
+        }
         await Promise.all(webXRClientConfig.session_modes.map(async (mode) => {
             const supported = await navigator.xr.isSessionSupported(mode).catch(() => false);
             sessionModeSupport.set(mode, supported);

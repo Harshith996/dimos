@@ -34,17 +34,22 @@ from typing import Any, ClassVar, Literal, TypeVar
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode import EpisodeStatus, ExportStatus
+from dimos.imitation.collection.episode import (
+    DATASET_SUFFIX_MAX_LENGTH,
+    EpisodeStatus,
+    ExportStatus,
+    normalize_dataset_suffix,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
@@ -60,6 +65,10 @@ logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 BUTTON_DEBOUNCE_S = 0.05
+
+
+class DatasetLabelRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=128)
 
 
 async def _ws_send_text(ws: WebSocket, data: str) -> None:
@@ -143,6 +152,7 @@ class WebXRTeleopModule(Module):
     teleop_buttons: Out[Buttons]
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
+    dataset_suffix: Out[String]
     status: In[String]
     export_status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
@@ -189,6 +199,7 @@ class WebXRTeleopModule(Module):
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
         self._latest_export_status: ExportStatus | None = None
+        self._selected_dataset_suffix: str | None = None
         self._body_report_started_at: float | None = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
@@ -207,6 +218,29 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/config")
         async def teleop_config() -> dict[str, Any]:
             return self._webxr_client_config()
+
+        @self._web_server.app.post("/teleop/dataset-label")
+        async def set_dataset_label(request: DatasetLabelRequest) -> dict[str, str]:
+            if not self._dataset_label_enabled():
+                raise HTTPException(status_code=404, detail="Dataset labeling is unavailable")
+            suffix = normalize_dataset_suffix(request.label)
+            if not suffix:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Use at least one letter or number in the dataset label",
+                )
+            with self._lock:
+                status = self._latest_episode_status
+                if status is not None and (
+                    status.state == "recording" or status.episodes_saved > 0
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="The dataset label is locked after recording begins",
+                    )
+                self._selected_dataset_suffix = suffix
+            self.dataset_suffix.publish(String(suffix))
+            return {"suffix": suffix}
 
         @self._web_server.app.get("/cameras", response_class=HTMLResponse)
         async def camera_viewer() -> HTMLResponse:
@@ -287,7 +321,16 @@ class WebXRTeleopModule(Module):
                 {"name": panel.name, "slot": panel.slot} for panel in self.camera_panels
             ],
             "hud_hint": self.config.hud_hint,
+            "dataset_label_enabled": self._dataset_label_enabled(),
+            "dataset_suffix": self._selected_dataset_suffix,
+            "dataset_suffix_max_length": DATASET_SUFFIX_MAX_LENGTH,
         }
+
+    def _dataset_label_enabled(self) -> bool:
+        return (
+            self.export_status.connection is not None
+            or self.export_status._transport is not None
+        )
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
         fingerprint = data[:8]

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+import math
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,19 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.hardware.whole_body.mock.adapter import MockWholeBodyAdapter
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
+    DualOpenYamCoordinator,
+    dual_openyam_trajectory_task,
+)
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+
+
+def test_trajectory_checks_measured_endpoint():
+    params = dual_openyam_trajectory_task().params
+    assert params["goal_tolerance"] == pytest.approx(math.radians(0.5))
+    assert params["goal_time_tolerance"] == 2.0
+    assert params["tracking_gain"] == 0.5
+    assert params["max_tracking_correction"] == pytest.approx(math.radians(1.0))
 
 
 @pytest.mark.parametrize("ports", [{}, {"left_can_port": "left", "right_can_port": "right"}])

@@ -154,6 +154,11 @@ class ControlCoordinator(Module):
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
 
+    # Output: Post-arbitration joint targets sent to hardware. Position-controlled
+    # joints carry the winning target; joints without an active command hold the
+    # latest measured position for a complete policy action vector.
+    coordinator_joint_command: Out[JointState]
+
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
@@ -904,6 +909,9 @@ class ControlCoordinator(Module):
         publish_cb = (
             self.coordinator_joint_state.publish if self.config.publish_joint_state else None
         )
+        publish_command_cb = (
+            self.coordinator_joint_command.publish if self.config.publish_joint_state else None
+        )
         publish_robot_cb = (
             self._publish_robot_joint_state if self.config.publish_robot_joint_states else None
         )
@@ -915,6 +923,7 @@ class ControlCoordinator(Module):
             task_lock=self._task_lock,
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
+            publish_command_callback=publish_command_cb,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses

@@ -169,6 +169,10 @@ class ArmTeleopModule(WebXRTeleopModule):
     def _move_to_zero(self) -> None:
         if self._manipulation is None:
             return
+        reset = self._manipulation.reset()
+        if not reset.succeeded:
+            logger.error("Could not reset manipulation before moving to zero", error=reset.message)
+            return
         targets = {
             group.id: JointState(
                 name=list(group.joint_names), position=[0.0] * len(group.joint_names)

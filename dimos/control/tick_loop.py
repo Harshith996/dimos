@@ -39,6 +39,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
+from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -49,7 +50,6 @@ if TYPE_CHECKING:
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
     from dimos.control.hardware_interface import ConnectedHardware
-    from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -101,6 +101,7 @@ class TickLoop:
         task_lock: threading.Lock,
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
+        publish_command_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
         publish_tf_callback: Callable[[TFMessage], None] | None = None,
         frame_pose_hz: float = 30.0,
@@ -114,6 +115,7 @@ class TickLoop:
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
+        self._publish_command_callback = publish_command_callback
         self._publish_robot_callback = publish_robot_callback
         self._publish_tf_callback = publish_tf_callback
         self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
@@ -203,6 +205,9 @@ class TickLoop:
         hw_commands = self._route_to_hardware(joint_commands)
 
         self._write_all_hardware(hw_commands)
+
+        if self._publish_command_callback:
+            self._publish_joint_command(joint_states, joint_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -457,6 +462,38 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_joint_command(
+        self,
+        snapshot: JointStateSnapshot,
+        commands: dict[str, tuple[float, ControlMode, str]],
+    ) -> None:
+        """Publish a complete snapshot of the targets sent to hardware this tick."""
+        names = list(snapshot.joint_positions)
+        positions = dict(snapshot.joint_positions)
+        velocities = dict.fromkeys(names, 0.0)
+        efforts = dict.fromkeys(names, 0.0)
+        for name, (value, mode, _) in commands.items():
+            if name not in positions:
+                continue
+            if mode in {ControlMode.POSITION, ControlMode.SERVO_POSITION}:
+                positions[name] = value
+            elif mode is ControlMode.VELOCITY:
+                velocities[name] = value
+            elif mode is ControlMode.TORQUE:
+                efforts[name] = value
+        publish = self._publish_command_callback
+        if publish is not None:
+            publish(
+                JointState(
+                    ts=snapshot.timestamp,
+                    frame_id=self._frame_id,
+                    name=names,
+                    position=[positions[name] for name in names],
+                    velocity=[velocities[name] for name in names],
+                    effort=[efforts[name] for name in names],
+                )
+            )
 
     def _publish_frame_poses(self, state: CoordinatorState) -> None:
         """Publish each task's measured frame poses (FK on this tick's joints) as TF."""

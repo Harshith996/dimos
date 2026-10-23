@@ -99,8 +99,11 @@ border colors, and uplink limits.
 ### Record episodes
 
 `learning-collect-webxr-dual-openyam` adds the episode monitor, a recorder
-that captures all three cameras, the joint state, and the episode markers, and
-an exporter that rebuilds a LeRobot dataset after every saved episode. Press B
+that captures all three cameras, measured joint state, post-arbitration joint
+targets, and episode markers, plus an exporter that rebuilds a LeRobot dataset
+after every saved episode. The LeRobot `observation.state` feature contains
+measured positions; `action` contains the absolute position targets sent to the
+arm and gripper hardware. Press B
 to start a take and B again to save it, or Y to discard it; the zero-pose reset
 is on A in this blueprint. The headset HUD shows a blinking `REC` timer while
 recording and the export result afterwards.
@@ -110,6 +113,20 @@ dimos run learning-collect-webxr-dual-openyam
 # recording:  recordings/session_dual_openyam_<ts>.db
 # dataset:    datasets/dual_openyam_<ts>   (rebuilt on every save)
 ```
+
+Give a collection run a short label with `--dataset-suffix`. Use letters,
+numbers, hyphens, or underscores; the timestamp remains in the name so separate
+runs never overwrite one another:
+
+```bash
+dimos run learning-collect-webxr-dual-openyam --dataset-suffix pick-red-cube
+# dataset: datasets/dual_openyam_<ts>_pick-red-cube
+```
+
+The Quest `/teleop` page also shows a **Collection label** field before the
+Connect button. Enter a label and press Enter or **Set label** before recording;
+spaces and punctuation are converted to hyphens. The label locks when recording
+begins so every saved take in the session stays in one dataset folder.
 
 See the [imitation learning guide](/dimos/imitation/README.md) for the full
 collection workflow.

@@ -261,6 +261,28 @@ class PlanExecutionManager:
         self._store(result, active=False)
         return result
 
+    def reset(self) -> ExecutionResult:
+        """Reset every bound trajectory task after motion has stopped."""
+        failed: list[str] = []
+        with self._operation_lock:
+            for task, _ in self._bindings:
+                try:
+                    if self._coordinator.task_invoke(task, "reset", {}) is not True:
+                        failed.append(task)
+                except Exception:
+                    logger.exception(f"Resetting {task} failed")
+                    failed.append(task)
+        if failed:
+            result = ExecutionResult(
+                ExecutionStatus.UNCERTAIN,
+                f"Could not reset {', '.join(failed)}",
+            )
+            self._store(result, active=False)
+            return result
+        result = ExecutionResult(ExecutionStatus.NO_EXECUTION, "Trajectory controller reset")
+        self._store(result, active=False)
+        return result
+
     def _poll(self, run_id: int | None = None) -> ExecutionResult:
         """Read every running task once and store the combined result.
 

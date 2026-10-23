@@ -37,7 +37,13 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
         type="trajectory",
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         priority=priority,
-        params={"start_position_tolerance": 0.05},
+        params={
+            "start_position_tolerance": 0.05,
+            "goal_tolerance": math.radians(0.5),
+            "goal_time_tolerance": 2.0,
+            "tracking_gain": 0.5,
+            "max_tracking_correction": math.radians(1.0),
+        },
     )
 
 

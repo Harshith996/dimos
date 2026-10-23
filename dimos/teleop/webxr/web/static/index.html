@@ -9,6 +9,23 @@
 <body>
     <div id="ui">
         <h1>DimOS WebXR Teleop</h1>
+        <form id="datasetLabelForm" class="dataset-label hidden">
+            <label for="datasetLabel">Collection label</label>
+            <div class="dataset-label-row">
+                <input
+                    id="datasetLabel"
+                    name="datasetLabel"
+                    type="text"
+                    maxlength="128"
+                    autocomplete="off"
+                    placeholder="e.g. pick red cube"
+                    aria-describedby="datasetLabelHelp datasetLabelStatus"
+                >
+                <button id="datasetLabelBtn" type="submit" class="secondary">Set label</button>
+            </div>
+            <p id="datasetLabelHelp">Added to the dataset folder name. Set before recording.</p>
+            <p id="datasetLabelStatus" class="field-status" aria-live="polite"></p>
+        </form>
         <div id="status">Ready to connect</div>
         <button id="connectBtn" onclick="connect()">Connect</button>
         <button id="disconnectBtn" class="disconnect hidden" onclick="disconnect()">Disconnect</button>

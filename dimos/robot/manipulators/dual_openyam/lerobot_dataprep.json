@@ -77,7 +77,7 @@
   },
   "action": {
     "action": {
-      "stream": "coordinator_joint_state",
+      "stream": "coordinator_joint_command",
       "field": "position",
       "dtype": "float32",
       "shape": [
@@ -116,7 +116,20 @@
     "path": "data/datasets/dual_openyam",
     "metadata": {
       "robot": "dual_openyam",
-      "repo_id": "dimos/dual-openyam"
+      "repo_id": "dimos/dual-openyam",
+      "action_semantics": "post_arbitration_absolute_joint_position_target",
+      "feature_units": {
+        "observation.state": [
+          "rad", "rad", "rad", "rad", "rad", "rad",
+          "rad", "rad", "rad", "rad", "rad", "rad",
+          "normalized_opening", "normalized_opening"
+        ],
+        "action": [
+          "rad", "rad", "rad", "rad", "rad", "rad",
+          "rad", "rad", "rad", "rad", "rad", "rad",
+          "normalized_opening", "normalized_opening"
+        ]
+      }
     }
   }
 }

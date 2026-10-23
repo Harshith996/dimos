@@ -29,12 +29,19 @@ import threading
 import time
 from typing import Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode import EpisodeStatus, ExportState, ExportStatus
+from dimos.imitation.collection.episode import (
+    DATASET_SUFFIX_MAX_LENGTH,
+    EpisodeStatus,
+    ExportState,
+    ExportStatus,
+    normalize_dataset_suffix,
+)
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
 from dimos.msgs.std_msgs.String import String
@@ -45,6 +52,8 @@ logger = setup_logger()
 # A long session can take minutes to re-encode; shutdown waits this long for
 # an export already in flight before giving up on it.
 EXPORT_JOIN_TIMEOUT_S = 600.0
+EXPORT_READY_TIMEOUT_S = 10.0
+EXPORT_RETRY_INTERVAL_S = 0.25
 BUILDING_SUFFIX = ".building"
 PREVIOUS_SUFFIX = ".previous"
 
@@ -56,6 +65,12 @@ class LeRobotExportConfig(ModuleConfig):
     dataprep_config: str | Path
     # LeRobot dataset directory to (re)build.
     dataset_path: str | Path
+    # Optional run label appended to dataset_path, e.g. ``_pick-red-cube``.
+    dataset_suffix: str | None = Field(
+        default=None,
+        max_length=DATASET_SUFFIX_MAX_LENGTH,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+    )
     # Rebuild after every saved episode; False exports once at shutdown.
     export_on_save: bool = True
 
@@ -70,6 +85,7 @@ class LeRobotExportModule(Module):
     dedicated_worker = True
 
     status: In[String]
+    dataset_suffix: In[String]
     export_status: Out[String]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -79,11 +95,19 @@ class LeRobotExportModule(Module):
         self._rerun_requested = False
         self._saved = 0
         self._exported_saves = 0
+        self._runtime_dataset_suffix = self.config.dataset_suffix
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.status.subscribe(self._on_status)))
+        if (
+            self.dataset_suffix.connection is not None
+            or self.dataset_suffix._transport is not None
+        ):
+            self.register_disposable(
+                Disposable(self.dataset_suffix.subscribe(self._on_dataset_suffix))
+            )
         self._publish("idle")
 
     @rpc
@@ -119,6 +143,19 @@ class LeRobotExportModule(Module):
             )
             self._thread.start()
 
+    def _on_dataset_suffix(self, message: String) -> None:
+        suffix = normalize_dataset_suffix(message.data)
+        if not suffix or suffix != message.data:
+            logger.warning("Ignoring invalid dataset suffix", suffix=message.data)
+            return
+        with self._lock:
+            if self._saved > 0 or (self._thread is not None and self._thread.is_alive()):
+                logger.warning("Ignoring dataset suffix change after collection began")
+                return
+            self._runtime_dataset_suffix = suffix
+        logger.info("Dataset suffix selected", suffix=suffix)
+        self._publish("idle")
+
     def _export_loop(self) -> None:
         while True:
             self._export_once()
@@ -133,29 +170,43 @@ class LeRobotExportModule(Module):
             saved = self._saved
         if saved == 0:
             return
-        dataset = Path(self.config.dataset_path)
+        dataset = self._dataset_path()
         building = dataset.with_name(dataset.name + BUILDING_SUFFIX)
         self._publish("exporting")
-        try:
-            config = DataPrepConfig.model_validate_json(
-                Path(self.config.dataprep_config).read_text()
-            )
-            config = config.model_copy(
-                update={
-                    "source": str(self.config.source),
-                    "output": OutputConfig(
-                        format="lerobot", path=building, metadata=config.output.metadata
-                    ),
-                }
-            )
+        config = DataPrepConfig.model_validate_json(Path(self.config.dataprep_config).read_text())
+        config = config.model_copy(
+            update={
+                "source": str(self.config.source),
+                "output": OutputConfig(
+                    format="lerobot", path=building, metadata=config.output.metadata
+                ),
+            }
+        )
+        deadline = time.monotonic() + EXPORT_READY_TIMEOUT_S
+        while True:
             shutil.rmtree(building, ignore_errors=True)
-            run_dataprep(config)
-            episodes = _swap_in(building, dataset)
-        except Exception as exc:
-            logger.exception("LeRobot export failed", dataset=str(dataset))
-            shutil.rmtree(building, ignore_errors=True)
-            self._publish("failed", error=str(exc))
-            return
+            try:
+                run_dataprep(config)
+                episodes = _swap_in(building, dataset)
+                break
+            except RuntimeError as exc:
+                shutil.rmtree(building, ignore_errors=True)
+                if time.monotonic() < deadline:
+                    logger.info(
+                        "LeRobot export waiting for recorder to flush",
+                        dataset=str(dataset),
+                        error=str(exc),
+                    )
+                    threading.Event().wait(EXPORT_RETRY_INTERVAL_S)
+                    continue
+                logger.exception("LeRobot export failed", dataset=str(dataset))
+                self._publish("failed", error=str(exc))
+                return
+            except Exception as exc:
+                logger.exception("LeRobot export failed", dataset=str(dataset))
+                shutil.rmtree(building, ignore_errors=True)
+                self._publish("failed", error=str(exc))
+                return
         with self._lock:
             self._exported_saves = max(self._exported_saves, saved)
         logger.info("LeRobot dataset exported", dataset=str(dataset), episodes=episodes)
@@ -169,11 +220,17 @@ class LeRobotExportModule(Module):
         status = ExportStatus(
             ts=time.time(),
             state=state,
-            dataset=str(self.config.dataset_path),
+            dataset=str(self._dataset_path()),
             episodes=exported if episodes is None else episodes,
             error=error,
         )
         self.export_status.publish(String(status.to_json()))
+
+    def _dataset_path(self) -> Path:
+        dataset = Path(self.config.dataset_path)
+        if self._runtime_dataset_suffix:
+            return dataset.with_name(f"{dataset.name}_{self._runtime_dataset_suffix}")
+        return dataset
 
 
 def _swap_in(building: Path, dataset: Path) -> int:
