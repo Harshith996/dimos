@@ -641,9 +641,9 @@ name = "dimos-module"
 version = "0.2.0"
 dependencies = [
  "cdr",
+ "dimos-generated-messages",
  "dimos-lcm",
  "dimos-module-macros",
- "dimos-tf-messages",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -666,17 +666,6 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-tf-messages"
-version = "0.1.0"
-dependencies = [
- "cdr",
- "heapless",
- "ros2msg",
- "serde",
- "serde-big-array",
 ]
 
 [[package]]

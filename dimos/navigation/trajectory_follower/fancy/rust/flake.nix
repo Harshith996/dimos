@@ -17,8 +17,8 @@
 
         own = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         plannerArchive = pkgs.fetchurl {
-          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/f7723ad4d5b9aa5dfe63614b6b537d1ccc2d212e";
-          sha256 = "f90af8fa794a34d53ee9481c6d0bdb63138853b30f851d92960fd34224ff62b2";
+          url = "https://codeload.github.com/dimensionalOS/dimos/tar.gz/a9365487b4323151ea85041c6a944b509c0c3268";
+          sha256 = "e339487dd2281980fcde7ab03c46dfd2e274491e0f73e66d9c6cbcaeea8902b2";
         };
         plannerSource = pkgs.runCommand "dimos-follower-planner-source" {
           nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
@@ -32,11 +32,13 @@
           chmod -R u+w $out
           mkdir -p $out/sdk
           cp -r ${plannerSource}/dimos/navigation/local_planner/rust $out/local-planner
-          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros ${plannerSource}/native/rust/dimos-tf-messages $out/sdk/
+          cp -r ${plannerSource}/native/rust/dimos-module ${plannerSource}/native/rust/dimos-module-macros $out/sdk/
           cp -r ${messageSource}/rust $out/messages
+          substituteInPlace $out/sdk/dimos-module/Cargo.toml \
+            --replace-fail '../../../build/message-source/rust' '../../messages'
           # The source artifacts own workspace roots; do not make them automatic members.
           substituteInPlace $out/Cargo.toml --replace-fail '[workspace]' '[workspace]
-          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "sdk/dimos-tf-messages", "messages"]'
+          exclude = ["local-planner", "sdk/dimos-module", "sdk/dimos-module-macros", "messages"]'
           substituteInPlace $out/Cargo.toml \
             --replace-fail '../../../local_planner/rust' 'local-planner' \
             --replace-fail '../../../../../native/rust/dimos-module' 'sdk/dimos-module' \
@@ -47,7 +49,7 @@
         '';
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
-        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" "dimos-tf-messages" ];
+        ours = [ name "dimos-local-planner" "dimos-module" "dimos-module-macros" ];
         callWith = mode: import generated {
           inherit pkgs;
           rootFeatures = [ "module" ];

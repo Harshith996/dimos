@@ -589,6 +589,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-generated-messages"
+version = "0.0.14"
+dependencies = [
+ "cdr",
+ "heapless",
+ "ros2msg",
+ "serde",
+ "serde-big-array",
+]
+
+[[package]]
 name = "dimos-lcm"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=04d78e8622500244123ba9cefa4c51b4cb454549#04d78e8622500244123ba9cefa4c51b4cb454549"
@@ -603,9 +614,9 @@ name = "dimos-module"
 version = "0.2.0"
 dependencies = [
  "cdr",
+ "dimos-generated-messages",
  "dimos-lcm",
  "dimos-module-macros",
- "dimos-tf-messages",
  "lcm-msgs",
  "nalgebra",
  "rayon",
@@ -629,17 +640,6 @@ dependencies = [
  "quote",
  "syn 3.0.5",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-tf-messages"
-version = "0.1.0"
-dependencies = [
- "cdr",
- "heapless",
- "ros2msg",
- "serde",
- "serde-big-array",
 ]
 
 [[package]]
