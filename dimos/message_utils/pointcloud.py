@@ -15,10 +15,10 @@
 """NumPy conversions for generated PointCloud2 messages."""
 
 from copy import deepcopy
+from dataclasses import replace
 import math
 from typing import Any
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
@@ -199,9 +199,9 @@ def concatenate_clouds(first: PointCloud2, second: PointCloud2) -> PointCloud2:
     pointcloud_view(first)
     pointcloud_view(second)
     if not first.width * first.height:
-        return cdr_decode(cdr_encode(second), PointCloud2)
+        return deepcopy(second)
     if not second.width * second.height:
-        return cdr_decode(cdr_encode(first), PointCloud2)
+        return deepcopy(first)
     if first.header.frame_id != second.header.frame_id:
         raise ValueError("cannot concatenate point clouds in different frames")
     if (
@@ -255,7 +255,7 @@ def transform_cloud(message: PointCloud2, transform: TransformStamped) -> PointC
     )
     for index, name in enumerate(("x", "y", "z")):
         writable[name] = transformed[:, index].reshape(message.height, message.width)
-    output = cdr_decode(cdr_encode(message), PointCloud2)
+    output = replace(message, header=deepcopy(message.header), fields=deepcopy(message.fields))
     output.data = np.frombuffer(payload, dtype=np.uint8).copy()
     output.header = Header(stamp=deepcopy(message.header.stamp), frame_id=transform.header.frame_id)
     return output
@@ -310,21 +310,28 @@ def pointcloud_from_rgbd(
     matrix = intrinsic_matrix(calibration).copy()
     matrix[0, :] *= depth.width / calibration.width
     matrix[1, :] *= depth.height / calibration.height
-    distances = image_view(depth).astype(np.float64)
+    distances = image_view(depth).astype(np.float32)
     if depth.encoding != "32FC1":
         distances *= depth_scale
-    valid = np.isfinite(distances) & (distances > 0) & (distances < depth_trunc)
-    rows = np.broadcast_to(np.arange(depth.height, dtype=np.float64)[:, None], distances.shape)
-    columns = np.broadcast_to(np.arange(depth.width, dtype=np.float64)[None, :], distances.shape)
-    z = distances[valid]
-    xyz = np.column_stack(
-        (
-            (columns[valid] - matrix[0, 2]) * z / matrix[0, 0],
-            (rows[valid] - matrix[1, 2]) * z / matrix[1, 1],
-            z,
-        )
+    distances[~np.isfinite(distances) | (distances <= 0)] = 0
+    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+        o3d.geometry.Image(np.ascontiguousarray(image_to_rgb(color))),
+        o3d.geometry.Image(np.ascontiguousarray(distances)),
+        depth_scale=1.0,
+        depth_trunc=depth_trunc,
+        convert_rgb_to_intensity=False,
     )
-    return pointcloud_from_xyz_rgb(xyz, image_to_rgb(color)[valid], header=depth.header)
+    intrinsics = o3d.camera.PinholeCameraIntrinsic(
+        depth.width,
+        depth.height,
+        matrix[0, 0],
+        matrix[1, 1],
+        matrix[0, 2],
+        matrix[1, 2],
+    )
+    cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsics)
+    colors = np.rint(np.asarray(cloud.colors) * 255).astype(np.uint8)
+    return pointcloud_from_xyz_rgb(np.asarray(cloud.points), colors, header=depth.header)
 
 
 def voxel_downsample_cloud(message: PointCloud2, voxel_size: float = 0.025) -> PointCloud2:
