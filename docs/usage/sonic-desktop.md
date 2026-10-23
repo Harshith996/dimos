@@ -33,6 +33,13 @@ No sim2, native Pico service, or ControlCoordinator is required.
 
 ## Third-person view
 
+The simulator renders cameras and raycasts in a separate sensing thread, using a private
+state snapshot. Physics does not wait for image rendering. The SONIC panel in Desktop
+shows measured physics rate and sim/wall-time ratio alongside policy timing and feedback
+age. The control warning in the top bar opens this panel. Missing or stale telemetry is
+reported as unavailable, not healthy. These diagnostics do not certify stability or
+replace the robot-side feedback and command watchdogs.
+
 Add `--mujocosimmodule.enable-observer true` after the blueprint name to publish
 an operator-only `observer_image` stream. In Controller, select `observer_image`
 in a camera panel; keep `color_image` in another panel for the head view.
