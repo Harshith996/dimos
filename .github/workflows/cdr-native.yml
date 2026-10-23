@@ -1,0 +1,37 @@
+name: CDR native interoperability
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DIMOS_ALLOW_MISSING_COCKPIT: "1"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: false
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: '3.12'
+          enable-cache: true
+      - name: Install build and media dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config clang libclang-dev portaudio19-dev libturbojpeg ffmpeg
+      - name: Install Python project and test dependencies
+        run: uv sync --frozen --group tests
+      - name: Test native SDK
+        run: |
+          cargo test --locked --manifest-path native/rust/dimos-module/Cargo.toml
+          cargo test --locked --manifest-path native/rust/dimos-module-macros/Cargo.toml
