@@ -99,9 +99,12 @@ def test_runtime_streams_are_usable_and_removed_without_reconnecting(monkeypatch
         "/agent",
         pickle.dumps((BaseMessage, FakeTransport())),
     )
+    unsupported = StreamDescriptor(
+        "sensor", "items", "out", "list", "/items", pickle.dumps((list[int], FakeTransport()))
+    )
     client = clients[0]
     try:
-        producer.get_stream_descriptors.return_value = [number]
+        producer.get_stream_descriptors.return_value = [number, unsupported]
         module.on_system_modules([producer])
         assert isinstance(client.control_frames[-1], WireManifest)
         assert [c["ch"] for c in client.control_frames[-1].manifest["channels"]] == [

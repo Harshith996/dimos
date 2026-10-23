@@ -344,7 +344,7 @@ class RelayBridgeModule(Module):
         for key in desired - self._discovered.keys():
             try:
                 self._discovered[key] = self._add_stream(producers[key])
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 logger.warning(
                     f"cannot expose {producers[key].module}.{producers[key].name}: {exc}"
                 )
