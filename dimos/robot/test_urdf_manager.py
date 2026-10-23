@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
-import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -45,7 +44,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -62,12 +61,12 @@ _URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointClearing]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[UrdfManager] = []
+    modules: list[UrdfManagerPointClearing] = []
 
-    def make(**overrides: Any) -> UrdfManager:
+    def make(**overrides: Any) -> UrdfManagerPointClearing:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -76,7 +75,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = UrdfManager(**settings)
+        module = UrdfManagerPointClearing(**settings)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
@@ -87,7 +86,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
         module.dispose()
 
 
-def _place_arm(module: UrdfManager, at: tuple[float, float, float], ts: float) -> None:
+def _place_arm(module: UrdfManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -109,7 +108,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., UrdfManager],
+    make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -122,7 +121,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., UrdfManager],
+    make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -343,16 +342,15 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_robot_description_names_files_by_package_and_hash_and_file_request_serves_only_stale_ones(
+def test_render_file_request_serves_the_urdf_and_only_files_it_names(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
     (package / "meshes").mkdir(parents=True)
     trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(package / "meshes" / "cube.stl")
-    cube = (package / "meshes" / "cube.stl").read_bytes()
-    urdf = tmp_path / "mesh_robot.urdf"
     (package / "textures").mkdir()
     (package / "textures" / "skin.png").write_bytes(b"png bytes")
+    urdf = tmp_path / "mesh_robot.urdf"
     urdf.write_text(
         _URDF.replace(
             '<box size="0.2 0.2 0.2"/>', '<mesh filename="package://box/meshes/cube.stl"/>'
@@ -365,41 +363,27 @@ def test_robot_description_names_files_by_package_and_hash_and_file_request_serv
     module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
     sent: list[MeshFile] = []
     monkeypatch.setattr(module.file_info, "publish", sent.append)
-    name = f"package://box/meshes/cube.stl?hash={hashlib.sha256(cube).hexdigest()}"
-    texture = f"package://box/textures/skin.png?hash={hashlib.sha256(b'png bytes').hexdigest()}"
+    cube = str((package / "meshes" / "cube.stl").resolve())
+    texture = str((package / "textures" / "skin.png").resolve())
 
-    assert f'filename="{name}"' in module._urdf_xml
-    assert f'filename="{texture}"' in module._urdf_xml
-    assert str(tmp_path) not in module._urdf_xml
-    # the name as robot_description gives it, with or without its hash, or with a stale have= gets the file; have= of the
-    # current file (a fresh cached copy) and a filesystem path get nothing
-    plain = "package://box/meshes/cube.stl"
-    for request in (name, plain, f"{name}&have=0", f"{name}&have={name.split('=')[1]}", str(urdf)):
-        asyncio.run(module.handle_file_request(String(request)))
+    # the URDF and the files by the full paths it names; anything else on disk gets nothing
+    for request in (
+        str(urdf),
+        cube,
+        texture,
+        str(package / "meshes"),
+        "package://box/meshes/cube.stl",
+    ):
+        asyncio.run(module.handle_render_file_request(String(request)))
 
-    asyncio.run(module.handle_file_request(String(texture)))
-
-    assert [file.uri for file in sent] == [name, name, name, texture]
-    assert MeshFile.lcm_decode(sent[0].lcm_encode()).data == cube
-    assert sent[3].data == b"png bytes"
-
-
-def test_an_empty_file_request_sends_robot_description_right_away(make_filter, monkeypatch):
-    module = make_filter()
-    sent: list[String] = []
-    monkeypatch.setattr(module.robot_description, "publish", sent.append)
-    monkeypatch.setattr(
-        module.file_info, "publish", lambda mesh: pytest.fail("no file for an empty request")
-    )
-
-    asyncio.run(module.handle_file_request(String("")))
-    asyncio.run(module.handle_file_request(String("")))  # within 0.2 s: dropped
-
-    assert [message.data for message in sent] == [module._urdf_xml]
+    assert [file.uri for file in sent] == [str(urdf), cube, texture]
+    assert f'filename="{cube}"' in sent[0].data.decode()
+    assert MeshFile.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
+    assert sent[2].data == b"png bytes"
 
 
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
-    make_filter: Callable[..., UrdfManager],
+    make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 2.0)
@@ -418,19 +402,6 @@ def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_captu
     late = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=1.0))
     assert late is not None
     np.testing.assert_allclose(late.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
-
-
-def test_with_self_filter_off_no_cloud_is_filtered_or_published(
-    make_filter: Callable[..., UrdfManager],
-) -> None:
-    module = make_filter(self_filter=False)
-    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
-    published: list[PointCloud2] = []
-    module.filtered_pointcloud.subscribe(published.append)
-
-    asyncio.run(module.handle_pointcloud(_cloud([[2.0, 0.0, 0.0]])))
-
-    assert published == []
 
 
 def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monkeypatch):
@@ -468,7 +439,7 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
     pytest.importorskip("roboplan.core")
     description = R1PRO_MODEL.load()
     roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
-    module = UrdfManager(model=R1PRO_MODEL, self_filter=False)
+    module = UrdfManager(model=R1PRO_MODEL)
     rng = np.random.default_rng(seed)
     positions = {
         joint.name: rng.uniform(
@@ -496,23 +467,23 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
         )
 
 
-def test_with_self_filter_off_roboplan_is_never_imported(tmp_path):
+def test_a_plain_urdf_manager_never_imports_roboplan(tmp_path):
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_joint_robot("prismatic"))
-    # A fresh interpreter where importing roboplan fails; self_filter=True is the control that proves it does.
+    # A fresh interpreter where importing roboplan fails; UrdfManagerPointClearing is the control that proves it does.
     script = f"""
 import sys
 sys.modules["roboplan"] = None
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
 model = RobotModel.from_file({str(urdf)!r})
-module = UrdfManager(model=model, self_filter=False)
+module = UrdfManager(model=model)
 [edge] = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
 module.dispose()
 assert abs(edge.translation.x - 0.3) < 1e-9, edge
 try:
-    UrdfManager(model=model, self_filter=True)
+    UrdfManagerPointClearing(model=model)
 except ImportError:
     pass
 else:

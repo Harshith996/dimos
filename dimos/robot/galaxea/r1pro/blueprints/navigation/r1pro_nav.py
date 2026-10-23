@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -40,7 +41,7 @@ from dimos.robot.galaxea.r1pro.config import (
 from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
@@ -51,6 +52,15 @@ PLANNER_VIZ_HZ = 0.0
 # mount tf comes at 5 Hz, Point-LIO's at 10 with jitter, and the Livox cloud arrives ~0.11 s behind its stamp (0.1 s
 # dropped clouds and head-depth frames).
 TF_TOLERANCE_S = 0.5
+# The mapper spares a voxel from a grazing ray only while something still sees it: 2 s of frames, Point-LIO's scans plus
+# head depth (Depth2DepthCloud logs ~5 fps on the Orin). A surface in the head camera's view is re-hit ~10 times in that
+# window and keeps its spare; the knee-high layer a crouching person leaves, which head depth's rays to the floor (all
+# steeper than graze_cos allows) never cleared, starts clearing 2 s after they leave. On the office box recording 1 s also
+# ate floor out of the head's view (zone floor coverage 0.81 -> 0.68) and 3 s left that layer up (floor error 0.17 cm).
+HEAD_DEPTH_HZ = 5.0
+GRAZE_RECENT_FRAMES = round(
+    2.0 * (PointLioConfig.model_fields["scan_rate"].default + HEAD_DEPTH_HZ)
+)
 
 
 r1pro_nav = autoconnect(
@@ -63,14 +73,14 @@ r1pro_nav = autoconnect(
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
     # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans and
     # the head depth (which sees the arms) alike.
-    UrdfManager.blueprint(
+    UrdfManagerPointClearing.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
         tf_tolerance_s=TF_TOLERANCE_S,
         tf_forward_tolerance_s=TF_TOLERANCE_S,
     ).remappings(
         [
-            (UrdfManager, "pointcloud", "lidar_with_robot"),
-            (UrdfManager, "filtered_pointcloud", "lidar"),
+            (UrdfManagerPointClearing, "pointcloud", "lidar_with_robot"),
+            (UrdfManagerPointClearing, "filtered_pointcloud", "lidar"),
         ]
     ),
     # Head depth within a voxel of the floor lands in the floor's layer, so it is anchored as floor.
@@ -85,6 +95,7 @@ r1pro_nav = autoconnect(
         emit_every=1,
         global_emit_every=50,
         support_min=4,
+        graze_recent_frames=GRAZE_RECENT_FRAMES,
         worker_threads=3,
         tf_match_tolerance_s=TF_TOLERANCE_S,
     ),
