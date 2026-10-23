@@ -22,10 +22,17 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 
 
-def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+def mujoco_if_sim(sim_path: str | Path, arm_dof: int) -> tuple[Blueprint, ...]:
+    """The MujocoSimModule for ``sim_path``, only when running in simulation.
+
+    ``arm_dof`` counts the arm joints only, never ``len(hardware.joints)``, which
+    includes the gripper. The sim module takes the first ``arm_dof`` actuated
+    joints of the scene as the arm and any further one as the gripper, so a
+    count that includes the gripper hides it and gripper commands never move it.
+    """
     if not global_config.simulation:
         return ()
 
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=arm_dof),)
