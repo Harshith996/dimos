@@ -49,7 +49,9 @@ else:
 from dimos_lcm.std_msgs import Bool
 
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.codecs import is_generic_lcm_encoding
 from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
@@ -476,6 +478,21 @@ class Map3D(Panel):
         if self.pose is not None:
             requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
         return tuple(requests)
+
+
+def preview_request(stream: str, message_type: type[Any]) -> ChannelRequest:
+    """Use cockpit preview defaults for a discovered output, without adding a panel."""
+    panel: Panel
+    if message_type is Image:
+        panel = Video(stream)
+    elif message_type is PointCloud2:
+        panel = Map3D(cloud=stream, pose=None)
+    elif message_type is OccupancyGrid:
+        panel = Map2D(costmap=stream, pose=None)
+    else:
+        return _request_of(Channel(stream, message_type))
+    (request,) = panel._channel_requests()
+    return request
 
 
 @dataclass(frozen=True)

@@ -66,13 +66,14 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
-from dimos.web.cockpit import Channel, _request_of
+from dimos.web.cockpit import preview_request
 from dimos.web.codecs import EncodedPayload, encoder_definition, resolve_encoder
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
-from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
+from dimos.web.relay_bridge import builtin_codecs as _builtin_codecs  # noqa: F401
 from dimos.web.relay_bridge.channels import BUILTIN_CHANNELS, TX_CHANNELS, RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest, resolve_robot_info
 from dimos.web.relay_bridge.locate import find_web_dir
@@ -286,6 +287,13 @@ class RelayBridgeModule(Module):
         super().stop()
 
     @rpc
+    def relay_endpoint(self) -> dict[str, str] | None:
+        """The relay HTTP endpoint and robot identity, once the bridge is connected."""
+        if self._session is None or self._url is None or self._robot_info is None:
+            return None
+        return {"url": self._url, "robot": self._robot_info.id}
+
+    @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         """Refresh discovery after coordinator startup, load, unload, or restart."""
         own_name = self.config.rpc_name or self.config.instance_name or type(self).__name__
@@ -352,14 +360,7 @@ class RelayBridgeModule(Module):
                 continue
             message_type, transport = pickle.loads(descriptor.transport)
             try:
-                request = _request_of(
-                    Channel(
-                        ch,
-                        message_type,
-                        encoding="jpeg.v1" if message_type is Image else None,
-                        delivery="latest" if message_type is Image else "reliable",
-                    )
-                )
+                request = preview_request(ch, message_type)
                 codec = resolve_encoder(request.encoding, message_type)
                 if codec.check_params is not None:
                     codec.check_params(request.params)
@@ -372,9 +373,10 @@ class RelayBridgeModule(Module):
                 encoding=request.encoding,
                 delivery=request.delivery,
                 max_hz=request.max_hz,
-                params=dict(request.params),
+                params={**request.params, "source": {"channel": descriptor.channel}},
                 encoder=codec.encode,
                 encoder_takes_params=codec.takes_params,
+                resend_on_subscribe=message_type in (OccupancyGrid, PointCloud2),
             )
             specs.append(spec)
             manifest["channels"].append(
@@ -389,7 +391,17 @@ class RelayBridgeModule(Module):
             )
             self._runtime_inputs[ch] = In(message_type, ch, self, transport)
             ids.add(ch)
+            covered.add(descriptor.transport)
         self._channel_specs = tuple(specs)
+
+    def _map_sources(self, manifest: RobotManifest) -> None:
+        for wire in manifest["channels"]:
+            ports = self.inputs if wire["dir"] == "rx" else self.outputs
+            transport = ports[wire["ch"]].transport
+            if transport is not None:
+                channel = getattr(transport, "channel", None)
+                if isinstance(channel, str):
+                    wire["params"] = {**wire["params"], "source": {"channel": channel}}
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
@@ -414,6 +426,7 @@ class RelayBridgeModule(Module):
                 self._channel_specs = self._resolve_builtin_specs(rx_wire)
             manifest_data = manifest.model_dump()
             self._discover_channels(manifest_data)
+            self._map_sources(manifest_data)
             manifest = parse_manifest(manifest_data)
             self._publish = PublishHandler(self._robot_info.id, pub_specs, self.outputs)
             self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
@@ -830,7 +843,9 @@ class RelayBridgeModule(Module):
         for channel in manifest["channels"]:
             if channel["ch"] in track_chs:
                 channel["encoding"] = TRACK_ENCODING
-                channel["params"] = {}  # jpeg quality means nothing to a track
+                channel["params"] = {
+                    key: value for key, value in channel["params"].items() if key == "source"
+                }
         return manifest, track_chs
 
     def _build_senders(

@@ -41,8 +41,11 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, pacing, relay_bridge_module
@@ -51,6 +54,7 @@ from dimos.web.relay_bridge.channels import RuntimeChannelSpec
 from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.module_test_support import (
+    FAKE_INFO_RTC,
     FakeClient,
     FakeTransport,
     flush_loop,
@@ -858,7 +862,7 @@ def test_inventory_refresh_preserves_authored_channels_and_retires_subscriptions
                     "encoding": "json.v1",
                     "delivery": "reliable",
                     "maxHz": 10.0,
-                    "params": {},
+                    "params": {"source": {"channel": "/remapped/counter"}},
                     "publish": "none",
                     "requiredScope": None,
                 },
@@ -887,5 +891,119 @@ def test_inventory_refresh_preserves_authored_channels_and_retires_subscriptions
         assert wait_until(lambda: seen == ["still connected"])
         assert wait_until(lambda: clients[-1].control_frames)
         assert isinstance(clients[-1].control_frames[0], PubAck)
+    finally:
+        stop_module(module)
+
+
+def test_authored_bridge_exposes_only_declared_channels(monkeypatch):
+    blueprint = cockpit(
+        channels=[Channel("agent_step", str, dir="tx", encoding="text.json.v1", publish="shared")],
+    )
+    module, clients = start_authored(monkeypatch, blueprint, wire=())
+    try:
+        assert module.relay_endpoint() == {"url": "http://127.0.0.1:1", "robot": "unit-bot"}
+        assert [channel["ch"] for channel in module._manifest["channels"]] == ["agent_step"]
+        received = []
+        module.register_disposable(Disposable(module.agent_step.subscribe(received.append)))
+        push(module, clients[0], _pub_frame(b'"ordinary channel"', ch="agent_step"))
+        assert wait_until(lambda: received == ["ordinary channel"])
+        assert wait_until(lambda: clients[0].control_frames)
+        assert isinstance(clients[0].control_frames[-1], PubAck)
+    finally:
+        stop_module(module)
+    assert module.relay_endpoint() is None
+
+
+@pytest.mark.parametrize(
+    ("message_type", "encoding", "rate", "params"),
+    [
+        (Image, "jpeg.v1", 30.0, {"quality": 75}),
+        (PointCloud2, "voxels.zlib.v1", 1.0, {"res": 0.05}),
+        (OccupancyGrid, "costmap.zlib.v1", 5.0, {}),
+    ],
+)
+def test_discovered_visualization_channels_map_native_topics(
+    monkeypatch, mocker, message_type, encoding, rate, params
+):
+    module, clients = start_authored(
+        monkeypatch, cockpit(Video("color_image", quality=39)), wire=("color_image",)
+    )
+    try:
+        monkeypatch.setattr(relay_bridge_module, "RTC_AVAILABLE", True)
+        mocker.patch.object(
+            module.color_image.transport, "channel", "/native/authored", create=True
+        )
+        transport = FakeTransport()
+        mocker.patch.object(transport, "channel", "/native/preview", create=True)
+        source = mocker.Mock(remote_name="Source")
+        source.get_stream_descriptors.return_value = [
+            StreamDescriptor(
+                "Source",
+                "preview",
+                "out",
+                message_type.__name__,
+                "/native/preview",
+                pickle.dumps((message_type, transport)),
+            )
+        ]
+        module.on_system_modules([source])
+        channels = {item["ch"]: item for item in module._manifest["channels"]}
+        assert channels["Source.preview"]["encoding"] == encoding
+        assert channels["Source.preview"]["delivery"] == "latest"
+        assert channels["Source.preview"]["maxHz"] == rate
+        assert channels["Source.preview"]["params"] == {
+            **params,
+            "source": {"channel": "/native/preview"},
+        }
+        assert channels["color_image"]["params"] == {
+            "quality": 39,
+            "source": {"channel": "/native/authored"},
+        }
+        rtc_manifest, _ = module._wire_manifest(FAKE_INFO_RTC)
+        rtc_channel = next(
+            wire for wire in rtc_manifest["channels"] if wire["ch"] == "Source.preview"
+        )
+        assert rtc_channel["encoding"] == ("video.webrtc.v1" if message_type is Image else encoding)
+        assert rtc_channel["params"]["source"] == {"channel": "/native/preview"}
+    finally:
+        stop_module(module)
+
+
+@pytest.mark.parametrize("discovered", [False, True], ids=["authored", "discovered"])
+def test_compressed_images_use_the_ordinary_lcm_channel(monkeypatch, mocker, discovered):
+    channel = Channel("camera", CompressedImage)
+    module, clients = start_authored(
+        monkeypatch,
+        cockpit(channels=[] if discovered else [channel]),
+        wire=() if discovered else ("camera",),
+    )
+    try:
+        ch = "Source.camera" if discovered else "camera"
+        if discovered:
+            source = mocker.Mock(remote_name="Source")
+            source.get_stream_descriptors.return_value = [
+                StreamDescriptor(
+                    "Source",
+                    "camera",
+                    "out",
+                    "CompressedImage",
+                    "/camera",
+                    pickle.dumps((CompressedImage, FakeTransport())),
+                )
+            ]
+            module.on_system_modules([source])
+        transport = module.inputs[ch].transport
+        assert isinstance(transport, FakeTransport)
+        spec = next(spec for spec in module._channel_specs if spec.ch == ch)
+        assert spec.message_type is CompressedImage
+        assert spec.encoding == "sensor_msgs.CompressedImage.lcm.v1"
+        client = clients[-1]
+        push(module, client, Subs(chs=[ch], n=1))
+        assert wait_until(lambda: transport.subscribers)
+        image = Image.from_numpy(np.zeros((12, 20, 3), dtype=np.uint8))
+        compressed = CompressedImage.from_image(image, format="png")
+        transport.publish(compressed)
+        assert wait_until(lambda: client.frames)
+        assert client.frames[-1] == (ch, compressed.lcm_encode(), "reliable", None)
     finally:
         stop_module(module)
