@@ -26,7 +26,7 @@ HEAD = "camera_head_left_link"
 
 @pytest.fixture(scope="module")
 def fk() -> UrdfManager:
-    return UrdfManager(model=R1PRO_MODEL, self_filter=False)
+    return UrdfManager(model=R1PRO_MODEL)
 
 
 def joint_state(**positions: float) -> JointState:
