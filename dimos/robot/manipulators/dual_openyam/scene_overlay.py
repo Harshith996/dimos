@@ -192,6 +192,13 @@ class SceneOverlayModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        # One line per run so the run log says which scene it belongs to.
+        logger.info(
+            "Scene overlay scenes_dir=%s scene=%s has_reference=%s",
+            self.config.scenes_dir,
+            self._scene or "none",
+            self._reference is not None,
+        )
         unsubscribe = self.color_image.subscribe(self._on_frame)
         self.register_disposable(Disposable(unsubscribe) if callable(unsubscribe) else unsubscribe)
 
@@ -274,7 +281,9 @@ class SceneOverlayModule(Module):
     @rpc
     def set_scene(self, scene: str) -> bool:
         """Switch to a scene; returns False when it has no reference yet."""
-        return self._load_reference(scene)
+        loaded = self._load_reference(scene)
+        logger.info("Scene overlay scene=%s has_reference=%s", scene or "none", loaded)
+        return loaded
 
     @rpc
     def set_opacity(self, opacity: float) -> float:
