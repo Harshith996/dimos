@@ -20,11 +20,14 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_shm import CMD_MODE_PD_TAU
 from dimos.simulation.engines.mujoco_sim_module import (
     MujocoSimModule,
@@ -350,6 +353,65 @@ def _write_freejoint_xml(path: Path) -> None:
 </mujoco>
 """.strip()
     )
+
+
+def test_observer_follows_base_and_renders_at_its_own_rate(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    robot_xml = tmp_path / "robot.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        observer_camera=CameraConfig(name="observer", fps=10),
+    )
+    renderer = mocker.Mock(spec=mujoco.Renderer)
+    pixels = np.full((2, 3, 3), 127, dtype=np.uint8)
+    renderer.render.return_value = pixels
+    camera = mujoco.MjvCamera()
+    camera.azimuth = 45
+    try:
+        assert engine.read_observer() is None
+        engine.data.qpos[:3] = [1.0, 2.0, 0.8]
+        engine._render_observer(10.0, renderer, camera)
+        np.testing.assert_array_equal(camera.lookat, [1.0, 2.0, 0.8])
+        engine.data.qpos[:3] = [3.0, 4.0, 0.6]
+        engine._render_observer(10.05, renderer, camera)
+        assert renderer.render.call_count == 1
+        engine._render_observer(10.11, renderer, camera)
+        assert renderer.render.call_count == 2
+        assert camera.azimuth == 45
+        np.testing.assert_array_equal(camera.lookat, [3.0, 4.0, 0.6])
+        frame = engine.read_observer()
+        assert frame is not None
+        assert frame[1] == 10.11
+        pixels[:] = 0
+        np.testing.assert_array_equal(frame[0], np.full((2, 3, 3), 127, dtype=np.uint8))
+    finally:
+        engine.disconnect()
+
+
+def test_observer_publishes_separately_without_primary_camera_and_skips_duplicate_frames(
+    mocker: MockerFixture,
+) -> None:
+    module = MujocoSimModule(enable_observer=True, enable_color=False, enable_depth=False)
+    engine = mocker.Mock(spec=MujocoEngine)
+    pixels = np.full((2, 3, 3), 127, dtype=np.uint8)
+    engine.read_observer.side_effect = [None, (pixels, 5.0), (pixels, 5.0), (pixels, 6.0)]
+    mocker.patch.object(module, "_engine", engine)
+    images: list[Image] = []
+    primary: list[Image] = []
+    try:
+        module.observer_image.subscribe(images.append)
+        module.color_image.subscribe(primary.append)
+        for _ in range(4):
+            module._publish_observer()
+        assert [image.ts for image in images] == [5.0, 6.0]
+        assert [image.frame_id for image in images] == ["", ""]
+        np.testing.assert_array_equal(images[0].data, pixels)
+        assert primary == []
+    finally:
+        module.stop()
 
 
 class _FakeCameraEngine:
