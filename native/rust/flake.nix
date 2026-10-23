@@ -29,6 +29,7 @@
         src = pkgs.runCommand "dimos-native-sdk-source" { } ''
           mkdir -p $out/native/rust $out/build/message-source
           cp -r ${sdkSource}/. $out/native/rust/
+          cp ${sdkSource}/crate-hashes.json $out/crate-hashes.json
           cp -r ${messageSource}/rust $out/build/message-source/rust
         '';
 
