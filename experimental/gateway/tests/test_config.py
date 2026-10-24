@@ -110,6 +110,17 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
     assert info["server"]["zenohNamespace"] == "ns"
 
 
+def test_config_answers_the_shared_settings_the_gateway_reads(
+    client: TestClient, home: Path
+) -> None:
+    (home / "dimos_home").mkdir(parents=True, exist_ok=True)
+    (home / "dimos_home" / "config.yaml").write_text("recordings:\n  dir: /tmp/elsewhere\n")
+    assert client.get("/config").json() == {
+        "path": str(home / "dimos_home" / "config.yaml"),
+        "recordingsDir": "/tmp/elsewhere",
+    }
+
+
 def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/openapi.json").json()["paths"]
     assert {"/active", "/active/modules", "/catalog/rpcs", "/catalog", "/catalog/config"} <= set(

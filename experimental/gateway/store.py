@@ -70,6 +70,17 @@ def recordings_dir() -> Path:
     return _served / "recordings" if (_served / ".git").exists() else STATE_DIR / "recordings"
 
 
+def shared_settings() -> dict[str, Any]:
+    """What `GET /config` answers, and what the `config` event says has changed: the shared
+    `config.yaml`'s settings as the gateway resolves them for each use.
+
+    The settings fixed when the gateway started (`zenoh.namespace`, `dimos-gateway.socket`, where a
+    flag wins over the file) are not here: they cannot change while it runs, and the running ones are
+    `GET /info`'s. So everything here is read fresh, and a change to any of it is news.
+    """
+    return {"path": str(shared_config.config_file()), "recordingsDir": str(recordings_dir())}
+
+
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)

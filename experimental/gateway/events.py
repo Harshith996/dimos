@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import watchfiles
 
 from dimos.core import run_registry
+from dimos.utils import shared_config
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import constants, launches, store
 
@@ -224,3 +225,38 @@ async def watch_blueprints(
     finally:
         for watcher in watchers:
             watcher.cancel()
+
+
+async def watch_config(
+    changed: Callable[[], None], debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
+) -> None:
+    """Calls `changed` when the shared config.yaml changes what `GET /config` answers.
+
+    Its directory is watched and not the file itself, because Desktop (the file's writer; the gateway
+    only reads it) saves it by renaming a temporary file over it, which replaces the inode a watch of
+    the file would hold. The directory is created if missing so the first config.yaml a machine ever
+    gets is seen too.
+    """
+    home = shared_config.dimos_home()
+    home.mkdir(parents=True, exist_ok=True)
+    config_name = shared_config.config_file().name
+
+    def is_shared_config(_change: watchfiles.Change, path: str) -> bool:
+        return Path(path).name == config_name
+
+    wake = asyncio.Event()
+    watcher = asyncio.create_task(
+        set_on_changes(wake, [home], is_shared_config, recursive=False, debounce_ms=debounce_ms)
+    )
+    try:
+        # the first reading is what a change is compared with
+        settings = store.shared_settings()
+        while True:
+            await wake.wait()
+            wake.clear()
+            current = store.shared_settings()
+            if current != settings:
+                settings = current
+                changed()
+    finally:
+        watcher.cancel()

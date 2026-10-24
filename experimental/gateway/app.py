@@ -40,6 +40,7 @@ def create_app(state: State, background: bool = True) -> FastAPI:
                 asyncio.create_task(events.watch_launch(state.bus, state.process_stats)),
                 asyncio.create_task(state.uploads.work()),
                 asyncio.create_task(watch),
+                asyncio.create_task(events.watch_config(state.config_changed)),
             ]
         yield
         state.uploads.shutdown()

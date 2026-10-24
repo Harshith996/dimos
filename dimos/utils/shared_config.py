@@ -36,11 +36,16 @@ def dimos_home() -> Path:
     return Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
 
 
+def config_file() -> Path:
+    """The shared ``config.yaml`` itself, which may not exist."""
+    return dimos_home() / "config.yaml"
+
+
 def setting(section: str, key: str) -> Any:
     """A value from the shared ``config.yaml``, None when the file, the section or the key is
     missing (an empty value counts as unset: that is how Desktop clears a setting)."""
     try:
-        loaded = yaml.safe_load((dimos_home() / "config.yaml").read_text()) or {}
+        loaded = yaml.safe_load(config_file().read_text()) or {}
     except (OSError, yaml.YAMLError):
         return None
     value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None

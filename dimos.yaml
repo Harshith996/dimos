@@ -24,6 +24,11 @@ provides:
           Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
           tag, its python, its checkout, runs, log and recordings directories, and this process (with its own code's directory,
           commit and tag: a copy apart from the checkout it serves when Desktop runs one)
+    /config:
+      get:
+        description: >-
+          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory): the one
+          answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)

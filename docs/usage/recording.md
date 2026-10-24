@@ -42,6 +42,10 @@ directory to each launch it starts as `--record-dir`, so the answer and the path
 to cannot drift apart. The run's Rerun stream
 (`rerun.rrd`) and `dimos cloud upload`'s list of what to upload follow the same directory.
 
+Somewhere a blocking request won't do, cache the answer and let the gateway invalidate it: it
+publishes a `config` event on zenoh when `config.yaml` changes what it reads from the file, and
+`GET /config` is the route to re-read ([gateway](/docs/usage/gateway.md)).
+
 Everything that resolves a recording to read it looks in the recordings directory as well as
 the checkout, so `--replay-db <run-id>/memory.db` finds a run recorded before the directory
 was configured and one recorded after. An absolute path always works.
