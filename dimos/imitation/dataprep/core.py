@@ -27,10 +27,11 @@ from __future__ import annotations
 
 import bisect
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import pairwise
 import math
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -47,7 +48,6 @@ from dimos.imitation.dataprep.schema import (
     EpisodeReport as EpisodeReport,
     FeatureSpec as FeatureSpec,
     IncompleteEpisode as IncompleteEpisode,
-    Inspector as Inspector,
     OutputConfig as OutputConfig,
     QualityConfig as QualityConfig,
     Sample as Sample,
@@ -557,7 +557,10 @@ def inspect_episode_quality(
 def get_writer(format_name: str) -> Writer:
     """Lazy-import the format writer's `write` function."""
     if format_name == "lerobot":
-        from dimos.imitation.dataprep.formats.lerobot.writer import write
+        raise RuntimeError(
+            "LeRobot conversion requires its isolated environment; "
+            "use `run_lerobot_dataprep()` or `dimos imitation prepare RECORDING_DIR`"
+        )
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.writer import write
     else:
@@ -565,15 +568,17 @@ def get_writer(format_name: str) -> Writer:
     return write
 
 
-def get_inspector(format_name: str) -> Inspector:
-    """Lazy-import the format reader's `inspect` function."""
+def get_inspector(format_name: str) -> Callable[[Path], dict[str, Any]]:
+    """Retain explicit-format CLI inspection; LeRobot uses its locked environment."""
     if format_name == "lerobot":
-        from dimos.imitation.dataprep.formats.lerobot.reader import inspect
-    elif format_name == "hdf5":
+        from dimos.imitation.dataprep.formats.lerobot.adapter import inspect_lerobot_dataset
+
+        return inspect_lerobot_dataset
+    if format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.reader import inspect
-    else:
-        raise ValueError(f"Unknown format: {format_name!r}")
-    return inspect
+
+        return inspect
+    raise ValueError(f"Unknown format: {format_name!r}")
 
 
 def summarize_lengths(lengths: list[int]) -> dict[str, Any]:
