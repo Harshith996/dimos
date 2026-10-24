@@ -73,9 +73,29 @@ checks feedback and command freshness in its independent motor publisher.
 
 For JetPack 5 or 6, use `bin/hardware/g1/setup-sonic`. It detects the release and
 installs the matching ONNX Runtime and model assets; `--check` checks system
-prerequisites only. JetPack 5 requires CUDA 11.8 with its compatibility driver
-and cuDNN 8; JetPack 6 requires CUDA 12.6 and cuDNN 9.
+prerequisites only. JetPack 5 uses its native CUDA 11.4 and cuDNN 8; an existing
+CUDA 11.8 installation with its compatibility driver is also supported.
+The wheel version `1.18.1.11.8` means ONNX Runtime 1.18.1, CUDA major 11,
+cuDNN major 8, not a requirement for CUDA 11.8. JetPack 6 requires CUDA 12.6
+and cuDNN 9.
+Use the setup script's CUDA-only `LD_LIBRARY_PATH` as printed, without appending
+`/usr/lib/aarch64-linux-gnu` or an inherited path: those can override the newer
+libc and libstdc++ used by Nix-built lidar and mapping modules.
 Hardware starts unarmed with policy outputs in dry-run.
+
+Setup also runs a no-motor inference preflight. Run
+`bin/hardware/g1/setup-sonic --verify` to repeat it without reinstalling packages.
+Stop the blueprint before running this check. It checks model hashes,
+loads the production pipeline on CUDA, and compares 30 planner calls against
+an unoptimized CPU reference. Failure exits setup before it reports readiness.
+This checks numerical consistency, not physical stability or control deadlines.
+
+The JP5 ORT 1.18.1 planner can return corrupted finite values after its first
+call with memory patterns enabled. SONIC disables that optimization for the
+planner and TF32 for Jetson inference. Startup checks two planner calls, and
+every returned plan is checked for valid frame count, finite values and unit
+root quaternions before use. A failed check follows the existing control-fault
+path; it is not silently normalized into a motion reference.
 
 On the Jetson, install the clock service once from the checkout:
 
