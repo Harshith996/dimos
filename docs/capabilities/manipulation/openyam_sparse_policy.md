@@ -99,3 +99,38 @@ CPU unit tests cover exact state layout and recurrence, passive feedback, frame
 identity, transport uncertainty and rejection behavior in
 [`test_sparse_policy.py`](/dimos/robot/manipulators/openyam/test_sparse_policy.py).
 They do not step physics or demonstrate successful learned behavior.
+
+## Recorded native simulation result
+
+On October 24, 2026, the exported historical A2 sparse PPO policy completed one
+predeclared `validation-000:reaching` episode through the actual local-only
+`SimRobotClient` and this adapter. It grasped the grounded cube, lifted it and
+completed the required 25-step hold, with no drop or constraint violation. The
+episode ran 400 policy commands and 1,600 CPU MuJoCo physics steps. This starts
+with the gripper aligned near the cube; it does not demonstrate reaching from the
+distant home pose. The actor uses privileged simulator state and no scripted
+motion or imitation controller.
+
+The independent direct-CPU comparison also succeeded, and all Boolean task
+flags agreed. **Strict numerical/contact parity failed and remains unqualified:**
+contact sets differed on 46 of 1,600 substeps; maximum cube-position difference
+was 6.45 micrometres, joint-position difference 0.000105 radians and contact-force
+difference 0.0456 newtons. Physical model parameters matched exactly in the named
+model audit. These facts establish one successful native policy playback, not
+exact cross-composition dynamics, CPU/Warp equivalence, a performance estimate,
+SGS superiority or hardware readiness.
+
+The [complete eight-second replay](https://github.com/Nabla7/humanoid-control-lab/releases/download/sparse-policy-a2-numpy-v1/a2-native-sim2-validation-000.mp4)
+and [measured result](https://github.com/Nabla7/humanoid-control-lab/blob/7e27868ceb0c33fd792549e4de253eb03407979b/results/sparse-policy-native-sim2-playback-002.json)
+require access to the private research repository. The replay contains every
+recorded state through termination; software rendering added no physics or
+policy inference. The [policy export release](https://github.com/Nabla7/humanoid-control-lab/releases/tag/sparse-policy-a2-numpy-v1)
+retains its original archive unchanged.
+
+Exact recorded playback and rendering pin DimOS source revision
+`d28399a91ae5a3368d6a2f342353f25e2b5f9f99`, MuJoCo 3.11.0 and the exported
+model/policy hashes. The frozen research runners reject a different checkout
+revision, including a later documentation-only commit. Use a separate checkout
+at that recorded revision when repeating them. The actual run is
+`20261024T020236868316Z-yam-sparse-sim2-parity-v2-seed0`; its failed strict gate,
+complete trajectories and successful task outcome are retained together.
