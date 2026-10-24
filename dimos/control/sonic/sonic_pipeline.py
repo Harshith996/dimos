@@ -1118,7 +1118,10 @@ class SonicPipeline:
     def _warm_planner(self) -> None:
         logger.info("SonicPipeline warming planner")
         started = time.perf_counter()
-        self._planner.run(None, self._build_planner_inputs())
+        inputs = self._build_planner_inputs()
+        # A first successful call does not exercise ORT's cached allocations.
+        for _ in range(2):
+            self._validate_planner_result(self._planner.run(None, inputs))
         self._planner_cold_start_ms = (time.perf_counter() - started) * 1000.0
         logger.info(
             "SonicPipeline planner warm",
@@ -1164,13 +1167,33 @@ class SonicPipeline:
         self._planner_started_at = None
         self._planner_future = None
 
-    def _apply_planner_result(self, result: list[Any]) -> None:
-        qpos_30hz = result[0].squeeze()
-        num_frames = int(result[1].item())
+    def _validate_planner_result(self, result: list[Any]) -> tuple[NDArray[Any], int]:
+        if len(result) != 2:
+            raise G1ControlError("planner returned an invalid output count")
+        qpos_30hz = np.asarray(result[0])
+        if qpos_30hz.ndim == 3 and qpos_30hz.shape[0] == 1:
+            qpos_30hz = qpos_30hz[0]
+        if qpos_30hz.ndim != 2 or qpos_30hz.shape[1] != 7 + NUM_JOINTS:
+            raise G1ControlError("planner returned an invalid motion shape")
+        frame_count = np.asarray(result[1])
+        if frame_count.size != 1 or not np.issubdtype(frame_count.dtype, np.integer):
+            raise G1ControlError("planner returned an invalid frame count")
+        num_frames = int(frame_count.item())
         if num_frames < 2:
             raise G1ControlError("planner returned fewer than two frames")
+        if num_frames > len(qpos_30hz):
+            raise G1ControlError("planner frame count exceeds its motion buffer")
         if self._nan_check("planner_qpos", qpos_30hz[:num_frames]):
             raise G1ControlError("non-finite planner output")
+        norms = np.linalg.norm(qpos_30hz[:num_frames, 3:7].astype(np.float64), axis=1)
+        if not np.all(np.abs(norms - 1.0) <= 1e-3):
+            # Do not let interpolation normalize a corrupt reference into an
+            # apparently valid orientation before the controller sees it.
+            raise G1ControlError("planner returned non-unit root quaternions")
+        return qpos_30hz, num_frames
+
+    def _apply_planner_result(self, result: list[Any]) -> None:
+        qpos_30hz, num_frames = self._validate_planner_result(result)
         new_traj = self._resample_to_50hz(qpos_30hz, num_frames)
 
         if (

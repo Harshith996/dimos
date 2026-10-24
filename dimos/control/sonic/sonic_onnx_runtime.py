@@ -87,6 +87,10 @@ def create_sonic_session(
 ) -> ort.InferenceSession:
     """Use CUDA for control, or explicitly select CPU for simulation."""
     options = session_options if session_options is not None else cast("Any", ort).SessionOptions()
+    if model_name == "planner":
+        # ORT 1.18.1 corrupts this model's repeated outputs with cached memory
+        # patterns, on CPU and CUDA. Keep the planner's allocations unpatterned.
+        options.enable_mem_pattern = False
     if cpu_simulation:
         options.intra_op_num_threads = 4
         providers = [CPU_PROVIDER]
@@ -96,10 +100,10 @@ def create_sonic_session(
         options.add_session_config_entry(_DISABLE_CPU_FALLBACK, "1")
         providers = [CUDA_PROVIDER]
 
-    # Orin / JetPack 6 TF32 exceeds the planner's reference accuracy tolerance.
-    # Keep full float32 math on that validated runtime, including during control.
+    # Reduced-precision TF32 changes the planner's generated joint references.
+    # Use full float32 on both supported Jetson runtimes.
     provider_options: list[dict[str, str]] = [{} for _ in providers]
-    if not cpu_simulation and jetson_l4t_major() == 36:
+    if not cpu_simulation and jetson_l4t_major() in JETSON_ORT_VERSIONS:
         provider_options[0] = {"use_tf32": "0"}
     session = ort.InferenceSession(
         str(model_path),
