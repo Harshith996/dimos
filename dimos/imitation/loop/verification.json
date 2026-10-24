@@ -1,0 +1,127 @@
+{
+  "status": "simulation integration verified; experimental implementation",
+  "date": "2026-10-23",
+  "implementation_commit": "93fb7cf9b7dd5ae9489d431684bd19bdc75a052d",
+  "base_commit": "78d94a8c268ae9f7cc9003bb64f77452d15fe651",
+  "collection_design_source": "cc/feat/flexible-policy-module@fde4d8e047729de20cb2e4162e2b60698b5738bc",
+  "artifact": {
+    "release": "Nabla7/humanoid-control-lab:yam-sim2-model-v1",
+    "archive_sha256": "2266478dc2f50f2c83d5d42f2c6b03f51a4fc7510f36bb649f59d6b794c02f00",
+    "contract_sha256": "58eb05c4362cd996f6bc14c2ebdde8b2a50f949c87919acc6380cd15e64b97e7",
+    "camera": "camera_d405",
+    "observation_profile": "openyam-artifact-d405-rgb-v3",
+    "image_shape": [
+      180,
+      320,
+      3
+    ],
+    "nominal_fps": 20
+  },
+  "checks": {
+    "host_tests_passed": 140,
+    "native_lerobot_tests_passed": 16,
+    "native_sim2_client_test": "passed separately; excluded from default host test command",
+    "host_mypy": "17 source files passed; final reset changes rechecked in 3 files",
+    "native_mypy": "2 source files passed",
+    "ruff_and_commit_hooks": "passed"
+  },
+  "integration": {
+    "models": [
+      {
+        "id": "act-20261023-211448-9cbcc",
+        "weights_sha256": "128147fe347510a088addfcd621775e0c56b463fb2206e484f9bd3775fd18a57",
+        "steps": 2,
+        "dataset_frames": 108,
+        "dataset_episodes": 11,
+        "final_loss": 68.2649917602539,
+        "parent_weights_sha256": null
+      },
+      {
+        "id": "act-20261023-211558-976b3",
+        "weights_sha256": "c777180b6af130e7a52d8c1b6dd8cf8f24b81d894a6514e85a835f68a4b0424e",
+        "steps": 2,
+        "dataset_frames": 180,
+        "dataset_episodes": 18,
+        "final_loss": 17702.029296875,
+        "parent_weights_sha256": "128147fe347510a088addfcd621775e0c56b463fb2206e484f9bd3775fd18a57"
+      }
+    ],
+    "continuous_rollout_chunks": 14,
+    "quest": {
+      "input": "scripted PoseStamped/Joy over real WSS server",
+      "recorded_frames": 66,
+      "jpeg_frames_received": 120,
+      "ik_arm_motion": "passed",
+      "gripper_control": "passed",
+      "a_record_save_status": "passed",
+      "grip_release": "hold",
+      "reset_with_grip_held": "hold",
+      "release_and_press_again": "correction"
+    },
+    "native_reset": {
+      "before": [
+        0.14970691420903784,
+        1.1666475297066574,
+        0.6688624077611858,
+        -1.1701185778049987,
+        -0.005733889830643409,
+        0.00207148259003119,
+        0.5282986999102569
+      ],
+      "after": {
+        "generation": 2,
+        "accepted": [
+          0.0,
+          1.047,
+          1.05,
+          -0.9,
+          0.0,
+          0.0,
+          0.5281690140845071
+        ],
+        "observed": [
+          4.569802312981951e-07,
+          1.0941114061052273,
+          0.8983000510432038,
+          -1.0685185852662797,
+          -0.0015499403124064261,
+          0.002464313786951253,
+          0.5281686095196215
+        ]
+      }
+    },
+    "trainer_cancellation": {
+      "status": "cancelled",
+      "seconds": 0.11372908437624574,
+      "surviving_descendants": 0
+    }
+  },
+  "desktop": {
+    "app": "dim-openyam-learning-clean",
+    "title": "OpenYAM Workcell",
+    "version": "0.2.223",
+    "url": "http://127.0.0.1:7077/?app=dim-openyam-learning-clean",
+    "verified": [
+      "embedded operator UI",
+      "3D geometry and camera feeds",
+      "manual joints and gripper",
+      "record/save evaluation episode",
+      "evaluation excluded from training",
+      "Quest server and headset links",
+      "reset and explicit Hold"
+    ],
+    "left_in": "held simulation; no active recording or training job; Quest server available",
+    "evaluation_episode": "8ce27ecc5c6f41a196d950debe52b64d",
+    "browser_note": "Initial frame navigation stalled during browser inspection. A fresh native browser tab loaded Desktop before inspection attached; final embedded UI verified."
+  },
+  "evidence_directory": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023",
+  "final_loop_directory": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023/run-20261023-211438",
+  "desktop_screenshot": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023/desktop-workcell.jpg",
+  "limits": [
+    "Two optimizer steps validate the data/model/rollout plumbing, not task learning or convergence.",
+    "No physical Quest headset usability session or physical arm test.",
+    "No hardware camera/action/gripper calibration or sim-to-real acceptance.",
+    "Nominal 20 Hz; camera gaps are split/rejected. Sustained collection throughput is not benchmarked.",
+    "Apple Silicon CPU runtime and app packaging verified; CUDA, MPS and other app packaging targets not exercised."
+  ]
+}
