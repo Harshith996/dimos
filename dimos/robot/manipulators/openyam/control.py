@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator
+from dimos.control.task import CoordinatorState, JointCommandOutput
 from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTask,
     GripperControlTaskConfig,
@@ -53,6 +54,25 @@ from dimos.robot.manipulators.openyam.simulation import PUBLIC_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
+
+
+class YamHoldTask(OperatorHoldTask):
+    """Reseed the existing hold from the same tick that observes a world reset."""
+
+    def __init__(self, device: YamPositionDevice) -> None:
+        super().__init__()
+        self._device = device
+        self._generation: int | None = None
+
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        if not self.is_active():
+            return None
+        generation = self._device.observed_generation()
+        if generation != self._generation:
+            self.acknowledge()
+            self.request("manual", "Hold the current simulation generation")
+            self._generation = generation
+        return super().compute(state)
 
 
 class YamControl:
@@ -87,7 +107,7 @@ class YamControl:
                 },
             )
         )
-        self._hold = OperatorHoldTask()
+        self._hold = YamHoldTask(device)
         self._gripper = GripperControlTask(
             "yam_gripper",
             GripperControlTaskConfig([PUBLIC_JOINTS[-1]], priority=20, hold_duration=0.2),
@@ -119,6 +139,8 @@ class YamControl:
 
     def transition(self, mode: AuthorityMode) -> int:
         with self._lock:
+            if mode == "hold" and self._grip:
+                self._await_release = True
             epoch = self.device.transition(mode)
             self.coordinator.cancel_trajectory()
             self._hold.request("manual", "Authority changed")

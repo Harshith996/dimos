@@ -33,6 +33,8 @@ finger reset contract; it does not import the RL trainer or add a second PD loop
 The existing coordinator owns interpolation, joint velocity limits and task arbitration.
 `YamPositionDevice` fences in-flight writes when authority changes and journals accepted
 commands until their exact sequence is acknowledged by sim2.
+The local hold task reseeds the existing OperatorHoldTask when its control tick observes
+a new sim2 generation, preventing pre-reset position targets from surviving a reset.
 
 The session changes authority and submits targets. It never writes a simulator client.
 A takeover invalidates queued and in-flight policy predictions, including after a later

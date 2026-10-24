@@ -137,6 +137,12 @@ class YamPositionDevice:
                 raise RuntimeError("read joint positions before velocity")
             return [float(value) for value in self._observed.frame.values["velocity"]]
 
+    def observed_generation(self) -> int:
+        """Reset generation of this control thread's joint-state snapshot."""
+        if self._observed.frame is None:
+            raise RuntimeError("read joint positions before their reset generation")
+        return self._observed.frame.metadata.episode_id
+
     def read_joint_efforts(self) -> list[float]:
         with self._lock:
             if self._observed.frame is None:

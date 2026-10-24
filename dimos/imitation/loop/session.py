@@ -204,6 +204,8 @@ class LearningSession:
 
     def tick(self, device: OpenYamSimulation, observation: Observation) -> None:
         with self.lock:
+            if self.latest is None and self.authority.mode == "hold":
+                self.authority.target = observation.state.copy()
             if self.latest is not None and observation.generation != self.latest.generation:
                 self.latest = observation
                 self.switch("hold")
