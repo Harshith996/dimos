@@ -21,6 +21,7 @@ import numpy as np
 import onnxruntime as ort  # type: ignore[import-untyped]
 import pytest
 
+from dimos.control.sonic import preflight, sonic_onnx_runtime
 from dimos.control.sonic.sonic_onnx_runtime import create_sonic_session
 from dimos.control.sonic.sonic_pipeline import (
     DEFAULT_ANGLES_DDS,
@@ -564,6 +565,106 @@ def test_cuda_session_rejects_silent_cpu_fallback(mocker):
 
     with pytest.raises(RuntimeError, match="did not activate CUDAExecutionProvider"):
         create_sonic_session("decoder", "decoder.onnx", allow_cpu_shape_ops=False)
+
+
+@pytest.mark.parametrize("cpu_simulation", [False, True])
+def test_planner_disables_corrupting_memory_patterns(mocker, cpu_simulation):
+    session_factory = mocker.patch.object(ort, "InferenceSession")
+    provider = "CPUExecutionProvider" if cpu_simulation else "CUDAExecutionProvider"
+    session_factory.return_value.get_providers.return_value = [provider]
+
+    create_sonic_session(
+        "planner", "planner.onnx", allow_cpu_shape_ops=True, cpu_simulation=cpu_simulation
+    )
+
+    assert session_factory.call_args.kwargs["sess_options"].enable_mem_pattern is False
+
+
+@pytest.mark.parametrize("l4t_major", [35, 36])
+def test_jetson_inference_uses_full_precision(mocker, l4t_major):
+    mocker.patch.object(sonic_onnx_runtime, "jetson_l4t_major", return_value=l4t_major)
+    session_factory = mocker.patch.object(ort, "InferenceSession")
+    session_factory.return_value.get_providers.return_value = ["CUDAExecutionProvider"]
+
+    create_sonic_session("planner", "planner.onnx", allow_cpu_shape_ops=True)
+
+    assert session_factory.call_args.kwargs["provider_options"][0] == {"use_tf32": "0"}
+
+
+def test_planner_warmup_checks_the_second_inference(velocity_pipeline):
+    valid = velocity_pipeline._planner.run.return_value
+    corrupt = [valid[0].copy(), valid[1].copy()]
+    corrupt[0][0, 0, 3:7] = [0.5, 0.9766, -0.1511, 0.5]
+    velocity_pipeline._planner.run.side_effect = [valid, corrupt]
+
+    with pytest.raises(G1ControlError, match="non-unit root quaternions"):
+        velocity_pipeline._warm_planner()
+
+
+def test_invalid_planner_reference_faults_before_decoder_or_trajectory_update(
+    velocity_pipeline, planner_requests
+):
+    _step(velocity_pipeline)
+    _step(velocity_pipeline)
+    previous = velocity_pipeline._trajectory
+    decoder_calls = velocity_pipeline._decoder.run.call_count
+    valid = velocity_pipeline._planner.run.return_value
+    corrupt = [valid[0].copy(), valid[1].copy()]
+    corrupt[0][0, 0, 3:7] = [0.5, 0.9766, -0.1511, 0.5]
+    future = Future()
+    future.set_result(corrupt)
+    velocity_pipeline._planner_future = future
+
+    with pytest.raises(G1ControlError, match="planner inference failed") as caught:
+        _step(velocity_pipeline)
+
+    assert "non-unit root quaternions" in str(caught.value.__cause__)
+    assert velocity_pipeline._trajectory is previous
+    assert velocity_pipeline._decoder.run.call_count == decoder_calls
+
+
+def test_planner_rejects_frame_count_beyond_buffer(velocity_pipeline):
+    valid = velocity_pipeline._planner.run.return_value
+
+    with pytest.raises(G1ControlError, match="frame count exceeds"):
+        velocity_pipeline._apply_planner_result([valid[0], np.array([100])])
+
+
+def test_planner_ignores_unused_output_padding(velocity_pipeline):
+    valid = velocity_pipeline._planner.run.return_value
+    padded = np.concatenate((valid[0], np.full((1, 4, 36), np.nan)), axis=1)
+
+    velocity_pipeline._apply_planner_result([padded, valid[1]])
+
+    assert velocity_pipeline._trajectory.num_frames == int(44 / 30.0 * 50.0)
+
+
+@pytest.mark.parametrize("failure", ["finite-values", "frame-count"])
+def test_preflight_rejects_second_call_corruption(velocity_pipeline, mocker, tmp_path, failure):
+    valid = velocity_pipeline._planner.run.return_value
+    reference_factory = mocker.patch.object(preflight, "create_sonic_session")
+    reference_factory.return_value.run.return_value = valid
+    actual = velocity_pipeline._planner.run
+    actual.reset_mock()
+
+    corrupt = [valid[0].copy(), valid[1].copy()]
+    if failure == "finite-values":
+        corrupt[0][0, 0, 0] += 0.1  # Finite, with valid quaternions; still incorrect.
+    else:
+        corrupt[1] -= 1
+    actual.side_effect = [valid, corrupt]
+    with pytest.raises(RuntimeError, match="discrepancy|frame count differs"):
+        preflight.verify_planner(velocity_pipeline, tmp_path / "planner.onnx")
+    assert actual.call_count == 2
+
+
+def test_preflight_checks_thirty_calls(velocity_pipeline, mocker, tmp_path):
+    reference_factory = mocker.patch.object(preflight, "create_sonic_session")
+    reference_factory.return_value.run.return_value = velocity_pipeline._planner.run.return_value
+    velocity_pipeline._planner.run.reset_mock()
+
+    assert preflight.verify_planner(velocity_pipeline, tmp_path / "planner.onnx") == 0.0
+    assert velocity_pipeline._planner.run.call_count == 30
 
 
 def test_nonfinite_decoder_output_raises_a_control_fault(velocity_pipeline):

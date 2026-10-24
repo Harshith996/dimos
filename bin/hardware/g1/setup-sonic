@@ -16,11 +16,13 @@
 # Install the pinned SONIC GPU runtime for the detected JetPack release.
 set -euo pipefail
 
-usage() { echo "usage: bin/hardware/g1/setup-sonic [--check]"; }
+usage() { echo "usage: bin/hardware/g1/setup-sonic [--check | --verify]"; }
 fail() { echo "$*" >&2; exit 1; }
 CHECK_ONLY=false
+VERIFY_ONLY=false
 case "${1:-}" in
     --check) CHECK_ONLY=true ;;
+    --verify) VERIFY_ONLY=true ;;
     -h|--help) usage; exit 0 ;;
     "") ;;
     *) usage >&2; exit 2 ;;
@@ -38,9 +40,15 @@ SONIC_ORT_DISTRIBUTION=""
 case "$SONIC_RELEASE" in
     "# R35 "*)
         SONIC_JETPACK=5
-        SONIC_CUDA=/usr/local/cuda-11.8
+        SONIC_CUDA=/usr/local/cuda-11.4
+        SONIC_DRIVER=/usr/lib/aarch64-linux-gnu/tegra/libcuda.so.1
+        # The pinned wheel supports native JetPack 5 CUDA 11.4. Preserve an
+        # existing 11.8 upgrade, but do not require one to run SONIC.
+        if [[ -d /usr/local/cuda-11.8 ]]; then
+            SONIC_CUDA=/usr/local/cuda-11.8
+            SONIC_DRIVER="$SONIC_CUDA/compat/libcuda.so"
+        fi
         SONIC_CUDART="$SONIC_CUDA/lib64/libcudart.so.11.0"
-        SONIC_DRIVER="$SONIC_CUDA/compat/libcuda.so"
         SONIC_CUDNN=/usr/lib/aarch64-linux-gnu/libcudnn.so.8
         SONIC_ORT_AUTO=1.23.3
         SONIC_ORT_DISTRIBUTION=1.18.1.11.8
@@ -61,12 +69,17 @@ for library in "$SONIC_CUDART" "$SONIC_DRIVER" "$SONIC_CUDNN"; do
     [[ -e "$library" ]] || fail "missing JetPack $SONIC_JETPACK prerequisite: $library"
 done
 command -v uv >/dev/null || fail "uv is required"
-echo "PASS  JetPack $SONIC_JETPACK SONIC prerequisites"
+echo "PASS  JetPack $SONIC_JETPACK SONIC prerequisites ($SONIC_CUDA)"
 [[ "$CHECK_ONLY" == false ]] || exit 0
 
 SONIC_VENV="$REPO_ROOT/.venv-sonic-jp$SONIC_JETPACK"
 export PATH="$SONIC_CUDA/bin:$PATH"
-export LD_LIBRARY_PATH="${SONIC_DRIVER%/*}:$SONIC_CUDA/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Broad system paths override Nix's newer libc/libstdc++ in native modules.
+export LD_LIBRARY_PATH="${SONIC_DRIVER%/*}:$SONIC_CUDA/lib64"
+if [[ "$VERIFY_ONLY" == true ]]; then
+    [[ -x "$SONIC_VENV/bin/python" ]] || fail "missing $SONIC_VENV; run setup-sonic first"
+    exec "$SONIC_VENV/bin/python" -m dimos.control.sonic.preflight
+fi
 if [[ ! -x "$SONIC_VENV/bin/python" ]]; then
     uv venv --python 3.10 "$SONIC_VENV"
 fi
@@ -115,6 +128,7 @@ print("PASS  DimOS CLI and SONIC controller blueprint imports")
 PY
 
 "$SONIC_VENV/bin/python" -m dimos.control.sonic.models
+"$SONIC_VENV/bin/python" -m dimos.control.sonic.preflight
 
 cat <<EOF
 
@@ -122,10 +136,12 @@ JetPack $SONIC_JETPACK SONIC environment is ready. Before each run:
   source $SONIC_VENV/bin/activate
   export DIMOS_TRANSPORT=zenoh
   export PATH=$SONIC_CUDA/bin:\$PATH
-  export LD_LIBRARY_PATH=${SONIC_DRIVER%/*}:$SONIC_CUDA/lib64:/usr/lib/aarch64-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=${SONIC_DRIVER%/*}:$SONIC_CUDA/lib64
   dimos-sonic-models --check
 
 Use this environment's dimos directly; uv run can replace the GPU wheel.
+Repeat the no-motor inference check without reinstalling:
+  bin/hardware/g1/setup-sonic --verify
 This setup does not install system packages or change the Jetson power/clocks.
 SONIC requires locked CPU/GPU clocks on Jetson. Install the boot service once:
   sudo bash $REPO_ROOT/bin/hardware/g1/install-jetson-clocks
