@@ -168,6 +168,7 @@ class mjtJoint:
 
 class mjtTrn:
     mjTRN_JOINT: int
+    mjTRN_JOINTINPARENT: int
     mjTRN_TENDON: int
 
 class mjtWrap:

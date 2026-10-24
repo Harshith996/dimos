@@ -178,6 +178,7 @@ class SimulationRuntime:
                     np.array([g[1] for g in hold_gains]),
                 )
             mujoco.mj_resetData(self.model, self.data)
+            self._initialize_passive_joints()
             for binding in self.robots.values():
                 self.data.qpos[binding.qpos] = binding.idle_position
                 public_positions = (binding.idle_position - binding.offset) / binding.scale
@@ -196,6 +197,34 @@ class SimulationRuntime:
         except BaseException:
             self.close()
             raise
+
+    def _initialize_passive_joints(self) -> None:
+        """Validate native passive coordinates before capturing the reset baseline."""
+        joint_transmissions = np.isin(
+            self.model.actuator_trntype,
+            (mujoco.mjtTrn.mjTRN_JOINT, mujoco.mjtTrn.mjTRN_JOINTINPARENT),
+        )
+        actuated = set(self.model.actuator_trnid[joint_transmissions, 0].tolist())
+        for robot_id, instance in self.config.robots.items():
+            for name, position in instance.passive_joint_positions.items():
+                full_name = f"{robot_id}/{name}"
+                joint = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, full_name)
+                if joint < 0:
+                    raise ValueError(f"unknown passive joint {full_name!r}")
+                if self.model.jnt_type[joint] not in (
+                    mujoco.mjtJoint.mjJNT_HINGE,
+                    mujoco.mjtJoint.mjJNT_SLIDE,
+                ):
+                    raise ValueError(f"passive joint {full_name!r} must be scalar (hinge or slide)")
+                if joint in actuated:
+                    raise ValueError(f"passive joint {full_name!r} has a joint actuator")
+                lower, upper = self.model.jnt_range[joint]
+                if not math.isfinite(position) or (
+                    self.model.jnt_limited[joint] and not lower <= position <= upper
+                ):
+                    raise ValueError(f"passive joint {full_name!r} is outside model joint limits")
+                self.data.qpos[self.model.jnt_qposadr[joint]] = position
+                self.data.qvel[self.model.jnt_dofadr[joint]] = 0.0
 
     def reset(self, initial: SceneUpdate | None = None) -> SceneState:
         with self.lock:

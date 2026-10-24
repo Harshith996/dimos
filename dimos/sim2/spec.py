@@ -131,12 +131,23 @@ class RobotInstance:
     hold_gains: dict[str, tuple[float, float]] = field(default_factory=dict)
     # Identity/configuration of the external controller; never executed by physics.
     controller: dict[str, Any] = field(default_factory=dict)
+    # Robot-local MJCF names and native coordinates for uncontrolled scalar joints.
+    # These enter the physical reset baseline, not the public command interface.
+    passive_joint_positions: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         joints = {joint.name: joint for joint in self.config.joints}
         unknown = (self.initial_positions.keys() | self.hold_gains.keys()) - joints.keys()
         if unknown:
             raise ValueError(f"unknown initial/holding joints: {sorted(unknown)}")
+        controlled_names = joints.keys() | {joint.model_name for joint in self.config.joints}
+        for name, position in self.passive_joint_positions.items():
+            if not isinstance(name, str) or not name or name != name.strip():
+                raise ValueError("passive joints require nonempty robot-local model names")
+            if name in controlled_names:
+                raise ValueError(f"passive joint {name!r} overlaps a controlled joint")
+            if not math.isfinite(position):
+                raise ValueError(f"passive joint {name!r} requires a finite initial position")
         for name, position in self.initial_positions.items():
             joint = joints[name]
             if not math.isfinite(position) or not joint.lower <= position <= joint.upper:
