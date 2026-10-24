@@ -1,0 +1,14 @@
+<mujoco model="openyam-learning-workcell">
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="10" ls_iterations="20" impratio="10"/>
+  <visual><headlight ambient=".35 .35 .35" diffuse=".45 .45 .45" specular="0 0 0"/></visual>
+  <worldbody>
+    <light pos="0 -1 2" diffuse=".4 .4 .4" ambient=".2 .2 .2"/>
+    <geom name="table" type="plane" size="1 1 .02" rgba=".65 .68 .72 1"/>
+    <camera name="overview" pos="1 -1 1" xyaxes=".707 .707 0 -.408 .408 .816" fovy="55"/>
+    <body name="cube" pos=".24 0 .025">
+      <freejoint/>
+      <geom name="cube" type="box" size=".025 .025 .025" mass=".05" rgba=".95 .3 .1 1" friction="1 .01 .001"/>
+    </body>
+    <geom name="goal" type="cylinder" pos=".24 .1 .001" size=".05 .001" rgba=".1 .7 .4 .7" contype="0" conaffinity="0"/>
+  </worldbody>
+</mujoco>
