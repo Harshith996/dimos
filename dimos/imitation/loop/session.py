@@ -270,7 +270,7 @@ class LearningSession:
                     authority.target = observation.state.copy()
                     return
                 desired = authority.target
-            # The existing trajectory task owns interpolation and velocity limits.
+            # The coordinator's persistent target task owns velocity limits.
             action = np.clip(desired, self.lower, self.upper)
             device.command(action, time.time())
 

@@ -11,10 +11,10 @@ recording, model handoff and app worker; it contains no separate web interface.
 flowchart LR
   Desktop[DimOS Desktop] --> Session[Session: authority + episode acceptance]
   Quest[Existing WebXR module] --> IK[Existing teleop IK task]
-  Session --> Trajectory[Existing joint trajectory task]
+  Session --> Target[YAM persistent position target task]
   ACT[Isolated ACT inference] --> Session
   IK --> Coordinator[ControlCoordinator]
-  Trajectory --> Coordinator
+  Target --> Coordinator
   Coordinator --> Device[YamPositionDevice: sole writable client]
   Device --> Sim[Existing sim2 + exported YAM artifact]
   Sim -->|joint feedback + acknowledged commands| Capture[Typed MCAP + provenance]
@@ -30,11 +30,19 @@ flowchart LR
 The exported YAM artifact is the physical robot definition. `openyam/workcell.py`
 adds the task scene and cameras. It preserves native position servos and the passive
 finger reset contract; it does not import the RL trainer or add a second PD loop.
-The existing coordinator owns interpolation, joint velocity limits and task arbitration.
+The existing coordinator owns task timing and arbitration. Its local `YamTargetTask`
+rate-limits slider/ACT setpoints from the last commanded reference and continues to
+emit the final target until authority changes. Re-executing finite trajectories here
+would restart completed joints from gravity-deflected feedback and produce oscillation.
+Takeover, task preemption and reset clear the reference before a new owner starts.
 `YamPositionDevice` fences in-flight writes when authority changes and journals accepted
 commands until their exact sequence is acknowledged by sim2.
 The local hold task reseeds the existing OperatorHoldTask when its control tick observes
 a new sim2 generation, preventing pre-reset position targets from surviving a reset.
+Hold seeds are clamped to command limits because measured physical positions can
+slightly overshoot them; one overtraveling finger must not invalidate the whole arm's hold.
+The exported servos still exhibit static gravity deflection. Persistent setpoints remove
+the command-induced shaking; they do not add gravity compensation or retune the model.
 
 The session changes authority and submits targets. It never writes a simulator client.
 A takeover invalidates queued and in-flight policy predictions, including after a later
