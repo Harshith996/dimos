@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+__version__: str
+
 # --- model / data -----------------------------------------------------
 
 class MjModel:
@@ -170,6 +172,18 @@ class mjtTrn:
     mjTRN_JOINT: int
     mjTRN_JOINTINPARENT: int
     mjTRN_TENDON: int
+
+class mjtDyn:
+    mjDYN_NONE: int
+
+class mjtGain:
+    mjGAIN_FIXED: int
+
+class mjtBias:
+    mjBIAS_AFFINE: int
+
+class mjtEq:
+    mjEQ_JOINT: int
 
 class mjtWrap:
     mjWRAP_JOINT: int
