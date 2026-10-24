@@ -56,14 +56,39 @@ export function liveRunOf(
   return mine.find((run) => run.run_id === wanted) ?? mine[0] ?? null;
 }
 
-/** Why a launch failed, in one line: what the gateway said, else the last thing it printed. */
+// dimos prints its tracebacks in rich's boxes, so the last line of a failed launch is a box edge and every line
+// inside one carries gutters. Both have to come off before any of it reads as a reason.
+const GUTTER = /^[\s|│┃]+|[\s|│┃]+$/g;
+const DECORATION = /^[╭╮╰╯┌┐└┘├┤┬┴┼─━═│┃|\s]*$/;
+/** `RuntimeError: ...`, `dimos.Error: ...`, and dimos's own `Error: ...` lines. */
+const RAISED = /^(?:[A-Za-z_][\w.]*(?:Error|Exception|Interrupt)|Error|ExceptionGroup)\b.*?:\s*\S/;
+/** A traceback's own furniture: the frames and code it quotes, not the exception. */
+const FRAME = /^(?:File ["']|\/|[\w./-]+\.py[:\s]|\d+\s|[❱>]\s|at\s|Traceback\b)/;
+
+const meaningful = (text: string): string[] =>
+  text.split(/\r?\n/).map((line) => line.replace(GUTTER, "")).filter((line) =>
+    line && !DECORATION.test(line)
+  );
+
+/**
+ * Why a launch failed, in one line: the exception it ended with, else the last thing it printed. rich wraps a long
+ * exception over several lines, so the lines under it are taken back onto it until the traceback's furniture starts.
+ */
 export function failedWhy(launch: Launch | null): string {
-  const said = launch?.error?.trim();
-  if (said) {
-    return said;
+  const said = meaningful(launch?.error ?? "");
+  const printed = said.length ? said : meaningful(launch?.output ?? "");
+  const raised = printed.findLastIndex((line) => RAISED.test(line));
+  if (raised < 0) {
+    return printed.at(-1) ?? "it printed nothing";
   }
-  const printed = (launch?.output ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return printed.at(-1) ?? "it printed nothing";
+  const wrapped = [printed[raised]];
+  for (const line of printed.slice(raised + 1)) {
+    if (RAISED.test(line) || FRAME.test(line) || wrapped.join(" ").length > 300) {
+      break;
+    }
+    wrapped.push(line);
+  }
+  return wrapped.join(" ");
 }
 
 /** A relaunch in flight: stopping the live run, then waiting for the new one. */

@@ -441,7 +441,11 @@ export function App() {
           <Text small tone="warn" className="bv-failed-head">Launch failed</Text>
           <Text small className="bv-failed-why" title={failedWhy(launch)}>{failedWhy(launch)}</Text>
           {(logsRun || launchOutput) && (
-            <Button size="sm" data-bp-failed-logs onClick={() => setDialog("logs")}>
+            <Button
+              size="sm"
+              data-bp-failed-logs
+              onClick={() => setDialog("logs")}
+            >
               <span className="label">{logsRun ? "Logs" : "Show output"}</span>
             </Button>
           )}
