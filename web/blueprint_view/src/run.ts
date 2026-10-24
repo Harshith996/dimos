@@ -7,6 +7,8 @@ export interface Launch {
   phase: "starting" | "running" | "stopping" | "stopped" | "failed";
   pid: number;
   output?: string;
+  /** why it failed, in one line, when the gateway could tell */
+  error?: string | null;
   runId: string | null;
   config?: { global?: Record<string, unknown>; modules?: Record<string, Record<string, unknown>> };
   steps?: { code: string; state: string; data?: { deployed?: number } }[];
@@ -52,6 +54,16 @@ export function liveRunOf(
 ): RegistryRun | null {
   const mine = runs.filter((run) => run.blueprint === name);
   return mine.find((run) => run.run_id === wanted) ?? mine[0] ?? null;
+}
+
+/** Why a launch failed, in one line: what the gateway said, else the last thing it printed. */
+export function failedWhy(launch: Launch | null): string {
+  const said = launch?.error?.trim();
+  if (said) {
+    return said;
+  }
+  const printed = (launch?.output ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return printed.at(-1) ?? "it printed nothing";
 }
 
 /** A relaunch in flight: stopping the live run, then waiting for the new one. */

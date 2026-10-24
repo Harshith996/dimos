@@ -30,11 +30,12 @@ import {
 import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
 import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
-import { LogsModal } from "./logs.tsx";
+import { LaunchOutputModal, LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import {
   type Active,
   activeRuns,
+  failedWhy,
   type Launch,
   launchedWithOther,
   liveRunOf,
@@ -117,6 +118,9 @@ export function App() {
   const live = running || !!liveRun;
   const logsRun = RUN ?? launch?.runId ?? null;
   const busy = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
+  // a launch that never became a run (a bad config, a build that failed) has no run log: what it printed stands in
+  const launchOutput = !logsRun && launch?.output ? launch.output : null;
+  const failed = !!launch && launch.phase === "failed" && !live && !busy;
 
   // the gateway reads the blueprint from the checkout its live run came from, so a new run can change it
   const loadBlueprint = useCallback(async () => {
@@ -388,7 +392,9 @@ export function App() {
                 onClick={relaunch}
               >
                 {busy ? <Spinner size={12} /> : <span aria-hidden="true">↻</span>}
-                {relaunchLabel(launch, relaunching, relaunchedPid, stale)}
+                <span className="label">
+                  {relaunchLabel(launch, relaunching, relaunchedPid, stale)}
+                </span>
               </Button>
             )}
             {running && (
@@ -397,23 +403,27 @@ export function App() {
                 data-bp-stop
                 onClick={() => act(() => send("POST", "active/stop"))}
               >
-                Stop
+                <span className="label">Stop</span>
               </Button>
             )}
             <Button size="sm" data-bp-configure onClick={() => setDialog("config")}>
-              Configure
+              <span className="label">Configure</span>
             </Button>
             {source && (
               <CodeButton where={source} shown={code} onToggle={setCode} data-bp-blueprint-code />
             )}
             <Button
               size="sm"
-              disabled={!logsRun}
-              title={logsRun ? `${NAME}'s log` : "no log yet"}
+              disabled={!logsRun && !launchOutput}
+              title={logsRun
+                ? `${NAME}'s log`
+                : launchOutput
+                ? "no run started: what the launch printed"
+                : "no log yet"}
               data-bp-logs
               onClick={() => setDialog("logs")}
             >
-              Logs
+              <span className="label">{logsRun ? "Logs" : "Output"}</span>
             </Button>
             {FRAMED && (
               <IconButton
@@ -426,6 +436,17 @@ export function App() {
           </>
         }
       />
+      {failed && (
+        <div className="bv-failed-bar" role="alert" data-bp-failed>
+          <Text small tone="warn" className="bv-failed-head">Launch failed</Text>
+          <Text small className="bv-failed-why" title={failedWhy(launch)}>{failedWhy(launch)}</Text>
+          {(logsRun || launchOutput) && (
+            <Button size="sm" data-bp-failed-logs onClick={() => setDialog("logs")}>
+              <span className="label">{logsRun ? "Logs" : "Show output"}</span>
+            </Button>
+          )}
+        </div>
+      )}
       <div id="app">
         <aside id="side" aria-label="Modules">
           {selectedModule
@@ -504,14 +525,25 @@ export function App() {
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog === "logs" && logsRun && (
-        <LogsModal
-          runId={logsRun}
-          title={NAME}
-          paused={!visible}
-          onClose={() => setDialog(null)}
-        />
-      )}
+      {dialog === "logs" && (logsRun
+        ? (
+          <LogsModal
+            runId={logsRun}
+            title={NAME}
+            paused={!visible}
+            onClose={() => setDialog(null)}
+          />
+        )
+        : launchOutput
+        ? (
+          <LaunchOutputModal
+            output={launchOutput}
+            why={failedWhy(launch)}
+            title={NAME}
+            onClose={() => setDialog(null)}
+          />
+        )
+        : null)}
     </>
   );
 }

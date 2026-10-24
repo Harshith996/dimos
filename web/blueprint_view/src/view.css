@@ -81,6 +81,65 @@ h4 {
   }
 }
 
+/* a button's label, so a flex row can give every button the same width and cut the long ones (Relaunch counts its
+   steps: "Building the blueprint…") instead of reflowing the row every time the text changes */
+.dr-btn > .label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* a launch that failed: the top bar's one word is easy to miss, and on a phone there is no room for it at all, so
+   the error gets a bar of its own with the way to what the launch printed */
+.bv-failed-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--warn) 13%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+.bv-failed-head {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+.bv-failed-why {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+}
+.bv-failed-bar .dr-btn {
+  flex: 0 0 auto;
+}
+
+/* what a launch printed, when it never became a run */
+.launch-output {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.launch-why {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.launch-raw {
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  max-height: 60vh;
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* the side: topic rates and modules, or one module */
 #side {
   min-height: 0;
@@ -465,6 +524,45 @@ h4 {
   #side {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+/* a phone (where dimos-react's top bar starts wrapping): the blueprint and its phase keep a row to themselves instead
+   of being squeezed to one letter by the controls, and the controls share the row under it, each the same width
+   whatever its label says, so none of them moves when Relaunch counts its steps. Close keeps its own width. */
+@media (max-width: 700px) {
+  .dr-topbar {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .dr-topbar-left {
+    flex: 1 1 100%;
+    order: 1;
+    gap: 6px;
+  }
+  .dr-topbar-right {
+    flex: 1 1 100%;
+    order: 2;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .dr-topbar-right > .dr-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 8px;
+  }
+  .dr-topbar-right > .dr-btn--icon {
+    flex: 0 0 auto;
+  }
+  .bv-failed-why {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+  .launch-raw {
+    max-height: 50vh;
   }
 }
 

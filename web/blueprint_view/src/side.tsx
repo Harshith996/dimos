@@ -169,7 +169,7 @@ export function CodeButton(
   const on = shown?.file === where.file && shown?.line === where.line;
   return (
     <Button size="sm" pressed={on} onClick={() => onToggle(on ? null : where)} {...data}>
-      {on ? "Hide code" : "Show code"}
+      <span className="label">{on ? "Hide code" : "Show code"}</span>
     </Button>
   );
 }

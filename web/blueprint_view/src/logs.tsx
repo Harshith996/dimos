@@ -1,5 +1,16 @@
 // A run's structured log (GET runs/log_hist/{id}), followed live unless paused; the server filters by level and search.
-import { EditorNote, type LogRecord, Modal, StructuredLog, useDesktopEditor } from "dimos-react";
+// A launch that never became a run has no such log: its own output stands in (LaunchOutputModal).
+import {
+  CopyButton,
+  EditorNote,
+  isTraceback,
+  type LogRecord,
+  Modal,
+  StructuredLog,
+  Text,
+  Traceback,
+  useDesktopEditor,
+} from "dimos-react";
 import { useEffect, useRef, useState } from "react";
 import { errorText, getJson } from "./api.ts";
 import { LOG_POLL_MS, LOG_SEARCH_DEBOUNCE_MS } from "./constants.ts";
@@ -90,6 +101,52 @@ export function LogsModal(
         onOpenFile={editor.open ?? undefined}
         formatPath={projectPath}
       />
+    </Modal>
+  );
+}
+
+/**
+ * What a launch printed, for one that never became a run (a bad config, a build that failed): dimos writes no run
+ * log for it, so this output is the only account of it there is. A traceback is drawn frame by frame, anything else
+ * as it came.
+ */
+export function LaunchOutputModal(
+  { output, why, title, onClose }: {
+    output: string;
+    why: string;
+    title: string;
+    onClose: () => void;
+  },
+) {
+  const editor = useDesktopEditor();
+  const text = output.trimEnd();
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="xl"
+      title={
+        <>
+          Launch output · {title} <span className="sub">no run started</span>
+        </>
+      }
+      footer={<CopyButton text={text || why} label="Copy output" />}
+      data-bp-launch-output
+    >
+      <div className="launch-output">
+        <Text tone="warn" className="launch-why">{why}</Text>
+        {isTraceback(text)
+          ? (
+            <Traceback
+              className="fill"
+              text={text}
+              onOpenFile={editor.open ?? undefined}
+              formatPath={projectPath}
+            />
+          )
+          : <pre className="launch-raw">{text || "it printed nothing."}</pre>}
+        <EditorNote status={editor.status} />
+      </div>
     </Modal>
   );
 }
