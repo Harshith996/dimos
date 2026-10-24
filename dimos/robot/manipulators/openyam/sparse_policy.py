@@ -258,11 +258,14 @@ def sparse_state(
             targets,
             prior,
             goal,
-            [
-                task.elapsed_steps / contract.max_episode_steps,
-                task.hold_steps / contract.required_hold_steps,
-                float(task.lifted),
-            ],
+            np.array(
+                [
+                    np.float32(task.elapsed_steps) * np.float32(1 / contract.max_episode_steps),
+                    np.float32(task.hold_steps) * np.float32(1 / contract.required_hold_steps),
+                    np.float32(task.lifted),
+                ],
+                dtype=np.float32,
+            ),
         )
     ).astype(np.float32)
     if not np.isfinite(state).all():

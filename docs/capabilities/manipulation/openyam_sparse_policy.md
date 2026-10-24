@@ -64,6 +64,9 @@ The sparse lift-hold export uses a 5 ms physics step, four physics steps per pol
 action, a 400-action horizon and 25 consecutive qualifying hold steps. These
 values are explicit contract fields. Task predicates, including the hold count,
 terminal status and lifted latch, remain the caller's responsibility.
+Normalized counters use `float32(count) * float32(1 / limit)`, matching the
+recorded CUDA scalar-division arithmetic. Dividing in Python float64 before casting
+can differ by one float32 ULP and is not the exported observation convention.
 
 ## One inference transaction
 

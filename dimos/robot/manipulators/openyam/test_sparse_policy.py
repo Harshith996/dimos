@@ -244,6 +244,18 @@ def test_contract_roundtrip_rejects_privilege_or_frame_change(
         SparsePolicyContract.from_dict(exported)
 
 
+def test_counter_arithmetic_matches_recorded_cuda_reciprocal(
+    contract: SparsePolicyContract,
+) -> None:
+    _, task = sample()
+    task = replace(task, elapsed_steps=171, hold_steps=13)
+    state = sparse_state(contract, preload(), np.zeros(7), task, preload(), np.zeros(7))
+    assert state[46] == np.float32(171) * np.float32(1 / 400)
+    assert state[47] == np.float32(13) * np.float32(1 / 25)
+    # The saved CUDA clock differs by one ULP from division in Python float64.
+    assert state[46] != np.float32(171 / 400)
+
+
 def test_v1_robot_instance_requires_identity_base_orientation(
     contract: SparsePolicyContract, artifact: YamArtifact
 ) -> None:
