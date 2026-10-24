@@ -123,5 +123,80 @@
     "No hardware camera/action/gripper calibration or sim-to-real acceptance.",
     "Nominal 20 Hz; camera gaps are split/rejected. Sustained collection throughput is not benchmarked.",
     "Apple Silicon CPU runtime and app packaging verified; CUDA, MPS and other app packaging targets not exercised."
-  ]
+  ],
+  "stability_fix": {
+    "date": "2026-10-23",
+    "implementation_commit": "a9d3e50269745159d4701a67c26fa4b67f351aad",
+    "cause": "Repeated finite trajectories reanchored finished joints from measured feedback despite unchanged intent. A separate hold failure rejected the whole command when measured gripper overshoot exceeded its target limit.",
+    "fix": "Persistent rate-limited setpoints inside the existing coordinator; explicit clear on authority/preemption/reset; hold seeds clipped to artifact command bounds.",
+    "artifact_and_servo_gains": "unchanged",
+    "comparison": {
+      "before": {
+        "samples": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023/stability-before/samples.json",
+        "samples_sha256": "ad186b977baa59472dc16846fc78ab0f8db2a51be83b3de8749b92445107b665",
+        "measurement_window": "final 2 seconds of a 9-second unchanged setpoint",
+        "arm_peak_to_peak_deg": [
+          0.0005488340658170872,
+          2.147653928764638,
+          2.1385721622695426,
+          0.945636475095725,
+          0.006071697452154606,
+          0.01686371722093217
+        ],
+        "command_peak_to_peak_deg": [
+          0.0,
+          10.820375879653204,
+          12.164274953746048,
+          1.4788810804389376,
+          0.0,
+          0.0
+        ],
+        "hold_acknowledged_samples": 0,
+        "hold_samples": 200
+      },
+      "after": {
+        "samples": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023/stability-after/samples.json",
+        "samples_sha256": "6f116dbfd2ee21c070b6e3df20110decfd2a458be2909026c44420e2f6bdddd9",
+        "measurement_window": "final 2 seconds of a 9-second unchanged setpoint",
+        "arm_peak_to_peak_deg": [
+          5.0050957772584706e-09,
+          3.024121771121666e-07,
+          7.868654115284562e-08,
+          1.289752199434323e-07,
+          1.216939632895468e-09,
+          7.994309615351597e-08
+        ],
+        "command_peak_to_peak_deg": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "hold_acknowledged_samples": 200,
+        "hold_samples": 200
+      }
+    },
+    "checks": {
+      "host_tests_passed": 43,
+      "host_tests_deselected": 1,
+      "mypy_source_files_passed": 2,
+      "ruff_and_commit_hooks": "passed",
+      "quest_native_regression": {
+        "rollout_chunks": 14,
+        "correction_recorded_frames": 71,
+        "jpeg_frames": 125,
+        "release": "hold",
+        "reset_held": "hold",
+        "reengage": "correction",
+        "path": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261023/stability-quest/quest-result.json"
+      },
+      "desktop": "manual move settled; worker reloaded, held, Quest restored on 8443; original episode preserved"
+    },
+    "limitations": [
+      "Static gravity deflection remains in the exported native servos.",
+      "Bounded simulation response, not hardware calibration or physical Quest acceptance."
+    ]
+  }
 }
