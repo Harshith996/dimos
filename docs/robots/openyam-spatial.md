@@ -5,6 +5,11 @@ teleoperation. It uses sim2 devices through the control and sensor interfaces;
 it does not open physical CAN devices. The viewer is served by the existing
 WebXR HTTPS server at `/spatial`.
 
+Both simulated grippers start fully open. The station overrides the active and
+passive finger startup positions without modifying the shared robot artifact.
+Native initialization and reset were checked with the exported YAM model;
+the six spatial-model tests pass. Hand-control gestures are unchanged.
+
 ## Run
 
 Install the repository dependencies and provide the validated `yam-sim2-model`

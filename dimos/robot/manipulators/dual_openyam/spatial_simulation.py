@@ -53,6 +53,7 @@ from dimos.robot.manipulators.dual_openyam.spatial_model import (
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import DualOpenYamPinkPoseTargetSolver
 from dimos.robot.manipulators.openyam.simulation import (
+    PASSIVE_JOINT,
     TARGET_LIMITS,
     YamArtifact,
     load_yam_artifact,
@@ -102,6 +103,9 @@ def spatial_world(artifact: YamArtifact) -> WorldConfig:
     robot = artifact.robot_instance()
     robot = replace(
         robot,
+        # Native YAM coordinates are closure; zero opens both coupled fingers.
+        initial_positions={**robot.initial_positions, "arm/gripper": 0.0},
+        passive_joint_positions={**robot.passive_joint_positions, PASSIVE_JOINT: 0.0},
         controller={**robot.controller, "gravity_compensation": "ideal_robot_links"},
         config=replace(
             robot.config, sensors=(WRIST_CAMERA,), configure_physics=_station_robot_physics
