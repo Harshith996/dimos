@@ -41,6 +41,7 @@ from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -114,6 +115,22 @@ def module(xarm7_config):
         yield mod
     finally:
         mod.stop()
+
+
+def test_plan_to_poses_hands_auxiliary_groups_to_the_pose_planner(xarm7_config):
+    """plan_to_poses is the spec's way in; a mobile base named there must reach the planner."""
+    module = ManipulationModule(model=xarm7_config, visualization={"backend": "none"})
+    module.generate_plan_to_pose_targets = MagicMock(return_value=None)
+    pose = PoseStamped(frame_id="world")
+    try:
+        result = module.plan_to_poses({"manipulator": pose}, auxiliary_groups=["moving_base"])
+    finally:
+        module.stop()
+
+    assert not result.succeeded
+    module.generate_plan_to_pose_targets.assert_called_once_with(
+        {"manipulator": pose}, ["moving_base"], speed_scale=None
+    )
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")

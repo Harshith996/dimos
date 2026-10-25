@@ -60,7 +60,8 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation = MagicMock()
     instance._box_filter = MagicMock()
     instance._manipulation.list_planning_groups.return_value = [
-        SimpleNamespace(id="arm/tool", has_gripper=True, tip_frame="tool")
+        SimpleNamespace(id="arm/tool", has_gripper=True, tip_frame="tool"),
+        SimpleNamespace(id="moving_base", has_gripper=False, tip_frame=None),
     ]
     instance._manipulation.get_state.return_value = SimpleNamespace(
         groups={
@@ -332,6 +333,76 @@ def test_final_grasp_leg_skips_collision_checking(module: PickAndPlaceModule) ->
     assert manipulation.move_linear.call_args_list
     for call in manipulation.move_linear.call_args_list:
         assert call.kwargs["check_collision"] is False
+
+
+def _auxiliary_groups_of(calls: list[Any]) -> list[tuple[str, ...]]:
+    """The auxiliary groups each planner call was given."""
+    return [tuple(call.kwargs["auxiliary_groups"]) for call in calls]
+
+
+def test_pick_plans_arm_only_by_default(module: PickAndPlaceModule) -> None:
+    manipulation: Any = module._manipulation
+
+    assert module.pick_object("cup-1").message == "Pick complete"
+
+    assert _auxiliary_groups_of(manipulation.plan_to_poses.call_args_list) == [()]
+    for call in manipulation.move_linear.call_args_list:
+        assert "auxiliary_groups" not in call.kwargs
+
+
+def test_pick_brings_the_base_along_for_the_approach_only(module: PickAndPlaceModule) -> None:
+    """The planner may drive the base to reach the pre-grasp; at the object the arm moves alone."""
+    manipulation: Any = module._manipulation
+
+    result = module.pick_object("cup-1", auxiliary_groups=["moving_base"])
+
+    assert result.message == "Pick complete"
+    (approach,) = manipulation.plan_to_poses.call_args_list
+    assert list(approach.args[0]) == ["arm/tool"]
+    assert tuple(approach.kwargs["auxiliary_groups"]) == ("moving_base",)
+    # Down onto the cup, then the lift: both straight, arm-only legs.
+    assert len(manipulation.move_linear.call_args_list) == 2
+    for call in manipulation.move_linear.call_args_list:
+        assert call.args[3] == "arm/tool"
+        assert "auxiliary_groups" not in call.kwargs
+
+
+def test_place_brings_the_base_along_for_the_pre_place_only(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    module._selected_grasp = PoseStamped(
+        frame_id="world",
+        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
+    )
+    module._holding_object = True
+
+    result = module.place_at(0.4, 0.0, 0.2, auxiliary_groups=["moving_base"])
+
+    assert result.message == "Place complete"
+    assert _auxiliary_groups_of(manipulation.plan_to_poses.call_args_list) == [("moving_base",)]
+    # Down to the place pose, then the retreat: both arm-only.
+    assert len(manipulation.move_linear.call_args_list) == 2
+    for call in manipulation.move_linear.call_args_list:
+        assert "auxiliary_groups" not in call.kwargs
+
+
+@pytest.mark.parametrize(
+    ("auxiliary_groups", "complaint"),
+    [
+        (["wheels"], r"\['wheels'\] are not planning groups"),
+        (["arm/tool"], "must not include the group doing the pick"),
+    ],
+)
+def test_pick_rejects_auxiliary_groups_the_planner_cannot_move(
+    module: PickAndPlaceModule, auxiliary_groups: list[str], complaint: str
+) -> None:
+    manipulation: Any = module._manipulation
+
+    with pytest.raises(ValueError, match=complaint):
+        module.pick_object("cup-1", auxiliary_groups=auxiliary_groups)
+
+    manipulation.set_gripper_position.assert_not_called()
 
 
 def test_empty_grasp_reopens_before_failing(

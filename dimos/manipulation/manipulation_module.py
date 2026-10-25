@@ -813,12 +813,19 @@ class ManipulationModule(Module):
         self,
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
     ) -> PlanResult:
-        """Plan one synchronized pose target set without moving hardware."""
+        """Plan one synchronized pose target set without moving hardware.
+
+        ``auxiliary_groups`` have no pose target of their own but may move so the
+        targets are reached, e.g. a mobile base alongside an arm.
+        """
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
+        plan = self.generate_plan_to_pose_targets(
+            targets, auxiliary_groups, speed_scale=speed_scale
+        )
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
