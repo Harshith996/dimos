@@ -21,6 +21,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -205,6 +206,17 @@ def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
 
     assert trajectory.joint_names == OPENYAM_JOINTS
     assert eef_twist.priority > trajectory.priority
+
+
+def test_keyboard_teleop_openyam_planner_coordinator_accepts_eef_twist() -> None:
+    atom = next(
+        atom
+        for atom in keyboard_teleop_openyam_planner.blueprints
+        if issubclass(atom.module, ControlCoordinator)
+    )
+
+    assert issubclass(atom.module, ArmTwistCoordinator)
+    assert "ee_twist_command" in atom.module.__annotations__
 
 
 def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
