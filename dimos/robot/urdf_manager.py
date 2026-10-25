@@ -32,7 +32,7 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.files.MeshFile import MeshFile
+from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -71,7 +71,7 @@ class UrdfManager(Module):
     # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
     # gets that file. Either goes out on file_info named as requested.
     render_file_request: In[String]
-    file_info: Out[MeshFile]
+    file_info: Out[File]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -91,14 +91,14 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(".urdf"):
-            self.file_info.publish(MeshFile(name, self._description.xml.encode()))
+            self.file_info.publish(File(name, self._description.xml.encode()))
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
         if name not in self._file_paths:
             logger.warning(f"render_file_request for {name!r}, which is not a file the URDF names")
             return
         data = await asyncio.to_thread(Path(name).read_bytes)
-        self.file_info.publish(MeshFile(name, data))
+        self.file_info.publish(File(name, data))
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
