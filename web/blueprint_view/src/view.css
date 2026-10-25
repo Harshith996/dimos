@@ -9,11 +9,17 @@ html,
 body {
   touch-action: pan-x pan-y;
 }
+/* the page's surfaces take the module graph's hue (--bg, tinted toward the accent), not the skin's warmer panel black:
+   the side a step lighter than the graph, its section headers a step lighter again (any skin: mixes, not colors) */
+:root {
+  --bv-panel: color-mix(in oklab, var(--bg) 96%, var(--primary));
+  --bv-head: color-mix(in oklab, var(--bg) 89%, var(--primary));
+}
 body.dr-body,
 #root {
   display: flex;
   flex-direction: column;
-  background: var(--raised);
+  background: var(--bv-panel);
   font-size: 13px;
 }
 /* an element styled display: flex or grid stays hidden while it has the hidden attribute */
@@ -154,6 +160,11 @@ h4 {
 }
 .list .dr-disclosure + .dr-disclosure {
   margin-top: 16px;
+}
+#side .dr-disclosure__summary {
+  margin: 0 -4px 6px;
+  padding: 6px 8px;
+  background: var(--bv-head);
 }
 .list li > .dr-popover-anchor {
   display: block;
