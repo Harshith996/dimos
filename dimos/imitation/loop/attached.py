@@ -39,6 +39,7 @@ from dimos.teleop.webxr.module import WebXRTeleopConfig
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import ControlCoordinator
+    from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 
 JOG_SPEED = 0.25  # rad/s; explicit Workcell input still uses coordinator arbitration.
 BLUEPRINT = "teleop-webxr-dual-openyam"
@@ -58,6 +59,9 @@ class AttachedDualArm:
         self.run: RunEntry | None = None
         self.stack = ExitStack()
         self.coordinator: ControlCoordinator | None = None
+        self.collection: DualOpenYamCollection | None = None
+        self._collection_state: dict[str, Any] = {}
+        self._next_collection_update = 0.0
         self.session = None
         self.last_error: str | None = None
         self.frames: dict[str, str] = {}
@@ -115,6 +119,13 @@ class AttachedDualArm:
         self.stack.callback(app.stop)  # Remote Dimos.stop closes only the client.
         handle = app.get_module("ControlCoordinator")
         self.coordinator = cast("ControlCoordinator", handle)
+        for module in app.list_modules():
+            if module.class_name == "DualOpenYamCollection":
+                self.collection = cast(
+                    "DualOpenYamCollection", app.get_module(module.instance_name or module.name)
+                )
+                self._collection_state = self.collection.get_status()
+                break
         self.run = run
         with self._joint_lock:
             self._feedback_run_id = run.run_id
@@ -128,8 +139,8 @@ class AttachedDualArm:
             option, separator, value = arg.partition("=")
             if option in ("--server-port", "--armteleopmodule.server-port"):
                 self.teleop_port = int(value if separator else run.cli_args[index + 1])
-        # Prefer image streams already published by the blueprint. The existing
-        # office teleop blueprint has none, so view its USB cameras locally.
+        # The collection module owns the cameras. Fall back only for older,
+        # viewing-only blueprints which have no image outputs.
         streams = [s for s in app.list_streams() if s.direction == "out" and s.type_name == "Image"]
         for index, stream in enumerate(streams, 1):
             key = f"camera{index}"
@@ -150,6 +161,9 @@ class AttachedDualArm:
     def _disconnect(self) -> None:
         self.run = None
         self.coordinator = None
+        self.collection = None
+        self._collection_state.clear()
+        self._next_collection_update = 0.0
         self._generation = None
         self._targets.clear()
         with self._joint_lock:
@@ -226,6 +240,8 @@ class AttachedDualArm:
             "controller_hand": "right",
             "station": None,
             "learning_available": False,
+            "collection_available": False,
+            "collection_ready": False,
             "joint_names": DUAL_OPENYAM_JOINTS,
             "joints": [positions[name] for name in DUAL_OPENYAM_JOINTS] if positions else [],
             "targets": [self._targets.get(name, positions[name]) for name in DUAL_OPENYAM_JOINTS]
@@ -240,6 +256,7 @@ class AttachedDualArm:
             "job": None,
             "recording": None,
             "policy": None,
+            **self._collection_state,
             "error": self.last_error
             or (
                 None
@@ -257,7 +274,18 @@ class AttachedDualArm:
         if self.run is None or params.get("run_id") != self.run.run_id:
             raise RuntimeError("The displayed run changed; Workcell reconnects automatically")
         coordinator = self._require_run()
-        if action == "target":
+        if action in ("record", "save", "discard"):
+            if self.collection is None:
+                raise RuntimeError("This run has no collection module; run the updated blueprint")
+            if action == "record":
+                self._collection_state = self.collection.record(
+                    task=params["task"], split=params.get("split", "train")
+                )
+            else:
+                self._collection_state = self.collection.finish(
+                    keep=action == "save", outcome=params.get("outcome", "ungraded")
+                )
+        elif action == "target":
             index, value = params.get("index"), params.get("value")
             if (
                 not isinstance(index, int)
@@ -324,6 +352,13 @@ class AttachedDualArm:
             self._follow_run()
         if self.run is None:
             return
+        if self.collection is not None and time.monotonic() >= self._next_collection_update:
+            self._next_collection_update = time.monotonic() + 0.5
+            try:
+                self._collection_state = self.collection.get_status()
+            except (RuntimeError, OSError) as exc:
+                self._collection_state["collection_ready"] = False
+                self._collection_state["collection_error"] = str(exc)
         self._targets.clear()
         if time.monotonic() > self._jog_until:
             self._generation = None

@@ -5,6 +5,12 @@ Quest demonstrations → saved episodes → ACT → rollout → human correction
 The Desktop app lives in its own repository. This directory owns the experiment session,
 recording, model handoff and app worker; it contains no separate web interface.
 
+For the physical **dual-arm** blueprint, Desktop now attaches to its collection
+module: Record/Save/Discard capture both cameras and both arms in the same run.
+See [dual-arm recording](../../../docs/capabilities/manipulation/openyam_integration.md#record-dual-arm-demonstrations).
+The training and rollout workflow described below still applies to the single-arm
+session; its model contract does not cover dual-arm recordings.
+
 ## Ownership
 
 ```mermaid

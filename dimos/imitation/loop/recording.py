@@ -22,7 +22,7 @@ from contextlib import ExitStack
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from uuid import uuid4
 
 import cv2
@@ -30,10 +30,9 @@ from mcap.reader import make_reader
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.transport import ZenohTransport
+from dimos.imitation.collection.capture import EpisodeCapture
 from dimos.imitation.collection.episode import EpisodeEvent, EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import CollectionRecorder, collection_recorder
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import inspect_episode_quality, iter_episode_samples
 from dimos.imitation.dataprep.schema import (
@@ -48,7 +47,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.std_msgs.String import String
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 
 CONTRACT_KEYS = (
     "joint_names",
@@ -135,50 +133,21 @@ class Episode:
         self.directory = root / "episodes" / uuid4().hex
         self.directory.parent.mkdir(parents=True, exist_ok=True)
         self.metadata = {"schema_version": 2, **metadata}
-        self._stack = ExitStack()
-        self._counts: dict[str, int] = {}
-        self._transports: dict[str, ZenohTransport[Any]] = {}
-        blueprint = collection_recorder(
-            profile=collection_profile(metadata),
-            recording=self.directory,
+        self._capture = EpisodeCapture(
+            self.directory,
+            collection_profile(metadata),
             extra_inputs={"provenance": String},
-            publish_status=True,
             stream_codecs={"provenance": "json"},
             stream_timestamp_fields={"provenance": "state_ts"},
             stream_json_schemas={"provenance": {"type": "object"}},
-            rpc_name=f"recording-{self.directory.name}",
         )
-        atom = blueprint.blueprints[0]
-        self._recorder = cast("CollectionRecorder", atom.module(**atom.kwargs))
-        try:
-            ports: dict[str, type[Any]] = dict(self._recorder.recording_inputs)
-            ports["recording_status"] = String
-            for name, kind in ports.items():
-                transport: ZenohTransport[Any] = ZenohTransport(
-                    Topic(
-                        f"recording/{self.directory.name}/{name}",
-                        kind,
-                        qos=None if name == "recording_status" else QOS_NEVER_DROP,
-                    )
-                )
-                self._transports[name] = transport
-                self._stack.callback(transport.stop)
-                self._recorder.set_transport(name, transport)
-            self._stack.callback(self._recorder.stop)
-            self._recorder.build()
-            self._recorder.start()
-            self._recorder.wait_written({})
-        except BaseException:
-            self._stack.close()
-            raise
         self.frames = 0
         self.training_frames = 0
         self._last_timestamp = 0.0
         self._closed = False
 
     def _write(self, channel: str, message: Any) -> None:
-        self._transports[channel].broadcast(None, message)
-        self._counts[channel] = self._counts.get(channel, 0) + 1
+        self._capture.write(channel, message)
 
     def _status(self, event: EpisodeEvent, timestamp: float, keep: bool = False) -> None:
         self._write(
@@ -240,22 +209,10 @@ class Episode:
             self._status(
                 "save" if keep else "discard", self._last_timestamp + 1 / self.metadata["fps"], keep
             )
-            self._recorder.wait_written(self._counts)
+            counts = self._capture.finish()
         finally:
-            self._stack.close()
+            self._capture.close()
         final = self.directory / "recording.mcap"
-        # Native receipts cover accepted writes. Verify finalized MCAP counts as
-        # well: process failure or an incomplete index must never become training data.
-        with final.open("rb") as source:
-            summary = make_reader(source).get_summary()
-            if summary is None or summary.statistics is None:
-                raise RuntimeError("Native recording did not finalize its MCAP index")
-            counts = {
-                summary.channels[channel].topic: count
-                for channel, count in summary.statistics.channel_message_counts.items()
-            }
-        if counts != self._counts:
-            raise RuntimeError(f"Recording counts differ: expected {self._counts}, found {counts}")
         self.metadata.update(
             frames=self.frames,
             training_frames=self.training_frames,

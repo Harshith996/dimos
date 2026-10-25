@@ -23,11 +23,13 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.core.introspection.module.info import ModuleInfo
 from dimos.core.run_registry import RunEntry
 from dimos.imitation.loop.attached import AttachedDualArm
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.robot.assets.model import LoadedRobotModel
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_JOINTS,
@@ -232,3 +234,50 @@ def test_blueprint_not_ready_yet_is_retried_without_restarting_worker(attached, 
         assert waiting.state()["error"] is None
         assert len(waiting.state()["lower"]) == 14
     coordinator.execute_trajectory.assert_not_called()
+
+
+def test_record_save_and_discard_use_blueprint_recorder_without_arm_commands(attached, mocker):
+    viewer, coordinator, app = attached
+    viewer.close()
+    recorder = mocker.create_autospec(DualOpenYamCollection, instance=True)
+    recorder.get_status.return_value = {
+        "collection_available": True,
+        "collection_ready": True,
+        "recording": None,
+        "episodes": [],
+        "recording_directory": "/recordings/dual-openyam",
+    }
+    app.list_modules.return_value = [
+        ModuleInfo(
+            name="dualopenyamcollection",
+            instance_name="dualopenyamcollection",
+            class_name="DualOpenYamCollection",
+        )
+    ]
+    app.get_module.side_effect = lambda name: (
+        recorder if name == "dualopenyamcollection" else coordinator
+    )
+    viewer._follow_run()
+    assert viewer.state()["collection_available"] is True
+    recorder.record.return_value = {**recorder.get_status.return_value, "recording": "take-1"}
+    recorder.finish.return_value = recorder.get_status.return_value
+    state = viewer.dispatch(
+        "record",
+        {
+            "run_id": "test-run",
+            "task": "put object in tray",
+            "split": "eval",
+        },
+    )
+    assert state["recording"] == "take-1"
+    recorder.record.assert_called_once_with(task="put object in tray", split="eval")
+    viewer.dispatch("save", {"run_id": "test-run", "outcome": "success"})
+    recorder.finish.assert_called_once_with(keep=True, outcome="success")
+    viewer.dispatch("discard", {"run_id": "test-run"})
+    assert recorder.finish.call_args.kwargs == {"keep": False, "outcome": "ungraded"}
+    coordinator.execute_trajectory.assert_not_called()
+    coordinator.task_invoke.assert_not_called()
+    coordinator.start.assert_not_called()
+    coordinator.stop.assert_not_called()
+    recorder.start.assert_not_called()
+    recorder.stop.assert_not_called()

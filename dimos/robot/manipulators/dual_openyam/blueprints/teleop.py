@@ -25,6 +25,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
     dual_openyam_trajectory_task,
 )
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
@@ -78,6 +79,7 @@ def build_dual_openyam_webxr(
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
+        DualOpenYamCollection.blueprint(),
         ArmTeleopModule.blueprint(zero_button="B"),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",

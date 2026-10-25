@@ -476,21 +476,21 @@ class TickLoop:
                 if hw_id in hardware:
                     if not hardware[hw_id].ready_for_control():
                         continue
-                    if (
-                        self._publish_command_callback is not None
-                        and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
-                        and hardware[hw_id].component.hardware_type != HardwareType.BASE
-                    ):
-                        joint_commands.update(
-                            (name, positions[name])
-                            for name in hardware[hw_id].joint_names
-                            if name in positions
-                        )
                     try:
                         accepted = hardware[hw_id].write_command(positions, mode)
                         if not accepted:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
+                            )
+                        elif (
+                            self._publish_command_callback is not None
+                            and mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION)
+                            and hardware[hw_id].component.hardware_type != HardwareType.BASE
+                        ):
+                            joint_commands.update(
+                                (name, positions[name])
+                                for name in hardware[hw_id].joint_names
+                                if name in positions
                             )
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")

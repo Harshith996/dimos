@@ -52,23 +52,20 @@ def make_loop(callback):
 
 
 @pytest.mark.parametrize("mode", [ControlMode.POSITION, ControlMode.SERVO_POSITION])
-@pytest.mark.parametrize("result", [True, False, RuntimeError("write failed")])
-def test_intended_subset_matches_dispatch_even_on_failure(mode, result):
+def test_accepted_position_subset_is_published_after_dispatch(mocker, mode):
     messages = []
     tick, hardware = make_loop(messages.append)
     values = {"arm/gripper": 600.0, "arm/joint1": 1.2}
-    with patch("dimos.control.tick_loop.time") as clock:
-        clock.time.return_value = 123.25
+    clock = mocker.patch("dimos.control.tick_loop.time")
+    clock.time.return_value = 123.25
 
-        def dispatch(*args):
-            clock.time.assert_not_called()
-            if isinstance(result, Exception):
-                raise result
-            return result
+    def dispatch(*args):
+        clock.time.assert_not_called()
+        return True
 
-        hardware.write_command.side_effect = dispatch
-        tick._write_all_hardware({"arm": (values, mode)})
-        clock.time.assert_called_once_with()
+    hardware.write_command.side_effect = dispatch
+    tick._write_all_hardware({"arm": (values, mode)})
+    clock.time.assert_called_once_with()
     hardware.write_command.assert_called_once_with(values, mode)
     (message,) = messages
     assert message.name == ["arm/joint1", "arm/gripper"]
@@ -77,6 +74,16 @@ def test_intended_subset_matches_dispatch_even_on_failure(mode, result):
     assert (message.ts, message.frame_id) == (123.25, "robot")
     decoded = JointState.lcm_decode(message.lcm_encode())
     assert (decoded.name, decoded.position, decoded.ts) == (message.name, message.position, 123.25)
+
+
+@pytest.mark.parametrize("result", [False, RuntimeError("USB write failed")])
+def test_rejected_or_failed_writes_never_become_recorded_actions(result):
+    messages = []
+    tick, hardware = make_loop(messages.append)
+    hardware.write_command.side_effect = [result]
+    tick._write_all_hardware({"arm": ({"arm/joint1": 1.2}, ControlMode.SERVO_POSITION)})
+    hardware.write_command.assert_called_once()
+    assert messages == []
 
 
 @pytest.mark.parametrize(
