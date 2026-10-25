@@ -17,7 +17,14 @@ import {
   useEscape,
   useZenoh,
 } from "dimos-react";
-import { GraphControls, type GraphViewHandle, type LayoutId } from "dimos-react/graph";
+import {
+  blueprintCommentSource,
+  BlueprintGraph,
+  type BlueprintGraphHandle,
+  type BlueprintSpot,
+  putView,
+  useNoPagePinch,
+} from "dimos-react/graph";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, getJson, send } from "./api.ts";
 import {
@@ -29,7 +36,6 @@ import {
 } from "./constants.ts";
 import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
-import { BlueprintGraph, type Spot, useNoPagePinch } from "./graph.tsx";
 import { LaunchOutputModal, LogsModal } from "./logs.tsx";
 import { type Blueprint, byRarity, type Module, moduleUsage, topicOf } from "./model.ts";
 import {
@@ -51,6 +57,8 @@ const PARAMS = new URLSearchParams(location.search);
 const NAME = PARAMS.get("name") ?? "";
 const RUN = PARAMS.get("run") || null;
 const VIEW = PARAMS.get("view");
+/** This page's name on Desktop's comments, view reports and highlights (the dimos gateway serves it). */
+export const APP = "dimos-gateway:blueprint_view";
 
 interface RatesAnswer {
   up?: boolean;
@@ -88,11 +96,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [graphHover, setGraphHover] = useState<Spot>(null);
+  const [graphHover, setGraphHover] = useState<BlueprintSpot>(null);
   const [pinnedTopic, setPinnedTopic] = useState<string | null>(null);
-  const [streamSpot, setStreamSpot] = useState<Spot>(null);
+  const [streamSpot, setStreamSpot] = useState<BlueprintSpot>(null);
   const [code, setCode] = useState<Where | null>(null);
-  const [layout, setLayout] = useState<LayoutId>("hierarchy");
   const [launch, setLaunch] = useState<Launch | null>(null);
   // undefined until the first poll; a run started outside Desktop (a terminal, tmux) is live too
   const [liveRun, setLiveRun] = useState<RegistryRun | null | undefined>(undefined);
@@ -110,7 +117,7 @@ export function App() {
   const visible = useDesktopVisible();
   const zenoh = useZenoh();
   const eventsArrive = useConnectionState() === "connected";
-  const graph = useRef<GraphViewHandle>(null);
+  const graph = useRef<BlueprintGraphHandle>(null);
   const [graphArea, setGraphArea] = useState<HTMLElement | null>(null);
   useNoPagePinch(graphArea);
 
@@ -282,6 +289,18 @@ export function App() {
       ).replace(/\//g, "."),
     }));
   }, [live, modules, rates, rateRowsHeard]);
+  // a comment on a module, topic or edge goes to the agent with the module's class
+  const commentSource = useMemo(
+    () =>
+      blueprintCommentSource(
+        modules ?? [],
+        (file) =>
+          getJson<{ text: string }>(`source?file=${encodeURIComponent(file)}`).then((answer) =>
+            answer.text
+          ),
+      ),
+    [modules],
+  );
 
   const open = (name: string | null) => {
     setSelected(name);
@@ -308,7 +327,7 @@ export function App() {
     }
   });
 
-  const spot: Spot = graphHover ?? (hovered ? { module: hovered } : null) ?? streamSpot ??
+  const spot: BlueprintSpot = graphHover ?? (hovered ? { module: hovered } : null) ?? streamSpot ??
     (pinnedTopic ? { topic: pinnedTopic } : null) ?? (selected ? { module: selected } : null);
 
   const act = async (action: () => Promise<unknown>) => {
@@ -480,14 +499,18 @@ export function App() {
         <main id="graph" ref={setGraphArea}>
           <BlueprintGraph
             ref={graph}
+            className="bv-graph"
             modules={modules ?? []}
             extras={showExtras ? extras : []}
-            layout={layout}
             spot={spot}
             rates={live ? rates : null}
             onModule={open}
             onTopic={(topic) => setPinnedTopic((was) => was === topic ? null : topic)}
             onHover={setGraphHover}
+            app={APP}
+            blueprint={NAME}
+            commentSource={commentSource}
+            onViewChange={(view) => putView(APP, { ...view, blueprint: NAME })}
           >
             <div className="graph-head">
               <Label>Module graph</Label>
@@ -517,7 +540,6 @@ export function App() {
                 </ul>
               </details>
             )}
-            <GraphControls graph={graph} layout={layout} onLayoutChange={setLayout} />
             {code && <CodePane where={code} onClose={() => setCode(null)} />}
           </BlueprintGraph>
         </main>
