@@ -26,6 +26,8 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
+# How far past a position limit is rounding, not a violation (rad or m).
+_POSITION_LIMIT_TOLERANCE = 1e-6
 # How long a plan to where the robot already is holds it there (s).
 STANDSTILL_S = 0.1
 
@@ -53,6 +55,7 @@ class BaseTrajectoryParametrizer(ABC):
 
         path = [JointState(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
+        self._snap_to_limits(world, selection, path)
         if result.timestamps is not None:
             trajectory = self._timed_trajectory(selection, path, result.timestamps)
         else:
@@ -126,6 +129,34 @@ class BaseTrajectoryParametrizer(ABC):
                 positions,
                 f"Waypoint {waypoint_index} positions",
             )
+
+    @classmethod
+    def _snap_to_limits(
+        cls,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        path: Sequence[JointState],
+    ) -> None:
+        """Put positions a rounding error outside a joint's limits onto them, in place."""
+        # A goal on a limit comes back from the planner a few ulps past it (0.0 asked for,
+        # -2.7e-17 answered) and the native TOPP-RA refuses the whole path over it. Only
+        # noise is snapped: a real violation stays, and the backend reports it as before.
+        lower, upper = (
+            world.get_prepared_model().joint_space.select(selection.joint_names).position_limits()
+        )
+        for state in path:
+            state.position = [
+                cls._snapped(value, float(low), float(high))
+                for value, low, high in zip(state.position, lower, upper, strict=True)
+            ]
+
+    @staticmethod
+    def _snapped(value: float, low: float, high: float) -> float:
+        if low - _POSITION_LIMIT_TOLERANCE <= value < low:
+            return low
+        if high < value <= high + _POSITION_LIMIT_TOLERANCE:
+            return high
+        return value
 
     @classmethod
     def _collapse_repeats(cls, path: Sequence[JointState]) -> list[JointState]:

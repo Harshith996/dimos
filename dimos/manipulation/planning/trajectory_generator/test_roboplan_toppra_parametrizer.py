@@ -14,14 +14,17 @@
 
 """Tests for the RoboPlan TOPP-RA trajectory parametrizer."""
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from itertools import pairwise
 import math
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from pytest_mock import MockerFixture
 
@@ -63,11 +66,15 @@ class _Scene:
     def __init__(self, *, unbounded_acceleration: bool = False) -> None:
         self.unbounded_acceleration = unbounded_acceleration
 
-    def getVelocityLimitVectors(self, group_name: str) -> tuple[np.ndarray, np.ndarray]:
+    def getVelocityLimitVectors(
+        self, group_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         assert group_name == "composite"
         return np.asarray([-2.0, -1.0]), np.asarray([2.0, 1.0])
 
-    def getAccelerationLimitVectors(self, group_name: str) -> tuple[np.ndarray, np.ndarray]:
+    def getAccelerationLimitVectors(
+        self, group_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         assert group_name == "composite"
         maximum = np.finfo(np.float64).max if self.unbounded_acceleration else 4.0
         return np.asarray([-6.0, -maximum]), np.asarray([6.0, maximum])
@@ -82,10 +89,10 @@ class _World(RoboPlanWorld):
         self.model = model
 
     @contextmanager
-    def parametrization_model(self):
+    def parametrization_model(self) -> Iterator[RoboPlanModel]:
         yield self.model
 
-    def get_prepared_model(self):
+    def get_prepared_model(self) -> Any:
         return SimpleNamespace(
             joint_space=JointSpace(
                 (
@@ -325,17 +332,84 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
     assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi
 
 
+def _one_joint_world(
+    tmp_path: Path, *, lower: float, upper: float
+) -> tuple[RoboPlanWorld, PlanningGroupSelection]:
+    model_path = tmp_path / "one-joint.urdf"
+    model_path.write_text(
+        '<robot name="one-joint" version="1.2"><link name="base"/><link name="tip"/>'
+        '<joint name="joint4" type="revolute"><parent link="base"/><child link="tip"/>'
+        f'<axis xyz="0 0 1"/><limit lower="{lower}" upper="{upper}" effort="1" velocity="1" '
+        'acceleration="2"/></joint></robot>'
+    )
+    config = RobotModelConfig(
+        model=RobotModel.from_file(model_path),
+        joint_names=["joint4"],
+        base_link="base",
+        planning_groups=[PlanningGroupDefinition("arm", ("joint4",), "base")],
+    )
+    world = RoboPlanWorld()
+    world.load_model(prepare_robot_model(config))
+    world.finalize()
+    return world, PlanningGroupRegistry(config.planning_groups).select(("arm",))
+
+
+@pytest.mark.parametrize(
+    "positions",
+    [[0.1, -2.697610857303145e-17], [0.5, -2.697610857303145e-17, 0.3]],
+    ids=["goal on the limit", "waypoint on the limit"],
+)
+def test_roboplan_toppra_accepts_rounding_noise_past_a_position_limit(
+    tmp_path: Path, positions: list[float]
+) -> None:
+    """The zero pose asks joint4 for its lower limit 0.0 and the planner answers -2.7e-17;
+    the native TOPP-RA checks limits exactly and refused the whole plan over it."""
+    world, selection = _one_joint_world(tmp_path, lower=0.0, upper=2.4435)
+    result = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[JointState(name=["joint4"], position=[position]) for position in positions],
+    )
+
+    plan = RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+        world, selection, result
+    )
+
+    sampled = [point.positions[0] for point in plan.trajectory.points]
+    assert sampled[0] == pytest.approx(positions[0])
+    assert sampled[-1] == pytest.approx(positions[-1])
+    assert min(sampled) >= 0.0
+
+
+def test_roboplan_toppra_still_rejects_a_real_position_limit_violation(tmp_path: Path) -> None:
+    world, selection = _one_joint_world(tmp_path, lower=0.0, upper=2.4435)
+    result = PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[
+            JointState(name=["joint4"], position=[0.5]),
+            JointState(name=["joint4"], position=[-0.01]),
+        ],
+    )
+
+    with pytest.raises(TrajectoryParametrizationError, match=r"is outside \[0.0, 2.4435\]"):
+        RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
+            world, selection, result
+        )
+
+
 def test_roboplan_parametrizer_rejects_incompatible_world(
     mocker: MockerFixture,
 ) -> None:
     selection, result = _selection_and_result()
+    # a world that knows the model (the base parametrizer reads its limits) but is not RoboPlan's
+    world = mocker.MagicMock()
+    world.get_prepared_model.return_value = _World(_model()).get_prepared_model()
 
     with pytest.raises(
         TrajectoryParametrizationError,
         match="RoboPlan TOPP-RA requires RoboPlanWorld",
     ):
         RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
-            mocker.MagicMock(), selection, result
+            world, selection, result
         )
 
 
