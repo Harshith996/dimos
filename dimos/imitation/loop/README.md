@@ -80,8 +80,8 @@ Changing Setup requires an idle experiment. Each app installation has its own da
    enable motors. Check the wrist preview, then explicitly
    Enable arm; activation calibrates the gripper. Set a task instruction before collecting.
 2. Start Quest teleop on an available port and open the displayed HTTPS address on the
-   headset. Hold the right grip to move through the existing IK task; the trigger closes
-   the gripper. Release holds. A starts/saves a **training** episode; B discards it. Wrist
+   headset. Hold the selected hand's grip to move through the existing IK task; the trigger closes
+   the gripper. Release holds. A/X starts/saves a **training** episode; B/Y discards it. Wrist
    video and recording state appear in the headset. Desktop also offers joint controls.
 3. Save useful episodes; discard the rest. Use Desktop's eval split for held-out collection.
 4. Train ACT. The robot session stops while the training subprocess owns the job. Normal
@@ -99,6 +99,11 @@ recording. Physical calibration and task reset remain operator actions. This ver
 one seven-dimensional arm policy; neither bimanual nor leader/follower teleoperation is wired.
 
 ## Data and compatibility
+
+The station name, camera identity/type and capture settings identify its observation profile.
+Desktop keeps all saved episodes visible, but trains only on the selected station's profile;
+simulation and the other arm's camera data are excluded. Loading/fine-tuning requires a compatible
+checkpoint. Exporting a bundle remains available for any saved checkpoint.
 
 Policy input is 320×180 wrist RGB plus seven joint positions at a nominal 20 Hz. It uses
 the exported artifact's named `camera_d405`, preserving its mount, optical calibration

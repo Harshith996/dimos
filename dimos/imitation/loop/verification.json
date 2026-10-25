@@ -270,5 +270,43 @@
       "left_in": "stopped; no recording, training, Quest server or physical station configuration",
       "browser_note": "Fresh native Chrome tab loaded the embedded app before browser inspection attached; initial inspected frame loads stalled."
     }
+  },
+  "workcell_hardware_2026_10_24": {
+    "status": "USB camera and Desktop integration verified; motor operation awaits operator handoff",
+    "implementation_parent": "24bc230971de320da4e6573e50d731301183f0c5",
+    "source_sha256": {
+      "dimos/hardware/sensors/camera/webcam.py": "9a7e2c856bc1c3f49dcee9fd0702a610933746a01065bdda570e083121297319",
+      "dimos/imitation/loop/hardware.py": "b4e3a56906764fccb2ff764aae5426bd5970938aeca6a7bb5082f7e4901380ba",
+      "dimos/imitation/loop/desktop_worker.py": "c0ecf6eccd2fe5f1e34e1330a51edcf93f68ec5ba2f830541b79358a8eb2e6d4",
+      "dimos/imitation/loop/recording.py": "b25d98127e272cba096ebf287466d5d5ff9c5f89373f576f14ac5100f98c987a",
+      "dimos/robot/manipulators/openyam/control.py": "2d661fa017f5e22ad8cd5bd58c6664060da6ec7f40377586be7fbaa59c2cf848"
+    },
+    "checks": {
+      "focused_host_tests": 44,
+      "native_recording_tests": 6,
+      "strict_mypy": "5 changed source files; camera ordering and export follow-up rechecked",
+      "desktop_app_tests": 5,
+      "desktop_app": "85cfd56",
+      "camera_previews": "Both USB cameras through the installed Desktop API and UI",
+      "ownership_guard": "Active PID 53356 rejected before CAN connection; connected=false and enabled=false"
+    },
+    "simulation_loop": {
+      "complete": true,
+      "demonstration_frames": 161,
+      "initial_training_frames": 160,
+      "initial_steps": 2,
+      "fine_tune_frames": 259,
+      "fine_tune_steps": 2,
+      "correction_and_bundle_handoff": true,
+      "session_stopped_after_validation": true
+    },
+    "evidence_directory": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/workcell-hardware",
+    "limits": [
+      "One selected arm per session; seven-coordinate ACT policy",
+      "Left/right camera association still requires operator selection",
+      "No physical motor activation, calibration, teleoperation or policy rollout performed",
+      "Two-step simulation training verifies plumbing, not task competence"
+    ],
+    "camera_enumeration_reference": "https://github.com/opencv/opencv/blob/4.13.0/modules/videoio/src/cap_avfoundation_mac.mm"
   }
 }

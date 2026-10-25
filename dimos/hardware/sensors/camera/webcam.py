@@ -47,7 +47,13 @@ def discover_webcams() -> list[WebcamDevice]:
         objc.loadBundle(
             "AVFoundation", {}, bundle_path="/System/Library/Frameworks/AVFoundation.framework"
         )
-        devices = objc.lookUpClass("AVCaptureDevice").devicesWithMediaType_("vide")
+        capture_device = objc.lookUpClass("AVCaptureDevice")
+        devices = [
+            *capture_device.devicesWithMediaType_("vide"),
+            *capture_device.devicesWithMediaType_("muxx"),
+        ]
+        # Match OpenCV's AVFoundation backend: video + muxed, sorted by uniqueID.
+        devices.sort(key=lambda device: str(device.uniqueID()))
         return [
             WebcamDevice(f"avfoundation:{device.uniqueID()}", str(device.localizedName()), index)
             for index, device in enumerate(devices)

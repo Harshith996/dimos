@@ -15,7 +15,7 @@
 import cv2
 import pytest
 
-from dimos.hardware.sensors.camera.webcam import Webcam, WebcamDevice
+from dimos.hardware.sensors.camera.webcam import Webcam, WebcamDevice, discover_webcams
 
 
 @pytest.fixture
@@ -77,3 +77,22 @@ def test_missing_saved_camera_never_opens_a_different_device(webcam, mocker):
     with pytest.raises(RuntimeError, match="unavailable"):
         webcam.start()
     capture.assert_not_called()
+
+
+def test_macos_discovery_matches_opencv_order_including_muxed_devices(mocker):
+    mocker.patch("sys.platform", "darwin")
+    objc = mocker.patch("dimos.hardware.sensors.camera.webcam.objc", create=True)
+    first, second, muxed = [mocker.Mock() for _ in range(3)]
+    for device, identity in zip((first, second, muxed), ("0x13", "0x14", "0x12"), strict=True):
+        device.uniqueID.return_value = identity
+        device.localizedName.return_value = "Camera"
+    native = objc.lookUpClass.return_value.devicesWithMediaType_
+    native.side_effect = [[second, first], [muxed], [first, second], [muxed]]
+
+    expected = [
+        WebcamDevice("avfoundation:0x12", "Camera", 0),
+        WebcamDevice("avfoundation:0x13", "Camera", 1),
+        WebcamDevice("avfoundation:0x14", "Camera", 2),
+    ]
+    assert discover_webcams() == expected
+    assert discover_webcams() == expected

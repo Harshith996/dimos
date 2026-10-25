@@ -285,14 +285,14 @@ class DesktopExperiment:
             self.stop()
             raise
 
-    def _checkpoint(self, model_id: str) -> Path:
+    def _checkpoint(self, model_id: str, *, require_compatible: bool = True) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", model_id):
             raise ValueError("Invalid checkpoint ID")
         path = self.root / "models" / model_id
         if not (path / "loop.json").is_file():
             raise ValueError("Checkpoint has not finished training")
         manifest = json.loads((path / "loop.json").read_text())
-        if manifest.get("observation_profile") != self.observation_profile:
+        if require_compatible and manifest.get("observation_profile") != self.observation_profile:
             raise ValueError("This checkpoint belongs to a different station or simulation setup")
         return path
 
@@ -403,7 +403,8 @@ class DesktopExperiment:
         elif action == "export_policy":
             model_id = str(params["model_id"])
             path = export_policy(
-                self._checkpoint(model_id), self.root / "bundles" / f"{model_id}.zip"
+                self._checkpoint(model_id, require_compatible=False),
+                self.root / "bundles" / f"{model_id}.zip",
             )
             return {"path": str(path), "name": path.name}
         elif action == "import_policy":

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import numpy as np
 import pytest
 
@@ -53,6 +55,15 @@ def test_catalog_tolerates_a_checkpoint_being_published(experiment):
     (checkpoint / "loop.json").write_text('{"training_job":')
 
     assert experiment.state()["models"] == []
+
+
+def test_other_station_checkpoint_can_be_exported_but_not_loaded(experiment):
+    checkpoint = experiment.root / "models" / "other"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "loop.json").write_text(json.dumps({"observation_profile": "other-station"}))
+    with pytest.raises(ValueError, match="different station"):
+        experiment._checkpoint("other")
+    assert experiment._checkpoint("other", require_compatible=False) == checkpoint
 
 
 def test_expired_operator_lease_holds_until_explicit_input(experiment, mocker):
