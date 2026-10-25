@@ -27,7 +27,7 @@ import pinocchio as pin
 import pytest
 import trimesh
 
-from dimos.msgs.files.MeshFile import MeshFile
+from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -361,7 +361,7 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
         )
     )
     module = make_filter(model=RobotModel.from_file(urdf, package_paths={"box": package}))
-    sent: list[MeshFile] = []
+    sent: list[File] = []
     monkeypatch.setattr(module.file_info, "publish", sent.append)
     cube = str((package / "meshes" / "cube.stl").resolve())
     texture = str((package / "textures" / "skin.png").resolve())
@@ -378,7 +378,7 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
 
     assert [file.uri for file in sent] == [str(urdf), cube, texture]
     assert f'filename="{cube}"' in sent[0].data.decode()
-    assert MeshFile.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
+    assert File.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
     assert sent[2].data == b"png bytes"
 
 
