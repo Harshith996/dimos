@@ -62,16 +62,13 @@ everything. A single `*` matches one chunk, so it would miss these.
 .venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
 ```
 
-- `DIMOS_APP` is what Desktop starts it with: the home whose config.yaml to read (`home`) and the config overrides
-  for this component and no other (`overrides`, config paths like `recordings.dir`, which win over the file and are
-  never written to it). `DIMOS_HOME` still works and still means the same thing. An override names its component
-  because an inherited one does not stay put: an empty `ZENOH_CONNECT` handed down from Desktop once reached every
-  module of every launch through `GlobalConfig`, which reads every one of its fields by its bare name.
+- `DIMOS_APP` is what Desktop starts it with: which component this is (`name`) and the home whose config.yaml to read
+  (`home`), as one JSON object rather than a variable per setting. `DIMOS_HOME` still works and still means the same
+  thing. Children inherit the variable; nothing reads it back out of their environment.
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
-  `GET /config` answers the settings that can change while it runs (the file's path, the recordings directory) and
-  which of them an override is answering (`overridden`); the ones a flag can win are fixed at startup, so `GET /info`
-  has those.
+  `GET /config` answers the settings that can change while it runs (the file's path, the recordings directory);
+  the ones a flag can win are fixed at startup, so `GET /info` has those.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

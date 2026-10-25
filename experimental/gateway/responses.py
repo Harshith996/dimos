@@ -67,8 +67,6 @@ class SharedConfig(Body):
 
     path: str
     recordingsDir: str
-    # the config paths DIMOS_APP handed this process, which the file does not hold: a debugging override is not state
-    overridden: list[str]
 
 
 class Stopping(Body):

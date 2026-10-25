@@ -44,11 +44,11 @@ def logs_dir() -> Path:
 
 
 def app_env() -> dict[str, Any]:
-    """`DIMOS_APP`, as Desktop started this gateway with it: the home it belongs to, and the config overrides for this
-    component and nothing else. One variable carrying what it is told, instead of a variable per setting.
+    """`DIMOS_APP`, as Desktop started this gateway with it: which component this is and the home it belongs to. One
+    variable carrying what it is told, instead of a variable per setting; children inherit it.
 
-    Unusable JSON is said out loud and then ignored: an override is a debugging aid, and refusing to start over one
-    would be worse than starting without it.
+    Unusable JSON is said out loud and then ignored rather than being fatal: what is in here locates a file that also
+    has a default, so there is something to fall back to.
     """
     text = os.environ.get("DIMOS_APP")
     if not text:
@@ -56,23 +56,9 @@ def app_env() -> dict[str, Any]:
     try:
         loaded = json.loads(text)
     except ValueError as error:
-        logger.warning(
-            "DIMOS_APP is not usable, so its home and overrides are ignored", error=str(error)
-        )
+        logger.warning("DIMOS_APP is not usable, so the home in it is ignored", error=str(error))
         return {}
     return loaded if isinstance(loaded, dict) else {}
-
-
-def overrides() -> dict[str, Any]:
-    """`DIMOS_APP.overrides`: config paths (`recordings.dir`) this process is to run with instead of the file's.
-
-    Desktop hands each component its own section and strips the rest, so there is nothing here to pass on to a run:
-    an override does not propagate, which is what went wrong when `ZENOH_CONNECT` was inherited by every module of
-    every launch. Keys are config paths and never environment variable names on purpose, because `GlobalConfig` is a
-    pydantic `BaseSettings` with no `env_prefix` and would pick those up by their bare names.
-    """
-    found = app_env().get("overrides")
-    return found if isinstance(found, dict) else {}
 
 
 def dimos_home() -> Path:
@@ -91,14 +77,7 @@ def config_file() -> Path:
 
 
 def setting(section: str, key: str) -> Any:
-    """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset.
-
-    An override for that path (`DIMOS_APP.overrides`) wins over the file, and nothing here ever writes the file, so an
-    override is never saved by the gateway either.
-    """
-    override = overrides().get(f"{section}.{key}")
-    if override is not None:
-        return None if override == "" else override
+    """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
     try:
         loaded = yaml.safe_load(config_file().read_text()) or {}
     except (OSError, yaml.YAMLError):
@@ -120,12 +99,7 @@ def shared_settings() -> dict[str, Any]:
     flag wins over the file) are not here: they cannot change while it runs, and the running ones are
     `GET /info`'s. So everything here is read fresh, and a change to any of it is news.
     """
-    return {
-        "path": str(config_file()),
-        "recordingsDir": str(recordings_dir()),
-        # provenance: a reader of these cannot otherwise tell a value this process was handed from one the file holds
-        "overridden": sorted(overrides()),
-    }
+    return {"path": str(config_file()), "recordingsDir": str(recordings_dir())}
 
 
 def write_atomic(path: Path, text: str) -> None:

@@ -119,35 +119,22 @@ def test_config_answers_the_shared_settings_the_gateway_reads(
     assert client.get("/config").json() == {
         "path": str(home / "dimos_home" / "config.yaml"),
         "recordingsDir": "/tmp/elsewhere",
-        "overridden": [],
     }
 
 
-def test_dimos_app_carries_the_home_and_this_components_overrides_only(
+def test_dimos_app_says_which_home_this_gateway_belongs_to(
     client: TestClient, home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (home / "dimos_home").mkdir(parents=True, exist_ok=True)
     (home / "dimos_home" / "config.yaml").write_text("recordings:\n  dir: /tmp/from-the-file\n")
     monkeypatch.setenv(
-        "DIMOS_APP",
-        json.dumps(
-            {
-                "name": "dimos-gateway",
-                "home": str(home / "dimos_home"),
-                "overrides": {"recordings.dir": "/tmp/from-the-override"},
-            }
-        ),
+        "DIMOS_APP", json.dumps({"name": "dimos-gateway", "home": str(home / "dimos_home")})
     )
-    # the override wins over the file, and GET /config says which value it is answering with
-    assert client.get("/config").json() == {
-        "path": str(home / "dimos_home" / "config.yaml"),
-        "recordingsDir": "/tmp/from-the-override",
-        "overridden": ["recordings.dir"],
-    }
     # DIMOS_APP's home is where the file is read from, over DIMOS_HOME
     monkeypatch.setenv("DIMOS_HOME", str(home / "elsewhere"))
     assert store.config_file() == home / "dimos_home" / "config.yaml"
-    # and unusable JSON changes nothing rather than stopping the gateway
+    assert client.get("/config").json()["recordingsDir"] == "/tmp/from-the-file"
+    # and unusable JSON falls back to DIMOS_HOME rather than stopping the gateway
     monkeypatch.setenv("DIMOS_APP", "{not json")
     monkeypatch.setenv("DIMOS_HOME", str(home / "dimos_home"))
     assert client.get("/config").json()["recordingsDir"] == "/tmp/from-the-file"
