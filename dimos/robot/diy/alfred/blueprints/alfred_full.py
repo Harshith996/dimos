@@ -152,23 +152,29 @@ class AlfredNavCoordinator(PathFollowingCoordinator):
     """Carries the ``path`` and ``speed`` ports the follower binds to."""
 
 
-def alfred_coordinator_tasks() -> list[TaskConfig]:
-    """Arms and lift on one trajectory task, a hold on the arms under it, and the base's three claims.
+def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> list[TaskConfig]:
+    """The coordinator's claims for one stack: with ``arms``, the arms and lift on one trajectory
+    task with a hold on the arms under it; always teleop and a plan's base segment on the base's
+    three joints; with ``follower``, navigation's follower under them.
 
     The lift is left out of the hold: it is a leadscrew under its own brake.
     """
     base_joints = list(_flowbase_hardware.joints)
-    return [
-        joint_trajectory_task(
-            [*alfred_arm_joints(), PILLAR_LIFT_JOINT],
-            velocity_limits={
-                **dict.fromkeys(alfred_arm_joints(), ARM_VELOCITY_LIMIT_RAD_S),
-                PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S,
-            },
-        ),
-        # The Damiao motors are torque-free until their first command: held from the first
-        # tick, the arms stay where they are through a restart instead of sagging.
-        joint_hold_task(alfred_arm_joints(), base_joints, name="hold_arms", always=True),
+    tasks: list[TaskConfig] = []
+    if arms:
+        tasks += [
+            joint_trajectory_task(
+                [*alfred_arm_joints(), PILLAR_LIFT_JOINT],
+                velocity_limits={
+                    **dict.fromkeys(alfred_arm_joints(), ARM_VELOCITY_LIMIT_RAD_S),
+                    PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S,
+                },
+            ),
+            # The Damiao motors are torque-free until their first command: held from the first
+            # tick, the arms stay where they are through a restart instead of sagging.
+            joint_hold_task(alfred_arm_joints(), base_joints, name="hold_arms", always=True),
+        ]
+    tasks += [
         TaskConfig(
             name=BASE_VELOCITY_TASK_NAME,
             type="velocity",
@@ -191,20 +197,24 @@ def alfred_coordinator_tasks() -> list[TaskConfig]:
                 "max_angular": _BASE_WZ_LIMIT,
             },
         ),
-        TaskConfig(
-            name=NAV_FOLLOWER_TASK_NAME,
-            type="holonomic_pose_follower",
-            joint_names=base_joints,
-            priority=NAV_PRIORITY,
-            params={
-                "speed": 0.4,
-                "goal_tolerance": 0.20,
-                "orientation_tolerance": 0.25,
-                # Alfred's measured plant model, or the Go2's with a warning.
-                "artifact_path": alfred_follower_artifact(),
-            },
-        ),
     ]
+    if follower:
+        tasks.append(
+            TaskConfig(
+                name=NAV_FOLLOWER_TASK_NAME,
+                type="holonomic_pose_follower",
+                joint_names=base_joints,
+                priority=NAV_PRIORITY,
+                params={
+                    "speed": 0.4,
+                    "goal_tolerance": 0.20,
+                    "orientation_tolerance": 0.25,
+                    # Alfred's measured plant model, or the Go2's with a warning.
+                    "artifact_path": alfred_follower_artifact(),
+                },
+            )
+        )
+    return tasks
 
 
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
@@ -261,9 +271,11 @@ _WORLD_IS_BASE = Transform(
     child_frame_id="world",
 )
 
-alfred_full = (
-    autoconnect(
-        _alfred_lidar_hardware,
+
+def alfred_nav_modules() -> tuple[Any, ...]:
+    """Navigation on Point-LIO: the lidar, odometry, the voxel map, both planners, the base pose
+    relay for the coordinator's base adapter, and relocalization."""
+    return (
         mid360_for_pointlio(lidar_ip=ALFRED_HARDWARE.mid360_ip),
         PointLio.blueprint(blind=LIO_BLIND_M),
         RayTracingVoxelMap.blueprint(
@@ -293,25 +305,31 @@ alfred_full = (
         # odom -> base_link there.
         StartRelay.blueprint(world_frame=ODOM_FRAME, base_frame=BASE_FRAME),
         LocalMapRelocalization.blueprint(world_frame=ODOM_FRAME, relocalize=MID360_NAV),
-        # The rerun web viewer's clicks land on clicked_point like the Controller's, and its
-        # keyboard on tele_cmd_vel. Teleop override is handled by priority.
-        vis_module(global_config.viewer, rerun_config=_rerun_config()),
+    )
+
+
+def alfred_urdf_manager() -> Any:
+    """The robot's URDF for Desktop's Controller: the XML on robot_description, meshes on
+    request. Joint tf stays off (Point-LIO or the wheel relay owns the base's pose, AlfredMountTf
+    the mounts, the planner the moving links), and the self filter is the perception layer's
+    business, so its cloud ports are parked."""
+    return UrdfManager.blueprint(
+        model=ALFRED_V1_MODEL, self_filter=False, publish_joint_tf=False
+    ).remappings(
+        [
+            (UrdfManager, "pointcloud", "urdf_manager_pointcloud_unused"),
+            (UrdfManager, "filtered_pointcloud", "urdf_manager_filtered_unused"),
+        ]
+    )
+
+
+def alfred_arm_modules() -> tuple[Any, ...]:
+    """The pillar, the URDF for the Controller, and the whole-body planner in base_link: the
+    planar base joints are not fed from odometry, they are held at zero and a plan moves them
+    from there. The obstacle map the perception layer adds arrives in base_link too."""
+    return (
         PillarConnection.blueprint(),
-        # The robot's URDF for Desktop's Controller: the XML on robot_description, meshes on
-        # request. Joint tf stays off (Point-LIO owns mid360_link, AlfredMountTf the mounts;
-        # the planner puts the moving links on tf), and the self filter is the perception
-        # layer's business, so its cloud ports are parked.
-        UrdfManager.blueprint(
-            model=ALFRED_V1_MODEL, self_filter=False, publish_joint_tf=False
-        ).remappings(
-            [
-                (UrdfManager, "pointcloud", "urdf_manager_pointcloud_unused"),
-                (UrdfManager, "filtered_pointcloud", "urdf_manager_filtered_unused"),
-            ]
-        ),
-        # Whole body in base_link: the planar base joints are not fed from odometry, they
-        # are held at zero and a plan moves them from there. The obstacle map
-        # alfred-full-perception adds arrives in base_link too.
+        alfred_urdf_manager(),
         planner(
             model=alfred_planar_model_config(tf_extra_links=ALFRED_MOVING_LINKS),
             visualization={"backend": "none"},
@@ -324,23 +342,43 @@ alfred_full = (
                 BASE_TRAJECTORY_TASK_NAME: list(ALFRED_PLANAR_BASE.joint_names),
             },
         ),
-        # Teleop arrives as a Twist onto the base's virtual joints; navigation as a Path on
-        # the follower's port. Both are ordinary joint claims from here.
-        AlfredNavCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            hardware=[pillar_hardware(), _openarm_hardware_from_env(), _flowbase_hardware],
-            tasks=alfred_coordinator_tasks(),
-        ).remappings([(AlfredNavCoordinator, "twist_command", "tele_cmd_vel")]),
     )
-    .transports(
-        {
-            **pillar_motor_transports(),
-            # The coordinator's one arbitrated base command; AlfredHighLevel turns it into wheels.
-            ("cmd_vel", Twist): channel_spec(f"/{ALFRED_BASE_HARDWARE_ID}/cmd_vel", Twist),
-            ("start_pose", PoseStamped): channel_spec(
-                f"/{ALFRED_BASE_HARDWARE_ID}/odom", PoseStamped
-            ),
-        }
+
+
+def alfred_coordinator(*, arms: bool = True, follower: bool = True) -> Any:
+    """One coordinator for the stack: the pillar, the arms (with ``arms``) and the FlowBase's
+    virtual joints. Teleop arrives as a Twist onto the base's joints; navigation (with
+    ``follower``) as a Path on the follower's port. Both are ordinary joint claims from here."""
+    hardware = [pillar_hardware(), _flowbase_hardware]
+    if arms:
+        hardware.insert(1, _openarm_hardware_from_env())
+    return AlfredNavCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        hardware=hardware,
+        tasks=alfred_coordinator_tasks(arms=arms, follower=follower),
+    ).remappings([(AlfredNavCoordinator, "twist_command", "tele_cmd_vel")])
+
+
+def alfred_base_transports() -> dict[tuple[str, type], Any]:
+    """The pillar's motor channels, the coordinator's one arbitrated base command (AlfredHighLevel
+    turns it into wheels), and the base pose it reads back."""
+    return {
+        **pillar_motor_transports(),
+        ("cmd_vel", Twist): channel_spec(f"/{ALFRED_BASE_HARDWARE_ID}/cmd_vel", Twist),
+        ("start_pose", PoseStamped): channel_spec(f"/{ALFRED_BASE_HARDWARE_ID}/odom", PoseStamped),
+    }
+
+
+alfred_full = (
+    autoconnect(
+        _alfred_lidar_hardware,
+        *alfred_nav_modules(),
+        # The rerun web viewer's clicks land on clicked_point like the Controller's, and its
+        # keyboard on tele_cmd_vel. Teleop override is handled by priority.
+        vis_module(global_config.viewer, rerun_config=_rerun_config()),
+        *alfred_arm_modules(),
+        alfred_coordinator(),
     )
+    .transports(alfred_base_transports())
     .global_config(n_workers=12, robot_model="alfred")
 )

@@ -48,6 +48,7 @@ from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.diy.alfred import alfred_model
 from dimos.robot.diy.alfred.alfred_model import (
     ALFRED_ARM_READY,
@@ -81,7 +82,10 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
 from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
     MANIP_VOXEL_MAP,
     alfred_full_perception,
+    alfred_perception_modules,
 )
+from dimos.robot.diy.alfred.blueprints.alfred_manipulation import alfred_manipulation
+from dimos.robot.diy.alfred.blueprints.alfred_navigation import alfred_navigation
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.pillar_connection import (
@@ -89,8 +93,10 @@ from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_LIFT_JOINT,
     PillarConnection,
 )
+from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 from dimos.robot.manipulators.openarm.config import OPENARM_HARDWARE_ID
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.utils.gpu_utils import is_cuda_available
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
@@ -274,12 +280,9 @@ def test_the_planner_gets_the_real_height_and_a_footprint_under_the_robot() -> N
 def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     """A second, short-range voxel map under its own name, so the nav map's streams stay put."""
     modules = {atom.module for atom in alfred_full_perception.blueprints}
-    assert {
-        RealSenseCamera,
-        RoboPlanPointCloudSelfFilter,
-        PointCloudBoxFilter,
-        Detection2DModule,
-    } <= (modules)
+    assert {RealSenseCamera, RoboPlanPointCloudSelfFilter, PointCloudBoxFilter} <= modules
+    assert Detection2DModule not in modules, "the perception stack's localize replaced YOLO"
+    assert (PerceptionLocalize in modules) == is_cuda_available(), "localize needs the GPU"
     assert len(_atoms(alfred_full_perception, RayTracingVoxelMap)) == 2
     remaps = alfred_full_perception.remapping_map
     assert remaps[(MANIP_VOXEL_MAP, "lidar")] == "filtered_pointcloud"
@@ -294,8 +297,65 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert manip_map.kwargs["world_frame"] == BASE_FRAME, "the planner's frame, not odom"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
     assert camera.kwargs["enable_pointcloud"] and camera.kwargs["enable_color"]
-    (detector,) = _atoms(alfred_full_perception, Detection2DModule)
-    assert detector.kwargs["max_freq"] <= 2.0, "YOLO runs on the Orin's CPU here"
+    localize = next(
+        atom
+        for fragment in alfred_perception_modules(gpu=True)
+        for atom in fragment.blueprints
+        if atom.module is PerceptionLocalize
+    )
+    assert localize.kwargs["world_frame"] == BASE_FRAME, "a found object is an arm target"
+    assert localize.kwargs["geometry"] == "depth" and localize.kwargs["mobile"] is False
+    assert localize.kwargs["params"].min_views == 1, "one fixed camera: one viewpoint"
+    assert "float16" not in localize.kwargs["detector"], "the registry's fp16 build is for a GPU"
+    assert localize.kwargs["segmenter"] == "none", "EdgeTAM needs a GPU"
+    assert not alfred_perception_modules(gpu=False) or all(
+        atom.module is not PerceptionLocalize
+        for fragment in alfred_perception_modules(gpu=False)
+        for atom in fragment.blueprints
+    ), "on a CPU-only torch localize would peg the box"
+
+
+def test_the_bench_stack_runs_without_the_lidar() -> None:
+    """alfred-manipulation: arms, lift, planner, camera; the base pose from wheel odometry."""
+    modules = {atom.module for atom in alfred_manipulation.blueprints}
+    assert {
+        AlfredHighLevel,
+        WheelOdometryRelay,
+        PillarConnection,
+        ManipulationModule,
+        AlfredNavCoordinator,
+        RealSenseCamera,
+        RoboPlanPointCloudSelfFilter,
+    } <= modules
+    assert not {PointLio, MLSPlannerNative, LocalPlannerNative, LocalMapRelocalization} & modules
+    tasks = _tasks(alfred_manipulation)
+    assert NAV_FOLLOWER_TASK_NAME not in tasks, "no path to follow here"
+    assert {BASE_VELOCITY_TASK_NAME, BASE_TRAJECTORY_TASK_NAME, "hold_arms"} <= set(tasks)
+    assert alfred_manipulation.remapping_map[("ControlCoordinator", "twist_command")] == (
+        "tele_cmd_vel"
+    )
+    (relay,) = _atoms(alfred_manipulation, WheelOdometryRelay)
+    assert (relay.kwargs["world_frame"], relay.kwargs["base_frame"]) == ("odom", BASE_FRAME)
+
+
+def test_the_driving_stack_runs_without_the_arms() -> None:
+    """alfred-navigation: the lidar chain, teleop and the follower; the pillar parked, no planner."""
+    modules = {atom.module for atom in alfred_navigation.blueprints}
+    assert {
+        PointLio,
+        MLSPlannerNative,
+        LocalPlannerNative,
+        AlfredNavCoordinator,
+        PillarConnection,
+    } <= (modules)
+    assert not {ManipulationModule, RealSenseCamera, WheelOdometryRelay} & modules
+    hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_navigation)["hardware"]}
+    assert ALFRED_BASE_HARDWARE_ID in hardware_ids
+    assert not any("openarm" in hw_id or "arm" in hw_id for hw_id in hardware_ids), "no arms' CAN"
+    tasks = _tasks(alfred_navigation)
+    assert {BASE_VELOCITY_TASK_NAME, NAV_FOLLOWER_TASK_NAME} <= set(tasks)
+    assert "hold_arms" not in tasks
+    assert alfred_navigation.remapping_map[(MLSPlannerNative.name, "goal")] == "clicked_point"
 
 
 def test_alfred_sim_still_composes() -> None:

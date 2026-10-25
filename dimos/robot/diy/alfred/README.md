@@ -27,6 +27,20 @@ Everything rides the default transport (zenoh), which is what Desktop reads: ope
 while a blueprint runs, drive on `tele_cmd_vel`, and plan the arms from its arm view (install the
 Controller's planner hook once, from its panel, and restart the blueprint).
 
+## Two stacks for one Orin
+
+The Orin NX overloads with everything on. Run one stack at a time and switch:
+
+| Stack | Runs | Does not run |
+|-------|------|--------------|
+| `alfred-manipulation` | arms, lift, whole-body planner, D455 (obstacle map; localize with a GPU), teleop, wheel odometry | lidar, Point-LIO, nav planners, follower |
+| `alfred-navigation` | Mid-360, Point-LIO, voxel map, planners, follower, teleop, the lift (parked) | arms' CAN, planner, camera |
+| `alfred-full-perception` | everything | — |
+
+The Manipulation app's **Stack** card switches them (stop, then launch); the Launcher does the
+same. After every start the lift must be homed before it moves (**Home the lift** in the app,
+**Pillar: home** in the Controller).
+
 ## Driving and navigating from the Controller
 
 - **Drive**: the Controller picks its drive topic by catalog *port* name, so it misses the
