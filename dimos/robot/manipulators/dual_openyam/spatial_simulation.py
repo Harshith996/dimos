@@ -274,7 +274,14 @@ class OpenYamSpatialCoordinator(TeleopControlCoordinator):
             wb_config=WholeBodyConfig(kp=(0.0,) * 14, kd=(0.0,) * 14),
         )
         self.config.hardware = [hardware]
-        self.config.tasks = []
+        self.config.tasks = [
+            TaskConfig(
+                name="joint_trajectory",
+                type="trajectory",
+                joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
+                params={"hold_final_position": True},
+            )
+        ]
         for side in DUAL_OPENYAM_SIDES:
             self.config.tasks.extend(
                 [

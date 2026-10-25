@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from contextlib import closing
-from pathlib import Path
 import time
 
+import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -23,17 +23,15 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.core.introspection.module.info import ModuleInfo
+from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, StreamInfo
 from dimos.core.run_registry import RunEntry
-from dimos.imitation.loop.attached import AttachedDualArm
+from dimos.imitation.loop.attached import AttachedBlueprint
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
-from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
-from dimos.robot.manipulators.dual_openyam.joints import (
-    DUAL_OPENYAM_ARM_JOINTS,
-    DUAL_OPENYAM_JOINTS,
-)
+
+JOINTS = ["gantry/slide", "wrist/rotation", "tool/opening"]
+OWNER = "renamed-controller"
 
 
 @pytest.fixture
@@ -41,243 +39,237 @@ def attached(mocker, monkeypatch, tmp_path):
     monkeypatch.setattr("dimos.core.run_registry.REGISTRY_DIR", tmp_path)
     mocker.patch("dimos.imitation.loop.attached.global_config")
     mocker.patch("dimos.imitation.loop.attached.is_pid_alive", return_value=True)
-    mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=100.0)
-    mocker.patch("dimos.imitation.loop.attached.discover_webcams", return_value=[])
-    model = mocker.patch("dimos.imitation.loop.attached.DUAL_OPENYAM_MODEL")
-    model.load.return_value = LoadedRobotModel(
-        '<robot name="test"><link name="base"/>'
-        + "".join(
-            f'<link name="{name}"/><joint name="{name}" type="revolute">'
-            f'<parent link="base"/><child link="{name}"/>'
-            '<axis xyz="0 0 1"/><limit lower="-2" upper="2" effort="1" velocity="1"/></joint>'
-            for name in DUAL_OPENYAM_ARM_JOINTS
-        )
-        + "</robot>",
-        Path("test.urdf"),
-        {},
-    )
+    clock = mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=100.0)
+    run = RunEntry("test-run", 1234, "unrelated-plugin-blueprint", "", "")
+    run.save()
+    discovery = mocker.patch("dimos.imitation.loop.attached.list_runs", return_value=[run])
     app = mocker.create_autospec(Dimos, instance=True)
-    coordinator = mocker.create_autospec(ControlCoordinator, instance=True)
-    mocker.patch.object(coordinator, "get_stream", create=True)
-    coordinator.get_joint_positions.return_value = dict.fromkeys(DUAL_OPENYAM_JOINTS, 0.1)
-    coordinator.get_trajectory_generation.return_value = 4
-    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+    owner = mocker.create_autospec(ControlCoordinator, instance=True)
+    mocker.patch.object(owner, "get_stream", create=True)
+    owner.list_joints.return_value = JOINTS
+    owner.describe_controller.return_value = {
+        "run_id": "test-run",
+        "joints": [
+            {"name": n, "lower": -2 if i < 2 else 0, "upper": 2 if i < 2 else 1}
+            for i, n in enumerate(JOINTS)
+        ],
+        "tasks": [
+            {"name": "move", "joints": JOINTS[:2], "commands": [], "trajectory": True},
+            {
+                "name": "tool_task_with_any_name",
+                "joints": JOINTS[2:],
+                "commands": ["set_position"],
+                "trajectory": False,
+            },
+        ],
+    }
+    owner.get_trajectory_generation.return_value = 4
+    owner.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
-    coordinator.task_invoke.return_value = True
-    app.get_module.return_value = coordinator
-    app.list_streams.return_value = []
-    mocker.patch("dimos.imitation.loop.attached.Dimos.connect", return_value=app)
-    run = RunEntry("test-run", 1234, "teleop-webxr-dual-openyam", "", "")
-    run.save()
-    mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=run)
-    viewer = AttachedDualArm()
-    try:
-        viewer.start()
-        coordinator.get_stream.return_value.subscribe.call_args.args[0](
-            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.1] * 14, ts=time.time())
+    owner.task_invoke.return_value = True
+    app.get_module.return_value = owner
+    app.list_modules.return_value = [
+        ModuleInfo(
+            name=OWNER,
+            instance_name=OWNER,
+            class_name="ExternalPluginController",
+            rpcs=[
+                RpcInfo(name=n)
+                for n in ["list_joints", "get_joint_positions", "describe_controller"]
+            ],
         )
-        yield viewer, coordinator, app
-    finally:
-        viewer.close()
+    ]
+    app.list_streams.return_value = [
+        StreamInfo(
+            name="coordinator_joint_state",
+            module_name=OWNER,
+            direction="out",
+            type_name="JointState",
+        )
+    ]
+    mocker.patch("dimos.imitation.loop.attached.Dimos.connect", return_value=app)
+    with closing(AttachedBlueprint()) as viewer:
+        viewer.start()
+        owner.get_stream.return_value.subscribe.call_args.args[0](
+            JointState(name=JOINTS, position=[0.1, 0.2, 0.3], ts=time.time())
+        )
+        yield viewer, owner, app, discovery, clock
 
 
-def test_attach_poll_and_close_leave_both_arms_owned_by_the_blueprint(attached):
-    viewer, coordinator, app = attached
-    viewer.update()
+def test_discovers_renamed_plugin_and_arbitrary_joints_without_owning_devices(attached):
+    viewer, owner, app, _, _ = attached
     state = viewer.state()
+    assert state["attached"]["blueprint"] == "unrelated-plugin-blueprint"
+    assert state["joint_names"] == JOINTS
+    assert state["joints"] == [0.1, 0.2, 0.3]
+    assert state["commandable"] == [True, True, True]
     viewer.close()
-
-    assert state["run_id"] == "test-run"
-    assert state["joint_names"] == DUAL_OPENYAM_JOINTS
-    assert state["joints"] == [0.1] * 14
-    assert state["running"] is True
     app.stop.assert_called_once_with()
-    coordinator.start.assert_not_called()
-    coordinator.stop.assert_not_called()
-    coordinator.execute_trajectory.assert_not_called()
-    coordinator.cancel_trajectory.assert_not_called()
-    coordinator.task_invoke.assert_not_called()
-    coordinator.get_joint_positions.assert_not_called()
+    owner.start.assert_not_called()
+    owner.stop.assert_not_called()
+    owner.execute_trajectory.assert_not_called()
+    owner.task_invoke.assert_not_called()
 
 
-def test_right_joint_command_routes_to_existing_coordinator_and_can_be_cancelled(attached):
-    viewer, coordinator, _ = attached
-    state = viewer.dispatch("target", {"run_id": "test-run", "index": 7, "value": 0.2})
-    trajectory = coordinator.execute_trajectory.call_args.args[0]
-    assert trajectory.joint_names == ["right_joint2"]
-    assert [point.positions for point in trajectory.points] == [[0.1], [0.2]]
-    assert trajectory.duration == pytest.approx(0.4)
-    assert coordinator.execute_trajectory.call_args.kwargs == {"expected_generation": 4}
-    assert state["targets"][7] == 0.2
+def test_joint_jog_uses_advertised_owner_and_cancellation_fence(attached):
+    viewer, owner, _, _, _ = attached
+    viewer.dispatch("target", {"run_id": "test-run", "index": 1, "value": 0.4})
+    trajectory = owner.execute_trajectory.call_args.args[0]
+    assert trajectory.joint_names == [JOINTS[1]]
+    assert [p.positions for p in trajectory.points] == [[0.2], [0.4]]
+    assert trajectory.duration == pytest.approx(0.8)
+    assert owner.execute_trajectory.call_args.kwargs == {"expected_generation": 4}
     viewer.dispatch("hold", {"run_id": "test-run"})
-    coordinator.cancel_trajectory.assert_called_once_with(expected_generation=4)
+    owner.cancel_trajectory.assert_called_once_with(expected_generation=4)
 
 
-@pytest.mark.parametrize(("index", "task"), [(12, "left_arm_gripper"), (13, "right_arm_gripper")])
-def test_each_gripper_uses_its_existing_task(attached, index, task):
-    viewer, coordinator, _ = attached
-    viewer.dispatch("target", {"run_id": "test-run", "index": index, "value": 0.3})
-    coordinator.task_invoke.assert_called_once_with(task, "set_normalized", {"values": [0.3]})
-    coordinator.execute_trajectory.assert_not_called()
+def test_scalar_position_uses_advertised_task_without_gripper_name_guessing(attached):
+    viewer, owner, _, _, _ = attached
+    viewer.dispatch("target", {"run_id": "test-run", "index": 2, "value": 0.8})
+    owner.task_invoke.assert_called_once_with(
+        "tool_task_with_any_name", "set_position", {"values": [0.8]}
+    )
+    owner.execute_trajectory.assert_not_called()
 
 
 @pytest.mark.parametrize(
     "params",
     [
-        {"run_id": "old-run", "index": 0, "value": 0.2},
+        {"run_id": "old", "index": 0, "value": 0.2},
+        {"run_id": "test-run", "index": True, "value": 0.2},
+        {"run_id": "test-run", "index": 0, "value": True},
         {"run_id": "test-run", "index": 0, "value": float("nan")},
-        {"run_id": "test-run", "index": 0, "value": 3.0},
+        {"run_id": "test-run", "index": 0, "value": 3},
     ],
 )
-def test_stale_run_or_invalid_target_never_sends_a_command(attached, params):
-    viewer, coordinator, _ = attached
-    with pytest.raises((ValueError, RuntimeError)):
+def test_stale_or_invalid_input_sends_no_command(attached, params):
+    viewer, owner, _, _, _ = attached
+    with pytest.raises((RuntimeError, ValueError)):
         viewer.dispatch("target", params)
-    coordinator.execute_trajectory.assert_not_called()
-    coordinator.task_invoke.assert_not_called()
+    owner.execute_trajectory.assert_not_called()
+    owner.task_invoke.assert_not_called()
 
 
-def test_stopped_blueprint_is_not_replaced_with_another_session(attached, mocker):
-    viewer, coordinator, _ = attached
-    mocker.patch("dimos.imitation.loop.attached.is_pid_alive", return_value=False)
-    with pytest.raises(RuntimeError, match="reconnects automatically"):
+def test_unknown_limits_or_missing_owner_disable_control(attached):
+    viewer, owner, _, _, _ = attached
+    viewer.close()
+    owner.describe_controller.return_value["joints"][0]["lower"] = None
+    owner.describe_controller.return_value["tasks"] = owner.describe_controller.return_value[
+        "tasks"
+    ][:1]
+    viewer.start()
+    assert viewer.state()["commandable"] == [False, True, False]
+    with pytest.raises(ValueError, match="advertised manual control"):
         viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.2})
-    coordinator.execute_trajectory.assert_not_called()
+    owner.execute_trajectory.assert_not_called()
 
 
-def test_lost_viewer_heartbeat_cancels_its_inflight_jog(attached, mocker):
-    viewer, coordinator, _ = attached
-    clock = mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=100.0)
-    viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 1.0})
-    clock.return_value = 103.0
+def test_heartbeat_loss_cancels_only_workcells_own_jog(attached):
+    viewer, owner, _, _, clock = attached
+    viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 1.5})
+    clock.return_value = 103
     viewer.update()
-    coordinator.cancel_trajectory.assert_called_once_with(expected_generation=4)
+    owner.cancel_trajectory.assert_called_once_with(expected_generation=4)
 
 
-@pytest.mark.parametrize("stop_between", [False, True])
-def test_follows_replacement_run_without_replaying_controls(attached, mocker, stop_between):
-    viewer, coordinator, app = attached
-    old_feedback = coordinator.get_stream.return_value.subscribe.call_args.args[0]
-    viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.2})
-    replacement = RunEntry("replacement", 5678, "teleop-webxr-dual-openyam", "", "")
+def test_follows_restart_and_rejects_old_feedback_and_commands(attached):
+    viewer, owner, app, discovery, clock = attached
+    old_feedback = owner.get_stream.return_value.subscribe.call_args.args[0]
+    replacement = RunEntry("next", 5678, "different-robot", "", "")
     replacement.save()
-    discovery = mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=None)
-    clock = mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=101.0)
-    if stop_between:
-        viewer.update()
-        assert viewer.state()["mode"] == "Waiting for blueprint"
-        assert viewer.state()["run_id"] is None
-        assert viewer.state()["joints"] == []
-    discovery.return_value = replacement
-    clock.return_value = 102.0
-
+    discovery.return_value = [replacement]
+    owner.describe_controller.return_value["run_id"] = "next"
+    clock.return_value = 102
     viewer.update()
-    old_feedback(JointState(name=DUAL_OPENYAM_JOINTS, position=[0.8] * 14, ts=time.time()))
+    old_feedback(JointState(name=JOINTS, position=[0.8] * 3, ts=time.time()))
     assert viewer.state()["joints"] == []
-    assert viewer.state()["running"] is False
-    assert viewer.state()["run_id"] == "replacement"
-    assert viewer.state()["attached"]["pid"] == 5678
+    assert viewer.state()["run_id"] == "next"
     with pytest.raises(RuntimeError, match="displayed run changed"):
-        viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.4})
-    coordinator.get_stream.return_value.subscribe.call_args.args[0](
-        JointState(name=DUAL_OPENYAM_JOINTS, position=[0.3] * 14, ts=time.time())
+        viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.2})
+    owner.get_stream.return_value.subscribe.call_args.args[0](
+        JointState(name=JOINTS, position=[0.4] * 3, ts=time.time())
     )
-    assert viewer.state()["running"] is True
-    assert viewer.state()["targets"] == [0.3] * 14
-    assert viewer.state()["error"] is None
+    assert viewer.state()["joints"] == [0.4] * 3
     app.stop.assert_called_once_with()
-    coordinator.execute_trajectory.assert_called_once()
-    coordinator.cancel_trajectory.assert_not_called()
-    coordinator.start.assert_not_called()
-    coordinator.stop.assert_not_called()
-    coordinator.task_invoke.assert_not_called()
+    owner.execute_trajectory.assert_not_called()
 
 
-def test_viewer_opened_before_blueprint_attaches_when_it_appears(attached, mocker):
-    viewer, coordinator, _ = attached
-    run = viewer.run
+def test_opening_before_run_and_multiple_run_selection(attached):
+    viewer, owner, _, discovery, clock = attached
+    original = viewer.run
     viewer.close()
-    discovery = mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=None)
-    with closing(AttachedDualArm()) as waiting:
-        waiting.start()
-        assert waiting.state()["mode"] == "Waiting for blueprint"
-        assert waiting.state()["attached"]["pid"] is None
-        discovery.return_value = run
-        waiting.update()
-        coordinator.get_stream.return_value.subscribe.call_args.args[0](
-            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.2] * 14, ts=time.time())
-        )
-        assert waiting.state()["running"] is True
-        assert waiting.state()["run_id"] == "test-run"
-    coordinator.execute_trajectory.assert_not_called()
-    coordinator.start.assert_not_called()
-    coordinator.stop.assert_not_called()
+    discovery.return_value = []
+    viewer.start()
+    assert viewer.state()["run_id"] is None
+    second = RunEntry("second", 2222, "another-robot", "", "")
+    second.save()
+    discovery.return_value = [original, second]
+    clock.return_value = 102
+    viewer.update()
+    assert viewer.state()["run_id"] is None
+    assert "Select" in viewer.state()["error"]
+    owner.describe_controller.return_value["run_id"] = "second"
+    viewer.dispatch("select_run", {"selected_run_id": "second"})
+    assert viewer.state()["run_id"] == "second"
+    owner.start.assert_not_called()
+    owner.execute_trajectory.assert_not_called()
 
 
-def test_blueprint_not_ready_yet_is_retried_without_restarting_worker(attached, mocker):
-    viewer, coordinator, app = attached
+def test_rejects_a_controller_from_another_run_on_the_same_bus(attached):
+    viewer, owner, _, _, _ = attached
     viewer.close()
-    mocker.patch(
-        "dimos.imitation.loop.attached.Dimos.connect",
-        side_effect=[RuntimeError("Coordinator is starting"), app],
-    )
-    with closing(AttachedDualArm()) as waiting:
-        waiting.start()
-        assert waiting.state()["running"] is False
-        assert "Coordinator is starting" in waiting.state()["error"]
-        waiting.update()
-        coordinator.get_stream.return_value.subscribe.call_args.args[0](
-            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.2] * 14, ts=time.time())
-        )
-        assert waiting.state()["running"] is True
-        assert waiting.state()["error"] is None
-        assert len(waiting.state()["lower"]) == 14
-    coordinator.execute_trajectory.assert_not_called()
+    owner.describe_controller.return_value["run_id"] = "another-run"
+    viewer.start()
+    assert viewer.state()["run_id"] is None
+    assert "different run" in viewer.state()["error"]
+    owner.execute_trajectory.assert_not_called()
+    owner.task_invoke.assert_not_called()
 
 
-def test_record_save_and_discard_use_blueprint_recorder_without_arm_commands(attached, mocker):
-    viewer, coordinator, app = attached
+def test_optional_views_and_recording_are_discovered_by_interface(attached, mocker):
+    viewer, owner, app, _, _ = attached
     viewer.close()
-    recorder = mocker.create_autospec(DualOpenYamCollection, instance=True)
-    recorder.get_status.return_value = {
-        "collection_available": True,
-        "collection_ready": True,
-        "recording": None,
-        "episodes": [],
-        "recording_directory": "/recordings/dual-openyam",
-    }
-    app.list_modules.return_value = [
-        ModuleInfo(
-            name="dualopenyamcollection",
-            instance_name="dualopenyamcollection",
-            class_name="DualOpenYamCollection",
-        )
+    provider = mocker.Mock()
+    provider.get_web_views.return_value = [
+        {"title": "Other view", "path": "/world", "port": 12345, "scheme": "https", "embed": True}
     ]
-    app.get_module.side_effect = lambda name: (
-        recorder if name == "dualopenyamcollection" else coordinator
+    provider.get_status.return_value = {"collection_available": True, "collection_ready": True}
+    provider.record.return_value = {"recording": "episode"}
+    app.list_modules.return_value.append(
+        ModuleInfo(
+            name="plugin",
+            instance_name="plugin",
+            class_name="UnknownPlugin",
+            rpcs=[
+                RpcInfo(name=n)
+                for n in [
+                    "get_web_views",
+                    "record",
+                    "finish",
+                    "get_status",
+                    "describe_run",
+                    "scene_state",
+                ]
+            ],
+        )
     )
-    viewer._follow_run()
-    assert viewer.state()["collection_available"] is True
-    recorder.record.return_value = {**recorder.get_status.return_value, "recording": "take-1"}
-    recorder.finish.return_value = recorder.get_status.return_value
-    state = viewer.dispatch(
-        "record",
-        {
-            "run_id": "test-run",
-            "task": "put object in tray",
-            "split": "eval",
-        },
-    )
-    assert state["recording"] == "take-1"
-    recorder.record.assert_called_once_with(task="put object in tray", split="eval")
-    viewer.dispatch("save", {"run_id": "test-run", "outcome": "success"})
-    recorder.finish.assert_called_once_with(keep=True, outcome="success")
-    viewer.dispatch("discard", {"run_id": "test-run"})
-    assert recorder.finish.call_args.kwargs == {"keep": False, "outcome": "ungraded"}
-    coordinator.execute_trajectory.assert_not_called()
-    coordinator.task_invoke.assert_not_called()
-    coordinator.start.assert_not_called()
-    coordinator.stop.assert_not_called()
-    recorder.start.assert_not_called()
-    recorder.stop.assert_not_called()
+    app.get_module.side_effect = lambda name: provider if name == "plugin" else owner
+    viewer.start()
+    assert viewer.state()["web_views"][0]["path"] == "/world"
+    assert viewer.state()["environment"] == "simulation"
+    viewer.dispatch("record", {"run_id": "test-run", "task": "Move an object", "split": "eval"})
+    provider.record.assert_called_once_with(task="Move an object", split="eval")
+    owner.execute_trajectory.assert_not_called()
+
+
+def test_late_camera_frame_from_previous_run_is_discarded(attached):
+    viewer, _, _, discovery, clock = attached
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8), format=ImageFormat.RGB)
+    viewer._image("test-run", "camera", image)
+    assert "camera" in viewer.images()
+    discovery.return_value = []
+    clock.return_value = 102
+    viewer.update()
+    viewer._image("test-run", "camera", image)
+    assert viewer.images() == {}

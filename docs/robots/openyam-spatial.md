@@ -41,6 +41,25 @@ ahead again; the desktop **Place workspace ahead** button also requests this.
 Use Ctrl-C in the launching terminal to stop. Restart the blueprint after a
 simulation reset: the device adapter rejects commands from a changed generation.
 
+## DimOS Desktop
+
+Open the installed Workcell app in DimOS Desktop. Its worker must use this
+DimOS checkout and follow running blueprints. It attaches automatically to
+`openyam-spatial-sim`, shows the same observed scene inside Desktop, subscribes
+to all three RGB camera streams and exposes the coordinator's joint controls.
+The preview does not acquire a teleoperation connection. Open the advertised
+HTTPS headset link to enter the immersive view.
+
+Attachment uses the run registry and module/stream introspection, not a
+blueprint-name list. `ControlCoordinator.describe_controller()` advertises the
+run identity, joint limits and command owners. `get_web_views()` advertises
+optional HTTP views; the app proxies embeddable views through its existing
+backend to the local server. The embedded scene uses relative asset/API URLs.
+The blueprint keeps ownership of its devices and control loop. Missing limits
+or command owners disable manual controls; missing recorder RPCs hide recording.
+If several runs exist, select one. Replacement runs reconnect automatically
+when following the sole run, and old run commands and callbacks are rejected.
+
 ## What is in the scene
 
 Two arm bases are 0.62 m apart. Each arm has an RGB wrist camera (320 × 240,

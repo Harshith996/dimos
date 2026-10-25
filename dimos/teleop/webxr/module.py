@@ -342,6 +342,24 @@ class WebXRTeleopModule(Module):
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
 
     @rpc
+    def get_web_views(self) -> list[dict[str, Any]]:
+        """Advertise this module's operator page to clients such as Desktop.
+
+        Paths are relative to this server. Embedding is opt-in: a preview
+        must not acquire a control connection merely because it is opened.
+        """
+        return [
+            {
+                "title": "WebXR teleoperation",
+                "scheme": "https",
+                "port": self.config.server_port,
+                "path": "/",
+                "embed": False,
+                "description": "Hold a controller grip to move; release to hold. Trigger closes the gripper.",
+            }
+        ]
+
+    @rpc
     def start(self) -> None:
         super().start()
         self._body_report_started_at = None

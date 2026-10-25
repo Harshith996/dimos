@@ -3,12 +3,16 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PinchGrab} from './spatial_input.mjs';
 
+const embedded = new URLSearchParams(location.search).has('embedded');
+if (embedded) document.body.classList.add('embedded');
+const apiBase = new URL('./spatial/', location.href);
+const endpoint = path => new URL(path, apiBase).href;
 const status = document.querySelector('#status');
 const enter = document.querySelector('#enter');
 const renderer = new THREE.WebGLRenderer({antialias: true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.xr.enabled = true;
+renderer.xr.enabled = !embedded;
 renderer.xr.setReferenceSpaceType('local-floor');
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
@@ -56,7 +60,7 @@ const cardTexture = new THREE.CanvasTexture(cardCanvas); cardTexture.colorSpace 
 const card = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), new THREE.MeshBasicMaterial({map: cardTexture, side: THREE.DoubleSide}));
 card.position.set(0.8, 0, 0.85);
 card.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0)));
-stage.add(card);
+stage.add(card); card.visible = !embedded;
 let cardStatus = '';
 function updateCard(text) {
   if (text === cardStatus) return; cardStatus = text;
@@ -69,7 +73,7 @@ function updateCard(text) {
   cardContext.fillStyle = '#f3bf77'; cardContext.font = '24px sans-serif'; cardContext.fillText(text, 30, 208);
   cardTexture.needsUpdate = true;
 }
-const geometry = await fetch('/spatial/model').then(check).then(r => r.json()).catch(error => {
+const geometry = await fetch(endpoint('model')).then(check).then(r => r.json()).catch(error => {
   status.textContent = `Cannot load station: ${error.message}. Reload after the blueprint is running.`;
   throw error;
 });
@@ -101,7 +105,7 @@ function connect() {
   socket.onopen = () => { sequence = 0; resetHands(); };
   socket.onclose = () => { resetHands(); if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
-poll('/spatial/state', 35, async response => {
+poll(endpoint('state'), 35, async response => {
   feedback = await response.json(); feedbackAt = performance.now();
   for (const side of geometry.sides) {
     const arm = feedback.arms?.[side]; if (!arm) continue;
@@ -117,7 +121,7 @@ poll('/spatial/state', 35, async response => {
     box.position.fromArray(object.position); box.quaternion.fromArray(object.orientation); detections.add(box);
   }
 });
-poll('/spatial/cloud', 75, async response => {
+poll(endpoint('cloud'), 75, async response => {
   const data = await response.json();
   if (data.ts !== cloudTS) {
     cloudTS = data.ts; cloudAt = performance.now();
@@ -128,13 +132,13 @@ poll('/spatial/cloud', 75, async response => {
   }
 });
 // Wrist feeds also live inside the immersive scene, as optional contextual panels.
-for (const [i, side] of ['left', 'right'].entries()) {
+for (const [i, side] of (embedded ? [] : ['left', 'right']).entries()) {
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.21), new THREE.MeshBasicMaterial({side: THREE.DoubleSide}));
   panel.position.set(0.68, i ? -0.43 : 0.43, 0.55);
   panel.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0)));
   stage.add(panel); panel.visible = false;
   let oldURL = null, imageAt = 0;
-  poll(`/spatial/wrist/${side}`, 150, async response => {
+  poll(endpoint(`wrist/${side}`), 150, async response => {
     const blob = await response.blob(); const bitmap = await createImageBitmap(blob, {imageOrientation: 'flipY'});
     const texture = new THREE.Texture(bitmap); texture.colorSpace = THREE.SRGBColorSpace; texture.needsUpdate = true;
     if (panel.material.map) { panel.material.map.image.close(); panel.material.map.dispose(); }
@@ -172,7 +176,7 @@ enter.onclick = async () => {
     await renderer.xr.setSession(session); connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
   } catch (error) { controlRequested = false; socket?.close(); entryError = `Cannot enter WebXR: ${error.message}`; }
 };
-if (navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')) enter.disabled = false;
+if (!embedded && navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')) enter.disabled = false;
 else enter.textContent = 'WebXR unavailable in this browser';
 
 function send(hands, focus = null) {

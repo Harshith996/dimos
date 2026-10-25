@@ -28,6 +28,7 @@ Features:
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 import inspect
+import os
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,7 @@ from dimos.control.components import (
 )
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.connection.source import ConnectionSource
+from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -58,6 +60,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -654,6 +657,51 @@ class ControlCoordinator(Module):
             for connection in self._connections.values():
                 positions.update(connection.read_joints().joint_positions)
             return positions
+
+    @rpc
+    def describe_controller(self) -> dict[str, Any]:
+        """Describe available joint controls without starting tasks or reading devices.
+
+        Missing bounds remain unknown. Clients must not invent a robot model
+        or offer controls for joints without a declared command owner.
+        """
+        with self._hardware_lock:
+            joints: dict[str, dict[str, Any]] = {
+                name: {"name": name, "lower": None, "upper": None}
+                for name in self._joint_to_hardware
+            }
+            for hardware in self._hardware.values():
+                limits = hardware.get_limits()
+                if limits is not None:
+                    for name, lower, upper in zip(
+                        hardware.joint_names,
+                        limits.position_lower,
+                        limits.position_upper,
+                        strict=True,
+                    ):
+                        joints[name].update(lower=lower, upper=upper)
+            for connection in self._connections.values():
+                for name in connection.joint_names:
+                    bound = connection.contract.description.limits.get(
+                        f"{name}{SEPARATOR}{Interface.POSITION}"
+                    )
+                    if bound is not None:
+                        joints[name].update(lower=bound.lo, upper=bound.hi)
+        with self._task_lock:
+            tasks = [
+                {
+                    "name": name,
+                    "joints": sorted(task.claim().joints),
+                    "commands": sorted(self._task_commands.get(name, ())),
+                    "trajectory": isinstance(task, JointTrajectoryTask),
+                }
+                for name, task in self._tasks.items()
+            ]
+        return {
+            "run_id": os.environ.get(DIMOS_RUN_ID_ENV),
+            "joints": list(joints.values()),
+            "tasks": tasks,
+        }
 
     @rpc
     def get_trajectory_generation(self) -> int:

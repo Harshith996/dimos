@@ -42,7 +42,7 @@ from numpy.typing import NDArray
 
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.loop.act import PolicyRunner, command
-from dimos.imitation.loop.attached import AttachedDualArm, running_dual_arm
+from dimos.imitation.loop.attached import AttachedBlueprint
 from dimos.imitation.loop.checkpoint import export_policy, import_policy
 from dimos.imitation.loop.device import OpenYamSimulation
 from dimos.imitation.loop.hardware import OpenYamHardware, StationConfig, discover_station
@@ -548,14 +548,14 @@ def main() -> None:
     parser.add_argument("--station", help="JSON station configuration; omitted for simulation")
     parser.add_argument("--follow-blueprint", action="store_true")
     args = parser.parse_args()
-    if args.follow_blueprint or running_dual_arm() is not None:
-        serve(args, AttachedDualArm())
+    if args.follow_blueprint:
+        serve(args, AttachedBlueprint())
     else:
         with learning_bus():
             serve(args)
 
 
-def serve(args: argparse.Namespace, attached: AttachedDualArm | None = None) -> None:
+def serve(args: argparse.Namespace, attached: AttachedBlueprint | None = None) -> None:
     wire: TextIO = sys.stdout
     sys.stdout = sys.stderr  # Imported modules/loggers must not corrupt the JSON protocol.
     stopped = Event()

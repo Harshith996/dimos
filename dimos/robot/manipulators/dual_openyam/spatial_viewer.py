@@ -166,6 +166,19 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 image[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"}
             )
 
+    @rpc
+    def get_web_views(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "title": "Spatial workstation",
+                "scheme": "https",
+                "port": self.config.server_port,
+                "path": "/spatial",
+                "embed": True,
+                "description": "Pinch a gripper handle with thumb and index finger to move that arm. Release to hold. Thumb and middle finger close the gripper.",
+            }
+        ]
+
     def _on_feedback(self, message: JointState) -> None:
         if len(message.name) != len(message.position) or not np.isfinite(message.ts):
             return

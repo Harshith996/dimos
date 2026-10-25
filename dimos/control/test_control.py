@@ -111,6 +111,24 @@ def trajectory_task():
     return JointTrajectoryTask(config=config)
 
 
+def test_controller_description_reports_device_bounds_and_command_owners(
+    make_coordinator, connected_hardware, trajectory_task, mock_adapter
+):
+    mock_adapter.get_limits.return_value = JointLimits(
+        position_lower=[-1.0] * 6,
+        position_upper=[2.0] * 6,
+        velocity_max=[0.5] * 6,
+    )
+    coordinator = make_coordinator()
+    coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
+    coordinator.add_task(trajectory_task, task_type="trajectory")
+    description = coordinator.describe_controller()
+    assert description["joints"][0] == {"name": "arm/joint1", "lower": -1.0, "upper": 2.0}
+    assert description["tasks"][0]["trajectory"] is True
+    assert description["tasks"][0]["joints"] == ["arm/joint1", "arm/joint2", "arm/joint3"]
+    mock_adapter.write_joint_positions.assert_not_called()
+
+
 @pytest.fixture
 def simple_trajectory():
     """Create a simple 2-point trajectory."""
