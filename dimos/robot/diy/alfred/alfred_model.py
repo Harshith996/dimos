@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred whole-robot planning model: FlowBase, pillar lift, bimanual OpenArm v2.0, sensors.
+"""Alfred whole-robot planning model: FlowBase, pillar lift, bimanual OpenArm v2.0 arms with the
+v1.0 parallel-link grippers, sensors.
 
 The URDFs come from the LFS archive alfred_description (built from the Onshape CAD by the
 bundled build_alfred_urdf.py). base_link is the FlowBase odometry origin on the floor,
