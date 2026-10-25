@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from itertools import pairwise
+import math
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -296,10 +297,14 @@ class RoboPlanPlanner:
         return "RoboPlan"
 
     def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
+        # RoboPlan's native RRT validates the whole scene, not just the selection, and rejects
+        # every start on a model with a coordinate it cannot bound (a planar base's line and
+        # circle joints): "Invalid start configuration requested" even for an arm alone. The
+        # shared planner bounds those itself, so a model with any such coordinate goes there.
+        joint_space = self._world.get_prepared_model().joint_space
         return (
-            not self._world.get_prepared_model()
-            .joint_space.select(selection.joint_names)
-            .is_interval_only
+            not joint_space.is_interval_only
+            or not joint_space.select(selection.joint_names).is_interval_only
         )
 
     def _normalize_selection_start(
@@ -366,10 +371,10 @@ class RoboPlanPlanner:
                     status=PlanningStatus.INVALID_GOAL,
                     message=f"Cartesian target for '{group_id}' must be a waypoint sequence",
                 )
-            if len(target) < 2:
+            if not target:
                 return PlanningResult(
                     status=PlanningStatus.INVALID_GOAL,
-                    message=f"Cartesian target for '{group_id}' requires at least two waypoints",
+                    message=f"Cartesian target for '{group_id}' has no waypoints",
                 )
             waypoint_type = (
                 PoseStamped
@@ -424,10 +429,14 @@ class RoboPlanPlanner:
             target_matrices = [
                 self._resolve_cartesian_waypoint(start_matrix, waypoint) for waypoint in target
             ]
-            if not np.allclose(target_matrices[0], start_matrix, atol=1e-6, rtol=0.0):
-                raise ValueError(
-                    f"Cartesian target for '{group.id}' must begin at its current TCP pose"
-                )
+            # The path leaves from where the TCP is. A caller's copy of that pose is a
+            # measurement or two old (a live arm's joints jitter), so a first waypoint
+            # within a hair of it is the start; one anywhere else is the first place to
+            # go, with the start put in front of it.
+            if _poses_coincide(target_matrices[0], start_matrix):
+                target_matrices[0] = start_matrix
+            else:
+                target_matrices.insert(0, start_matrix)
             base_frames.append(ROBOPLAN_WORLD_FRAME)
             tip_frames.append(self._world.native_link_name(group.tip_link))
             waypoint_paths.append(target_matrices)
@@ -741,3 +750,17 @@ class RoboPlanPlanner:
                 )
             )
         return path
+
+
+# A Cartesian target's first waypoint this close to the TCP is the TCP: a live arm's
+# joints jitter, so a caller's copy of the start pose is never bit-exact.
+CARTESIAN_START_POSITION_TOLERANCE_M = 0.01
+CARTESIAN_START_ANGLE_TOLERANCE_RAD = 0.02
+
+
+def _poses_coincide(a: NDArray[np.float64], b: NDArray[np.float64]) -> bool:
+    if np.linalg.norm(a[:3, 3] - b[:3, 3]) > CARTESIAN_START_POSITION_TOLERANCE_M:
+        return False
+    relative = a[:3, :3].T @ b[:3, :3]
+    angle = math.acos(min(1.0, max(-1.0, (float(np.trace(relative)) - 1.0) / 2.0)))
+    return angle <= CARTESIAN_START_ANGLE_TOLERANCE_RAD

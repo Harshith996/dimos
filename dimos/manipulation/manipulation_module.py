@@ -171,6 +171,11 @@ class ManipulationModuleConfig(ModuleConfig):
     # Coordinator joint name -> model joint name, so a twist base's odometry
     # joints (chassis/vx, ...) can feed the model's planar base joints.
     joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+    # Model joints the driver never reports, held at these positions: a planar
+    # base planned relative to where the robot stands (always zero at plan time,
+    # the base task executes the motion from wherever it is) rather than fed
+    # from odometry.
+    joint_state_defaults: dict[str, float] = Field(default_factory=dict)
     # Trajectory task -> the joints it drives. Empty means the joint trajectory
     # task drives every model joint; joints no task is bound to are preview-only.
     trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
@@ -204,6 +209,19 @@ class ManipulationModuleConfig(ModuleConfig):
         targets = Counter(self.joint_state_aliases.values())
         if collided := sorted(name for name, count in targets.items() if count > 1):
             raise ValueError(f"joint_state_aliases targets are not unique: {collided}")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_joint_state_defaults(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        if unknown := sorted(set(self.joint_state_defaults) - model_joints):
+            raise ValueError(f"joint_state_defaults are not model joints: {unknown}")
+        if aliased := sorted(
+            set(self.joint_state_defaults) & set(self.joint_state_aliases.values())
+        ):
+            raise ValueError(f"joint_state_defaults are also alias targets: {aliased}")
+        if bad := sorted(k for k, v in self.joint_state_defaults.items() if not math.isfinite(v)):
+            raise ValueError(f"joint_state_defaults are not finite: {bad}")
         return self
 
 
@@ -359,17 +377,24 @@ class ManipulationModule(Module):
             ):
                 logger.warning("Skipping malformed model state")
                 return
-            missing = [name for name in names if name not in name_to_idx]
+            defaults = self.config.joint_state_defaults
+            missing = [name for name in names if name not in name_to_idx and name not in defaults]
             if missing:
                 logger.warning("Skipping incomplete model state", missing_joints=missing)
                 return
-            indices = [name_to_idx[name] for name in names]
+            has_velocity = len(msg.velocity) == len(msg.name)
             state = JointState(
                 ts=msg.ts,
                 name=list(names),
-                position=[msg.position[index] for index in indices],
-                velocity=[msg.velocity[index] for index in indices]
-                if len(msg.velocity) == len(msg.name)
+                position=[
+                    msg.position[name_to_idx[name]] if name in name_to_idx else defaults[name]
+                    for name in names
+                ],
+                velocity=[
+                    msg.velocity[name_to_idx[name]] if name in name_to_idx else 0.0
+                    for name in names
+                ]
+                if has_velocity
                 else [],
             )
             self._world_monitor.on_joint_state(state)
@@ -397,7 +422,7 @@ class ManipulationModule(Module):
                     ee_pose = self._world_monitor.get_group_ee_pose(group.id, state)
                     if ee_pose is not None and group.tip_link is not None:
                         ee_tf = Transform.from_pose(group.tip_link, ee_pose)
-                        ee_tf.frame_id = "world"
+                        ee_tf.frame_id = self.config.world_frame
                         transforms.append(ee_tf)
                 for link_name in config.tf_extra_links:
                     if not state.name:
@@ -405,7 +430,7 @@ class ManipulationModule(Module):
                     link_pose = self._world_monitor.get_link_pose(link_name, state)
                     if link_pose is not None:
                         link_tf = Transform.from_pose(link_name, link_pose)
-                        link_tf.frame_id = "world"
+                        link_tf.frame_id = self.config.world_frame
                         transforms.append(link_tf)
 
                 # Fixed mounts are valid at the same measurement time as their parent.
@@ -471,6 +496,9 @@ class ManipulationModule(Module):
 
     def _refresh_execution_status(self) -> None:
         """Poll active nonblocking execution once, without waiting for motion."""
+        if getattr(self, "_execution_manager", None) is None:
+            # An RPC can land before start() has built the executor.
+            return
         if self._execution_manager.status in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.EXECUTING,
@@ -839,7 +867,7 @@ class ManipulationModule(Module):
             return None
         stamped_targets = {
             group_id: PoseStamped(
-                frame_id="world",
+                frame_id=self.config.world_frame,
                 position=pose.position,
                 orientation=pose.orientation,
             )
@@ -1210,7 +1238,8 @@ class ManipulationModule(Module):
     @rpc
     def get_obstacles(self) -> dict[str, PoseStamped]:
         """Return planning-world obstacle poses keyed by obstacle name."""
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
+            # Asked before start() finished building the world: nothing is in it yet.
             return {}
         return {
             obstacle.name: obstacle.pose for obstacle in self._world_monitor.world.get_obstacles()
@@ -1295,7 +1324,9 @@ class ManipulationModule(Module):
         await asyncio.to_thread(self._apply_voxel_map, cloud)
 
     def _apply_voxel_map(self, cloud: PointCloud2) -> None:
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
+            # A mapper publishes continuously, so a map that lands while the world is
+            # still being built is not lost: the next one arrives after finalize.
             return
         frame = self.config.world_frame
         if cloud.frame_id != frame:

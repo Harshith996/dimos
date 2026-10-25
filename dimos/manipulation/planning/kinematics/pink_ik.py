@@ -200,6 +200,14 @@ class PinkIK(_PinkSolverCore):
         except (FileNotFoundError, ImportError, ValueError) as exc:
             return _failure(IKStatus.NO_SOLUTION, f"Pink IK model setup failed: {exc}")
 
+        # A retry restarts the joints that chase a pose from somewhere else. An auxiliary
+        # group (a torso, a base, the other arm) stays where it was seeded: it is free to
+        # help during the solve, but a restart that flings it to a random posture gives the
+        # caller a solution that moves it for no reason.
+        target_joint_names = {name for group in pose_targets for name in group.joint_names}
+        retry_indices = [
+            index for index in selected_indices if joint_names[index] in target_joint_names
+        ]
         fallback_result: IKResult | None = None
         for attempt in range(max_attempts):
             current_positions = seed_positions.copy()
@@ -209,11 +217,11 @@ class PinkIK(_PinkSolverCore):
                     seed_positions,
                     lower_limits,
                     upper_limits,
-                    selected_indices,
+                    retry_indices,
                     attempt,
                 )
-                current_positions[selected_indices] = np.random.uniform(
-                    retry_lower[selected_indices], retry_upper[selected_indices]
+                current_positions[retry_indices] = np.random.uniform(
+                    retry_lower[retry_indices], retry_upper[retry_indices]
                 )
             try:
                 q0 = self._q_from_dimos_positions(targets[0][0], current_positions)

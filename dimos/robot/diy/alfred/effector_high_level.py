@@ -44,6 +44,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.hardware.drive_trains.flowbase import portal_compat
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -88,6 +89,9 @@ class AlfredHighLevel(Module):
         # every blueprint that composes Alfred unimportable without the misc extra.
         import portal
 
+        # Portal's socket thread otherwise spins a whole core once the 50 Hz odometry poll
+        # races its wake-up (see portal_compat).
+        portal_compat.install()
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
         client = portal.Client(self.config.address)

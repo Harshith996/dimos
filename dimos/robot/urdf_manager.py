@@ -1,0 +1,346 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""One URDF and the live joint state: every joint on tf, and the robot cut out of any point cloud wired in."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Mapping
+import hashlib
+from pathlib import Path
+from threading import RLock
+import time
+from typing import Protocol
+from urllib.parse import parse_qs
+import xml.etree.ElementTree as ET
+
+import numpy as np
+from numpy.typing import NDArray
+from pydantic import Field
+
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO, In, Out
+from dimos.msgs.files.MeshFile import MeshFile
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.types.timestamped import TimestampedBufferCollection
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+# Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
+_MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
+
+class UrdfManagerConfig(ModuleConfig):
+    model: RobotModel
+    # Cut the robot out of `pointcloud` onto `filtered_pointcloud`; off where nothing needs a robot-free cloud.
+    self_filter: bool = True
+    padding_m: float = Field(default=0.01, ge=0.0)
+    # How far a cloud's capture time may be from the tf and joint state it is matched with.
+    tf_tolerance_s: float = Field(default=0.02, ge=0.0)
+    tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
+    state_tolerance_s: float = Field(default=0.02, ge=0.0)
+    state_history_s: float = Field(default=5.0, gt=0.0)
+    # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
+    publish_joint_tf: bool = True
+    # An edge goes out when it moves, at most this often...
+    joint_tf_hz: float = Field(default=30.0, gt=0.0)
+    # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
+    # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
+    unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
+    # robot_description is re-sent so a late subscriber gets it; nothing on these streams is latched.
+    robot_description_period_s: float = Field(default=5.0, gt=0.0)
+    # Seconds between self-filter summary log lines (0 disables).
+    filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
+
+
+class UrdfManager(Module):
+    """Poses the URDF from the joint state: publishes it on tf, and (self_filter) drops robot returns from clouds at
+    their capture time."""
+
+    config: UrdfManagerConfig
+
+    pointcloud: In[PointCloud2]
+    # IO: the joints it poses are published on it, and a cloud's mount is read from it
+    tf: IO[TFMessage]
+    coordinator_joint_state: In[JointState]
+    filtered_pointcloud: Out[PointCloud2]
+    # The URDF XML (ROS's robot_description), the files it names (meshes, textures) named
+    # package://<package>/<path>?hash=<sha256>; a file_request for one of those names gets the file on file_info, unless it
+    # carries &have=<sha256> of the current file (a client's cached copy is fresh). An empty file_request asks for
+    # robot_description now, so a client that just connected doesn't wait out robot_description_period_s.
+    robot_description: Out[String]
+    file_request: In[String]
+    file_info: Out[MeshFile]
+
+    _running: bool = False
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._filter_lock = RLock()
+        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._load_scene()
+        self._next_joint_tf_t = 0.0
+        self._last_urdf_on_request_t = -1.0
+        # Per edge: the last transform sent (translation + rotation) and when.
+        self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
+        self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+
+    @rpc
+    def start(self) -> None:
+        self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
+        super().start()
+        self._running = True
+        self.spawn(self._publish_urdf_loop())
+
+    @rpc
+    def stop(self) -> None:
+        self._running = False
+        super().stop()
+
+    async def _publish_urdf_loop(self) -> None:
+        while self._running:
+            self.robot_description.publish(String(self._urdf_xml))
+            await asyncio.sleep(self.config.robot_description_period_s)
+
+    async def handle_file_request(self, request: String) -> None:
+        if not request.data:
+            # at most every 0.2 s however many clients connect
+            if time.monotonic() - self._last_urdf_on_request_t >= 0.2:
+                self._last_urdf_on_request_t = time.monotonic()
+                self.robot_description.publish(String(self._urdf_xml))
+            return
+        name, _, query = request.data.partition("?")
+        # Only files the URDF names: a request is never a path into the filesystem.
+        file = self._file_paths.get(name)
+        if file is None:
+            logger.warning(
+                f"file_request for {request.data!r}, which is not a file in robot_description"
+            )
+            return
+        path, digest = file
+        if parse_qs(query).get("have", [""])[0] == digest:
+            return
+        data = await asyncio.to_thread(path.read_bytes)
+        self.file_info.publish(MeshFile(f"{name}?hash={digest}", data))
+
+    async def handle_pointcloud(self, cloud: PointCloud2) -> None:
+        """Filter the latest capture without starving TF transport callbacks."""
+        if self.config.self_filter:
+            await asyncio.to_thread(self._on_pointcloud, cloud)
+
+    async def handle_coordinator_joint_state(self, state: JointState) -> None:
+        await asyncio.to_thread(self.add_joint_state, state)
+
+    def add_joint_state(self, state: JointState) -> None:
+        """Buffer the full model state (out-of-order arrivals stay timestamped) and publish its joints on tf."""
+        with self._filter_lock:
+            if np.isfinite(state.ts):
+                self._states.remove_by_timestamp(state.ts)
+                self._states.add(JointState(state))
+                latest = self._states.last()
+                if latest is not None:
+                    self._states.prune_old(latest.ts - self.config.state_history_s)
+        if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
+            return
+        self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
+        with self._filter_lock:
+            transforms = self._edges_to_send(self.joint_transforms(state))
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
+    def _edges_to_send(self, transforms: list[Transform]) -> list[Transform]:
+        """The edges that moved since they were last sent, and those not sent for one keepalive period."""
+        now = time.monotonic()
+        keepalive_s = 1.0 / self.config.unchanged_tf_hz
+        due = []
+        for transform in transforms:
+            key = (transform.frame_id, transform.child_frame_id)
+            value = (*transform.translation.to_tuple(), *transform.rotation.to_tuple())
+            sent = self._sent_edges.get(key)
+            if (
+                sent is None
+                or now - sent[1] >= keepalive_s
+                or not np.allclose(value, sent[0], atol=1e-6)
+            ):
+                due.append(transform)
+                self._sent_edges[key] = (value, now)
+        return due
+
+    def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
+        """The capture with the robot's points removed, frame and point fields unchanged; None when it can't be."""
+        filtered = self._filter_capture(cloud)
+        self._clouds_in += 1
+        if filtered is None:
+            self._clouds_dropped += 1
+        else:
+            self._points_in += len(cloud)
+            self._points_removed += len(cloud) - len(filtered)
+        if self.config.filter_stats_interval_s > 0 and time.monotonic() >= self._next_stats_t:
+            self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+            logger.info(
+                f"self filter: {self._clouds_in} clouds, {self._clouds_dropped} dropped for missing tf/joint state, "
+                f"{self._points_removed} of {self._points_in} points were the robot"
+            )
+            self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
+        return filtered
+
+    def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
+        with self._filter_lock:
+            # Sensors sharing this input interleave, so an older capture is filtered at its own time rather than dropped.
+            if not np.isfinite(cloud.ts):
+                logger.warning("Dropping cloud: invalid capture timestamp")
+                return None
+            points = cloud.points_f32()
+            if not np.isfinite(points).all():
+                return None
+            keep = self._compute_keep_mask(cloud, points)
+            if keep is None:
+                return None
+            filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
+            for name, values in cloud.pointcloud_tensor.point.items():
+                filtered.pointcloud_tensor.point[name] = values[keep]
+            return filtered
+
+    def _on_pointcloud(self, cloud: PointCloud2) -> None:
+        with self._filter_lock:
+            filtered = self.filter_cloud(cloud)
+            if filtered is not None:
+                self.filtered_pointcloud.publish(filtered)
+
+    def joint_transforms(self, state: JointState) -> list[Transform]:
+        """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
+        positions = dict(zip(state.name, state.position, strict=False))
+        for joint in self._joints.values():
+            if joint.mimic is not None and joint.mimic[0] in positions:
+                leader, multiplier, offset = joint.mimic
+                positions[joint.name] = multiplier * positions[leader] + offset
+        # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as its stalest edge.
+        return [
+            Transform.from_matrix(
+                joint.parent_from_child(positions.get(joint.name, 0.0)),
+                frame_id=joint.parent_link,
+                child_frame_id=joint.child_link,
+                ts=state.ts,
+            )
+            for joint in self._joints.values()
+            if joint.type not in _MULTI_DOF_JOINT_TYPES
+        ]
+
+    def _compute_keep_mask(
+        self, cloud: PointCloud2, points: NDArray[np.float32]
+    ) -> NDArray[np.bool_] | None:
+        """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
+        assert self._body_filter is not None, "self_filter is off"
+        base_from_sensor = self._tf_at(self._base_link, cloud.frame_id, cloud.ts)
+        state = self._capture_state(cloud.ts)
+        motions = self._multi_dof_motions(cloud.ts)
+        keep = None
+        if base_from_sensor is not None and state is not None and motions is not None:
+            transform = base_from_sensor.to_matrix()
+            base_points = np.asarray(
+                points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64
+            )
+            keep = self._body_filter.keep_mask(base_points, state, motions)
+        if keep is None:
+            logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
+        return keep
+
+    def _capture_state(self, stamp: float) -> dict[str, float] | None:
+        """Joint positions at capture time (empty when none is close enough), or None when that state is malformed."""
+        state = self._states.find_closest(stamp, self.config.state_tolerance_s)
+        if state is None:
+            return {}
+        if len(state.name) != len(state.position) or len(set(state.name)) != len(state.name):
+            return None
+        positions = dict(zip(state.name, state.position, strict=True))
+        if not np.isfinite(list(positions.values())).all():
+            return None
+        return positions
+
+    def _multi_dof_motions(self, stamp: float) -> dict[str, NDArray[np.float64]] | None:
+        """Each floating/planar joint's motion past its URDF origin, from capture-time tf (they have no scalar
+        JointState); None when one is missing."""
+        motions = {}
+        for joint in self._joints.values():
+            if joint.type in _MULTI_DOF_JOINT_TYPES:
+                parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
+                if parent_from_child is None:
+                    return None
+                motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
+        return motions
+
+    def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
+        return self.tfbuffer.get(
+            parent,
+            child,
+            time_point=stamp,
+            time_tolerance=self.config.tf_tolerance_s,
+            forward_tolerance=self.config.tf_forward_tolerance_s,
+        )
+
+    def _load_scene(self) -> None:
+        description = self.config.model.load()
+        self._body_filter: RobotBodyFilter | None = None
+        if self.config.self_filter:
+            # RoboPlan is the one backend today, imported only when filtering so the rest runs without it.
+            from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+
+            self._body_filter = RoboPlanBodyFilter(description, self.config.padding_m)
+        self._urdf_xml, self._file_paths = _shareable_urdf(description)
+        self._base_link = description.root_link
+        self._joints = {joint.name: joint for joint in description.joints}
+
+
+class RobotBodyFilter(Protocol):
+    """A self-filter backend: which points lie on the robot at a given joint state."""
+
+    def keep_mask(
+        self,
+        root_points: NDArray[np.float64],
+        joint_positions: Mapping[str, float],
+        joint_motions: Mapping[str, NDArray[np.float64]],
+    ) -> NDArray[np.bool_] | None:
+        """One keep flag per point (points in the URDF root frame, input order), or None when the state lacks a
+        joint the backend needs. joint_motions holds each floating/planar joint's 4x4 motion past its URDF origin."""
+        ...
+
+
+def _shareable_urdf(description: LoadedRobotModel) -> tuple[str, dict[str, tuple[Path, str]]]:
+    """The URDF with each mesh's and texture's local path swapped for package://<package>/<path>?hash=<sha256>, and per
+    name (without the query) its file and hash."""
+    root = ET.fromstring(description.xml)
+    file_paths: dict[str, tuple[Path, str]] = {}
+    for element in root.iter():
+        if element.tag not in ("mesh", "texture") or "filename" not in element.attrib:
+            continue
+        path = Path(element.attrib["filename"])
+        uri = str(path)
+        for package, package_root in description.package_paths.items():
+            if path.is_relative_to(package_root):
+                uri = f"package://{package}/{path.relative_to(package_root).as_posix()}"
+                break
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        element.set("filename", f"{uri}?hash={digest}")
+        file_paths[uri] = (path, digest)
+    return ET.tostring(root, encoding="unicode"), file_paths

@@ -1868,6 +1868,29 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
     assert start_pose[0, 3] == pytest.approx(sum(start.position))
 
 
+def test_cartesian_path_leaves_from_the_tcp_whatever_the_first_waypoint_says(
+    fake_roboplan: None, robot_config: RobotModelConfig
+) -> None:
+    """A target that starts a hair off the TCP (a UI's copy of a live, jittering pose) is
+    snapped onto it; one that starts elsewhere gets the TCP put in front of it."""
+    world = _make_world(fake_roboplan, robot_config)
+    selection = _selection(robot_config, "manipulator")
+    start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
+
+    def pose(x: float) -> PoseStamped:
+        return PoseStamped(
+            frame_id="world", position=Vector3(x, 0.0, 0.0), orientation=Quaternion()
+        )
+
+    for target in ((pose(0.1004), pose(0.3)), (pose(0.3),)):
+        result = _planner_for(world).plan_cartesian_path(
+            world, selection, start, {"manipulator": target}, RoboPlanCartesianPathConfig()
+        )
+        assert result.status == PlanningStatus.SUCCESS, result.message
+        waypoints = FakeCartesianPathPlanner.instances[-1].paths[0].tforms[0]
+        assert [tform[0, 3] for tform in waypoints] == pytest.approx([0.1, 0.3])
+
+
 def test_cartesian_rejects_official_planner_failure(
     fake_roboplan: None,
     robot_config: RobotModelConfig,

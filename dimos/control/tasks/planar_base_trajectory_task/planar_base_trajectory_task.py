@@ -68,6 +68,11 @@ class PlanarBaseTrajectoryTaskConfig:
     settle_timeout: float = 2.0
     stop_hold_s: float = 0.5
     stale_pose_timeout: float = 0.3
+    # The trajectory is a motion from wherever the base stands when it starts (x forward,
+    # y left, yaw; its first point is zero), not odometry poses: the odometry pose on the
+    # first tick becomes its origin. A planner that works in the robot's own frame plans
+    # such motions, and they survive odometry jumping between planning and execution.
+    relative: bool = False
 
 
 class PlanarBaseTrajectoryTask(BaseControlTask):
@@ -94,6 +99,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
         self._error = ""
         self._trajectory: JointTrajectory | None = None
         self._start_t: float | None = None
+        self._origin: tuple[float, float, float] | None = None
         self._elapsed = 0.0
         self._stop_until: float | None = None
         self._stop_pending = False
@@ -138,6 +144,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                 )
             self._trajectory = trajectory
             self._start_t = None
+            self._origin = None
             self._elapsed = 0.0
             self._stop_until = None
             self._stop_pending = False
@@ -176,13 +183,16 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
     def _start_problem(
         self, trajectory: JointTrajectory, current_positions: Mapping[str, float]
     ) -> str:
-        """Reject a trajectory that does not start where the base currently is."""
-        pose: list[float] = []
-        for name in self._joints:
-            value = current_positions.get(name)
-            if value is None or not math.isfinite(value):
-                return ""
-            pose.append(float(value))
+        """Reject a trajectory that does not start where the base currently is (at zero, for
+        a relative one)."""
+        pose: list[float] = [0.0, 0.0, 0.0]
+        if not self._config.relative:
+            pose = []
+            for name in self._joints:
+                value = current_positions.get(name)
+                if value is None or not math.isfinite(value):
+                    return ""
+                pose.append(float(value))
         start = trajectory.points[0].positions
         position_error = math.hypot(start[0] - pose[0], start[1] - pose[1])
         yaw_error = abs(angle_diff(start[2], pose[2]))
@@ -195,6 +205,21 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                 "base's odometry"
             )
         return ""
+
+    def _from_origin(
+        self, reference: list[float], velocity: list[float]
+    ) -> tuple[list[float], list[float]]:
+        """A relative sample laid down from the origin: positions composed onto it, the
+        velocity turned into odometry's axes."""
+        assert self._origin is not None
+        ox, oy, oyaw = self._origin
+        cos_yaw, sin_yaw = math.cos(oyaw), math.sin(oyaw)
+        rx, ry, ryaw = reference
+        vx, vy, vyaw = velocity
+        return (
+            [ox + cos_yaw * rx - sin_yaw * ry, oy + sin_yaw * rx + cos_yaw * ry, oyaw + ryaw],
+            [cos_yaw * vx - sin_yaw * vy, sin_yaw * vx + cos_yaw * vy, vyaw],
+        )
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         with self._lock:
@@ -220,8 +245,12 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             first_tick = self._start_t is None
             if self._start_t is None:
                 self._start_t = state.t_now
+                if self._config.relative:
+                    self._origin = pose
             self._elapsed = state.t_now - self._start_t
             reference, reference_velocity = self._trajectory.sample(self._elapsed)
+            if self._origin is not None:
+                reference, reference_velocity = self._from_origin(reference, reference_velocity)
             position_error = math.hypot(reference[0] - pose[0], reference[1] - pose[1])
             yaw_error = abs(angle_diff(reference[2], pose[2]))
 
@@ -366,6 +395,7 @@ class PlanarBaseTrajectoryTaskParams(BaseConfig):
     settle_timeout: NonNegativeFloat = 2.0
     stop_hold_s: NonNegativeFloat = 0.5
     stale_pose_timeout: PositiveFloat = 0.3
+    relative: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> PlanarBaseTrajectoryTask:

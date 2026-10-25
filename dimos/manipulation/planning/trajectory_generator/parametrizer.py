@@ -26,6 +26,8 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
+# How long a plan to where the robot already is holds it there (s).
+STANDSTILL_S = 0.1
 
 
 class TrajectoryParametrizationError(ValueError):
@@ -51,10 +53,17 @@ class BaseTrajectoryParametrizer(ABC):
 
         path = [JointState(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
-        if result.timestamps is None:
-            trajectory = self._parametrize_path(world, selection, tuple(path), speed_scale)
-        else:
+        if result.timestamps is not None:
             trajectory = self._timed_trajectory(selection, path, result.timestamps)
+        else:
+            # A planner asked for where the robot already is answers [start, start]; a
+            # sampling planner may repeat a waypoint. Time parametrization wants motion
+            # between its gridpoints, so repeats go, and no motion at all is a standstill.
+            distinct = self._collapse_repeats(path)
+            if len(distinct) == 1:
+                trajectory = self._standstill(selection, distinct[0])
+            else:
+                trajectory = self._parametrize_path(world, selection, tuple(distinct), speed_scale)
         self._validate_trajectory(
             trajectory,
             selection.joint_names,
@@ -117,6 +126,31 @@ class BaseTrajectoryParametrizer(ABC):
                 positions,
                 f"Waypoint {waypoint_index} positions",
             )
+
+    @classmethod
+    def _collapse_repeats(cls, path: Sequence[JointState]) -> list[JointState]:
+        """The path without consecutive waypoints that coincide."""
+        distinct = [path[0]]
+        for state in path[1:]:
+            if not cls._positions_close(state.position, distinct[-1].position):
+                distinct.append(state)
+        return distinct
+
+    @staticmethod
+    def _standstill(selection: PlanningGroupSelection, state: JointState) -> JointTrajectory:
+        """A trajectory that holds ``state`` for ``STANDSTILL_S``: the robot is already there."""
+        at_rest = [0.0] * len(selection.joint_names)
+        return JointTrajectory(
+            joint_names=list(selection.joint_names),
+            points=[
+                TrajectoryPoint(
+                    time_from_start=0.0, positions=list(state.position), velocities=at_rest
+                ),
+                TrajectoryPoint(
+                    time_from_start=STANDSTILL_S, positions=list(state.position), velocities=at_rest
+                ),
+            ],
+        )
 
     @classmethod
     def _timed_trajectory(

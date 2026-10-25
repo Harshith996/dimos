@@ -237,3 +237,36 @@ def test_lost_odometry_aborts_and_stops_the_base(loss, goal):
 
     assert task.get_status().state == TrajectoryState.ABORTED
     assert [o for o in outputs if o is not None][-1].velocities == ZERO
+
+
+def test_a_relative_trajectory_runs_from_wherever_the_base_stands():
+    """Planned in the base's own frame (its first point is zero), the motion is laid down from
+    the odometry pose on its first tick: forward is the way the base faces."""
+    base = _TwistBase(x=3.0, y=-1.0, yaw=1.2)
+    task = _task(relative=True)
+    result = task.execute(
+        _line((0.0, 0.0, 0.0), (0.5, 0.2, 0.3), duration=2.0),
+        {"base/vx": 3.0, "base/vy": -1.0, "base/wz": 1.2},
+    )
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED
+
+    _run(task, base, seconds=3.0)
+
+    assert task.get_status().state == TrajectoryState.COMPLETED
+    cos_yaw, sin_yaw = math.cos(1.2), math.sin(1.2)
+    assert base.x == pytest.approx(3.0 + cos_yaw * 0.5 - sin_yaw * 0.2, abs=0.03)
+    assert base.y == pytest.approx(-1.0 + sin_yaw * 0.5 + cos_yaw * 0.2, abs=0.03)
+    assert angle_diff(base.yaw, 1.5) == pytest.approx(0.0, abs=0.05)
+
+
+def test_a_relative_trajectory_must_still_start_at_zero():
+    base = _TwistBase(x=3.0)
+    task = _task(relative=True)
+    result = task.execute(_line((1.0, 0.0, 0.0), (2.0, 0.0, 0.0), duration=2.0))
+    assert result.status == TrajectoryExecutionStatus.ACCEPTED, "checked on the first tick"
+
+    _run(task, base, seconds=0.5)
+
+    assert task.get_status().state == TrajectoryState.ABORTED
+    assert "starts" in task.get_status().error
+    assert base.x == pytest.approx(3.0)

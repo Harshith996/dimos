@@ -26,6 +26,7 @@ from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.parametrizer import (
+    STANDSTILL_S,
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
@@ -232,3 +233,53 @@ def test_rejects_malformed_path_before_invoking_backend(
         )
 
     assert parametrizer.calls == []
+
+
+class _RecordingParametrizer(_FixedParametrizer):
+    def _parametrize_path(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        path: tuple[JointState, ...],
+        speed_scale: float,
+    ) -> JointTrajectory:
+        self.paths = [*getattr(self, "paths", []), path]
+        return super()._parametrize_path(world, selection, path, speed_scale)
+
+
+def test_a_plan_to_where_the_robot_is_becomes_a_standstill() -> None:
+    """A planner asked for the current configuration answers [start, start]; TOPP-RA would
+    choke on it, so no backend runs and the robot is held there for a moment."""
+    names = ["arm/a", "arm/b"]
+    here = JointState(name=names, position=[0.4, 0.0])
+    parametrizer = _RecordingParametrizer(_output())
+    result = PlanningResult(status=PlanningStatus.SUCCESS, path=[here, JointState(here)])
+
+    plan = parametrizer.materialize_plan(MagicMock(), _selection(), result)
+
+    assert parametrizer.calls == []
+    assert [point.positions for point in plan.trajectory.points] == [[0.4, 0.0], [0.4, 0.0]]
+    assert [point.time_from_start for point in plan.trajectory.points] == [0.0, STANDSTILL_S]
+    assert all(point.velocities == [0.0, 0.0] for point in plan.trajectory.points)
+    assert len(plan.path) == 2, "the planner's path is reported as it came"
+
+
+def test_repeated_waypoints_are_dropped_before_the_backend_sees_them() -> None:
+    names = ["arm/a", "arm/b"]
+    path = [
+        JointState(name=names, position=[0.0, 0.0]),
+        JointState(name=names, position=[0.0, 0.0]),
+        JointState(name=names, position=[0.2, 0.1]),
+        JointState(name=names, position=[0.2, 0.1 + 1e-9]),
+        JointState(name=names, position=[0.4, 0.0]),
+    ]
+    parametrizer = _RecordingParametrizer(_output())
+
+    parametrizer.materialize_plan(
+        MagicMock(),
+        _selection(),
+        PlanningResult(status=PlanningStatus.SUCCESS, path=path),
+    )
+
+    (seen,) = parametrizer.paths
+    assert [state.position for state in seen] == [[0.0, 0.0], [0.2, 0.1], [0.4, 0.0]]
