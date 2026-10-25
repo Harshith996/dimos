@@ -172,7 +172,7 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        # RoboPlan is the one backend today, imported only here so a plain UrdfManager runs without it.
+        # Imported here so a plain UrdfManager runs without RoboPlan installed.
         from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(

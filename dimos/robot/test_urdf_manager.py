@@ -420,9 +420,9 @@ def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monke
     clock = [100.0]
     monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
 
-    def state_at(t: float, shoulder: float) -> None:
-        clock[0] = 100.0 + t
-        module.add_joint_state(JointState(ts=t, name=["shoulder"], position=[shoulder]))
+    def state_at(seconds: float, shoulder: float) -> None:
+        clock[0] = 100.0 + seconds
+        module.add_joint_state(JointState(ts=seconds, name=["shoulder"], position=[shoulder]))
 
     state_at(0.0, 0.3)
     state_at(0.1, 0.4)  # the shoulder moved; the tool's edge (relative to arm) did not
@@ -449,8 +449,8 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
         for joint in description.joints
         if joint.type in ("revolute", "continuous", "prismatic")
     }
-    q = roboplan.configuration(positions, {})
-    assert q is not None
+    configuration = roboplan.configuration(positions, {})
+    assert configuration is not None
     try:
         transforms = module.joint_transforms(
             JointState(ts=1.0, name=list(positions), position=list(positions.values()))
@@ -462,7 +462,9 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
     for transform in transforms:
         np.testing.assert_allclose(
             transform.to_matrix(),
-            roboplan._context.forwardKinematics(q, transform.child_frame_id, transform.frame_id),
+            roboplan._context.forwardKinematics(
+                configuration, transform.child_frame_id, transform.frame_id
+            ),
             atol=1e-9,
         )
 
