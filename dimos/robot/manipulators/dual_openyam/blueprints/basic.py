@@ -20,6 +20,7 @@ from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_hardware,
@@ -46,6 +47,7 @@ class DualOpenYamCoordinatorConfig(ControlCoordinatorConfig):
 
     left_can_port: str | None = None
     right_can_port: str | None = None
+    robot_model: RobotModel = DUAL_OPENYAM_MODEL
 
 
 class DualOpenYamCoordinator(TeleopControlCoordinator):
@@ -65,7 +67,7 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
         assert component.limits is not None
         lower = list(component.limits.position_lower)
         upper = list(component.limits.position_upper)
-        model = DUAL_OPENYAM_MODEL.load()
+        model = self.config.robot_model.load()
         for name in DUAL_OPENYAM_ARM_JOINTS:
             joint = model.get_joint(name)
             if (

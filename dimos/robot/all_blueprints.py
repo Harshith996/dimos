@@ -109,6 +109,7 @@ all_blueprints = {
     "mid360-realsense-record-with-pcap": "dimos.robot.assembly.mid360_realsense_30:mid360_realsense_record_with_pcap",
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.basic:openarm_planner_coordinator",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
+    "openyam-spatial": "dimos.robot.manipulators.dual_openyam.blueprints.spatial:openyam_spatial",
     "openyam-spatial-sim": "dimos.robot.manipulators.dual_openyam.blueprints.spatial:openyam_spatial_sim",
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",

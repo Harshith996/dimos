@@ -69,6 +69,7 @@ def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[Transform]:
 class StaticTfPublisherConfig(ModuleConfig):
     # How often to re-publish the static transforms onto the tf stream.
     publish_hz: float = Field(default=5.0, gt=0.0)
+    frames: list[FrameSpec] = Field(default_factory=list)
 
 
 class StaticTfPublisher(Module):
@@ -81,8 +82,10 @@ class StaticTfPublisher(Module):
 
     def transforms(self) -> list[Transform]:
         """The static transforms to publish. Override in a rig-specific subclass."""
+        if self.config.frames:
+            return frames_to_edge_transforms(self.config.frames)
         raise NotImplementedError(
-            f"{type(self).__name__} must override transforms() with its mount frames"
+            f"{type(self).__name__}: configure frames or override transforms() with calibrated mounts"
         )
 
     @rpc

@@ -1,7 +1,7 @@
 // Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {PinchGrab} from './spatial_input.mjs';
+import {PinchGrab, ToolPinch} from './spatial_input.mjs';
 test('release, grab, hold with hysteresis, release', () => {
   const hand = new PinchGrab();
   assert.equal(hand.update(.01, true).grab, false);
@@ -9,6 +9,26 @@ test('release, grab, hold with hysteresis, release', () => {
   assert.deepEqual(hand.update(.01, true), {grab:true, pressed:true});
   assert.equal(hand.update(.028, false).grab, true);
   assert.equal(hand.update(.05, false).grab, false);
+});
+test('opening drag starts at measured position and owns only its selected action', () => {
+  const hand=new ToolPinch();
+  const update=(d,target,x,opening=.6)=>hand.update(d,target,[x,0,0],[1,0,0],opening,.12);
+  update(.05,'opening',0);
+  assert.equal(update(.01,'opening',0).action,'opening');
+  assert.equal(hand.opening,.6);
+  assert.equal(update(.01,'move',-.03,.55).action,'opening');
+  assert.ok(Math.abs(hand.opening-.35)<1e-12);
+  update(.01,null,-1); assert.equal(hand.opening,0);
+  update(.05,null,0); assert.equal(hand.action,null);
+  update(.01,'opening',0,.2); assert.equal(hand.opening,.2);
+});
+test('a pinch begun away from tools cannot acquire one until release', () => {
+  const hand=new ToolPinch();
+  const update=(d,target)=>hand.update(d,target,[0,0,0],[1,0,0],.5,.12);
+  update(.05,null); update(.01,null);
+  assert.equal(update(.01,'move').action,null);
+  update(.05,null); assert.equal(update(.01,'move').action,'move');
+  hand.reset(); assert.equal(update(.01,'opening').action,null);
 });
 test('lost tracking and pinch away from a handle cannot activate an arm', () => {
   const hand = new PinchGrab();

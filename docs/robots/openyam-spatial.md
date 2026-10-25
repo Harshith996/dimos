@@ -1,14 +1,15 @@
 # OpenYAM spatial teleoperation
 
-`openyam-spatial-sim` is an experimental bimanual workstation for WebXR hand
-teleoperation. It uses sim2 devices through the control and sensor interfaces;
-it does not open physical CAN devices. The viewer is served by the existing
-WebXR HTTPS server at `/spatial`.
+`openyam-spatial-sim` and `openyam-spatial` use the same WebXR hand interface
+and registered RGB-D observation renderer. The first uses sim2 devices; the
+second composes the existing physical dual-YAM coordinator, wrist-camera
+collection module, RealSense and a calibrated camera mount. The viewer is
+served by the existing WebXR HTTPS server at `/spatial`.
 
 Both simulated grippers start fully open. The station overrides the active and
 passive finger startup positions without modifying the shared robot artifact.
 Native initialization and reset were checked with the exported YAM model;
-the six spatial-model tests pass. Hand-control gestures are unchanged.
+the six spatial-model tests pass. Physical connections retain measured state.
 
 ## Run
 
@@ -36,8 +37,13 @@ ahead again; the desktop **Place workspace ahead** button also requests this.
 - Open your hand, then pinch index and thumb near the corresponding coloured
   gripper handle. Move and rotate that hand to move that arm independently.
 - Release the pinch to hold. Re-grabbing captures new hand and robot references.
-- While grabbed, bring the middle finger toward the thumb to close the gripper;
-  separate them to open it. These gesture distances are prototype defaults.
+- Pinch the small bead on the tool's opening rail, then slide toward OPEN or
+  CLOSE. Opening starts at measured feedback, so grabbing the bead does not
+  jump the jaws. This action holds the arm; moving the arm leaves opening alone.
+- The solid bead and percentage show measured opening. A white outline shows
+  the requested opening while dragging. Release holds the last command.
+- Each pinch captures one action until release. Crossing another handle while
+  pinched cannot switch actions. Middle-finger position has no control effect.
 - Tracking loss, stale observations, disconnection, or leaving the immersive
   session releases control. Open the hand before grabbing again.
 - Pinching while pointing away from a handle selects a surface in the observed
@@ -65,6 +71,50 @@ or command owners disable manual controls; missing recorder RPCs hide recording.
 If several runs exist, select one. Replacement runs reconnect automatically
 when following the sole run, and old run commands and callbacks are rejected.
 
+## Physical station
+
+Run the physical blueprint with a station JSON file through the normal CLI:
+
+```bash
+uv run dimos run openyam-spatial --config /path/to/station.json
+```
+
+The file uses ordinary module settings; no second viewer or robot-control
+process is required. Supply these deployment values:
+
+| Module / field | Meaning |
+| --- | --- |
+| `ControlCoordinator.left_can_port`, `right_can_port` | Distinct, explicitly identified left and right CAN interfaces |
+| `dualopenyamcollection.camera_ids` | Two stable USB camera IDs, ordered left then right; the recorder remains their sole owner |
+| `workspace_camera.serial_number` | The central RealSense serial number |
+| `workspace_mount.frames` | Calibrated fixed edges, each `[child, parent, [x,y,z], [roll,pitch,yaw]]`, in metres/radians; provide the `world` → `camera_link` mount |
+| `openyamspatialteleop.depth_unit_m` | Metres per raw uint16 depth unit, from the device's depth-units setting; default 0.001. Float depth is already metres |
+| `openyamspatialteleop.server_port` | Existing WebXR HTTPS port setting |
+
+RealSense supplies the factory-calibrated `camera_link` → optical-frame subtree.
+The mount publisher supplies the measured station edge at 20 Hz. An absent
+mount is an error; the viewer never substitutes an identity transform. Registered
+color/depth use one optical frame and resolution, with timestamps within 30 ms.
+The default coordinator still supports its existing mock mode if neither CAN
+port is set; that does not connect physical arms.
+
+The default physical model is `dual_openyam_abc_box_v2`. Verify its arm-base
+placements against the actual rig. The simulation artifact has different grasp
+frames and joint limits and is not substituted for this model. For a calibrated
+station URDF, compose `build_openyam_spatial(model=...)` with a `RobotModelConfig`;
+that exact model is passed to IK, hardware limits, manipulation and display.
+Do not independently override only the viewer's model.
+
+The existing physical URDF fixes its fingertip visuals and supplies no moving
+finger kinematics. Those fixed visuals are omitted rather than animated with
+guessed axes. The measured opening gauge is live; observed fingertips come from
+RGB-D. Simulated finger meshes follow measured finger state. Physical mesh
+animation needs a calibrated moving-finger description.
+
+Physical deployment is wired and configuration/model checks pass locally.
+Real camera acquisition, calibration and arm operation still require station
+acceptance.
+
 ## What is in the scene
 
 Two arm bases are 0.62 m apart. Each arm has an RGB wrist camera (320 × 240,
@@ -72,17 +122,17 @@ requested 15 Hz). A central RGB-D camera (480 × 360, requested 10 Hz) looks
 forward and down at 45 degrees from a pole. This is an example arrangement,
 not a calibration of the office station or a RealSense sensor-noise model.
 
-The immersive scene contains the latest observed cloud, the known robot meshes,
+The immersive scene contains the latest observed depth surface, the known robot meshes,
 measured gripper handles, and wrist images. The table and task objects enter
 only through camera pixels and depth. The viewer does not consume `sim_truth`
-or load the simulation scene. Occluded surfaces remain absent. Clouds replace
-one another; this is not a persistent reconstructed map.
+or load the simulation scene. Occluded surfaces remain absent. Each observation
+replaces the previous one; this is not a persistent reconstructed map.
 
 | Owner | Inputs | Outputs / responsibility |
 | --- | --- | --- |
 | `OpenYamSpatialSimulation` | Native servo targets | Physics and sim2 device observations |
 | `OpenYamSpatialCameras` | Read-only sim2 sensor snapshots | Central RGB/depth/intrinsics/cloud/TF; two wrist RGB feeds |
-| `OpenYamSpatialTeleop` | Cloud + timestamped camera TF; measured joints; tracked hands | Sensor-derived view; existing teleop streams; optional focus request |
+| `OpenYamSpatialTeleop` | Registered RGB/depth/intrinsics + timestamped TF; measured joints; tracked hands | Sensor-derived surface; independent pose/opening actions through existing teleop streams; optional focus request |
 | `OpenYamSpatialCoordinator` | Per-arm teleop streams | Existing per-arm IK tasks; one writer for both sim2 arm devices |
 
 All three existing CameraDevices run sequentially in one dedicated sensor
@@ -91,12 +141,19 @@ aborted in the macOS graphics driver during development; this composition
 avoids that observed failure without changing sim2's renderer or worker system.
 Each device keeps its acquisition clock and reports skipped acquisitions.
 
-The known mesh model and the temporary kinematics-only URDF derive from the
+The simulated mesh model and temporary kinematics-only URDF derive from the
 same robot artifact, including its grasp site. Thus display, IK and simulated
 joints use consistent frames. Robot poses always follow measured joint state,
-not the requested hand target. The viewer accepts at most 12,000 observed
-points, requires camera calibration at the acquisition timestamp, and rejects
-control when feedback or cloud age exceeds 0.5 seconds. Input expires after
+not the requested hand target. The renderer retains an organized depth grid
+bounded by `max_pixels` (60,000 by default) and textures it with the original
+RGB resolution. It rectifies supported distortion, preserves invalid samples,
+and rejects triangles with edges longer than `max_edge_m` (35 mm). It does not
+smooth across depth holes or invent hidden surfaces. The transport carries
+millimetre uint16 depth and JPEG in a versioned binary frame; GPU buffers are
+reused, and each client requests only acquisitions newer than its last frame.
+
+The viewer requires camera calibration at the acquisition timestamp and rejects
+control when feedback or surface age exceeds 0.5 seconds. Input expires after
 0.3 seconds. It does not accumulate queued hand commands.
 
 This station adds **ideal gravity compensation on robot links**, matching the
@@ -127,6 +184,26 @@ It also does not attach the collection recorder or ACT training loop yet; those
 remain on the base OpenYAM workflow.
 
 ## Verification
+
+Scene clarity and tool controls verified in the native simulation, 2026-10-25:
+
+| Check | Observed result |
+| --- | --- |
+| One central RGB-D frame | 23,004 valid depth samples, 43,148 triangles, 106,314 bytes including full-resolution RGB JPEG |
+| Left opening drag | Measured opening 0.994 → 0.685 during the sampled closing interval; arm displacement below 0.001 mm; right arm stationary |
+| Reopen | Opening increased toward the fully-open target; arm displacement below 0.001 mm; right arm stationary |
+| Left pose gesture | 21.1 mm maximum measured displacement; right arm stationary; measured opening stayed within 0.000001 |
+| Surface age during opening exercise | Maximum below 158 ms across the sampled commands |
+| Physical model inspection | Display grasp positions agreed with physical-model Pinocchio FK across 16 poses, maximum numerical difference below 1e-14 m |
+| Browser and installed DimOS Desktop | Live textured surface and tool controls; zero JavaScript errors and zero preview control WebSockets |
+
+These are short local exercises, not a throughput benchmark or physical-arm/
+Vision Pro acceptance. Depth tests cover float metres, non-default uint16 units,
+invalid samples, timestamp/frame mismatch, distortion and missing transforms.
+Gesture/control tests cover no-jump opening capture, action ownership, independent
+hands, release, missing tracking, stale observations and replayed messages.
+The existing physical blueprint's mock tests also retain independent grip behavior.
+The old measurements below describe the earlier point-cloud/gesture version.
 
 Python tests cover independent grabs, tracking loss and release-before-regrab,
 stale/replayed input, observed-surface focus, timestamped cloud transforms,

@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One simulation blueprint, one sensor-derived WebXR viewer; no CAN devices."""
+"""The same sensor-derived WebXR view on sim2 or physical dual-YAM devices."""
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_cameras import OpenYamSpatialCameras
 from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
     WORKSPACE_CAMERA,
@@ -22,6 +28,37 @@ from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
     OpenYamSpatialSimulation,
 )
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
+
+
+def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint:
+    """Physical camera/control wiring; configure CAN ports and measured mount frames.
+
+    A custom calibrated robot model is shared by IK, joint limits and display.
+    The default uses the existing physical dual-YAM model, not the sim artifact.
+    """
+    robot_model = model or dual_openyam_model_config()
+    return (
+        autoconnect(
+            build_dual_openyam_webxr(
+                visualization=NoManipulationVisualizationConfig(),
+                teleop=OpenYamSpatialTeleop,
+                teleop_kwargs={"robot_model": robot_model, "zero_button": None},
+                robot_model=robot_model,
+            ),
+            RealSenseCamera.blueprint(instance_name="workspace_camera", align_depth_to_color=True),
+            StaticTfPublisher.blueprint(instance_name="workspace_mount", publish_hz=20),
+        )
+        .remappings(
+            [
+                (OpenYamSpatialTeleop, "left_wrist", "camera1"),
+                (OpenYamSpatialTeleop, "right_wrist", "camera2"),
+            ]
+        )
+        .global_config(viewer="none")
+    )
+
+
+openyam_spatial = autoconnect(build_openyam_spatial())
 
 openyam_spatial_sim = (
     autoconnect(

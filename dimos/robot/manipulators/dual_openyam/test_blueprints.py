@@ -30,12 +30,13 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    _dual_openyam_webxr_tasks,
+    _teleop_tasks,
     teleop_webxr_dual_openyam,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_PER_ARM,
     dual_openyam_arm_joints,
+    dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
@@ -43,6 +44,10 @@ from dimos.robot.manipulators.dual_openyam.teleop_ik import (
 from dimos.teleop.webxr.controller_types import Buttons
 
 pytestmark = pytest.mark.self_hosted
+
+_tasks_by_side = dict(
+    zip(("left", "right"), _teleop_tasks(dual_openyam_model_config()), strict=True)
+)
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -98,7 +103,7 @@ def coordinator(mocker: MockerFixture) -> Iterator[DualOpenYamCoordinator]:
     ("left_grip", "right_grip"), [(True, False), (False, True), (True, True), (False, False)]
 )
 def test_mock_webxr_grip_engages_only_its_own_arm(coordinator, left_grip, right_grip):
-    for side, config in _dual_openyam_webxr_tasks.items():
+    for side, config in _tasks_by_side.items():
         task = cast("TeleopIKTask", coordinator._tasks[config.name])
         assert set(task.claim().joints) == set(dual_openyam_arm_joints(side))
     buttons = Buttons()
@@ -129,9 +134,7 @@ def test_releasing_one_grip_keeps_the_other_arm_engaged(coordinator, released):
     coordinator._dispatch("teleop_buttons", buttons)
     coordinator._dispatch("left_cartesian_command", PoseStamped(position=[1.0, 0.0, 0.0]))
     coordinator._dispatch("right_cartesian_command", PoseStamped(position=[-1.0, 0.0, 0.0]))
-    tasks = {
-        side: coordinator._tasks[config.name] for side, config in _dual_openyam_webxr_tasks.items()
-    }
+    tasks = {side: coordinator._tasks[config.name] for side, config in _tasks_by_side.items()}
     assert {side: task.is_active() for side, task in tasks.items()} == {"left": True, "right": True}
 
     setattr(buttons, f"{released}_grip", False)

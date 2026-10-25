@@ -26,31 +26,40 @@ from fastapi.responses import HTMLResponse, Response
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from reactivex.disposable import Disposable
+from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object import Object
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
-from dimos.robot.manipulators.dual_openyam.spatial_model import KnownYamModel, artifact_directory
+from dimos.robot.manipulators.dual_openyam.spatial_model import (
+    KnownUrdfYamModel,
+    KnownYamModel,
+    artifact_directory,
+)
 from dimos.robot.manipulators.openyam.simulation import load_yam_artifact
-from dimos.teleop.webxr.controller_types import Hand, WebXRControllerState
+from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.teleop.webxr.module import STATIC_DIR, WebXRTeleopConfig
+from dimos.teleop.webxr.rgbd import RGBDEncoder, SurfaceFrame
+from dimos.types.timestamped import align_timestamped
+from dimos.utils.reactive import backpressure
 
 
 class SpatialHand(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     position: tuple[float, float, float]
     orientation: tuple[float, float, float, float]
-    grab: bool
-    opening: float = Field(ge=0, le=1)
+    pinched: bool
+    action: Literal["move", "opening"] | None = None
 
     @field_validator("orientation")
     @classmethod
@@ -73,10 +82,16 @@ class SpatialInput(BaseModel):
 
 class SpatialViewerConfig(WebXRTeleopConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
+    robot_model: RobotModelConfig | None = None
     input_timeout_s: float = 0.3
     observation_timeout_s: float = Field(default=0.5, gt=0)
-    max_points: int = Field(default=12000, gt=0, le=50000)
-    max_depth_m: float = Field(default=2.0, gt=0)
+    max_pixels: int = Field(default=60000, ge=4, le=200000)
+    max_depth_m: float = Field(default=2.0, gt=0, le=60)
+    depth_unit_m: float = Field(default=0.001, gt=0)
+    sync_tolerance_s: float = Field(default=0.03, gt=0, le=0.1)
+    max_edge_m: float = Field(default=0.035, gt=0, le=0.1)
+    opening_handle_offset: tuple[float, float, float] = (0.0, 0.14, 0.0)
+    opening_handle_travel_m: float = Field(default=0.12, gt=0)
 
 
 class OpenYamSpatialTeleop(ArmTeleopModule):
@@ -89,7 +104,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
 
     config: SpatialViewerConfig
     coordinator_joint_state: In[JointState]
-    pointcloud: In[PointCloud2]
+    color_image: In[Image]
+    depth_image: In[Image]
+    camera_info: In[CameraInfo]
     left_wrist: In[Image]
     right_wrist: In[Image]
     tf: In[TFMessage]
@@ -98,24 +115,43 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._robot: KnownYamModel | None = None
+        self._robot: KnownYamModel | KnownUrdfYamModel | None = None
         self._feedback: dict[str, Any] = {}
-        self._cloud: dict[str, Any] = {"ts": 0.0, "positions": [], "colors": []}
+        self._surface: SurfaceFrame | None = None
+        self._camera_info: CameraInfo | None = None
+        self._observation_error = "Waiting for registered RGB-D and camera calibration"
+        self._encoder = RGBDEncoder(
+            **{
+                name: getattr(self.config, name)
+                for name in (
+                    "max_pixels",
+                    "max_depth_m",
+                    "depth_unit_m",
+                    "sync_tolerance_s",
+                    "max_edge_m",
+                )
+            }
+        )
         self._images: dict[str, tuple[float, bytes]] = {}
         self._objects: list[dict[str, Any]] = []
         self._objects_at = 0.0
         self._transforms = MultiTBuffer()
         self._sequence = -1
         self._released = {hand: False for hand in Hand}
-        self._grabbing = {hand: False for hand in Hand}
+        self._actions: dict[Hand, str | None] = {hand: None for hand in Hand}
+        self._opening_refs: dict[Hand, tuple[np.ndarray, np.ndarray, float]] = {}
 
     @rpc
     def build(self) -> None:
-        self._robot = KnownYamModel(load_yam_artifact(self.config.artifact_directory))
+        self._robot = (
+            KnownUrdfYamModel(self.config.robot_model)
+            if self.config.robot_model
+            else KnownYamModel(load_yam_artifact(self.config.artifact_directory))
+        )
         super().build()
         subscriptions: list[tuple[In[Any], Callable[[Any], None]]] = [
             (self.coordinator_joint_state, self._on_feedback),
-            (self.pointcloud, self._on_cloud),
+            (self.camera_info, self._on_camera_info),
             (self.tf, self._transforms.receive_tfmessage),
             (self.left_wrist, lambda image: self._on_image("left", image)),
             (self.right_wrist, lambda image: self._on_image("right", image)),
@@ -123,6 +159,13 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         ]
         for port, callback in subscriptions:
             self.register_disposable(Disposable(port.subscribe(callback)))
+        frames = align_timestamped(
+            self.color_image.observable(),
+            self.depth_image.observable(),
+            buffer_size=0.3,
+            match_tolerance=self.config.sync_tolerance_s,
+        )
+        self.register_disposable(backpressure(frames).subscribe(self._on_rgbd))
 
     def _setup_routes(self) -> None:
         super()._setup_routes()
@@ -145,16 +188,32 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 return {
                     **self._feedback,
                     "server_time": now,
-                    "cloud_ts": self._cloud["ts"],
+                    "surface_ts": self._surface.ts if self._surface else 0.0,
+                    "observation_error": self._observation_error,
+                    "opening_handle_offset": self.config.opening_handle_offset,
+                    "opening_handle_travel_m": self.config.opening_handle_travel_m,
+                    "actions": {
+                        "left" if hand == Hand.LEFT else "right": action
+                        for hand, action in self._actions.items()
+                    },
                     "objects": self._objects if now - self._objects_at < 2 else [],
                     "objects_active": now - self._objects_at < 2,
                     "observation_timeout_s": self.config.observation_timeout_s,
                 }
 
-        @app.get("/spatial/cloud")
-        def cloud() -> dict[str, Any]:
+        @app.get("/spatial/surface")
+        def surface(after: float = 0) -> Response:
             with self._lock:
-                return self._cloud
+                frame = self._surface
+            if frame is None:
+                raise HTTPException(503, self._observation_error)
+            if frame.ts <= after:
+                return Response(status_code=204, headers={"Cache-Control": "no-store"})
+            return Response(
+                frame.payload,
+                media_type="application/octet-stream",
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.get("/spatial/wrist/{side}")
         def wrist(side: str) -> Response:
@@ -175,7 +234,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 "port": self.config.server_port,
                 "path": "/spatial",
                 "embed": True,
-                "description": "Pinch a gripper handle with thumb and index finger to move that arm. Release to hold. Thumb and middle finger close the gripper.",
+                "description": "Pinch the round tool handle to move the arm. Pinch and slide its opening control to adjust the jaws. Release to hold.",
             }
         ]
 
@@ -197,31 +256,30 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         with self._lock:
             self._images[side] = (message.ts, data)
 
-    def _on_cloud(self, message: PointCloud2) -> None:
-        # Camera optical coordinates require a measured/calibrated camera transform.
-        transform = self._transforms.get("world", message.frame_id, message.ts, 0.1, warn=False)
-        if transform is None:
+    def _on_camera_info(self, message: CameraInfo) -> None:
+        self._camera_info = message
+
+    def _on_rgbd(self, frames: tuple[Image, ...]) -> None:
+        color, depth = frames
+        info = self._camera_info
+        if (
+            info is None
+            or time.time() - min(color.ts, depth.ts) > self.config.observation_timeout_s
+        ):
             return
-        points, colors = message.as_numpy()
-        valid = (
-            np.isfinite(points).all(axis=1)
-            & (points[:, 2] > 0)
-            & (points[:, 2] < self.config.max_depth_m)
-        )
-        points = points[valid]
-        colors = colors[valid] if colors is not None else np.full_like(points, 0.65)
-        step = max(1, int(np.ceil(len(points) / self.config.max_points)))
-        points, colors = points[::step], colors[::step]
-        matrix = transform.to_matrix()
-        points = points @ matrix[:3, :3].T + matrix[:3, 3]
-        packet = {
-            "ts": message.ts,
-            "frame": "world",
-            "positions": np.round(points, 4).ravel().tolist(),
-            "colors": np.round(np.nan_to_num(colors).clip(0, 1), 3).ravel().tolist(),
-        }
+        transform = self._transforms.get("world", depth.frame_id, depth.ts, 0.1, warn=False)
+        if transform is None:
+            self._observation_error = "Camera-to-world calibration unavailable"
+            return
+        try:
+            frame = self._encoder.encode(color, depth, info, transform)
+        except ValueError as error:
+            self._observation_error = str(error)
+            return
         with self._lock:
-            self._cloud = packet
+            if self._surface is None or frame.ts > self._surface.ts:
+                self._surface = frame
+                self._observation_error = ""
 
     def _on_objects(self, objects: list[Object]) -> None:
         # Match ManipulationModule's world-frame object contract. Do not guess a frame.
@@ -261,7 +319,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             fresh = (
                 0 <= now - message.observed_at <= self.config.observation_timeout_s
                 and 0 <= now - self._feedback.get("ts", 0) <= self.config.observation_timeout_s
-                and 0 <= now - self._cloud["ts"] <= self.config.observation_timeout_s
+                and self._surface is not None
+                and 0 <= now - self._surface.ts <= self.config.observation_timeout_s
             )
             if message.sequence <= self._sequence or not fresh:
                 self._reset_controller_state()
@@ -273,17 +332,46 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 if sample is None:
                     self._controllers[hand] = None
                     self._current_poses[hand] = None
-                    self._released[hand] = self._grabbing[hand] = False
-                    continue
-                if not sample.grab:
-                    self._released[hand] = True
-                    self._grabbing[hand] = False
-                elif self._released[hand] and not self._grabbing[hand]:
-                    grasp = self._feedback["arms"][side]["grasp"]
-                    self._grabbing[hand] = bool(
-                        np.linalg.norm(np.array(sample.position) - grasp) < 0.12
-                    )
                     self._released[hand] = False
+                    self._actions[hand] = None
+                    self._opening_refs.pop(hand, None)
+                    continue
+                arm = self._feedback["arms"][side]
+                position = np.asarray(sample.position)
+                opening = float(arm["opening"])
+                if not sample.pinched:
+                    self._released[hand] = True
+                    self._actions[hand] = None
+                    self._opening_refs.pop(hand, None)
+                elif self._released[hand]:
+                    # Capture one action at the pinch edge. Moving over another
+                    # control while held cannot switch ownership or acquire it.
+                    self._released[hand] = False
+                    rotation = Rotation.from_quat(arm["orientation"])
+                    axis = rotation.apply([1.0, 0.0, 0.0])
+                    knob = (
+                        np.asarray(arm["grasp"])
+                        + rotation.apply(self.config.opening_handle_offset)
+                        + axis * (opening - 0.5) * self.config.opening_handle_travel_m
+                    )
+                    if sample.action == "opening" and np.linalg.norm(position - knob) < 0.055:
+                        self._actions[hand] = "opening"
+                        self._opening_refs[hand] = (position, axis, opening)
+                    elif sample.action == "move" and np.linalg.norm(position - arm["grasp"]) < 0.12:
+                        self._actions[hand] = "move"
+                elif sample.action != self._actions[hand]:
+                    self._actions[hand] = None
+                    self._opening_refs.pop(hand, None)
+                if self._actions[hand] == "opening":
+                    origin, axis, initial = self._opening_refs[hand]
+                    opening = float(
+                        np.clip(
+                            initial
+                            + np.dot(position - origin, axis) / self.config.opening_handle_travel_m,
+                            0,
+                            1,
+                        )
+                    )
                 self._current_poses[hand] = PoseStamped(
                     position=sample.position,
                     orientation=sample.orientation,
@@ -292,31 +380,39 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 )
                 self._controllers[hand] = WebXRControllerState(
                     is_left=hand == Hand.LEFT,
-                    grip=float(self._grabbing[hand]),
-                    trigger=1 - sample.opening,
+                    grip=float(self._actions[hand] == "move"),
+                    trigger=1 - opening,
                 )
                 self._last_pose_update[hand] = self._last_controller_update[hand] = time.monotonic()
             if message.focus is not None:
-                points = np.asarray(self._cloud["positions"]).reshape(-1, 3)
+                assert self._surface is not None
+                points = self._surface.points
                 if len(points) and np.min(np.linalg.norm(points - message.focus, axis=1)) < 0.04:
                     self.perception_focus.publish(
                         PointStamped(*message.focus, frame_id="world", ts=now)
                     )
             return True
 
+    def _gripper_is_enabled(self, hand: Hand, buttons: Buttons) -> bool:
+        # The opening handle owns only the gripper; IK receives a released grip.
+        return self._actions[hand] == "opening"
+
     def _reset_controller_state(self) -> None:
         with self._lock:
             self._released = {hand: False for hand in Hand}
-            self._grabbing = {hand: False for hand in Hand}
+            self._actions = {hand: None for hand in Hand}
+            self._opening_refs.clear()
             super()._reset_controller_state()
 
     def _expire_stale_state(self, now: float) -> None:
         for hand in Hand:
             updated = self._last_pose_update[hand]
             if updated is None or now - updated > self.config.input_timeout_s:
-                self._released[hand] = self._grabbing[hand] = False
+                self._released[hand] = False
+                self._actions[hand] = None
+                self._opening_refs.pop(hand, None)
         if (
-            time.time() - min(self._feedback.get("ts", 0), self._cloud["ts"])
+            time.time() - min(self._feedback.get("ts", 0), self._surface.ts if self._surface else 0)
             > self.config.observation_timeout_s
         ):
             self._reset_controller_state()

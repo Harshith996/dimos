@@ -24,6 +24,7 @@ geometry. Display meshes use the same MJCF and only measured joint positions.
 
 from __future__ import annotations
 
+from io import BytesIO
 import os
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,9 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
+from yourdfpy import URDF  # type: ignore[import-untyped]
 
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES
 from dimos.robot.manipulators.openyam.simulation import (
     GRIPPER_STROKE,
@@ -146,7 +149,12 @@ class KnownYamModel:
             mat = int(model.geom_matid[i])
             color = model.mat_rgba[mat] if mat >= 0 else model.geom_rgba[i]
             geometries.append({"id": i, "mesh": str(mesh), "rgba": color.tolist()})
-        return {"meshes": meshes, "geometries": geometries, "sides": list(DUAL_OPENYAM_SIDES)}
+        return {
+            "meshes": meshes,
+            "arms": {side: geometries for side in DUAL_OPENYAM_SIDES},
+            "sides": list(DUAL_OPENYAM_SIDES),
+            "finger_geometry": True,
+        }
 
     def feedback(self, positions: dict[str, float]) -> dict[str, Any]:
         arms = {}
@@ -169,5 +177,67 @@ class KnownYamModel:
                 "transforms": transforms,
                 "grasp": site.xpos.tolist(),
                 "orientation": Rotation.from_matrix(site.xmat.reshape(3, 3)).as_quat().tolist(),
+                "opening": float(np.clip(positions[f"{side}_arm/gripper"], 0, 1)),
+            }
+        return arms
+
+
+class KnownUrdfYamModel:
+    """Display the same resolved URDF and base pose used by physical-arm IK.
+
+    The arm-only hardware URDF fixes its fingertips. Hide those fixed visuals;
+    depth observations and the measured opening gauge represent the jaws until
+    a calibrated moving-finger description is supplied. Never guess their axes.
+    """
+
+    def __init__(self, config: RobotModelConfig) -> None:
+        loaded = config.model.load()
+        self.robot = URDF.load(BytesIO(loaded.xml.encode()), load_collision_meshes=False)
+        self.base = np.eye(4)
+        self.base[:3, :3] = Rotation.from_quat(config.base_pose.orientation.to_list()).as_matrix()
+        self.base[:3, 3] = config.base_pose.position.to_list()
+        self.nodes: dict[str, list[str]] = {side: [] for side in DUAL_OPENYAM_SIDES}
+        meshes: dict[str, Any] = {}
+        arms: dict[str, list[dict[str, Any]]] = {side: [] for side in DUAL_OPENYAM_SIDES}
+        fixed_tips = {
+            joint.child_link
+            for joint in loaded.joints
+            if joint.type == "fixed" and joint.child_link.endswith(("_tip_left", "_tip_right"))
+        }
+        for parent, node, edge in self.robot.scene.graph.to_edgelist():
+            name = edge.get("geometry")
+            side = next((s for s in DUAL_OPENYAM_SIDES if parent.startswith(f"{s}_")), None)
+            if name is None or side is None or parent in fixed_tips:
+                continue
+            mesh = self.robot.scene.geometry[name]
+            meshes[name] = {
+                "vertices": mesh.vertices.ravel().tolist(),
+                "faces": mesh.faces.ravel().tolist(),
+            }
+            color = np.asarray(mesh.visual.main_color, dtype=float) / 255
+            arms[side].append({"mesh": name, "rgba": color.tolist()})
+            self.nodes[side].append(node)
+        self.geometry = {
+            "meshes": meshes,
+            "arms": arms,
+            "sides": list(DUAL_OPENYAM_SIDES),
+            "finger_geometry": not fixed_tips,
+        }
+
+    def feedback(self, positions: dict[str, float]) -> dict[str, Any]:
+        self.robot.update_cfg(
+            {name: positions[name] for name in self.robot.actuated_joint_names if name in positions}
+        )
+        arms = {}
+        for side in DUAL_OPENYAM_SIDES:
+            grasp = self.base @ self.robot.get_transform(f"{side}_grasp_frame")
+            arms[side] = {
+                "transforms": [
+                    (self.base @ self.robot.get_transform(node)).T.ravel().tolist()
+                    for node in self.nodes[side]
+                ],
+                "grasp": grasp[:3, 3].tolist(),
+                "orientation": Rotation.from_matrix(grasp[:3, :3]).as_quat().tolist(),
+                "opening": float(np.clip(positions[f"{side}_arm/gripper"], 0, 1)),
             }
         return arms

@@ -13,3 +13,28 @@ export class PinchGrab {
     return {grab: this.grabbed, pressed: this.pinched && !before};
   }
 }
+
+// One tool action belongs to a pinch until release, even if the hand crosses
+// another control. Opening is a relative drag, seeded from measured feedback.
+export class ToolPinch {
+  constructor() { this.reset(); }
+  reset() {
+    this.pinch = new PinchGrab(); this.action = null; this.opening = null;
+    this.origin = null; this.axis = null; this.initial = 0; this.travel = 1;
+  }
+  get grabbed() { return this.action !== null; }
+  update(distance, target, position, axis, measuredOpening, travel) {
+    const edge = this.pinch.update(distance, target !== null);
+    if (edge.pressed && edge.grab) {
+      this.action = target;
+      this.origin = [...position]; this.axis = [...axis];
+      this.initial = measuredOpening; this.travel = travel;
+    }
+    if (!edge.grab) { this.action = null; this.opening = null; }
+    if (this.action === 'opening') {
+      const delta = position.reduce((sum, v, i) => sum + (v-this.origin[i])*this.axis[i], 0);
+      this.opening = Math.max(0, Math.min(1, this.initial + delta/this.travel));
+    }
+    return {pinched: this.pinch.pinched, action: this.action, pressed: edge.pressed};
+  }
+}

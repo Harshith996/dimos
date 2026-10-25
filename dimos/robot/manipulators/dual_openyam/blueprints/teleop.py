@@ -14,10 +14,13 @@
 
 """WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
 
+from typing import Any
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
@@ -53,38 +56,47 @@ _dual_openyam_webxr_pink = PinkKinematicsConfig(
 )
 _dual_openyam_webxr_hardware = dual_openyam_hardware()
 _dual_openyam_webxr_model = dual_openyam_model_config()
-_dual_openyam_webxr_tasks = {
-    side: teleop_ik_task(
-        _dual_openyam_webxr_hardware,
-        robot_model=_dual_openyam_webxr_model,
-        name=f"{DUAL_OPENYAM_WEBXR_TASK_NAME}_{side}",
-        joint_names=dual_openyam_arm_joints(side),
-        priority=20,
-        solver_type=DualOpenYamPinkPoseTargetSolver,
-        bindings=[{"hand": side, "target_frame": f"{side}_grasp_frame"}],
-        params={
-            "pink": _dual_openyam_webxr_pink,
-            "timeout": 0.5,
-            "max_command_tracking_error_deg": 10.0,
-            "max_joint_velocity_rad_s": 2.0,
-            "joint_command_filter_cutoff_hz": 30.0,
-        },
-    )
-    for side in DUAL_OPENYAM_SIDES
-}
+
+
+def _teleop_tasks(model: RobotModelConfig) -> list[TaskConfig]:
+    return [
+        teleop_ik_task(
+            _dual_openyam_webxr_hardware,
+            robot_model=model,
+            name=f"{DUAL_OPENYAM_WEBXR_TASK_NAME}_{side}",
+            joint_names=dual_openyam_arm_joints(side),
+            priority=20,
+            solver_type=DualOpenYamPinkPoseTargetSolver,
+            bindings=[{"hand": side, "target_frame": f"{side}_grasp_frame"}],
+            params={
+                "pink": _dual_openyam_webxr_pink,
+                "timeout": 0.5,
+                "max_command_tracking_error_deg": 10.0,
+                "max_joint_velocity_rad_s": 2.0,
+                "joint_command_filter_cutoff_hz": 30.0,
+            },
+        )
+        for side in DUAL_OPENYAM_SIDES
+    ]
 
 
 def build_dual_openyam_webxr(
-    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+    *,
+    visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
+    teleop: type[ArmTeleopModule] = ArmTeleopModule,
+    teleop_kwargs: dict[str, Any] | None = None,
+    robot_model: RobotModelConfig | None = None,
 ) -> Blueprint:
     """Compose dual-arm teleop with deployment-specific visualization."""
+    model = robot_model or _dual_openyam_webxr_model
     return autoconnect(
         DualOpenYamCollection.blueprint(),
-        ArmTeleopModule.blueprint(zero_button="B"),
+        teleop.blueprint(**{"zero_button": "B", **(teleop_kwargs or {})}),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
+            robot_model=model.model,
             tasks=[
-                *_dual_openyam_webxr_tasks.values(),
+                *_teleop_tasks(model),
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",
@@ -103,16 +115,16 @@ def build_dual_openyam_webxr(
             ],
         ),
         ManipulationModule.blueprint(
-            model=_dual_openyam_webxr_model,
+            model=model,
             kinematics=_dual_openyam_webxr_pink,
             visualization=visualization,
         ),
     ).remappings(
         [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+            (teleop, "left_controller_output", "left_cartesian_command"),
+            (teleop, "left_gripper_command", "left_gripper_command"),
+            (teleop, "right_controller_output", "right_cartesian_command"),
+            (teleop, "right_gripper_command", "right_gripper_command"),
         ]
     )
 
