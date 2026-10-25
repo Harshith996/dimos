@@ -28,10 +28,11 @@ CUDA: the models run on the CPU, a scan takes seconds.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
@@ -45,6 +46,10 @@ from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.diy.alfred.alfred_model import ALFRED_SELF_FILTER_MODEL
 from dimos.robot.diy.alfred.blueprints.alfred_full import BASE_FRAME, alfred_full
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
+from dimos.robot.diy.alfred.gripper import (
+    OPENARM_V10_GRASP_FRAME_TO_TCP,
+    OPENARM_V10_SWEEP_VOLUME,
+)
 from dimos.utils.gpu_utils import is_cuda_available
 
 # librealsense leaks usbfs fds (~8/s) in its worker; keep socket-accepting modules out of
@@ -87,10 +92,18 @@ GPU_MODULES = (
     ObjectSceneRegistrationModule,
     PickAndPlaceModule,
     HeuristicGraspModule,
+    GraspGenXModule,
 )
 
+GraspGenerator = Literal["heuristic", "graspgenx"]
+"""Who answers the pick pipeline's ``propose_grasps``: the top-down heuristic, or GraspGenX, the
+learned generator, in its own Python environment (``native/python/graspgenx``) with the v1.0
+gripper's geometry (``alfred.gripper``)."""
 
-def alfred_perception_modules(*, gpu: bool | None = None, localize: bool = True) -> tuple[Any, ...]:
+
+def alfred_perception_modules(
+    *, gpu: bool | None = None, localize: bool = True, grasp: GraspGenerator = "heuristic"
+) -> tuple[Any, ...]:
     """What the mast D455 adds to a stack: colour for the camera panel, a self-filtered depth
     cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run it,
     the perception stack's localize. On the venv's CPU-only torch SigLIP embeds a frame in ~30 s
@@ -193,7 +206,7 @@ def alfred_perception_modules(*, gpu: bool | None = None, localize: bool = True)
             tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
         ).remappings([(ObjectSceneRegistrationModule, "pointcloud", "scene_objects_pointcloud")]),
         PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME),
-        HeuristicGraspModule.blueprint(),
+        _grasp_generator(grasp),
     ]
     present = gpu if gpu is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]
     if not localize:
@@ -207,6 +220,17 @@ def alfred_perception_modules(*, gpu: bool | None = None, localize: bool = True)
             m for m in modules if all(atom.module not in GPU_MODULES for atom in m.blueprints)
         ]
     return tuple(modules)
+
+
+def _grasp_generator(grasp: GraspGenerator) -> Any:
+    if grasp == "graspgenx":
+        return GraspGenXModule.blueprint(
+            gripper=OPENARM_V10_SWEEP_VOLUME,
+            grasp_frame_to_tcp=OPENARM_V10_GRASP_FRAME_TO_TCP,
+        )
+    if grasp == "heuristic":
+        return HeuristicGraspModule.blueprint()
+    raise ValueError(f"unknown grasp generator {grasp!r}")
 
 
 alfred_full_perception = autoconnect(alfred_full, *alfred_perception_modules()).global_config(

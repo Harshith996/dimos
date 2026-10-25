@@ -22,6 +22,7 @@ all_blueprints = {
     "alfred-full-perception": "dimos.robot.diy.alfred.blueprints.alfred_full_perception:alfred_full_perception",
     "alfred-keyboard-teleop": "dimos.robot.diy.alfred.blueprints.alfred_keyboard_teleop:alfred_keyboard_teleop",
     "alfred-manipulation": "dimos.robot.diy.alfred.blueprints.alfred_manipulation:alfred_manipulation",
+    "alfred-manipulation-graspgenx": "dimos.robot.diy.alfred.blueprints.alfred_manipulation:alfred_manipulation_graspgenx",
     "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "alfred-mls-nav-lidar": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav_lidar:alfred_mls_nav_lidar",
     "alfred-nav": "dimos.robot.diy.alfred.blueprints.alfred_nav:alfred_nav",

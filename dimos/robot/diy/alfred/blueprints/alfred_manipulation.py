@@ -14,7 +14,8 @@
 
 """Alfred at the bench: the arms, the lift, the whole-body planner and the mast D455, no lidar.
 
-    dimos run alfred-manipulation
+    dimos run alfred-manipulation              # top-down heuristic grasps
+    dimos run alfred-manipulation-graspgenx    # GraspGenX grasps (its own env, synced on first start)
 
 The Orin NX runs one of two stacks at a time: this one for manipulation, ``alfred-navigation``
 for driving around. Nothing of navigation is here: no Mid-360, no Point-LIO, no planners, no
@@ -27,6 +28,8 @@ The D455 feeds the planner's obstacle map and, with a GPU, the perception stack'
 
 from __future__ import annotations
 
+from typing import Any
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
@@ -37,14 +40,19 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     alfred_base_transports,
     alfred_coordinator,
 )
-from dimos.robot.diy.alfred.blueprints.alfred_full_perception import alfred_perception_modules
+from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
+    GraspGenerator,
+    alfred_perception_modules,
+)
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 from dimos.visualization.vis_module import vis_module
 
-alfred_manipulation = (
-    autoconnect(
+
+def alfred_bench_modules(*, grasp: GraspGenerator = "heuristic") -> tuple[Any, ...]:
+    """The bench stack's modules, with one grasp generator answering the pick pipeline."""
+    return (
         # The mounts rooted at base_link: no lidar owns a frame above it here.
         AlfredMountTf.blueprint(),
         AlfredHighLevel.blueprint(),
@@ -52,10 +60,22 @@ alfred_manipulation = (
         vis_module(global_config.viewer, rerun_config=_rerun_config()),
         *alfred_arm_modules(),
         alfred_coordinator(arms=True, follower=False),
-        # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and its
-        # frame memory pushed the Orin into swap beside it.
-        *alfred_perception_modules(localize=False),
+        # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and
+        # its frame memory pushed the Orin into swap beside it.
+        *alfred_perception_modules(localize=False, grasp=grasp),
     )
+
+
+# The registry scans for module-level autoconnect(...) chains: each stack is spelled out.
+alfred_manipulation = (
+    autoconnect(*alfred_bench_modules())
+    .transports(alfred_base_transports())
+    .global_config(n_workers=10, robot_model="alfred")
+)
+# The same stack with GraspGenX proposing grasps instead of the top-down heuristic. GraspGenX
+# runs in its own environment, synced on first start (its weights download then too).
+alfred_manipulation_graspgenx = (
+    autoconnect(*alfred_bench_modules(grasp="graspgenx"))
     .transports(alfred_base_transports())
     .global_config(n_workers=10, robot_model="alfred")
 )

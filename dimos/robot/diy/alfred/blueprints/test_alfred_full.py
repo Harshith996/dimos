@@ -22,7 +22,9 @@ import re
 from typing import Any, cast
 import xml.etree.ElementTree as ElementTree
 
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
@@ -33,6 +35,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import transport_topic
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig, GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -88,10 +91,18 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
     alfred_full_perception,
     alfred_perception_modules,
 )
-from dimos.robot.diy.alfred.blueprints.alfred_manipulation import alfred_manipulation
+from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
+    alfred_manipulation,
+    alfred_manipulation_graspgenx,
+)
 from dimos.robot.diy.alfred.blueprints.alfred_navigation import alfred_navigation
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
+from dimos.robot.diy.alfred.gripper import (
+    OPENARM_V10_FINGERTIP_DEPTH_M,
+    OPENARM_V10_GRASP_FRAME_TO_TCP,
+    OPENARM_V10_SWEEP_VOLUME,
+)
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
@@ -520,3 +531,51 @@ def test_an_arm_plans_on_the_planar_whole_body_model() -> None:
         world=world, selection=selection, start=start, goal=goal, timeout=5.0
     )
     assert result.is_success(), result.message
+
+
+def test_graspgenx_sees_the_v10_gripper_the_urdf_carries() -> None:
+    """GraspGenX's gripper frame is the wrist turned half a turn about x (approach +z, jaws
+    along x); its sweep volume and the step to grasp_frame come from the URDF's numbers."""
+    config = GraspGenXConfig.model_validate(
+        {"gripper": OPENARM_V10_SWEEP_VOLUME, "grasp_frame_to_tcp": OPENARM_V10_GRASP_FRAME_TO_TCP}
+    )
+    # The URDF: ee_base_link -> grasp_frame is rpy (pi, 0, pi/2) at (0, 0, -0.186).
+    wrist_to_tcp = np.eye(4)
+    wrist_to_tcp[:3, :3] = Rotation.from_euler("xyz", [np.pi, 0.0, np.pi / 2]).as_matrix()
+    wrist_to_tcp[:3, 3] = [0.0, 0.0, -0.186]
+    wrist_to_graspgenx = np.eye(4)
+    wrist_to_graspgenx[:3, :3] = Rotation.from_euler("x", np.pi).as_matrix()
+    expected = np.linalg.inv(wrist_to_graspgenx) @ wrist_to_tcp
+    assert np.allclose(np.asarray(config.grasp_frame_to_tcp), expected, atol=1e-9)
+    # Approach +z, closing along x, the way GraspGenX wants them.
+    tcp = np.asarray(config.grasp_frame_to_tcp)
+    assert np.allclose(tcp[:3, 2], [0.0, 0.0, 1.0]), "grasp_frame's z is the approach"
+    assert np.allclose(tcp[:3, 1], [1.0, 0.0, 0.0]), "grasp_frame's y is across the jaw"
+    gripper = config.gripper
+    jaw_open, pad_width, pad_length = gripper.extents_open
+    assert 0.080 < jaw_open < 0.088, "88 mm of slider travel less the pads' overlap"
+    assert gripper.extents_half_open[0] < jaw_open / 2 + 1e-9
+    assert gripper.extents_half_open[1:] == (pad_width, pad_length), "prismatic: pads only slide"
+    assert gripper.offset_open == gripper.offset_half_open
+    assert gripper.fingertip_depth == OPENARM_V10_FINGERTIP_DEPTH_M
+    far_face = gripper.offset_open[2] + pad_length / 2
+    assert abs(far_face - gripper.fingertip_depth) < 1e-9, "the box ends at the fingertips"
+    assert gripper.offset_open[2] < 0.186 < gripper.fingertip_depth, "the TCP sits in the pads"
+    assert gripper.family == "parallel_2f"
+
+
+def test_the_bench_stack_can_run_graspgenx_instead_of_the_heuristic() -> None:
+    """alfred-manipulation-graspgenx: the same stack, GraspGenX answering propose_grasps."""
+    heuristic = {atom.module for atom in alfred_manipulation.blueprints}
+    assert HeuristicGraspModule in heuristic and GraspGenXModule not in heuristic
+    learned = {atom.module for atom in alfred_manipulation_graspgenx.blueprints}
+    assert GraspGenXModule in learned and HeuristicGraspModule not in learned
+    assert learned - {GraspGenXModule} == heuristic - {HeuristicGraspModule}, "only the generator"
+    (graspgenx,) = _atoms(alfred_manipulation_graspgenx, GraspGenXModule)
+    assert graspgenx.kwargs["gripper"] == OPENARM_V10_SWEEP_VOLUME
+    assert graspgenx.kwargs["grasp_frame_to_tcp"] == OPENARM_V10_GRASP_FRAME_TO_TCP
+    assert GraspGenXModule not in {
+        atom.module
+        for f in alfred_perception_modules(gpu=False, grasp="graspgenx")
+        for atom in f.blueprints
+    }, "GraspGenX is a GPU model"
