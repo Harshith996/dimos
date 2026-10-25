@@ -109,7 +109,6 @@ class R1ProLio(StaticTfPublisher):
 
     odometry: In[Odometry]
     pose: Out[PoseStamped]
-    # The same pose as an Odometry, for a fusion module such as dimSLAM.
     base_odometry: Out[Odometry]
 
     def transforms(self) -> list[Transform]:

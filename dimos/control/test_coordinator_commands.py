@@ -364,9 +364,9 @@ def test_rate_limited_publish_drops_calls_within_the_period(monkeypatch):
     clock = [10.0]
     monkeypatch.setattr("dimos.control.coordinator.time.monotonic", lambda: clock[0])
     publish = _rate_limited(sent.append, 30.0)
-    for t in (0.0, 0.01, 0.02, 0.034, 0.05, 0.07):
-        clock[0] = 10.0 + t
-        publish(t)
+    for offset in (0.0, 0.01, 0.02, 0.034, 0.05, 0.07):
+        clock[0] = 10.0 + offset
+        publish(offset)
 
     assert sent == [0.0, 0.034, 0.07]
     publish_all = sent.append
