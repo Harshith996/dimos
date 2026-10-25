@@ -37,8 +37,7 @@ class HeadFloorPriorConfig(ModuleConfig):
     tf_tolerance_s: float = 0.1
     # A head point no higher than this above the floor (and no lower than min_height_m) is floor.
     floor_tolerance_m: float = 0.05
-    # Kept from just under the floor to just above the chassis lidar's plane, what the lidar sees worst; a drop deeper
-    # than min_height_m stays unseen rather than becoming floor.
+    # Just under the floor to just above the chassis lidar's plane, what the lidar sees worst; deeper drops stay unseen.
     min_height_m: float = -0.15
     max_height_m: float = 0.35
     # The floor under the robot, which it stands on and no sensor sees, as points this far apart; 0 radius adds none.
@@ -50,9 +49,7 @@ class HeadFloorPriorConfig(ModuleConfig):
 
 
 class HeadFloorPrior(Module):
-    """Head depth onto the floor the robot stands on (floor_frame's z = 0; the chassis lidar never sees it): a point just
-    above or under the floor slides along its ray onto it, and the floor under the robot's own footprint is added. Every
-    pose comes from tf at the cloud's stamp, so the torso and base may move."""
+    """Head depth near floor_frame's z = 0 slid along its ray onto the floor, plus the floor under the robot's footprint."""
 
     config: HeadFloorPriorConfig
 
@@ -133,8 +130,7 @@ def footprint_floor(radius: float, spacing: float) -> np.ndarray:
 def view_floor(
     in_floor: np.ndarray, inner: float, reach: float, bin_deg: float, spacing: float
 ) -> np.ndarray:
-    """Floor points in floor_frame on a `spacing` grid from radius `inner` out to, per `bin_deg` bearing, the nearest of
-    `in_floor` (floor_frame points) within `reach`, on the bearings where that nearest point is on the floor."""
+    """Floor grid from radius `inner` out to the nearest `in_floor` point per bearing within `reach`, where that point is floor."""
     bins = int(np.ceil(360.0 / bin_deg))
     radius = np.hypot(in_floor[:, 0], in_floor[:, 1])
     near = (radius > inner) & (radius < reach)
@@ -153,8 +149,8 @@ def view_floor(
     return points
 
 
-def _bin(x: np.ndarray, y: np.ndarray, bin_deg: float) -> np.ndarray:
-    bearing: np.ndarray = (np.degrees(np.arctan2(y, x)) % 360.0 // bin_deg).astype(int)
+def _bin(xs: np.ndarray, ys: np.ndarray, bin_deg: float) -> np.ndarray:
+    bearing: np.ndarray = (np.degrees(np.arctan2(ys, xs)) % 360.0 // bin_deg).astype(int)
     return bearing
 
 
@@ -164,8 +160,7 @@ def _apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 
 def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
-    """Head depth anchored on Point-LIO's scans, tuned for the Orin, then put onto the floor by HeadFloorPrior;
-    keywords override the Depth2DepthCloud config."""
+    """Orin-tuned head depth anchored on Point-LIO, floored by HeadFloorPrior; keywords override Depth2DepthCloud's config."""
     return autoconnect(
         Depth2DepthCloud.blueprint(
             **{
@@ -176,8 +171,7 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 # The lidar never sees the floor (base_link z = 0): unanchored, the near field read 2-5x short.
                 "height_frame": BASE_FRAME,
                 "floor_tolerance_m": HeadFloorPriorConfig.model_fields["floor_tolerance_m"].default,
-                # One point per 8x8 pixels, at most 3000: replaying r1_live_20260930_1332 on the R1, floor near the robot
-                # rose from ~45% of the map at 11x11 / 1500 to 51%.
+                # 8x8 / 3000 over 11x11 / 1500 raised near floor coverage from ~45% to 51% on r1_live_20260930_1332.
                 "decimation": 8,
                 "max_points": 3000,
                 # One floor probe per cloud pixel.

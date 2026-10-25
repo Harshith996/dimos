@@ -869,20 +869,27 @@ impl FloorPrior {
         let camera_z = floor_from_camera.translation.vector.z;
         let candidates: Vec<(usize, usize, f64, f64)> = (0..map.height)
             .step_by(self.step)
-            .flat_map(|v| (0..map.width).step_by(self.step).map(move |u| (u, v)))
-            .filter_map(|(u, v)| {
+            .flat_map(|row| {
+                (0..map.width)
+                    .step_by(self.step)
+                    .map(move |column| (column, row))
+            })
+            .filter_map(|(column, row)| {
                 let ray = Vector3::new(
-                    (u as f64 - pin.cx as f64) / pin.fx as f64,
-                    (v as f64 - pin.cy as f64) / pin.fy as f64,
+                    (column as f64 - pin.cx as f64) / pin.fx as f64,
+                    (row as f64 - pin.cy as f64) / pin.fy as f64,
                     1.0,
                 );
                 // Height gained per unit of depth along the optical axis; the floor is only below the camera.
                 let down = (floor_from_camera.rotation * ray).z;
                 let depth = -camera_z / down;
-                (down < 0.0 && depth <= self.max_range).then_some((u, v, depth, down))
+                (down < 0.0 && depth <= self.max_range).then_some((column, row, depth, down))
             })
             .collect();
-        let pixels: Vec<(usize, usize)> = candidates.iter().map(|&(u, v, _, _)| (u, v)).collect();
+        let pixels: Vec<(usize, usize)> = candidates
+            .iter()
+            .map(|&(column, row, _, _)| (column, row))
+            .collect();
         let mut anchored = vec![false; candidates.len()];
         let mut floor: Vec<Anchor> = Vec::new();
         // Floor read too near drops onto the floor once its neighbours are anchored; an obstacle keeps its height.
@@ -890,12 +897,14 @@ impl FloorPrior {
             let with_floor: Vec<Anchor> = visible.iter().chain(&floor).copied().collect();
             let probed = calibration.probe(pred, map.height, map.width, &with_floor, &pixels);
             let before = floor.len();
-            for (i, (&(u, v, depth, down), probed)) in candidates.iter().zip(probed).enumerate() {
-                if !anchored[i] && camera_z + probed as f64 * down <= self.tolerance {
-                    anchored[i] = true;
+            for (index, (&(column, row, depth, down), probed)) in
+                candidates.iter().zip(probed).enumerate()
+            {
+                if !anchored[index] && camera_z + probed as f64 * down <= self.tolerance {
+                    anchored[index] = true;
                     floor.push(Anchor {
-                        u: u as f32,
-                        v: v as f32,
+                        u: column as f32,
+                        v: row as f32,
                         z: depth as f32,
                     });
                 }
@@ -937,10 +946,10 @@ mod tests {
         let map = UndistortMap::new(&lens, 160, 120, 100.0);
         let pin = &map.camera;
         // Depth along the optical axis to the floor for each pixel, and whether it lands in a box's footprint.
-        let floor_hit = |u: usize, v: usize| {
+        let floor_hit = |column: usize, row: usize| {
             let ray = Vector3::new(
-                (u as f64 - pin.cx as f64) / pin.fx as f64,
-                (v as f64 - pin.cy as f64) / pin.fy as f64,
+                (column as f64 - pin.cx as f64) / pin.fx as f64,
+                (row as f64 - pin.cy as f64) / pin.fy as f64,
                 1.0,
             );
             let down = (floor_from_camera.rotation * ray).z;
@@ -950,8 +959,8 @@ mod tests {
         };
         // The model reads the floor 30% too far and the box as a block 20% nearer than the floor behind it.
         let pred: Vec<f32> = (0..120)
-            .flat_map(|v| (0..160).map(move |u| (u, v)))
-            .map(|(u, v)| match floor_hit(u, v) {
+            .flat_map(|row| (0..160).map(move |column| (column, row)))
+            .map(|(column, row)| match floor_hit(column, row) {
                 Some((depth, false)) => (depth * 1.3) as f32,
                 Some((depth, true)) => (depth * 0.8) as f32,
                 None => 20.0,

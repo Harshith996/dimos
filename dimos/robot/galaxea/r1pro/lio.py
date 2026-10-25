@@ -123,7 +123,7 @@ def set_affinity(pid: int, cores: set[int]) -> None:
 def run_pids() -> list[int]:
     """This dimos run: the coordinator (this worker's forkserver's parent) and everything under it."""
     coordinator = psutil.Process(psutil.Process().parent().ppid())
-    return [coordinator.pid, *(p.pid for p in coordinator.children(recursive=True))]
+    return [coordinator.pid, *(child.pid for child in coordinator.children(recursive=True))]
 
 
 class R1ProPointLio(PointLio):

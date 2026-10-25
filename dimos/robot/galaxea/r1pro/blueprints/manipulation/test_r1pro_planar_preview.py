@@ -81,8 +81,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)
-    # The mock base steps a fixed tick per write, so on a loaded machine it trails the clock: give it time to settle,
-    # and a goal tolerance tighter than the check below so "completed" can't mean stopping 5 cm short.
+    # The mock base trails the clock on a loaded machine: more settle time, and a tolerance tighter than the check below.
     tasks = [
         replace(
             task, params={**task.params, "settle_timeout": 10.0, "position_goal_tolerance": 0.01}
