@@ -752,7 +752,8 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
             // rotate_180 turns every imager's pixels by a half turn about its optical axis, so
             // its optical frame turns with them and the cloud lands where it did; the mount edges
             // keep describing the physical housing, and the IMU's data are not turned.
-            let half_turn = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::PI);
+            let half_turn =
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::PI);
             for (frame_id, kind, index) in wanted {
                 let Some(profile) = find_profile(&device_profiles, kind, index) else {
                     tracing::warn!("RealSense has no stream for {frame_id}; not published on tf");
@@ -843,16 +844,28 @@ fn capture_thread(cfg: &Config, shared: &Shared, handle: &Handle, outs: &Outs) {
         let infra2_ts = fresh.check("infra2", infra2.as_ref(), shared);
 
         let color_img = match (&color, color_ts) {
-            (Some(frame), Some(ts)) => {
-                Some(image(frame, "rgb8", 3, &cfg.color_optical_frame(), ts, cfg.rotate_180))
-            }
+            (Some(frame), Some(ts)) => Some(image(
+                frame,
+                "rgb8",
+                3,
+                &cfg.color_optical_frame(),
+                ts,
+                cfg.rotate_180,
+            )),
             _ => None,
         };
         if let (Some(img), true) = (&color_img, cfg.enable_color) {
             let _ = handle.block_on(outs.color_image.publish(img));
         }
         let depth_img = match (&depth, depth_ts) {
-            (Some(frame), Some(ts)) => Some(image(frame, "16UC1", 2, &depth_frame_id, ts, cfg.rotate_180)),
+            (Some(frame), Some(ts)) => Some(image(
+                frame,
+                "16UC1",
+                2,
+                &depth_frame_id,
+                ts,
+                cfg.rotate_180,
+            )),
             _ => None,
         };
         if let (Some(img), true) = (&depth_img, cfg.enable_depth) {
@@ -1447,7 +1460,10 @@ mod tests {
 
     #[test]
     fn rotate_180_reverses_pixels_and_recenters_the_principal_point() {
-        assert_eq!(rotate_180_pixels(&[1, 2, 3, 4, 5, 6], 3), vec![4, 5, 6, 1, 2, 3]);
+        assert_eq!(
+            rotate_180_pixels(&[1, 2, 3, 4, 5, 6], 3),
+            vec![4, 5, 6, 1, 2, 3]
+        );
         assert_eq!(rotate_180_pixels(&[1, 2, 3, 4], 2), vec![3, 4, 1, 2]);
         let info = CameraInfo {
             header: header("f", 0.0),
@@ -1457,7 +1473,9 @@ mod tests {
             D: vec![0.1, 0.2, 0.3, 0.4, 0.5],
             K: [430.0, 0.0, 400.0, 0.0, 430.0, 250.0, 0.0, 0.0, 1.0],
             R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            P: [430.0, 0.0, 400.0, 0.0, 0.0, 430.0, 250.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            P: [
+                430.0, 0.0, 400.0, 0.0, 0.0, 430.0, 250.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+            ],
             binning_x: 0,
             binning_y: 0,
             roi: RegionOfInterest {
