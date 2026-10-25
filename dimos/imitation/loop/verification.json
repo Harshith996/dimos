@@ -201,7 +201,7 @@
   },
   "reconciliation": {
     "date": "2026-10-24",
-    "status": "native simulation loop verified; physical station unverified; Desktop update pending",
+    "status": "native simulation loop and installed Desktop verified; physical station unverified",
     "branch": "pim/refactor/openyam-learning-reconciled",
     "base_commit": "a7bb57c64c4e44ffd66f80fa4fd16c9c031fe29d",
     "evidence_directory": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation",
@@ -255,6 +255,20 @@
       "release": "hold",
       "reset_held": "hold",
       "evidence": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation/quest-reconciled/quest-result.json"
+    },
+    "engine_commit": "fd6d52f0ac8ae74c4a9e341687237ecb79aa232e",
+    "desktop": {
+      "app_commit": "67158b350ca7b61d8d690df70ebd9524006bbe1c",
+      "installed_update": "passed",
+      "verified": [
+        "embedded operator UI",
+        "single-arm station setup fields",
+        "stopped state and disabled controls",
+        "original evaluation episode preserved"
+      ],
+      "screenshot": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation/desktop-station-setup.png",
+      "left_in": "stopped; no recording, training, Quest server or physical station configuration",
+      "browser_note": "Fresh native Chrome tab loaded the embedded app before browser inspection attached; initial inspected frame loads stalled."
     }
   }
 }
