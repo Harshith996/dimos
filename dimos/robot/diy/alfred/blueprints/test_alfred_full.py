@@ -112,6 +112,7 @@ from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 from dimos.robot.manipulators.openarm.config import OPENARM_HARDWARE_ID
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.utils.gpu_utils import is_cuda_available
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
@@ -579,3 +580,13 @@ def test_the_bench_stack_can_run_graspgenx_instead_of_the_heuristic() -> None:
         for f in alfred_perception_modules(gpu=False, grasp="graspgenx")
         for atom in f.blueprints
     }, "GraspGenX is a GPU model"
+
+
+@pytest.mark.parametrize(
+    "stack", [alfred_full, alfred_manipulation, alfred_navigation], ids=["full", "bench", "nav"]
+)
+def test_the_rerun_bridge_keeps_little_for_late_viewers(stack: Blueprint) -> None:
+    """A quarter of the Orin's RAM (the bridge's default) is what the models run in: that
+    worker reached 6.4 GB and was OOM-killed, with the box thrashing first."""
+    (bridge,) = _atoms(stack, RerunBridgeModule)
+    assert bridge.kwargs["memory_limit"] == "256MB"
