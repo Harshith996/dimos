@@ -48,6 +48,13 @@ const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)
 Live launch phases (and added or removed blueprints) also arrive on zenoh at `<namespace>/dimos/events/<type>`
 (`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`).
 
+A change to the shared `config.yaml` arrives the same way, one topic per setting:
+`<namespace>/dimos/events/config/<setting>`, where `<setting>` is a key of `GET /config`
+(`recordingsDir`, `path`). The payload is `{"type": "config", "setting": "<setting>"}` and carries no
+value: `GET /config` stays the one answer, so a listener's cache and the event can never say
+different things. Subscribe to the setting you read, or to `<namespace>/dimos/events/**` for
+everything. A single `*` matches one chunk, so it would miss these.
+
 ## Running it yourself
 
 ```sh skip
@@ -57,6 +64,8 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 
 - Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
   `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
+  `GET /config` answers the settings that can change while it runs (the file's path, the recordings directory);
+  the ones a flag can win are fixed at startup, so `GET /info` has those.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

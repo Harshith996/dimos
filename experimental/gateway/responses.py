@@ -62,6 +62,13 @@ class Info(Body):
     server: ServerInfo
 
 
+class SharedConfig(Body):
+    """The shared config.yaml's settings as this gateway reads them, re-read on a `config` event."""
+
+    path: str
+    recordingsDir: str
+
+
 class Stopping(Body):
     stopping: bool
 

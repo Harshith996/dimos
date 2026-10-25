@@ -62,6 +62,11 @@ async def info(state: GatewayState) -> dict[str, Any]:
     }
 
 
+@router.get("/config", response_model=responses.SharedConfig)
+async def config() -> dict[str, Any]:
+    return store.shared_settings()
+
+
 @router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
     asyncio.get_running_loop().call_later(constants.SERVER_STOP_DELAY_S, state.exit)

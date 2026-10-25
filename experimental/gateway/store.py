@@ -40,11 +40,19 @@ def logs_dir() -> Path:
     return gateway_dir() / "logs"
 
 
+def dimos_home() -> Path:
+    return Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
+
+
+def config_file() -> Path:
+    """The shared `config.yaml` itself, which may not exist."""
+    return dimos_home() / "config.yaml"
+
+
 def setting(section: str, key: str) -> Any:
     """A value from the shared `$DIMOS_HOME/config.yaml` (default ~/.dimos/config.yaml), None when unset."""
-    home = Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
     try:
-        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
+        loaded = yaml.safe_load(config_file().read_text()) or {}
     except (OSError, yaml.YAMLError):
         return None
     value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
@@ -54,6 +62,17 @@ def setting(section: str, key: str) -> Any:
 def recordings_dir() -> Path:
     configured = setting("recordings", "dir")
     return Path(configured).expanduser() if configured else RECORDINGS_DIR
+
+
+def shared_settings() -> dict[str, Any]:
+    """What `GET /config` answers, and what a `config` event says has changed: the shared
+    `config.yaml`'s settings as the gateway resolves them for each use.
+
+    The settings fixed when the gateway started (`zenoh.namespace`, `dimos-gateway.socket`, where a
+    flag wins over the file) are not here: they cannot change while it runs, and the running ones are
+    `GET /info`'s. So everything here is read fresh, and a change to any of it is news.
+    """
+    return {"path": str(config_file()), "recordingsDir": str(recordings_dir())}
 
 
 def write_atomic(path: Path, text: str) -> None:
