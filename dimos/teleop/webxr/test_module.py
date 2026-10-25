@@ -476,7 +476,8 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
     module = ArmTeleopModule(server_port=9443, zero_button="B")
     manipulation = mocker.Mock()
     manipulation.list_planning_groups.return_value = (
-        SimpleNamespace(id="manipulator", joint_names=("joint1", "joint2")),
+        SimpleNamespace(id="left_arm", joint_names=("left_joint1", "left_joint2")),
+        SimpleNamespace(id="right_arm", joint_names=("right_joint1", "right_joint2")),
     )
     module._manipulation = manipulation
     thread = mocker.patch("dimos.teleop.webxr.extensions.threading.Thread")
@@ -492,9 +493,11 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
     finally:
         module.stop()
 
-    target = manipulation.plan_to_joints.call_args.args[0]["manipulator"]
-    assert target.name == ["joint1", "joint2"]
-    assert list(target.position) == [0.0, 0.0]
+    targets = manipulation.plan_to_joints.call_args.args[0]
+    assert {group: (target.name, list(target.position)) for group, target in targets.items()} == {
+        "left_arm": (["left_joint1", "left_joint2"], [0.0, 0.0]),
+        "right_arm": (["right_joint1", "right_joint2"], [0.0, 0.0]),
+    }
     manipulation.execute.assert_called_once_with(
         blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
     )

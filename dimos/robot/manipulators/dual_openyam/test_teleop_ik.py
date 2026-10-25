@@ -34,17 +34,29 @@ from dimos.robot.manipulators.dual_openyam.teleop_ik import (
 _TARGET_FRAMES = ("left_grasp_frame",)
 
 
-def _solver() -> DualOpenYamPinkPoseTargetSolver:
-    task = _dual_openyam_webxr_tasks["left"]
+def _solver(side: str = "left") -> DualOpenYamPinkPoseTargetSolver:
+    task = _dual_openyam_webxr_tasks[side]
     config = PoseTargetIKTaskConfig(
         joint_names=tuple(task.joint_names),
         robot_model=task.params["robot_model"],
-        target_frames=_TARGET_FRAMES,
+        target_frames=(f"{side}_grasp_frame",),
         pink=task.params["pink"],
         max_joint_velocity_rad_s=task.params["max_joint_velocity_rad_s"],
         joint_command_filter_cutoff_hz=task.params["joint_command_filter_cutoff_hz"],
     )
     return DualOpenYamPinkPoseTargetSolver(config)
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_each_arm_solver_uses_its_six_joint_home_posture(side):
+    solver = _solver(side)
+    seed = JointState(name=dual_openyam_arm_joints(side), position=DUAL_OPENYAM_HOME_PER_ARM)
+    targets = solver.frame_poses(seed, (f"{side}_grasp_frame",))
+
+    assert solver.step(targets, seed, 0.01) is not None
+    context = next(iter(solver._control_contexts.values()))
+    assert context.tasks["posture/current"].target_q == pytest.approx(DUAL_OPENYAM_HOME_PER_ARM)
 
 
 @pytest.mark.self_hosted

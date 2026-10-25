@@ -348,5 +348,61 @@
       "No robot restart or motor commands issued by this assistant. Physical jogs untested.",
       "No browser or native UI automation."
     ]
+  },
+  "miguel_teleop_integration_2026_10_24": {
+    "status": "approved per-arm and zero-reset changes integrated; tests pass; existing physical process not restarted",
+    "pull_requests": [
+      "https://github.com/dimensionalOS/dimos/pull/4631",
+      "https://github.com/dimensionalOS/dimos/pull/4633"
+    ],
+    "dependency_head": "58cfc5a43fa3478181386c2b58a3d7db7cc11050",
+    "integration_method": "Three upstream commits cherry-picked with -x, preserving authorship and source IDs; excludes unrelated newer-main changes.",
+    "commits": [
+      {
+        "upstream": "64312385d9f43f492dcb5650a6049ebc47124524",
+        "local": "d0a2da0fea9323cabab41aee86189dc033a0ce8f"
+      },
+      {
+        "upstream": "a11e3e7e592426fa311f16a2ab6aec77129e6938",
+        "local": "a9e92608cbcb13fa7c42a3aefcc513641a423e17"
+      },
+      {
+        "upstream": "58cfc5a43fa3478181386c2b58a3d7db7cc11050",
+        "local": "4fa727989a99f541ae67332dd3ea9c9bc8b5f708"
+      }
+    ],
+    "source_sha256": {
+      "dimos/robot/manipulators/dual_openyam/blueprints/teleop.py": "b98f3cd7a238806c421e9d1fb403ba48ed4a88347b9f640fa7685a5f2f055ca6",
+      "dimos/robot/manipulators/dual_openyam/teleop_ik.py": "8e997aaab60505382bf7c297d5da56396c8924770af73ea13af44401872c78ec",
+      "dimos/robot/manipulators/openyam/blueprints/teleop.py": "3f4296d0c9be8de9be9a9d6a51a9f916cbab1bf42ba896faf09ceea4d8526494",
+      "dimos/teleop/webxr/module.py": "bdf8afc4089389140cd3a460b44f8899c3f4be6e6ab68b077daa11b69e2cca83",
+      "dimos/teleop/webxr/extensions.py": "2381c5ec199f3b801852df0803e826fbd55bfef37143bb412a148c1299399e1e"
+    },
+    "checks": {
+      "python_tests": 95,
+      "desktop_tests": 14,
+      "mypy": "5 changed production files passed",
+      "ruff": "all 8 upstream changed Python files passed"
+    },
+    "coverage": [
+      "left-only, right-only, both-grip and neither-grip commands using mock hardware",
+      "release either grip without disengaging the other arm",
+      "real per-arm IK tracking and six-joint nominal posture for both arms",
+      "one debounced B press plans zero targets for both planning groups",
+      "existing Desktop attachment, reconnection and stale-command tests"
+    ],
+    "runtime": {
+      "pid": 88998,
+      "run_id": "20261024-203419-1d4e-teleop-webxr-dual-openyam",
+      "desktop_http": 200,
+      "running": true,
+      "error": null,
+      "implementation": "Process predates this integration and still uses the coupled teleop code."
+    },
+    "limits": [
+      "No physical restart, motor commands, or browser/native UI automation performed.",
+      "Independent grips and B reset take effect only after the operator restarts the blueprint.",
+      "Headset camera panels, elbow steering, and dual-arm learning integration are outside these two PRs."
+    ]
   }
 }

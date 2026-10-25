@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 from typing import Any, cast
 
 import pytest
@@ -66,7 +67,8 @@ def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
-def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None:
+@pytest.fixture
+def coordinator(mocker: MockerFixture) -> Iterator[DualOpenYamCoordinator]:
     kwargs = _module_kwargs(teleop_webxr_dual_openyam, DualOpenYamCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
@@ -87,29 +89,55 @@ def test_mock_webxr_grip_engages_only_its_own_arm(mocker: MockerFixture) -> None
 
     coordinator.start()
     try:
-        for side, config in _dual_openyam_webxr_tasks.items():
-            task = cast("TeleopIKTask", coordinator._tasks[config.name])
-            assert set(task.claim().joints) == set(dual_openyam_arm_joints(side))
-        buttons = Buttons()
-        buttons.left_grip = True
-        coordinator._dispatch("teleop_buttons", buttons)
-        coordinator._dispatch("left_gripper_command", Float32(data=0.75))
-        coordinator._dispatch("right_gripper_command", Float32(data=0.25))
-        coordinator._dispatch(
-            "left_cartesian_command",
-            PoseStamped(position=[1.0, 0.0, 0.0]),
-        )
-        coordinator._dispatch(
-            "right_cartesian_command",
-            PoseStamped(position=[-1.0, 0.0, 0.0]),
-        )
-        assert coordinator._tick_loop is not None
-        coordinator._tick_loop._tick()
-
-        adapter = cast("WholeBodyAdapter", coordinator._hardware["dual_openyam"].adapter)
-        states = adapter.read_motor_states()
-        assert [state.q for state in states[:6]] == [0.01] * 6
-        assert [state.q for state in states[6:12]] == pytest.approx(DUAL_OPENYAM_HOME_PER_ARM)
-        assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
+        yield coordinator
     finally:
         coordinator.stop()
+
+
+@pytest.mark.parametrize(
+    ("left_grip", "right_grip"), [(True, False), (False, True), (True, True), (False, False)]
+)
+def test_mock_webxr_grip_engages_only_its_own_arm(coordinator, left_grip, right_grip):
+    for side, config in _dual_openyam_webxr_tasks.items():
+        task = cast("TeleopIKTask", coordinator._tasks[config.name])
+        assert set(task.claim().joints) == set(dual_openyam_arm_joints(side))
+    buttons = Buttons()
+    buttons.left_grip = left_grip
+    buttons.right_grip = right_grip
+    coordinator._dispatch("teleop_buttons", buttons)
+    coordinator._dispatch("left_gripper_command", Float32(data=0.75))
+    coordinator._dispatch("right_gripper_command", Float32(data=0.25))
+    coordinator._dispatch("left_cartesian_command", PoseStamped(position=[1.0, 0.0, 0.0]))
+    coordinator._dispatch("right_cartesian_command", PoseStamped(position=[-1.0, 0.0, 0.0]))
+    coordinator._tick_loop._tick()
+
+    adapter = cast("WholeBodyAdapter", coordinator._hardware["dual_openyam"].adapter)
+    states = adapter.read_motor_states()
+    assert [state.q for state in states[:6]] == pytest.approx(
+        [0.01] * 6 if left_grip else DUAL_OPENYAM_HOME_PER_ARM
+    )
+    assert [state.q for state in states[6:12]] == pytest.approx(
+        [0.01] * 6 if right_grip else DUAL_OPENYAM_HOME_PER_ARM
+    )
+    assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
+
+
+@pytest.mark.parametrize("released", ["left", "right"])
+def test_releasing_one_grip_keeps_the_other_arm_engaged(coordinator, released):
+    buttons = Buttons()
+    buttons.left_grip = buttons.right_grip = True
+    coordinator._dispatch("teleop_buttons", buttons)
+    coordinator._dispatch("left_cartesian_command", PoseStamped(position=[1.0, 0.0, 0.0]))
+    coordinator._dispatch("right_cartesian_command", PoseStamped(position=[-1.0, 0.0, 0.0]))
+    tasks = {
+        side: coordinator._tasks[config.name] for side, config in _dual_openyam_webxr_tasks.items()
+    }
+    assert {side: task.is_active() for side, task in tasks.items()} == {"left": True, "right": True}
+
+    setattr(buttons, f"{released}_grip", False)
+    coordinator._dispatch("teleop_buttons", buttons)
+
+    assert {side: task.is_active() for side, task in tasks.items()} == {
+        "left": released != "left",
+        "right": released != "right",
+    }

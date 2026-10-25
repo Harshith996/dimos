@@ -69,6 +69,21 @@ dimos run teleop-webxr-dual-openyam \
 Linux interfaces must already be configured for classical CAN at 1 Mbit/s.
 The native macOS transport configures the adapter bitrate directly.
 
+### Quest controls
+
+Each controller's grip engages its own arm: left grip controls the left arm,
+right grip controls the right arm, and both can operate together. Releasing a
+grip ends teleoperation for that arm without disengaging the other. Each index
+trigger controls its corresponding gripper.
+
+With both grips released, B requests a planned move of both arms to the zero
+joint pose. This uses the existing manipulation planner and coordinator
+trajectory task. Held teleoperation has higher priority than the reset move.
+
+The Desktop Workcell continues to attach to the same coordinator and camera
+feeds. Blueprint code changes take effect on the next blueprint start; reloading
+the viewer does not reload the running robot's code.
+
 ## Hardware topology
 
 | Motor | Send ID | Reply ID | Type |
