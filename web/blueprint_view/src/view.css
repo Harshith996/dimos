@@ -9,11 +9,19 @@ html,
 body {
   touch-action: pan-x pan-y;
 }
-/* the page's surfaces take the module graph's hue (--bg, tinted toward the accent), not the skin's warmer panel black:
-   the side a step lighter than the graph, its section headers a step lighter again (any skin: mixes, not colors) */
+/* one temperature for the whole page: every surface is the module graph's own color (--bg) at another lightness, same
+   hue and chroma (oklch), so the skin's warm panel black never sits next to the graph's cool one. Graph, then the side
+   a step lighter, then headers and the top bar a step lighter again (a step darker in a light skin). */
 :root {
-  --bv-panel: color-mix(in oklab, var(--bg) 96%, var(--primary));
-  --bv-head: color-mix(in oklab, var(--bg) 89%, var(--primary));
+  --bv-step: -1;
+  --bv-panel: oklch(from var(--bg) calc(l + 0.025 * var(--bv-step)) c h);
+  --bv-head: oklch(from var(--bg) calc(l + 0.06 * var(--bv-step)) c h);
+}
+:root[data-dr-dark] {
+  --bv-step: 1;
+}
+.dr-topbar {
+  background: var(--bv-head);
 }
 body.dr-body,
 #root {
