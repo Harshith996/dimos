@@ -28,6 +28,8 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
 # How far past a position limit is rounding, not a violation (rad or m).
 _POSITION_LIMIT_TOLERANCE = 1e-6
+# Where a position that close to a limit lands: inside it, by this much (rad or m).
+_POSITION_LIMIT_MARGIN = 1e-7
 # How long a plan to where the robot already is holds it there (s).
 STANDSTILL_S = 0.1
 
@@ -137,10 +139,12 @@ class BaseTrajectoryParametrizer(ABC):
         selection: PlanningGroupSelection,
         path: Sequence[JointState],
     ) -> None:
-        """Put positions a rounding error outside a joint's limits onto them, in place."""
+        """Move positions on or a rounding error past a joint's limits a hair inside, in place."""
         # A goal on a limit comes back from the planner a few ulps past it (0.0 asked for,
-        # -2.7e-17 answered) and the native TOPP-RA refuses the whole path over it. Only
-        # noise is snapped: a real violation stays, and the backend reports it as before.
+        # -2.7e-17 answered) and the native TOPP-RA refuses the whole path over it. It
+        # checks the sampled spline, so a waypoint exactly on the limit fails the same way:
+        # the samples beside it land a few ulps outside. Both go a hair inside instead. A
+        # real violation stays, and the backend reports it as before.
         lower, upper = (
             world.get_prepared_model().joint_space.select(selection.joint_names).position_limits()
         )
@@ -152,10 +156,11 @@ class BaseTrajectoryParametrizer(ABC):
 
     @staticmethod
     def _snapped(value: float, low: float, high: float) -> float:
-        if low - _POSITION_LIMIT_TOLERANCE <= value < low:
-            return low
-        if high < value <= high + _POSITION_LIMIT_TOLERANCE:
-            return high
+        # A range narrower than the margin has no inside to land in: stay on the limit.
+        if low - _POSITION_LIMIT_TOLERANCE <= value < low + _POSITION_LIMIT_MARGIN:
+            return min(low + _POSITION_LIMIT_MARGIN, high)
+        if high - _POSITION_LIMIT_MARGIN < value <= high + _POSITION_LIMIT_TOLERANCE:
+            return max(high - _POSITION_LIMIT_MARGIN, low)
         return value
 
     @classmethod

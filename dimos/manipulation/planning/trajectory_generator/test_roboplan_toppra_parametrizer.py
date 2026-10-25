@@ -332,21 +332,27 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
     assert max(abs(current[2] - previous[2]) for previous, current in pairwise(positions)) < math.pi
 
 
-def _one_joint_world(
-    tmp_path: Path, *, lower: float, upper: float
-) -> tuple[RoboPlanWorld, PlanningGroupSelection]:
-    model_path = tmp_path / "one-joint.urdf"
+def _two_joint_world(tmp_path: Path) -> tuple[RoboPlanWorld, PlanningGroupSelection]:
+    """joint4 is bounded [0.0, 2.4435] like the OpenArm's. joint1 moves alongside it, so the
+    shared path parameter is a two-joint norm and samples land a few ulps off the knots, as on
+    the robot; with one joint the spline evaluates exactly and nothing goes wrong."""
+    model_path = tmp_path / "two-joint.urdf"
     model_path.write_text(
-        '<robot name="one-joint" version="1.2"><link name="base"/><link name="tip"/>'
-        '<joint name="joint4" type="revolute"><parent link="base"/><child link="tip"/>'
-        f'<axis xyz="0 0 1"/><limit lower="{lower}" upper="{upper}" effort="1" velocity="1" '
-        'acceleration="2"/></joint></robot>'
+        '<robot name="two-joint" version="1.2">'
+        '<link name="base"/><link name="middle"/><link name="tip"/>'
+        '<joint name="joint1" type="revolute"><parent link="base"/><child link="middle"/>'
+        '<axis xyz="0 0 1"/><limit lower="-3" upper="3" effort="1" velocity="1" acceleration="2"/>'
+        "</joint>"
+        '<joint name="joint4" type="revolute"><parent link="middle"/><child link="tip"/>'
+        '<axis xyz="0 0 1"/><limit lower="0" upper="2.4435" effort="1" velocity="1" '
+        'acceleration="2"/></joint>'
+        "</robot>"
     )
     config = RobotModelConfig(
         model=RobotModel.from_file(model_path),
-        joint_names=["joint4"],
+        joint_names=["joint1", "joint4"],
         base_link="base",
-        planning_groups=[PlanningGroupDefinition("arm", ("joint4",), "base")],
+        planning_groups=[PlanningGroupDefinition("arm", ("joint1", "joint4"), "base")],
     )
     world = RoboPlanWorld()
     world.load_model(prepare_robot_model(config))
@@ -354,45 +360,47 @@ def _one_joint_world(
     return world, PlanningGroupRegistry(config.planning_groups).select(("arm",))
 
 
+def _two_joint_result(positions: list[list[float]]) -> PlanningResult:
+    return PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=[JointState(name=["joint1", "joint4"], position=list(row)) for row in positions],
+    )
+
+
 @pytest.mark.parametrize(
     "positions",
-    [[0.1, -2.697610857303145e-17], [0.5, -2.697610857303145e-17, 0.3]],
-    ids=["goal on the limit", "waypoint on the limit"],
+    [
+        [[0.7, 0.5], [0.0, 0.0]],
+        [[0.7, 0.5], [0.0, -2.697610857303145e-17]],
+        [[0.0, 0.5], [0.0, -2.697610857303145e-17], [0.0, 0.3]],
+    ],
+    ids=["zero pose", "zero pose with the planner's rounding", "rounding at a waypoint mid-path"],
 )
-def test_roboplan_toppra_accepts_rounding_noise_past_a_position_limit(
-    tmp_path: Path, positions: list[float]
+def test_roboplan_toppra_accepts_a_waypoint_on_or_a_rounding_error_past_a_limit(
+    tmp_path: Path, positions: list[list[float]]
 ) -> None:
-    """The zero pose asks joint4 for its lower limit 0.0 and the planner answers -2.7e-17;
-    the native TOPP-RA checks limits exactly and refused the whole plan over it."""
-    world, selection = _one_joint_world(tmp_path, lower=0.0, upper=2.4435)
-    result = PlanningResult(
-        status=PlanningStatus.SUCCESS,
-        path=[JointState(name=["joint4"], position=[position]) for position in positions],
-    )
+    """The zero pose asks joint4 for exactly its lower limit 0.0, and the planner may answer
+    -2.7e-17. The native TOPP-RA checks the sampled spline exactly; the final sample of a path
+    to the limit falls a few ulps below it, and a knot a rounding error past it is hit exactly.
+    Each of these paths was refused with "is outside [0.0, 2.4435]"."""
+    world, selection = _two_joint_world(tmp_path)
 
     plan = RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
-        world, selection, result
+        world, selection, _two_joint_result(positions)
     )
 
-    sampled = [point.positions[0] for point in plan.trajectory.points]
-    assert sampled[0] == pytest.approx(positions[0])
-    assert sampled[-1] == pytest.approx(positions[-1])
-    assert min(sampled) >= 0.0
+    joint4 = [point.positions[1] for point in plan.trajectory.points]
+    assert joint4[0] == pytest.approx(positions[0][1], abs=1e-6)
+    assert joint4[-1] == pytest.approx(positions[-1][1], abs=1e-6)
+    assert min(joint4) > 0.0, "every sample stays inside the limit"
 
 
 def test_roboplan_toppra_still_rejects_a_real_position_limit_violation(tmp_path: Path) -> None:
-    world, selection = _one_joint_world(tmp_path, lower=0.0, upper=2.4435)
-    result = PlanningResult(
-        status=PlanningStatus.SUCCESS,
-        path=[
-            JointState(name=["joint4"], position=[0.5]),
-            JointState(name=["joint4"], position=[-0.01]),
-        ],
-    )
+    world, selection = _two_joint_world(tmp_path)
 
     with pytest.raises(TrajectoryParametrizationError, match=r"is outside \[0.0, 2.4435\]"):
         RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
-            world, selection, result
+            world, selection, _two_joint_result([[0.7, 0.5], [0.0, -0.01]])
         )
 
 

@@ -72,7 +72,7 @@ def _selection() -> PlanningGroupSelection:
     )
 
 
-def _world(*, lower: float = 0.0, upper: float = 1.0) -> WorldSpec:
+def _world(*, lower: float = -1.0, upper: float = 1.0) -> WorldSpec:
     config = RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
         joint_names=["arm/a", "arm/b"],
@@ -326,25 +326,36 @@ def test_repeated_waypoints_are_dropped_before_the_backend_sees_them() -> None:
 @pytest.mark.parametrize(
     ("planned", "seen"),
     [
-        (-2.697610857303145e-17, 0.0),
-        (1.0 + 5e-7, 1.0),
+        (-2.697610857303145e-17, 1e-7),
+        (0.0, 1e-7),
+        (1.0 + 5e-7, 1.0 - 1e-7),
+        (1.0, 1.0 - 1e-7),
         (-0.01, -0.01),
         (1.01, 1.01),
     ],
-    ids=["noise below", "noise above", "violation below", "violation above"],
+    ids=[
+        "noise below",
+        "on the lower limit",
+        "noise above",
+        "on the upper limit",
+        "violation below",
+        "violation above",
+    ],
 )
-def test_rounding_noise_past_a_limit_is_snapped_onto_it_and_a_violation_is_kept(
+def test_a_position_on_or_a_rounding_error_past_a_limit_moves_a_hair_inside(
     planned: float, seen: float
 ) -> None:
     """A goal on a joint's limit (0.0 for a joint bounded [0.0, 1.0]) comes back from the
-    planner at -2.7e-17, which an exact native limit check refuses; it belongs on the limit.
-    Anything further out is a real violation and reaches the backend as it came."""
+    planner at -2.7e-17 or exactly 0.0; the native TOPP-RA checks the sampled spline exactly,
+    and samples beside a waypoint on the limit fall a few ulps outside. So both land 1e-7
+    inside. Anything further out is a real violation and reaches the backend as it came."""
     names = ["arm/a", "arm/b"]
     path = [
-        JointState(name=names, position=[0.0, 0.0]),
+        JointState(name=names, position=[0.5, 0.5]),
         JointState(name=names, position=[0.4, planned]),
     ]
     output = _output()
+    output.points[0].positions = [0.5, 0.5]
     output.points[-1].positions = [0.4, seen]
     parametrizer = _RecordingParametrizer(output)
 
@@ -355,5 +366,5 @@ def test_rounding_noise_past_a_limit_is_snapped_onto_it_and_a_violation_is_kept(
     )
 
     (backend_path,) = parametrizer.paths
-    assert [state.position for state in backend_path] == [[0.0, 0.0], [0.4, seen]]
+    assert [state.position for state in backend_path] == [[0.5, 0.5], [0.4, seen]]
     assert plan.path[-1].position == [0.4, seen]
