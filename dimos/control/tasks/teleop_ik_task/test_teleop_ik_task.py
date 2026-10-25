@@ -237,6 +237,41 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
     assert solver.reset.call_count >= 1
 
 
+@pytest.mark.parametrize("hand", ["left", "right"])
+def test_regrip_after_operator_frame_change_holds_measured_robot_pose(
+    mocker: MockerFixture, hand: str
+) -> None:
+    solver = _solver(mocker)
+    frame = f"{hand}_tool"
+    task = TeleopIKTask("quest", _config((_binding(hand, frame),)), solver=solver)
+    on_pose = task.on_left_cartesian_command if hand == "left" else task.on_right_cartesian_command
+    held = _buttons(left=hand == "left", right=hand == "right")
+    task.on_teleop_buttons(held, 1.0)
+    on_pose(_pose(0.1), 1.0)
+    assert task.compute(_state()) is not None
+    task.on_teleop_buttons(_buttons(), 1.1)
+
+    # Forward calibration changes the controller frame while both arms hold.
+    calibrated = PoseStamped(
+        position=Vector3(2.0, -3.0, 1.0),
+        orientation=Quaternion.from_euler(Vector3(0.2, -0.3, 1.5)),
+    )
+    robot = PoseStamped(
+        position=Vector3(0.4, 0.3, 0.2),
+        orientation=Quaternion.from_euler(Vector3(-0.4, 0.5, 0.6)),
+    )
+    solver.frame_poses.return_value[frame] = robot
+    on_pose(calibrated, 1.2)
+    assert task.compute(_state(1.2)) is None
+
+    task.on_teleop_buttons(held, 1.3)
+    on_pose(calibrated, 1.3)
+    assert task.compute(_state(1.3)) is not None
+    target = solver.step.call_args.args[0][frame]
+    assert target.position.to_tuple() == pytest.approx(robot.position.to_tuple())
+    assert target.orientation.to_tuple() == pytest.approx(robot.orientation.to_tuple())
+
+
 def test_estop_and_preemption_clear_command_session(mocker: MockerFixture) -> None:
     solver = _solver(mocker)
     task = TeleopIKTask(

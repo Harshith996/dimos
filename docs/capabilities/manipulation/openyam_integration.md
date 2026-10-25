@@ -71,6 +71,13 @@ The native macOS transport configures the adapter bitrate directly.
 
 ### Quest controls
 
+To set **forward**, release both grips, point either controller in your intended
+operating direction, and click that controller's thumbstick. This sets one
+horizontal heading for both arms; up stays up. The headset confirms the change.
+Grip again to continue from the held robot poses. Recalibrate after changing your
+operating direction or reconnecting the headset. Looking around does not change
+the heading, and calibration is ignored while either grip is held.
+
 Each controller's grip engages its own arm: left grip controls the left arm,
 right grip controls the right arm, and both can operate together. Releasing a
 grip ends teleoperation for that arm without disengaging the other. Each index

@@ -52,6 +52,7 @@ let hudTexture = null;
 let hudDirty = false;
 let hudElapsedSecond = -1;
 let hudPlaced = false;
+let forwardStatus = null;
 
 const HUD_WIDTH_PX = 2048;
 const HUD_HEIGHT_PX = 256;
@@ -96,6 +97,8 @@ function setupWebSocket() {
 
         ws.onopen = () => {
             hudOffline = false;
+            forwardStatus = null;
+            hudPlaced = false;
             hudDirty = true;
             setStatus('Server connected');
             resolve();
@@ -305,6 +308,13 @@ function renderVideoPanel(view, viewport) {
 function handleServerMessage(data) {
     try {
         const message = JSON.parse(data);
+        if (message.type === 'teleop_forward') {
+            forwardStatus = message.message;
+            hudDirty = true;
+            hudPlaced = false; // Show feedback in front of the operator's current view.
+            setStatus(message.message);
+            return;
+        }
         if (message.type !== 'episode_status') return;
         episodeStatus = message;
         episodeStatusReceivedAtMs = performance.now();
@@ -387,26 +397,28 @@ function formatElapsed(seconds) {
 }
 
 function updateHudTexture() {
-    if (!episodeStatus || !hudContext) return;
+    const showForward = webXRClientConfig?.forward_calibration;
+    if ((!episodeStatus && !showForward) || !hudContext) return;
     const elapsed = collectionElapsedSeconds();
     if (!hudDirty && elapsed === hudElapsedSecond) return;
     hudDirty = false;
     hudElapsedSecond = elapsed;
 
-    const saved = episodeStatus.episodes_saved;
-    const discarded = episodeStatus.episodes_discarded;
-    const recording = episodeStatus.state === 'recording';
+    const saved = episodeStatus?.episodes_saved ?? 0;
+    const discarded = episodeStatus?.episodes_discarded ?? 0;
+    const recording = episodeStatus?.state === 'recording';
     const state = hudOffline ? 'OFFLINE' : recording ? 'RECORDING' : 'READY';
     const stateColor = hudOffline ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
-    const lastEvent = episodeStatus.last_event === 'init' ? 'NONE' : episodeStatus.last_event.toUpperCase();
-    const sections = [
+    const lastEvent = !episodeStatus || episodeStatus.last_event === 'init'
+        ? 'NONE' : episodeStatus.last_event.toUpperCase();
+    const sections = episodeStatus ? [
         [400, 'STATE', state, '#f4f7fb', stateColor],
         [220, 'TAKE', String(saved + discarded + 1).padStart(3, '0'), '#f4f7fb'],
         [280, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
         [260, 'SAVED', String(saved).padStart(3, '0'), '#8de2bd'],
         [320, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
         [568, 'LAST ACTION', lastEvent, '#f4f7fb'],
-    ];
+    ] : [];
 
     hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
     hudContext.beginPath();
@@ -422,6 +434,17 @@ function updateHudTexture() {
         drawHudSection(hudContext, x, width, label, value, color, dotColor);
         x += width;
     }
+    if (showForward) {
+        hudContext.fillStyle = '#c0cfdf';
+        hudContext.font = '32px sans-serif';
+        hudContext.fillText(
+            hudOffline ? 'Disconnected — reconnect to control the arms.' : forwardStatus
+                ?? 'Set forward: release both grips, point ahead, then click that thumbstick.',
+            32,
+            episodeStatus ? 229 : 140,
+            HUD_WIDTH_PX - 64,
+        );
+    }
 
     gl.bindTexture(gl.TEXTURE_2D, hudTexture);
     gl.texImage2D(
@@ -435,7 +458,7 @@ function updateHudTexture() {
 }
 
 function renderCollectionHud(view, viewport) {
-    if (!episodeStatus || !hudPlaced) return;
+    if ((!episodeStatus && !webXRClientConfig?.forward_calibration) || !hudPlaced) return;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     renderTexturedQuad(

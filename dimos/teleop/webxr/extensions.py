@@ -23,7 +23,10 @@ Available subclasses:
 """
 
 import asyncio
+import json
+import math
 import threading
+import time
 from typing import Any
 
 from fastapi import WebSocket
@@ -32,6 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -157,6 +161,18 @@ class ArmTeleopModule(WebXRTeleopModule):
 
     _manipulation: ManipulationSpec | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._forward_rotation: Quaternion | None = None
+
+    def _webxr_client_config(self) -> dict[str, Any]:
+        return {**super()._webxr_client_config(), "forward_calibration": True}
+
+    def _reset_controller_state(self) -> None:
+        with self._lock:
+            self._forward_rotation = None
+            super()._reset_controller_state()
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -166,10 +182,50 @@ class ArmTeleopModule(WebXRTeleopModule):
         super().stop()
 
     def _on_buttons_pressed(self, pressed: Buttons) -> None:
-        """Move to the zero joint pose, off the control loop, when zero_button is pressed."""
+        """Calibrate forward on a stick click; run configured zero moves off-thread."""
+        if pressed.left_thumbstick or pressed.right_thumbstick:
+            if pressed.left_thumbstick and pressed.right_thumbstick:
+                self._forward_status("Click just one thumbstick to set forward.")
+            else:
+                self._calibrate_forward(Hand.LEFT if pressed.left_thumbstick else Hand.RIGHT)
         button = self.config.zero_button
         if button is not None and getattr(pressed, BUTTON_ALIASES.get(button, button)):
             threading.Thread(target=self._move_to_zero, daemon=True).start()
+
+    def _forward_status(self, message: str) -> None:
+        self._broadcast_text(json.dumps({"type": "teleop_forward", "message": message}))
+
+    def _calibrate_forward(self, hand: Hand) -> None:
+        """Set a shared horizontal heading from a controller; callers hold ``_lock``."""
+        if any(self._is_engaged.values()) or any(
+            controller is not None and controller.grip > 0.5
+            for controller in self._controllers.values()
+        ):
+            self._forward_status("Release both grips, then click again to set forward.")
+            return
+        pose = self._current_poses[hand]
+        updated = self._last_pose_update[hand]
+        if (
+            pose is None
+            or updated is None
+            or time.monotonic() - updated > self.config.input_timeout_s
+        ):
+            self._forward_status("Controller tracking unavailable. Try again when tracked.")
+            return
+
+        # WebXR controller -Z points forward. The fixed per-hand Z offsets
+        # preserve that axis, so this is still the pointing direction after
+        # webxr_to_robot(). Project onto the floor to keep robot Z vertical.
+        forward = pose.orientation.rotate_vector(Vector3(0.0, 0.0, -1.0))
+        horizontal = math.hypot(forward.x, forward.y)
+        if not math.isfinite(horizontal) or horizontal < 0.1:
+            self._forward_status(
+                "Point the controller ahead, away from vertical, then click again."
+            )
+            return
+        yaw = math.atan2(forward.y, forward.x)
+        self._forward_rotation = Quaternion.from_euler(Vector3(0.0, 0.0, -yaw))
+        self._forward_status("Forward set for both arms. Grip to resume.")
 
     def _move_to_zero(self) -> None:
         if self._manipulation is None:
@@ -185,8 +241,16 @@ class ArmTeleopModule(WebXRTeleopModule):
             self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
-        """Return the current absolute controller pose."""
-        return self._current_poses.get(hand)
+        """Express both position and rotation in the calibrated operator frame."""
+        pose = self._current_poses.get(hand)
+        if pose is None or self._forward_rotation is None:
+            return pose
+        return PoseStamped(
+            position=self._forward_rotation.rotate_vector(pose.position),
+            orientation=self._forward_rotation * pose.orientation,
+            ts=pose.ts,
+            frame_id=pose.frame_id,
+        )
 
     def _handle_engage(self) -> None:
         """Leave arm engagement to TeleopIKTask."""
@@ -242,6 +306,9 @@ class HandTeleopModule(ArmTeleopModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._primary_was_pressed: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+
+    def _webxr_client_config(self) -> dict[str, Any]:
+        return {**super()._webxr_client_config(), "forward_calibration": False}
 
     def _handle_engage(self) -> None:
         """Toggle each hand on the rising edge of its primary button."""
