@@ -38,7 +38,7 @@ from dimos.robot.galaxea.r1pro.config import (
 from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
-from dimos.robot.urdf_manager import UrdfManagerPointClearing
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
