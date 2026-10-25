@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+import time
 
 import pytest
 
@@ -23,6 +24,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.core.run_registry import RunEntry
 from dimos.imitation.loop.attached import AttachedDualArm
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.manipulators.dual_openyam.joints import (
@@ -52,6 +54,7 @@ def attached(mocker, monkeypatch, tmp_path):
     )
     app = mocker.create_autospec(Dimos, instance=True)
     coordinator = mocker.create_autospec(ControlCoordinator, instance=True)
+    mocker.patch.object(coordinator, "get_stream", create=True)
     coordinator.get_joint_positions.return_value = dict.fromkeys(DUAL_OPENYAM_JOINTS, 0.1)
     coordinator.get_trajectory_generation.return_value = 4
     coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
@@ -66,6 +69,9 @@ def attached(mocker, monkeypatch, tmp_path):
     viewer = AttachedDualArm(run)
     try:
         viewer.start()
+        coordinator.get_stream.return_value.subscribe.call_args.args[0](
+            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.1] * 14, ts=time.time())
+        )
         yield viewer, coordinator, app
     finally:
         viewer.close()
@@ -87,6 +93,7 @@ def test_attach_poll_and_close_leave_both_arms_owned_by_the_blueprint(attached):
     coordinator.execute_trajectory.assert_not_called()
     coordinator.cancel_trajectory.assert_not_called()
     coordinator.task_invoke.assert_not_called()
+    coordinator.get_joint_positions.assert_not_called()
 
 
 def test_right_joint_command_routes_to_existing_coordinator_and_can_be_cancelled(attached):

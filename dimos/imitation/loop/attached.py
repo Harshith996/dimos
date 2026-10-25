@@ -26,6 +26,7 @@ from dimos.core.global_config import global_config
 from dimos.core.run_registry import RunEntry, is_pid_alive, list_runs
 from dimos.hardware.sensors.camera.webcam import Webcam, discover_webcams
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.porcelain.dimos import Dimos
@@ -64,6 +65,7 @@ class AttachedDualArm:
         self._images: dict[str, Image] = {}
         self._camera_lock = Lock()
         self._positions: dict[str, float] = {}
+        self._joint_lock = Lock()
         self._targets: dict[str, float] = {}
         self._lower: list[float] = []
         self._upper: list[float] = []
@@ -80,7 +82,8 @@ class AttachedDualArm:
         global_config.update(**self.run.config_overrides)
         app = Dimos.connect()
         self.stack.callback(app.stop)  # Remote Dimos.stop closes only the client.
-        self.coordinator = cast("ControlCoordinator", app.get_module("ControlCoordinator"))
+        handle = app.get_module("ControlCoordinator")
+        self.coordinator = cast("ControlCoordinator", handle)
         model = DUAL_OPENYAM_MODEL.load()
         for name in DUAL_OPENYAM_JOINTS:
             joint = model.get_joint(name)
@@ -92,7 +95,9 @@ class AttachedDualArm:
             else:
                 self._lower.append(joint.lower)
                 self._upper.append(joint.upper)
-        self._read_positions()
+        self.stack.callback(
+            handle.get_stream("coordinator_joint_state").subscribe(self._joint_state)
+        )
         for index, arg in enumerate(self.run.cli_args):
             option, separator, value = arg.partition("=")
             if option in ("--server-port", "--armteleopmodule.server-port"):
@@ -115,7 +120,6 @@ class AttachedDualArm:
                     partial(self._image, key), on_error=partial(self._camera_error, key)
                 )
                 self.stack.callback(subscription.dispose)
-        self._read_positions()
 
     def _image(self, key: str, image: Image) -> None:
         with self._camera_lock:
@@ -135,18 +139,29 @@ class AttachedDualArm:
         assert self.coordinator is not None
         return self.coordinator
 
-    def _read_positions(self) -> None:
-        positions: dict[str, float] = self._require_run().get_joint_positions()
+    def _joint_state(self, state: JointState) -> None:
+        positions = dict(zip(state.name, state.position, strict=True))
         if any(
             name not in positions or not math.isfinite(positions[name])
             for name in DUAL_OPENYAM_JOINTS
         ):
-            raise RuntimeError("The dual-arm blueprint has incomplete joint feedback")
-        self._positions = positions
-        self._updated_at = time.monotonic()
+            return
+        if abs(time.time() - state.ts) > 1.0:
+            return
+        with self._joint_lock:
+            self._positions = positions
+            self._updated_at = time.monotonic()
+
+    def _read_positions(self) -> dict[str, float]:
+        with self._joint_lock:
+            if not self._positions or time.monotonic() - self._updated_at >= 1.0:
+                raise RuntimeError("The blueprint is not publishing fresh joint feedback")
+            return dict(self._positions)
 
     def state(self) -> dict[str, Any]:
-        fresh = bool(self._positions) and time.monotonic() - self._updated_at < 1.0
+        with self._joint_lock:
+            positions = dict(self._positions)
+            fresh = bool(positions) and time.monotonic() - self._updated_at < 1.0
         with self._camera_lock:
             cameras = [
                 dict(camera, ready=key in self.frames) for key, camera in self.cameras.items()
@@ -161,11 +176,10 @@ class AttachedDualArm:
             "station": None,
             "learning_available": False,
             "joint_names": DUAL_OPENYAM_JOINTS,
-            "joints": [self._positions.get(name, 0.0) for name in DUAL_OPENYAM_JOINTS],
-            "targets": [
-                self._targets.get(name, self._positions.get(name, 0.0))
-                for name in DUAL_OPENYAM_JOINTS
-            ],
+            "joints": [positions[name] for name in DUAL_OPENYAM_JOINTS] if positions else [],
+            "targets": [self._targets.get(name, positions[name]) for name in DUAL_OPENYAM_JOINTS]
+            if positions
+            else [],
             "lower": self._lower,
             "upper": self._upper,
             "cameras": cameras,
@@ -175,7 +189,8 @@ class AttachedDualArm:
             "job": None,
             "recording": None,
             "policy": None,
-            "error": self.last_error,
+            "error": self.last_error
+            or (None if fresh else "The blueprint is not publishing fresh joint feedback"),
         }
 
     def dispatch(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -201,7 +216,7 @@ class AttachedDualArm:
                 or not self._lower[index] <= value <= self._upper[index]
             ):
                 raise ValueError("Joint target is outside its limits")
-            self._read_positions()
+            positions = self._read_positions()
             name = DUAL_OPENYAM_JOINTS[index]
             if name not in DUAL_OPENYAM_ARM_JOINTS:
                 side = name.split("_", 1)[0]
@@ -212,7 +227,7 @@ class AttachedDualArm:
                     raise RuntimeError("The gripper task rejected the command")
             else:
                 generation = coordinator.get_trajectory_generation()
-                start = self._positions[name]
+                start = positions[name]
                 trajectory = JointTrajectory(
                     joint_names=[name],
                     points=[
@@ -244,7 +259,7 @@ class AttachedDualArm:
         if time.monotonic() < self._next_update:
             return
         self._next_update = time.monotonic() + 0.1
-        self._read_positions()
+        self._require_run()
         self._targets.clear()
         if time.monotonic() > self._jog_until:
             self._generation = None
