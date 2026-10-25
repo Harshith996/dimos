@@ -42,8 +42,10 @@ from dimos.robot.urdf_manager import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
-# A hard limit, so the chassis can turn in place anywhere on a route.
-WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2
+# A hard limit, so the chassis can turn in place anywhere on a route. Measured from voxel centres, which sit up to half a
+# voxel inside the surface they stand for: without that half voxel, routes on the controller_1792896758 replay brushed
+# furniture with the chassis.
+WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2 + VOXEL_SIZE_M / 2
 PLANNER_VIZ_HZ = 0.0
 # How far apart a sensor sample and the tf it is placed with may be, for every module here that matches them: the lidar
 # mount tf comes at 5 Hz, Point-LIO's at 10 with jitter, and the Livox cloud arrives ~0.11 s behind its stamp (0.1 s
@@ -103,9 +105,10 @@ r1pro_nav = autoconnect(
         wall_clearance_m=WALL_CLEARANCE_M,
         wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
         wall_buffer_weight=100.0,
-        # MLS counts steps in whole voxels (rounding down): under one voxel no two floor cells a layer apart connect,
-        # and a flat floor straddling a voxel boundary is such a pair.
-        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, VOXEL_SIZE_M),
+        # MLS counts steps in whole voxels (rounding down). The fused floor spans up to three layers (Mid-360 noise ~4 cm
+        # around a floor on a voxel boundary), so floor cells two layers apart must connect; one voxel planned 67 of 78
+        # known-good routes on the controller_1792896758 replay (0.45 m clearance), two 72 with the clearance above.
+        step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
         worker_threads=2,
