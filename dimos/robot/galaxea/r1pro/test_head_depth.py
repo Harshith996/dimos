@@ -42,8 +42,8 @@ def _in_floor(floor_from_camera: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 def _scene(floor_from_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Camera-frame points where each ray first meets the floor or the box (true depths), and which rays hit the box."""
-    u, v = np.meshgrid(np.linspace(-0.6, 0.6, 41), np.linspace(-0.3, 0.9, 41))
-    rays = np.stack([u.ravel(), v.ravel(), np.ones(u.size)], axis=1)
+    ray_x, ray_y = np.meshgrid(np.linspace(-0.6, 0.6, 41), np.linspace(-0.3, 0.9, 41))
+    rays = np.stack([ray_x.ravel(), ray_y.ravel(), np.ones(ray_x.size)], axis=1)
     origin, direction = floor_from_camera[:3, 3], rays @ floor_from_camera[:3, :3].T
     rays, direction = rays[direction[:, 2] < -0.05], direction[direction[:, 2] < -0.05]
     t_floor = -origin[2] / direction[:, 2]
@@ -54,9 +54,9 @@ def _scene(floor_from_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         t1, t2 = (lo - origin) / direction, (hi - origin) / direction
     t_near, t_far = np.minimum(t1, t2).max(axis=1), np.maximum(t1, t2).min(axis=1)
     box = (t_near <= t_far) & (t_near > 0) & (t_near < t_floor)
-    t = np.where(box, t_near, t_floor)
-    keep = t < 6.0
-    return rays[keep] * t[keep, None], box[keep]
+    hit_distance = np.where(box, t_near, t_floor)
+    keep = hit_distance < 6.0
+    return rays[keep] * hit_distance[keep, None], box[keep]
 
 
 @pytest.mark.parametrize(
@@ -65,8 +65,7 @@ def _scene(floor_from_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     ids=["just-above", "under", "obstacle-height", "drop"],
 )
 def test_points_near_the_floor_slide_onto_it(offset_m: float, slides: bool) -> None:
-    """Within floor_tolerance_m above or min_height_m below the floor a point is floor; higher is an obstacle, and deeper
-    is a drop, which stays where it is (and is cut by the height band) rather than becoming floor."""
+    """Within floor_tolerance_m above or min_height_m below the floor is floor; higher is an obstacle, deeper a drop."""
     floor_from_camera = _pose(
         Rotation.from_euler("y", 30, degrees=True).as_matrix() @ OPTICAL, [0.1, 0.0, 1.1]
     )

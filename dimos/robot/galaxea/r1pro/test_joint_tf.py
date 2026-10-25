@@ -44,17 +44,17 @@ def joint_state(**positions: float) -> JointState:
 
 def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
     """Compose the published edges from the root down to `link`."""
-    edges = {t.child_frame_id: t for t in transforms}
+    edges = {transform.child_frame_id: transform for transform in transforms}
     position, rotation = np.zeros(3), Rotation.identity()
     while link in edges:
-        t = edges[link]
-        q = t.rotation
-        local = Rotation.from_quat([q.x, q.y, q.z, q.w])
+        edge = edges[link]
+        quaternion = edge.rotation
+        local = Rotation.from_quat([quaternion.x, quaternion.y, quaternion.z, quaternion.w])
         position = local.apply(position) + np.array(
-            [t.translation.x, t.translation.y, t.translation.z]
+            [edge.translation.x, edge.translation.y, edge.translation.z]
         )
         rotation = local * rotation
-        link = t.frame_id
+        link = edge.frame_id
     return position, rotation
 
 
@@ -77,14 +77,14 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager
 
     def edges(state: JointState) -> dict[str, tuple[float, ...]]:
         return {
-            t.child_frame_id: (
-                *t.translation,
-                t.rotation.x,
-                t.rotation.y,
-                t.rotation.z,
-                t.rotation.w,
+            transform.child_frame_id: (
+                *transform.translation,
+                transform.rotation.x,
+                transform.rotation.y,
+                transform.rotation.z,
+                transform.rotation.w,
             )
-            for t in fk.joint_transforms(state)
+            for transform in fk.joint_transforms(state)
         }
 
     upright, bent = edges(joint_state()), edges(joint_state(torso_joint2=0.5))
@@ -95,10 +95,10 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager
 
 def test_transforms_hang_off_base_link(fk: UrdfManager) -> None:
     transforms = fk.joint_transforms(joint_state())
-    children = [t.child_frame_id for t in transforms]
-    parents = {t.frame_id for t in transforms}
+    children = [transform.child_frame_id for transform in transforms]
+    parents = {transform.frame_id for transform in transforms}
 
     assert len(children) == len(set(children)), "a link with two parents breaks the tree"
     assert parents - set(children) == {"base_link"}
     assert {HEAD, "head_link", "camera_head_right_link"} <= set(children)
-    assert all(t.ts == 1.0 for t in transforms)
+    assert all(transform.ts == 1.0 for transform in transforms)

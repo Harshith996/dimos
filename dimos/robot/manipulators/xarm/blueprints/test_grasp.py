@@ -29,7 +29,7 @@ from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
-from dimos.robot.urdf_manager import UrdfManagerPointClearing
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
 
 
