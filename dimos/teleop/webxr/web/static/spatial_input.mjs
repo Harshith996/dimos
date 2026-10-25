@@ -24,6 +24,7 @@ export class ToolPinch {
   }
   get grabbed() { return this.action !== null; }
   update(distance, target, position, axis, measuredOpening, travel) {
+    const releasedFree=this.pinch.pinched && this.action===null && distance>0.035;
     const edge = this.pinch.update(distance, target !== null);
     if (edge.pressed && edge.grab) {
       this.action = target;
@@ -35,6 +36,6 @@ export class ToolPinch {
       const delta = position.reduce((sum, v, i) => sum + (v-this.origin[i])*this.axis[i], 0);
       this.opening = Math.max(0, Math.min(1, this.initial + delta/this.travel));
     }
-    return {pinched: this.pinch.pinched, action: this.action, pressed: edge.pressed};
+    return {pinched: this.pinch.pinched, action: this.action, pressed: edge.pressed, releasedFree};
   }
 }

@@ -73,10 +73,10 @@ let feedback = null, feedbackAt = 0, cloudAt = 0, cloudTS = 0, sequence = 0, soc
 let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, observationsReady=false;
-const ui = new SpatialUI(stage,endpoint,{embedded,onAction:action=>{
+const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:action=>{
   if(action==='hold') paused=!paused;
-  if(action==='actual_size') { workspace.resize(1,ui.workspaceAnchor()); applyPlacement(); }
-  if(action==='place_ahead') placeAhead=true;
+  if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
+  if(action==='bring_here') placeAhead=true;
   resetHands(); send({});
 }});
 const uiPointer=new THREE.Mesh(new THREE.SphereGeometry(0.007,8,6),new THREE.MeshBasicMaterial({color:0xffffff,depthTest:false}));
@@ -93,7 +93,7 @@ if(!geometry.finger_geometry) {
 for (const [id, mesh] of Object.entries(geometry.meshes)) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(mesh.vertices, 3));
-  g.setIndex(mesh.faces); g.computeVertexNormals(); meshes[id] = g;
+  g.setIndex(mesh.faces); g.computeVertexNormals(); g.computeBoundingBox(); meshes[id] = g;
 }
 for (const side of geometry.sides) {
   for (const geom of geometry.arms[side]) {
@@ -138,6 +138,12 @@ poll(endpoint('state'), 35, async response => {
       c.texture.needsUpdate=true;
     }
   }
+  if(!workspace.active) {
+    const bounds=new THREE.Box3();
+    for(const group of Object.values(arms)) for(const mesh of group.children)
+      bounds.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrix));
+    ui.setWorkspaceBounds(bounds);
+  }
   document.querySelector('#perception').textContent = feedback.objects_active
     ? `Object perception connected · ${feedback.objects.length} current detections`
     : 'Object recognition: no detector connected.';
@@ -180,7 +186,12 @@ async function pollSurface() {
 }
 pollSurface();
 function resetTools() { inputGeneration++; for (const state of Object.values(gestures)) state.reset(); }
-function resetHands() { resetTools(); workspace.cancel(); }
+function resetHands() { resetTools(); workspace.cancel(); ui.hidePalm(); }
+function workspacePivot() {
+  const known=Object.values(feedback?.arms??{});
+  return known.reduce((center,arm)=>center.add(new THREE.Vector3().fromArray(arm.grasp)),new THREE.Vector3())
+    .multiplyScalar(known.length?1/known.length:0);
+}
 function applyPlacement() {
   stage.matrix.makeRotationY(workspace.yaw).multiply(basis)
     .scale(new THREE.Vector3().setScalar(workspace.scale)).setPosition(...workspace.position);
@@ -198,7 +209,10 @@ function place(viewer) {
   heading.y = 0; if (heading.length() < 0.1) return;
   heading.normalize();
   const yaw = Math.atan2(-heading.x, -heading.z);
-  workspace.place([position.x + heading.x*0.15,Math.max(0.3,position.y-0.8),position.z + heading.z*0.15],yaw);
+  const target=new THREE.Vector3(position.x+heading.x*0.5,Math.max(0.3,position.y-0.4),position.z+heading.z*0.5);
+  const offset=workspacePivot().applyMatrix4(new THREE.Matrix4().makeRotationY(yaw).multiply(basis)
+    .scale(new THREE.Vector3().setScalar(workspace.scale)));
+  workspace.place(target.sub(offset).toArray(),yaw);
   applyPlacement(); resetHands(); send({}); placeAhead = false;
 }
 document.querySelector('#place').onclick = () => { placeAhead=true; resetHands(); send({}); };
@@ -220,7 +234,7 @@ function send(hands, focus = null) {
   if (socket.bufferedAmount > 16384) { socket.close(); resetHands(); return; }
   socket.send(JSON.stringify({type: 'spatial_input', sequence: sequence++, observed_at: feedback?.ts || 0, hands, focus}));
 }
-function track(frame, reference, ready) {
+function track(frame, reference, ready, viewer) {
   const samples={};
   ui.hovered=null; uiPointer.visible=false;
   for (const source of frame.session.inputSources) {
@@ -238,7 +252,7 @@ function track(frame, reference, ready) {
     if (!thumb || !tip || !wrist) { gestures[side].reset(); continue; }
     const indexPosition = new THREE.Vector3().copy(tip.transform.position);
     const thumbPosition = new THREE.Vector3().copy(thumb.transform.position);
-    samples[side]={indexPosition,thumbPosition,wrist,knuckle:poses['index-finger-metacarpal'],
+    samples[side]={poses,indexPosition,thumbPosition,wrist,knuckle:poses['index-finger-metacarpal'],
       position:indexPosition.clone().add(thumbPosition).multiplyScalar(0.5),
       distance:indexPosition.distanceTo(thumbPosition)};
   }
@@ -246,31 +260,38 @@ function track(frame, reference, ready) {
     gestures[side].reset(); for(const dot of handDots[side]) dot.visible=false;
   }
   stage.updateMatrixWorld(true);
+  inverseStage.copy(stage.matrixWorld).invert();
+  const owned=Object.values(gestures).some(g=>g.grabbed);
+  const now=performance.now();
+  ui.updatePalm(samples,viewer?.transform.position,workspace.active||owned,now);
+  // Resolve every tool/UI target before considering a two-hand air grab.
+  for(const [side,hand] of Object.entries(samples)) {
+    const c=openingControls[side], arm=feedback?.arms?.[side];
+    hand.local=hand.position.clone().applyMatrix4(inverseStage);
+    hand.axis=new THREE.Vector3(1,0,0).applyQuaternion(c.group.quaternion);
+    const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
+    const direction=hand.knuckle?hand.indexPosition.clone().sub(new THREE.Vector3().copy(hand.knuckle.transform.position)):null;
+    hand.ray=direction?.length()>0.01?new THREE.Raycaster(hand.indexPosition,direction.normalize(),0,3):null;
+    hand.uiHit=ui.hit(hand.ray,side,hand.position);
+    const toolTarget=!ready||!arm||paused?null:hand.local.distanceTo(knob)<0.045?'opening'
+      :hand.local.distanceTo(handles[side].position)<0.10?'move':null;
+    hand.target=toolTarget || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
+  }
   const arranging=workspace.update(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
-    side,{position:hand.position.toArray(),distance:hand.distance,nearRail:ui.nearWorkspace(hand.position)},
-  ])));
+    side,{position:hand.position.toArray(),distance:hand.distance,available:hand.target===null},
+  ])),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
   if(arranging) {
     applyPlacement(); resetTools(); send({}); return;
   }
   const inputs = {}; let focus = null;
   const generation=inputGeneration;
-  inverseStage.copy(stage.matrixWorld).invert();
   // Uniform view scale affects positions, never the hand's orientation quaternion.
   const rotation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(inverseStage));
   for(const [side,hand] of Object.entries(samples)) {
-    const {indexPosition,thumbPosition,wrist,knuckle}=hand;
-    const pinchPosition=hand.position.clone().applyMatrix4(inverseStage);
+    const {wrist,local:pinchPosition,axis,ray,uiHit,target}=hand;
     const c=openingControls[side], arm=feedback?.arms?.[side];
-    const axis=new THREE.Vector3(1,0,0).applyQuaternion(c.group.quaternion);
-    const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
-    const direction=knuckle?indexPosition.clone().sub(new THREE.Vector3().copy(knuckle.transform.position)):null;
-    const ray=direction?.length()>0.01?new THREE.Raycaster(indexPosition,direction.normalize(),0,3):null;
-    const uiHit=ray?ui.hit(ray):null;
-    const toolTarget=!ready||!arm||paused?null:pinchPosition.distanceTo(knob)<0.045 ? 'opening'
-      : pinchPosition.distanceTo(handles[side].position)<0.10 ? 'move' : null;
-    const target=toolTarget || (uiHit?`ui:${uiHit.action}`:null);
-    if(!toolTarget && uiHit) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
-    const gesture=gestures[side].update(indexPosition.distanceTo(thumbPosition),target,
+    if(target?.startsWith('ui:')) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
+    const gesture=gestures[side].update(hand.distance,target,
       pinchPosition.toArray(),axis.toArray(),arm?.opening??0,feedback?.opening_handle_travel_m??1);
     const orientation = rotation.clone().multiply(new THREE.Quaternion().copy(wrist.transform.orientation));
     if(ready && arm) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
@@ -278,7 +299,7 @@ function track(frame, reference, ready) {
     if(gesture.pressed && gesture.action?.startsWith('ui:')) ui.activate(gesture.action.slice(3));
     handles[side].material.opacity = gesture.action==='move' ? 1 : 0.45;
     c.measured.material.opacity=target==='opening' || gesture.action==='opening' ? 1 : 0.55;
-    if (ready && gesture.pressed && target===null) {
+    if (ready && gesture.releasedFree && target===null) {
       if (ray) {
         const hit = ray.intersectObject(cloud)[0];
         if (hit) { focus = hit.point.clone().applyMatrix4(inverseStage).toArray(); focusMarker.position.fromArray(focus); focusMarker.visible = true; }
@@ -294,6 +315,8 @@ renderer.setAnimationLoop((time, frame) => {
   for (const side of ['left', 'right']) {
     arms[side].visible = !!feedback?.arms?.[side]; handles[side].visible = ready;
     const c=openingControls[side]; c.group.visible=ready;
+    handles[side].material.opacity=workspace.active?0.12:gestures[side].action==='move'?1:0.45;
+    c.rail.material.opacity=workspace.active?0.12:0.65; c.label.material.opacity=workspace.active?0.25:1;
     c.requested.visible=ready && gestures[side].action==='opening';
     if(c.requested.visible) c.requested.position.x=(gestures[side].opening-0.5)*feedback.opening_handle_travel_m;
   }
@@ -310,7 +333,7 @@ renderer.setAnimationLoop((time, frame) => {
     if (placeAhead && viewer) place(viewer);
     if (time-lastSend > 20) {
       lastSend = time;
-      if (frame.session.visibilityState === 'visible') track(frame, reference, ready);
+      if (frame.session.visibilityState === 'visible') track(frame, reference, ready, viewer);
       else { resetHands(); uiPointer.visible=false; send({}); }
     }
   } else orbit.update();

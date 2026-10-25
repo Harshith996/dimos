@@ -4,8 +4,8 @@ import * as THREE from 'three';
 const panelRotation = new THREE.Matrix4().makeBasis(
   new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0));
 const cameraViews = [['left','LEFT WRIST',0.48],['workspace','WORKSPACE',0],['right','RIGHT WRIST',-0.48]];
-const RAIL_LENGTH = 0.9;
-const RAIL_GRAB_RADIUS = 0.05; // Maximum physical XR radius; shrink with miniature views.
+const PALM_REVEAL_MS = 250;
+const PALM_WIDTH = 0.24, PALM_HEIGHT = 0.075;
 
 function panel(parent, width, height, position, pixels) {
   const canvas=document.createElement('canvas'); [canvas.width,canvas.height]=pixels;
@@ -28,27 +28,27 @@ function wrapped(context, text, x, y, width, lineHeight) {
 
 // Owns camera/HUD resources. It only invokes episode RPCs; arm input stays in spatial.js.
 export class SpatialUI {
-  constructor(parent, endpoint, {embedded, onAction}) {
+  constructor(parent, endpoint, {embedded, onAction, xrScene=parent}) {
     this.endpoint=endpoint; this.embedded=embedded; this.onAction=onAction;
     this.abort=new AbortController(); this.stopped=false; this.pending=null; this.version=0;
     this.collection=null; this.collectionAt=0; this.error=''; this.pollError=''; this.hovered=null; this.drawn='';
     this.cameras=new Map(); this.buttons=[];
-    this.workspaceButtons=[]; this.workspaceDrawn='';
-    this.hud=panel(parent,0.84,0.315,[0.82,0,1.05],[1024,384]);
-    this.workspacePanel=panel(parent,0.84,0.15,[0.2,0,-0.16],[1024,184]);
-    // Keep arrangement affordances readable through the observed tabletop, like tool labels.
-    this.workspacePanel.mesh.material.depthTest=false;
-    this.workspacePanel.mesh.material.depthWrite=false;
-    this.workspacePanel.mesh.renderOrder=10;
-    this.rail=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,RAIL_LENGTH,12),
-      new THREE.MeshBasicMaterial({color:0xb9cecf,depthTest:false,depthWrite:false}));
-    this.rail.renderOrder=11;
-    this.rail.position.set(0.2,0,-0.05); parent.add(this.rail);
-    for(const y of [-RAIL_LENGTH/2,RAIL_LENGTH/2]) {
-      const end=new THREE.Mesh(new THREE.SphereGeometry(0.018,12,8),this.rail.material);
-      end.renderOrder=11;
-      end.position.y=y; this.rail.add(end);
-    }
+    this.workspaceButtons=[];
+    this.hud=panel(parent,0.84,0.3675,[0.82,0,1.05],[1024,448]);
+    this.outline=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),
+      new THREE.LineBasicMaterial({color:0x76e2c1,transparent:true,opacity:0.8,depthTest:false,depthWrite:false}));
+    this.outline.renderOrder=8; this.outline.visible=false; parent.add(this.outline);
+    this.palm=panel(xrScene,PALM_WIDTH,PALM_HEIGHT,[0,0,0],[512,160]);
+    this.palm.mesh.material.depthTest=false; this.palm.mesh.material.depthWrite=false;
+    this.palm.mesh.renderOrder=20; this.palm.mesh.visible=false;
+    this.palmCandidate=null; this.palmOwner=null;
+    const c=this.palm.context;
+    c.fillStyle='#10242f'; c.fillRect(0,0,512,160);
+    c.strokeStyle='#76e2c1'; c.lineWidth=5; c.strokeRect(3,3,506,154);
+    c.textAlign='center'; c.fillStyle='#d6fff1'; c.font='bold 32px system-ui';
+    c.fillText('Bring workspace here',256,70);
+    c.fillStyle='#b9cecf'; c.font='20px system-ui'; c.fillText('Point and pinch with your other hand',256,116);
+    this.palm.texture.needsUpdate=true;
     for(const [name,title,y] of cameraViews) {
       const view=panel(parent,0.42,0.3465,[0.78,y,0.68],[640,528]);
       Object.assign(view,{name,title,ts:0,url:null,stale:true}); this.cameras.set(name,view);
@@ -124,8 +124,11 @@ export class SpatialUI {
   }
 
   async activate(action) {
+    if(action==='bring_here' && this.palmOwner!==null && this.palm.mesh.visible) {
+      this.onAction(action); this.hidePalm(); return;
+    }
     if(![...this.buttons,...this.workspaceButtons].some(button=>button.action===action && button.enabled)) return;
-    if(['hold','actual_size','place_ahead'].includes(action)) { this.onAction(action); return; }
+    if(['hold','actual_size'].includes(action)) { this.onAction(action); return; }
     if(this.pending) return;
     this.pending=action; this.version++; this.error='';
     try {
@@ -139,7 +142,9 @@ export class SpatialUI {
   }
 
   update({now,ready,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
-    this.updateWorkspace(workspaceScale,workspaceActive,!preview);
+    this.outline.visible=workspaceActive;
+    this.workspaceButtons=[{action:'actual_size',label:'Actual size',x:780,y:384,w:220,h:48,
+      enabled:!preview&&!workspaceActive}];
     for(const view of this.cameras.values()) {
       if(!view.stale && now-view.ts>0.5) this.cameraStatus(view,false);
     }
@@ -169,71 +174,82 @@ export class SpatialUI {
       const element=document.querySelector(`[data-action="${button.action}"]`);
       element.disabled=!button.enabled; element.textContent=button.label;
     }
-    const signature=JSON.stringify([control,summary,arms,hint,this.buttons,this.hovered]);
+    const signature=JSON.stringify([control,summary,arms,hint,this.buttons,this.workspaceButtons,this.hovered,Math.round(workspaceScale*100)]);
     if(signature===this.drawn) return; this.drawn=signature;
     const c=this.hud.context;
-    c.fillStyle='#13232d'; c.fillRect(0,0,1024,384); c.textAlign='left';
+    c.fillStyle='#13232d'; c.fillRect(0,0,1024,448); c.textAlign='left';
     c.fillStyle=active&&ready&&!paused?'#76e2c1':'#f3bf77'; c.font='bold 28px system-ui'; c.fillText(control,24,46);
     c.fillStyle=recording?'#ff8888':'#edf5f4'; c.font='bold 35px system-ui'; c.fillText(summary,24,101);
     c.fillStyle='#c4dcf2'; c.font='25px system-ui'; c.fillText(arms,24,148);
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,195,976,32);
-    for(const button of this.buttons) {
+    c.font='21px system-ui'; c.fillStyle='#76e2c1';
+    c.fillText(`Workspace ${Math.round(workspaceScale*100)}% · Pinch both hands in free space`,24,391);
+    c.fillStyle='#b9cecf'; c.fillText('Move, spread or turn · Palm up to bring the workspace here',24,425);
+    for(const button of [...this.buttons,...this.workspaceButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);
       c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font='bold 27px system-ui'; c.textAlign='center';
-      c.fillText(button.label,button.x+button.w/2,button.y+44);
+      c.fillText(button.label,button.x+button.w/2,button.y+button.h/2+10);
     }
     this.hud.texture.needsUpdate=true;
   }
 
-  hit(ray) {
-    const hit=ray.intersectObjects([this.hud.mesh,this.workspacePanel.mesh])[0];
+  hit(ray, side, point) {
+    const palmAvailable=this.palm.mesh.visible && side!==this.palmOwner;
+    if(palmAvailable && point) {
+      const local=this.palm.mesh.worldToLocal(point.clone());
+      if(Math.abs(local.x)<PALM_WIDTH/2 && Math.abs(local.y)<PALM_HEIGHT/2 && Math.abs(local.z)<0.05)
+        return {action:'bring_here',point:point.clone()};
+    }
+    const hit=ray?.intersectObjects(palmAvailable?[this.hud.mesh,this.palm.mesh]:[this.hud.mesh])[0];
     if(!hit) return null;
-    const workspace=hit.object===this.workspacePanel.mesh;
-    const x=hit.uv.x*1024,y=(1-hit.uv.y)*(workspace?184:384);
-    const button=(workspace?this.workspaceButtons:this.buttons).find(b=>b.enabled && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h);
+    if(hit.object===this.palm.mesh) return {action:'bring_here',point:hit.point};
+    const x=hit.uv.x*1024,y=(1-hit.uv.y)*448;
+    const button=[...this.buttons,...this.workspaceButtons].find(b=>b.enabled && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h);
     return button?{action:button.action,point:hit.point}:null;
   }
 
-  nearWorkspace(point) {
-    const start=new THREE.Vector3(0,-RAIL_LENGTH/2,0).applyMatrix4(this.rail.matrixWorld);
-    const end=new THREE.Vector3(0,RAIL_LENGTH/2,0).applyMatrix4(this.rail.matrixWorld);
-    const nearest=new THREE.Line3(start,end).closestPointToPoint(point,true,new THREE.Vector3());
-    const scale=this.rail.matrixWorld.getMaxScaleOnAxis();
-    return nearest.distanceTo(point)<RAIL_GRAB_RADIUS*Math.min(1,scale);
+  setWorkspaceBounds(robotBounds) {
+    const bounds=robotBounds.clone();
+    for(const view of [this.hud,...this.cameras.values()]) {
+      view.mesh.updateMatrix(); view.mesh.geometry.computeBoundingBox();
+      bounds.union(view.mesh.geometry.boundingBox.clone().applyMatrix4(view.mesh.matrix));
+    }
+    bounds.expandByScalar(0.04); bounds.getCenter(this.outline.position); bounds.getSize(this.outline.scale);
   }
 
-  workspaceAnchor() { return this.rail.getWorldPosition(new THREE.Vector3()).toArray(); }
+  hidePalm() { this.palm.mesh.visible=false; this.palmOwner=null; this.palmCandidate=null; }
 
-  updateWorkspace(scale,active,immersive) {
-    this.workspaceButtons=[['actual_size','Actual size'],['place_ahead','Place ahead']].map(([action,label],i)=>({
-      action,label,x:24+i*500,y:100,w:476,h:64,enabled:immersive&&!active,
-    }));
-    const signature=JSON.stringify([Math.round(scale*100),active,immersive,this.hovered]);
-    if(signature===this.workspaceDrawn) return; this.workspaceDrawn=signature;
-    this.rail.material.color.set(active?0x76e2c1:0xb9cecf);
-    const c=this.workspacePanel.context;
-    c.fillStyle='#13232d'; c.fillRect(0,0,1024,184); c.textAlign='left';
-    c.fillStyle='#edf5f4'; c.font='bold 29px system-ui';
-    c.fillText(`WORKSPACE · ${Math.round(scale*100)}%${active?' · ARMS HELD':''}`,24,38);
-    c.fillStyle='#b9cecf'; c.font='24px system-ui';
-    c.fillText('Pinch rail to move · Two hands to resize and turn',24,77);
-    for(const button of this.workspaceButtons) {
-      c.fillStyle=!button.enabled?'#25333e':this.hovered===button.action?'#c0f4e7':'#76e2c1';
-      c.fillRect(button.x,button.y,button.w,button.h);
-      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font='bold 27px system-ui'; c.textAlign='center';
-      c.fillText(button.label,button.x+button.w/2,button.y+42);
+  updatePalm(hands, eye, blocked, now) {
+    if(blocked || !eye) { this.hidePalm(); return; }
+    const candidates=[];
+    for(const [side,hand] of Object.entries(hands)) {
+      const middle=hand.poses['middle-finger-phalanx-proximal'];
+      const tip=hand.poses['middle-finger-tip'];
+      if(!middle || !tip || hand.distance<0.04) continue;
+      const wrist=new THREE.Vector3().copy(hand.wrist.transform.position);
+      const knuckle=new THREE.Vector3().copy(middle.transform.position);
+      // WebXR joint -Y points out of the palm: https://www.w3.org/TR/webxr-hand-input-1/#xrjointspace
+      const normal=new THREE.Vector3(0,-1,0).applyQuaternion(new THREE.Quaternion().copy(hand.wrist.transform.orientation));
+      if(normal.y<0.65 || new THREE.Vector3().copy(tip.transform.position).distanceTo(wrist)<1.5*knuckle.distanceTo(wrist)) continue;
+      candidates.push({side,position:wrist.add(knuckle).multiplyScalar(0.5).addScaledVector(normal,0.1)});
     }
-    this.workspacePanel.texture.needsUpdate=true;
+    const palm=candidates.find(c=>c.side===this.palmCandidate?.side) || candidates[0];
+    if(!palm) { this.hidePalm(); return; }
+    if(this.palmCandidate?.side!==palm.side) this.palmCandidate={side:palm.side,since:now};
+    this.palm.mesh.visible=now-this.palmCandidate.since>=PALM_REVEAL_MS;
+    this.palmOwner=this.palm.mesh.visible?palm.side:null;
+    this.palm.mesh.position.copy(palm.position); this.palm.mesh.lookAt(new THREE.Vector3().copy(eye));
+    this.palm.mesh.updateMatrixWorld(true);
   }
 
   dispose() {
     this.stopped=true; this.abort.abort();
-    for(const view of [this.hud,this.workspacePanel,...this.cameras.values()]) {
+    for(const view of [this.hud,this.palm,...this.cameras.values()]) {
       view.texture.dispose(); view.mesh.geometry.dispose(); view.mesh.material.dispose(); view.mesh.removeFromParent();
       if(view.url) URL.revokeObjectURL(view.url);
     }
-    this.rail.traverse(mesh=>mesh.geometry.dispose()); this.rail.material.dispose(); this.rail.removeFromParent();
+    this.outline.geometry.dispose(); this.outline.material.dispose(); this.outline.removeFromParent();
     for(const button of document.querySelectorAll('[data-action]')) button.onclick=null;
   }
 }

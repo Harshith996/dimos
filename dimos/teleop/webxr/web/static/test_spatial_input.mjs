@@ -50,3 +50,15 @@ test('an episode button pinch cannot acquire an arm until the hand releases', ()
   hand.reset();
   assert.equal(update(.01,'move').action,null);
 });
+test('free-space selection happens on release, excluding tool releases and cancelled pinches', () => {
+  const hand = new ToolPinch();
+  const update = (d, target = null) => hand.update(d, target, [0,0,0], [1,0,0], 1, .12);
+  update(.05);
+  assert.equal(update(.01).releasedFree, false);
+  assert.equal(update(.028).releasedFree, false);
+  assert.equal(update(.05).releasedFree, true);
+  update(.01, 'move');
+  assert.equal(update(.05).releasedFree, false);
+  update(.01); hand.reset();
+  assert.equal(update(.05).releasedFree, false);
+});

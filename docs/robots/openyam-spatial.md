@@ -35,20 +35,29 @@ placed at metre scale ahead of the current head direction. The same transform
 maps both displayed geometry and hand commands. Exit and re-enter to place it
 ahead again; the desktop **Place workspace ahead** button also requests this.
 
-In immersive view, pinch the rail beneath the workspace to move the entire view.
-Add the other hand to resize and turn it, keeping it upright. Release either
-hand to continue dragging with the remaining hand; release both to leave it
-in place. Scale is bounded to 25–200%. The rail shows the current percentage,
-**Actual size** restores 100% around the rail, and **Place ahead** recenters
-without changing the chosen scale. These controls remain available with stale
-robot observations because they only arrange the local view.
+In immersive view, pinch thumb and index on **both hands in free space**, close
+together in time. The workspace lights up and its tool controls dim. Move your
+hands together to drag, spread/squeeze to resize, or turn them to rotate the
+view while keeping it upright. Release either hand to continue dragging with
+the other; release both to park. You can do this near your body, even when the
+workspace is far away. Scale is bounded to 25–200%, around the work area itself
+so spreading your hands does not push it farther away. **Actual size** on the
+status panel restores 100% around that same pivot.
 
-Arrangement releases both robot gestures. Open your hand and make a fresh tool
+Turn an open palm upward to reveal **Bring workspace here** above it. Point and
+pinch with the other hand, or pinch directly on that card. This brings the work
+area within reach ahead of your current head direction, retaining its scale.
+The palm control stays the same size regardless of workspace scale. These view
+controls remain available with stale robot observations.
+
+Existing tool and UI grabs keep ownership; they cannot turn into arrangement.
+Both starting pinches must be free of tool/button targets, within 450 ms of each
+other. Arrangement sends no arm input. Open your hand and make a fresh tool
 grab afterward to resume operation. Calibration and robot coordinates stay
 unchanged; all displayed observations and controls share the same transform.
 At 200%, a 2 cm hand translation becomes a 1 cm robot translation. Hand
 orientation uses only the transform's rotation, independent of display scale.
-Tracking loss freezes the view and requires release before re-grabbing the rail.
+Losing an owned hand's tracking freezes the view and requires fresh pinches.
 
 - Open your hand, then pinch index and thumb near the corresponding coloured
   gripper handle. Move and rotate that hand to move that arm independently.
@@ -59,12 +68,12 @@ Tracking loss freezes the view and requires release before re-grabbing the rail.
 - The solid bead and percentage show measured opening. A white outline shows
   the requested opening while dragging. Release holds the last command.
 - Each pinch captures one action until release. Crossing another handle while
-  pinched cannot switch actions. Middle-finger position has no control effect.
+  pinched cannot switch actions. Middle-finger position does not control the jaws.
 - Tracking loss, stale observations, disconnection, or leaving the immersive
   session releases control. Open the hand before grabbing again.
 - Point at **Hold control** on the headset panel and pinch to pause both hands.
   **Resume** enables fresh grabs; it does not resume an earlier movement.
-- Pinching while pointing away from a handle selects a surface in the observed
+- Pinch and release while pointing away from a handle to select a surface in the observed
   cloud and publishes `perception_focus`. Recognition needs a connected consumer.
 
 Use Ctrl-C in the launching terminal to stop. Restart the blueprint after a
@@ -228,7 +237,26 @@ yet supply bimanual ACT training or policy rollout.
 
 ## Verification
 
-Workspace arrangement, later 2026-10-25: sixteen JavaScript tests cover existing
+Free-air arrangement and palm recovery, later 2026-10-25: eighteen JavaScript
+tests pass, including dual-pinch timing, target ownership, scaling about a
+distant workstation, one-hand continuation, tracking loss and deferred surface
+selection. A private browser harness exercises the actual client input path
+with synthetic tracked hands, live native sim observations and an intercepted
+command socket. Bimanual tool grabs retain ownership; free-air arrangement
+sends empty commands. A 20 mm hand movement at 200% requests 10 mm of robot
+translation with a unit orientation quaternion. Open upturned palms reveal
+the recovery card for either hand; downturned/curled palms do not. The other
+hand can choose it by direct touch or pointing. Recovery retains scale and
+places the measured work-area pivot 0.5 m ahead and 0.4 m below eye level.
+The card remains 24 cm wide even at miniature workspace scale. Existing arm
+ownership and tracking loss hide it. The installed Desktop proxy loads the new
+assets and live scene. Both browser checks report zero errors and zero control
+WebSockets; these checks do not command the robot. Evidence and reproducible
+harnesses:
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-air-grab-20261025/`.
+Actual Vision Pro tracking and gesture comfort still require operator testing.
+
+Superseded rail arrangement, earlier 2026-10-25: sixteen JavaScript tests cover existing
 pinch/surface behavior and eight new workspace cases, including one/two-hand
 transitions, scale limits, coincident/vertical hands and tracking loss. A private
 browser harness runs the real hand-input path against live sim observations,
