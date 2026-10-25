@@ -32,11 +32,14 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.diy.alfred.alfred_model import ALFRED_SELF_FILTER_MODEL
@@ -73,6 +76,15 @@ LOCALIZE_SEGMENTER = "none"
 # would hold 600 MB of frames.
 LOCALIZE_FEED_FRAMES = 45
 LOCALIZE_HORIZON_S = 120.0
+# Objects further than this from the camera are not registered: the bench, not the room.
+SCENE_MAX_DISTANCE_M = 1.5
+# What only runs with a GPU: the models, and the pick pipeline that is nothing without them.
+GPU_MODULES = (
+    PerceptionLocalize,
+    ObjectSceneRegistrationModule,
+    PickAndPlaceModule,
+    HeuristicGraspModule,
+)
 
 
 def alfred_perception_modules(*, gpu: bool | None = None) -> tuple[Any, ...]:
@@ -154,13 +166,27 @@ def alfred_perception_modules(*, gpu: bool | None = None) -> tuple[Any, ...]:
             feed_frames=LOCALIZE_FEED_FRAMES,
             horizon_s=LOCALIZE_HORIZON_S,
         ).remappings([(PerceptionLocalize, "lidar", "localize_lidar_unused")]),
+        # The pick pipeline: prompted detections registered as 3D objects in base_link
+        # (OWLv2 + EdgeTAM on the GPU), one top-down grasp per object, and PickAndPlace
+        # running pregrasp, grasp, close and retreat through the planner and the arms' gripper
+        # tasks. The scene's merged cloud is renamed: the camera's own `pointcloud` feeds the map.
+        ObjectSceneRegistrationModule.blueprint(
+            target_frame=BASE_FRAME,
+            detector_backend="owlv2",
+            segmentation_backend="edgetam",
+            detect_on_request=True,
+            distance_threshold=0.08,
+            min_detections_for_permanent=3,
+            max_distance=SCENE_MAX_DISTANCE_M,
+            use_aabb=True,
+        ).remappings([(ObjectSceneRegistrationModule, "pointcloud", "scene_objects_pointcloud")]),
+        PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME),
+        HeuristicGraspModule.blueprint(),
     ]
     present = gpu if gpu is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]
     if not present:
         modules = [
-            m
-            for m in modules
-            if all(atom.module is not PerceptionLocalize for atom in m.blueprints)
+            m for m in modules if all(atom.module not in GPU_MODULES for atom in m.blueprints)
         ]
     return tuple(modules)
 

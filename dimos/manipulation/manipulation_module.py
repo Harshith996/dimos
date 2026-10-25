@@ -179,6 +179,10 @@ class ManipulationModuleConfig(ModuleConfig):
     # Trajectory task -> the joints it drives. Empty means the joint trajectory
     # task drives every model joint; joints no task is bound to are preview-only.
     trajectory_tasks: dict[str, list[str]] = Field(default_factory=dict)
+    # Planning group -> the coordinator gripper task that opens and closes its hand,
+    # for a robot with a hand per arm. A group left out falls back to the model's one
+    # "<gripper_hardware_id>_gripper" task, or has no gripper.
+    gripper_tasks: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_trajectory_tasks(self) -> ManipulationModuleConfig:
@@ -195,6 +199,13 @@ class ManipulationModuleConfig(ModuleConfig):
                         f"Joint '{joint}' is bound to both '{owners[joint]}' and '{task}'"
                     )
                 owners[joint] = task
+        return self
+
+    @model_validator(mode="after")
+    def _validate_gripper_tasks(self) -> ManipulationModuleConfig:
+        groups = {group.name for group in self.model.planning_groups}
+        if unknown := sorted(set(self.gripper_tasks) - groups):
+            raise ValueError(f"gripper_tasks groups are not planning groups: {unknown}")
         return self
 
     @model_validator(mode="after")
@@ -467,7 +478,7 @@ class ManipulationModule(Module):
                 groups[group.id] = PlanningGroupState(
                     joints=joints,
                     end_effector_pose=pose,
-                    gripper_position=self._get_group_gripper_position(),
+                    gripper_position=self._get_group_gripper_position(group.id),
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
@@ -1039,14 +1050,13 @@ class ManipulationModule(Module):
         """Return public planning-group capabilities."""
         if self._world_monitor is None:
             return ()
-        has_gripper = self.config.model.gripper_hardware_id is not None
         return tuple(
             PlanningGroupInfo(
                 id=group.id,
                 joint_names=group.joint_names,
                 base_frame=group.base_link,
                 tip_frame=group.tip_link,
-                has_gripper=has_gripper,
+                has_gripper=self._gripper_task(group.id) is not None,
             )
             for group in self._world_monitor.planning_groups.list()
         )
@@ -1070,13 +1080,19 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _get_group_gripper_position(self) -> float | None:
+    def _gripper_task(self, group_id: PlanningGroupID) -> str | None:
+        """The coordinator gripper task of a planning group: its own, else the model's one."""
+        task = self.config.gripper_tasks.get(group_id)
+        if task is not None:
+            return task
         hardware_id = self.config.model.gripper_hardware_id
-        if hardware_id is None:
+        return None if hardware_id is None else f"{hardware_id}_gripper"
+
+    def _get_group_gripper_position(self, group_id: PlanningGroupID) -> float | None:
+        task = self._gripper_task(group_id)
+        if task is None:
             return None
-        values = self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper", "get_normalized", {}
-        )
+        values = self._control_coordinator.task_invoke(task, "get_normalized", {})
         return float(values[0]) if values else None
 
     def get_current_joint_state(self) -> JointState | None:
@@ -1401,10 +1417,10 @@ class ManipulationModule(Module):
         group = self._resolve_gripper_group(planning_group)
         if isinstance(group, CommandResult):
             return group
-        hardware_id = self.config.model.gripper_hardware_id
-        assert hardware_id is not None
+        task = self._gripper_task(group.id)
+        assert task is not None
         if self._control_coordinator.task_invoke(
-            f"{hardware_id}_gripper",
+            task,
             "set_normalized",
             {"values": [float(position)]},
         ):
@@ -1433,7 +1449,7 @@ class ManipulationModule(Module):
         def is_capable(group: PlanningGroup) -> bool:
             if capability == "pose":
                 return group.has_pose_target
-            return self.config.model.gripper_hardware_id is not None
+            return self._gripper_task(group.id) is not None
 
         if planning_group is not None:
             try:

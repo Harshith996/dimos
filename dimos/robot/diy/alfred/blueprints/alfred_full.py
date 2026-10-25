@@ -94,7 +94,7 @@ from dimos.robot.diy.alfred.pillar_connection import (
     pillar_hardware,
 )
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.openarm.config import openarm_hardware
+from dimos.robot.manipulators.openarm.config import OPENARM_GRIPPER_JOINTS, openarm_hardware
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
@@ -117,6 +117,13 @@ NAV_FOLLOWER_TASK_NAME = "holonomic_follower"
 TELEOP_PRIORITY = 20
 PLAN_PRIORITY = 15
 NAV_PRIORITY = 10
+GRIPPER_PRIORITY = 20
+# Each arm's hand is its own coordinator gripper task; the planner opens and closes a
+# planning group's hand through this map (one gripper per robot is the default).
+ALFRED_GRIPPER_TASKS = {
+    "left_manipulator": "left_arm_gripper",
+    "right_manipulator": "right_arm_gripper",
+}
 
 
 def _openarm_hardware_from_env() -> HardwareComponent:
@@ -173,6 +180,18 @@ def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> lis
             # The Damiao motors are torque-free until their first command: held from the first
             # tick, the arms stay where they are through a restart instead of sagging.
             joint_hold_task(alfred_arm_joints(), base_joints, name="hold_arms", always=True),
+            # The hands: 0 closed, 1 open on the adapter's normalized joint (mock and Damiao).
+            *(
+                TaskConfig(
+                    name=ALFRED_GRIPPER_TASKS[group],
+                    type="gripper",
+                    joint_names=[joint],
+                    priority=GRIPPER_PRIORITY,
+                )
+                for group, joint in zip(
+                    ("left_manipulator", "right_manipulator"), OPENARM_GRIPPER_JOINTS, strict=True
+                )
+            ),
         ]
     tasks += [
         TaskConfig(
@@ -336,6 +355,7 @@ def alfred_arm_modules() -> tuple[Any, ...]:
             world_frame=BASE_FRAME,
             static_transforms=[_WORLD_IS_BASE],
             joint_state_defaults=dict.fromkeys(ALFRED_PLANAR_BASE.joint_names, 0.0),
+            gripper_tasks=ALFRED_GRIPPER_TASKS,
             # Splits a whole-body plan; either side aborting cancels the other.
             trajectory_tasks={
                 JOINT_TRAJECTORY_TASK_NAME: [*alfred_arm_joints(), PILLAR_LIFT_JOINT],

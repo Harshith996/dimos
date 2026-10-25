@@ -33,7 +33,9 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import transport_topic
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
@@ -48,6 +50,7 @@ from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.robot.diy.alfred import alfred_model
 from dimos.robot.diy.alfred.alfred_model import (
@@ -69,6 +72,7 @@ from dimos.robot.diy.alfred.alfred_model import (
 from dimos.robot.diy.alfred.blueprints._nav import WALL_CLEARANCE_M
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     ALFRED_BASE_HARDWARE_ID,
+    ALFRED_GRIPPER_TASKS,
     BASE_FRAME,
     BASE_TRAJECTORY_TASK_NAME,
     BASE_VELOCITY_TASK_NAME,
@@ -236,6 +240,13 @@ def test_one_trajectory_task_covers_the_lift_and_both_arms_with_the_hold_under_i
     )
     assert hold.priority < trajectory.priority
     assert hold.params["always"] is True, "Damiao motors are torque-free until commanded"
+    for task_name in ALFRED_GRIPPER_TASKS.values():
+        gripper = tasks[task_name]
+        assert gripper.type == "gripper"
+        assert gripper.joint_names in (["left_arm/gripper"], ["right_arm/gripper"])
+        assert gripper.priority > trajectory.priority, "a hand command beats a trajectory's hold"
+    (planner,) = _atoms(alfred_full, ManipulationModule)
+    assert planner.kwargs["gripper_tasks"] == ALFRED_GRIPPER_TASKS, "one hand per arm"
 
 
 def test_the_whole_body_is_planned_in_the_robots_own_frame() -> None:
@@ -308,6 +319,18 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert localize.kwargs["params"].min_views == 1, "one fixed camera: one viewpoint"
     assert "float16" not in localize.kwargs["detector"], "the registry's fp16 build is for a GPU"
     assert localize.kwargs["segmenter"] == "none", "EdgeTAM needs a GPU"
+    with_gpu = {atom.module for f in alfred_perception_modules(gpu=True) for atom in f.blueprints}
+    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, HeuristicGraspModule} <= with_gpu
+    without = {atom.module for f in alfred_perception_modules(gpu=False) for atom in f.blueprints}
+    assert not ({ObjectSceneRegistrationModule, PickAndPlaceModule} & without)
+    scene = next(
+        atom
+        for f in alfred_perception_modules(gpu=True)
+        for atom in f.blueprints
+        if atom.module is ObjectSceneRegistrationModule
+    )
+    assert scene.kwargs["target_frame"] == BASE_FRAME, "objects where the arm plans"
+    assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
     assert not alfred_perception_modules(gpu=False) or all(
         atom.module is not PerceptionLocalize
         for fragment in alfred_perception_modules(gpu=False)
