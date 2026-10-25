@@ -45,20 +45,12 @@ from dimos.robot.urdf_manager import UrdfManagerPointClearing
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.07
-# A hard limit, so the chassis can turn in place anywhere on a route. Measured from voxel centres, which sit up to half a
-# voxel inside the surface they stand for: without that half voxel, routes on the controller_1792896758 replay brushed
-# furniture with the chassis.
+# Turn-in-place radius plus half a voxel, since voxel centres sit up to half a voxel inside the surface they stand for.
 WALL_CLEARANCE_M = R1PRO_ROTATION_DIAMETER_M / 2 + VOXEL_SIZE_M / 2
 PLANNER_VIZ_HZ = 0.0
-# How far apart a sensor sample and the tf it is placed with may be, for every module here that matches them: the lidar
-# mount tf comes at 5 Hz, Point-LIO's at 10 with jitter, and the Livox cloud arrives ~0.11 s behind its stamp (0.1 s
-# dropped clouds and head-depth frames).
+# Sample-to-tf gap allowed: the mount tf is 5 Hz, Point-LIO's 10 Hz with jitter, and Livox clouds lag ~0.11 s (0.1 s dropped them).
 TF_TOLERANCE_S = 0.5
-# The mapper spares a voxel from a grazing ray only while something still sees it: 2 s of frames, Point-LIO's scans plus
-# head depth (Depth2DepthCloud logs ~5 fps on the Orin). A surface in the head camera's view is re-hit ~10 times in that
-# window and keeps its spare; the knee-high layer a crouching person leaves, which head depth's rays to the floor (all
-# steeper than graze_cos allows) never cleared, starts clearing 2 s after they leave. On the office box recording 1 s also
-# ate floor out of the head's view (zone floor coverage 0.81 -> 0.68) and 3 s left that layer up (floor error 0.17 cm).
+# Grazing spare lasts 2 s of frames (Point-LIO + ~5 fps head depth): on the office box recording 1 s ate floor, 3 s left a crouching person's layer up.
 HEAD_DEPTH_HZ = 5.0
 GRAZE_RECENT_FRAMES = round(
     2.0 * (PointLioConfig.model_fields["scan_rate"].default + HEAD_DEPTH_HZ)
@@ -73,8 +65,7 @@ r1pro_nav = autoconnect(
     # Point-LIO owns odom -> base_link, so the connection's wheel odometry stays off tf.
     r1pro_control(publish_odom_tf=False, enable_wrist_color=False, enable_imu=False),
     r1pro_lidar_odometry().remappings([(R1ProPointLio, "lidar", "lidar_with_robot")]),
-    # Every joint on tf (the head cameras ride the torso), and the robot's own body cut out of the Mid-360's scans and
-    # the head depth (which sees the arms) alike.
+    # Joints on tf (the head cameras ride the torso), and the robot's body cut out of both the Mid-360 and head depth.
     UrdfManagerPointClearing.blueprint(
         **R1PRO_URDF_MANAGER_CONFIG,
         tf_tolerance_s=TF_TOLERANCE_S,
@@ -108,9 +99,7 @@ r1pro_nav = autoconnect(
         wall_clearance_m=WALL_CLEARANCE_M,
         wall_buffer_m=R1PRO_CHASSIS_WIDTH_M,
         wall_buffer_weight=100.0,
-        # MLS counts steps in whole voxels (rounding down). The fused floor spans up to three layers (Mid-360 noise ~4 cm
-        # around a floor on a voxel boundary), so floor cells two layers apart must connect; one voxel planned 67 of 78
-        # known-good routes on the controller_1792896758 replay (0.45 m clearance), two 72 with the clearance above.
+        # MLS rounds steps down to whole voxels and the fused floor spans up to three layers, so floor two layers apart must connect.
         step_threshold_m=max(R1PRO_MAX_STEP_HEIGHT_M, 2 * VOXEL_SIZE_M),
         step_penalty_weight=4.0,
         viz_publish_hz=PLANNER_VIZ_HZ,
