@@ -42,6 +42,7 @@ from numpy.typing import NDArray
 
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.loop.act import PolicyRunner, command
+from dimos.imitation.loop.attached import AttachedDualArm, running_dual_arm
 from dimos.imitation.loop.checkpoint import export_policy, import_policy
 from dimos.imitation.loop.device import OpenYamSimulation
 from dimos.imitation.loop.hardware import OpenYamHardware, StationConfig, discover_station
@@ -546,11 +547,15 @@ def main() -> None:
     parser.add_argument("--artifact", type=Path)
     parser.add_argument("--station", help="JSON station configuration; omitted for simulation")
     args = parser.parse_args()
-    with learning_bus():
-        serve(args)
+    run = running_dual_arm()
+    if run is not None:
+        serve(args, AttachedDualArm(run))
+    else:
+        with learning_bus():
+            serve(args)
 
 
-def serve(args: argparse.Namespace) -> None:
+def serve(args: argparse.Namespace, attached: AttachedDualArm | None = None) -> None:
     wire: TextIO = sys.stdout
     sys.stdout = sys.stderr  # Imported modules/loggers must not corrupt the JSON protocol.
     stopped = Event()
@@ -575,14 +580,16 @@ def serve(args: argparse.Namespace) -> None:
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, stop_signal)
     Thread(target=receive, daemon=True, name="desktop-requests").start()
-    experiment = DesktopExperiment(
+    experiment = attached or DesktopExperiment(
         args.root.expanduser().resolve(),
         args.artifact,
         StationConfig.model_validate_json(args.station) if args.station else None,
     )
-    emit({"event": "ready", "data": experiment.state()})
     next_status = 0.0
     try:
+        if attached is not None:
+            attached.start()
+        emit({"event": "ready", "data": experiment.state()})
         while not stopped.is_set():
             started = time.monotonic()
             for _ in range(8):
@@ -598,6 +605,10 @@ def serve(args: argparse.Namespace) -> None:
                     emit({"id": request["id"], "error": str(exc)})
             try:
                 experiment.update()
+                if attached is not None:
+                    attached.frames = {
+                        key: jpeg(image.to_rgb().data) for key, image in attached.images().items()
+                    }
             except Exception as exc:
                 experiment.last_error = str(exc)
                 if experiment.session and experiment.session.latest is not None:
