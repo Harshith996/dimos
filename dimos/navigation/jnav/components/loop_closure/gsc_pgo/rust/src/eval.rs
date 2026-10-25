@@ -19,7 +19,7 @@
 //! This deliberately bypasses the module/transport/replay scaffolding: it opens
 //! the SQLite recording directly, decodes the LCM blobs, and drives the same
 //! worker-loop logic as `main.rs` (pair each scan with the latest odom pose →
-//! add_key_pose → on keyframe: search_for_loop_pairs + smooth_and_update).
+//! add_key_pose → on keyframe: search_for_closure_pairs + update).
 //! Trajectory-warp / map / tag scoring is left to a thin Python postprocess that
 //! reuses `trajectory_metrics`.
 
@@ -30,7 +30,8 @@ use std::time::Instant;
 use std::collections::BTreeMap;
 
 use dimos_gsc_pgo::gsc_pgo::{
-    CloudWithPose, CommittedLoop, Config as PgoConfig, GscPgo, LoopCandidateDiag, PoseWithTime,
+    ClosureCandidateDiag, CloudWithPose, CommittedClosure, Config as PgoConfig, GscPgo,
+    PoseWithTime, CLOSURE_EDGE_RECORD_BYTES,
 };
 use dimos_gsc_pgo::mat3;
 use dimos_gsc_pgo::pointcloud;
@@ -38,236 +39,25 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 mod memory2;
-mod reform_map;
-use memory2::{for_each_scan, read_odometry, OdomRow};
+use memory2::{read_odometry, read_scans, OdomRow};
 
-/// Eval config. Defaults mirror `module.py`'s `PGOConfig` so a bare run
-/// reproduces the module default; a `--config` JSON overlays any subset.
-// Unknown keys are ignored on purpose: the resolved config is dumped from the
-// Python PGOConfig, which carries module-lifecycle fields (executable, cwd,
-// global_map_*, ...) this eval never uses. PGOConfig itself rejects typos.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Eval config: the PGO core's config (defaults mirror `module.py`'s `PGOConfig`, so a bare run reproduces
+/// the module default) plus how the scans arrive; a `--config` JSON overlays any subset.
+// Unknown keys are ignored on purpose: the resolved config is dumped from the Python PGOConfig, which
+// carries module-lifecycle fields (executable, cwd, global_map_*, ...) this eval never uses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct EvalConfig {
-    map_frame: String,
-    child_frame_id: String,
-    body_frame: String,
-
-    keyframe_min_rotation_degrees: f64,
-    keyframe_min_distance_meters: f64,
-
-    loop_search_radius: f64,
-    loop_time_thresh: f64,
-    loop_score_thresh: f64,
-    loop_submap_half_range: i32,
-    submap_resolution: f64,
-    min_loop_detect_duration: f64,
-    min_descriptor_std: f64,
-    loop_min_occupancy: i32,
-    loop_min_degeneracy: f64,
-    loop_max_lowe_ratio: f64,
-    loop_candidate_max_distance_m: f64,
-    loop_max_yank_rotation_deg: f64,
-    loop_yank_gate_max_distance_m: f64,
-    loop_min_id_gap: u64,
-
-    loop_instant_accept_distance_m: f64,
-    loop_buffer_agreement_trans_m: f64,
-    loop_buffer_agreement_rot_deg: f64,
-    loop_buffer_min_agree: u64,
-
+    #[serde(flatten)]
+    pgo: PgoConfig,
+    /// The scans arrive in the world frame: bring them into the body frame with the odometry.
     subtract_odom_from_cloud: bool,
-
-    use_scan_context: bool,
-    scan_context_num_rings: i32,
-    scan_context_num_sectors: i32,
-    scan_context_max_range_m: f64,
-    scan_context_top_k: i32,
-    scan_context_match_threshold: f64,
-    scan_context_lidar_height_m: f64,
-
-    loop_robust_kernel: bool,
-    loop_robust_huber_k: f64,
-    strong_accept_range: f64,
-    loop_icp_max_iterations: u64,
-    loop_icp_max_correspondence_m: f64,
-    loop_icp_inlier_fitness: bool,
-    loop_icp_min_points: u64,
-    loop_icp_seed_at_current_pose: bool,
-    loop_rotation_variance: f64,
-    loop_translation_variance_floor: f64,
-    loop_refinement_passes: u64,
-    loop_gnc_final: bool,
-    loop_gnc_var_scale: f64,
-    loop_gnc_inlier_probability: f64,
-
-    use_location_constraints: bool,
-
-    anchor_roll_pitch_var: f64,
-    per_keyframe_roll_pitch_prior: bool,
-    per_keyframe_roll_pitch_var: f64,
-
-    odom_rot_roll_pitch_var: f64,
-    odom_rot_yaw_var: f64,
-    odom_trans_xy_var: f64,
-    odom_trans_z_var: f64,
-
-    max_scan_queue: i32,
-
-    loop_conservativeness: i32,
 }
 
-impl Default for EvalConfig {
-    fn default() -> Self {
-        Self {
-            map_frame: "map".into(),
-            child_frame_id: "odom".into(),
-            body_frame: "base_link".into(),
-            keyframe_min_rotation_degrees: 10.0,
-            keyframe_min_distance_meters: 0.5,
-            loop_search_radius: 3.0,
-            loop_time_thresh: 5.0,
-            loop_score_thresh: 0.15,
-            loop_submap_half_range: 5,
-            submap_resolution: 0.1,
-            min_loop_detect_duration: 2.0,
-            min_descriptor_std: 0.0,
-            loop_min_occupancy: 80,
-            loop_min_degeneracy: 0.05,
-            loop_max_lowe_ratio: 0.0,
-            loop_candidate_max_distance_m: 0.0,
-            loop_max_yank_rotation_deg: 0.0,
-            loop_yank_gate_max_distance_m: 0.0,
-            loop_min_id_gap: 0,
-            loop_instant_accept_distance_m: 0.0,
-            loop_buffer_agreement_trans_m: 1.0,
-            loop_buffer_agreement_rot_deg: 10.0,
-            loop_buffer_min_agree: 2,
-            subtract_odom_from_cloud: false,
-            use_scan_context: true,
-            scan_context_num_rings: 20,
-            scan_context_num_sectors: 60,
-            scan_context_max_range_m: 0.0,
-            scan_context_top_k: 10,
-            scan_context_match_threshold: 0.4,
-            scan_context_lidar_height_m: 2.0,
-            loop_robust_kernel: true,
-            loop_robust_huber_k: 1.345,
-            strong_accept_range: 0.0,
-            loop_icp_max_iterations: 50,
-            loop_icp_max_correspondence_m: 10.0,
-            loop_icp_inlier_fitness: false,
-            loop_icp_min_points: 0,
-            loop_icp_seed_at_current_pose: false,
-            loop_rotation_variance: 0.0,
-            loop_translation_variance_floor: 0.0,
-            loop_refinement_passes: 5,
-            loop_gnc_final: true,
-            loop_gnc_var_scale: 10.0,
-            loop_gnc_inlier_probability: 0.95,
-            use_location_constraints: false,
-            anchor_roll_pitch_var: 1e-12,
-            per_keyframe_roll_pitch_prior: false,
-            per_keyframe_roll_pitch_var: 1e-4,
-            odom_rot_roll_pitch_var: 1e-8,
-            odom_rot_yaw_var: 1e-5,
-            odom_trans_xy_var: 1e-4,
-            odom_trans_z_var: 1e-6,
-            max_scan_queue: 100,
-            loop_conservativeness: -1,
-        }
-    }
-}
-
-impl EvalConfig {
-    fn to_pgo(&self) -> PgoConfig {
-        let mut config = PgoConfig {
-            keyframe_min_rotation_degrees: self.keyframe_min_rotation_degrees,
-            keyframe_min_distance_meters: self.keyframe_min_distance_meters,
-            loop_search_radius: self.loop_search_radius,
-            loop_time_thresh: self.loop_time_thresh,
-            loop_score_thresh: self.loop_score_thresh,
-            loop_submap_half_range: self.loop_submap_half_range,
-            submap_resolution: self.submap_resolution,
-            min_loop_detect_duration: self.min_loop_detect_duration,
-            loop_candidate_max_distance_m: self.loop_candidate_max_distance_m,
-            min_descriptor_std: self.min_descriptor_std,
-            loop_min_occupancy: self.loop_min_occupancy,
-            loop_min_degeneracy: self.loop_min_degeneracy,
-            loop_max_lowe_ratio: self.loop_max_lowe_ratio,
-            loop_max_yank_rotation_deg: self.loop_max_yank_rotation_deg,
-            loop_yank_gate_max_distance_m: self.loop_yank_gate_max_distance_m,
-            loop_min_id_gap: self.loop_min_id_gap,
-            loop_instant_accept_distance_m: self.loop_instant_accept_distance_m,
-            loop_buffer_agreement_trans_m: self.loop_buffer_agreement_trans_m,
-            loop_buffer_agreement_rot_deg: self.loop_buffer_agreement_rot_deg,
-            loop_buffer_min_agree: self.loop_buffer_min_agree,
-            loop_robust_kernel: self.loop_robust_kernel,
-            loop_robust_huber_k: self.loop_robust_huber_k,
-            strong_accept_range: self.strong_accept_range,
-            loop_icp_max_iterations: self.loop_icp_max_iterations,
-            loop_icp_max_correspondence_m: self.loop_icp_max_correspondence_m,
-            loop_icp_inlier_fitness: self.loop_icp_inlier_fitness,
-            loop_icp_min_points: self.loop_icp_min_points,
-            loop_icp_seed_at_current_pose: self.loop_icp_seed_at_current_pose,
-            loop_rotation_variance: self.loop_rotation_variance,
-            loop_translation_variance_floor: self.loop_translation_variance_floor,
-            loop_refinement_passes: self.loop_refinement_passes,
-            loop_gnc_final: self.loop_gnc_final,
-            loop_gnc_var_scale: self.loop_gnc_var_scale,
-            loop_gnc_inlier_probability: self.loop_gnc_inlier_probability,
-            use_location_constraints: self.use_location_constraints,
-            odom_rot_roll_pitch_var: self.odom_rot_roll_pitch_var,
-            odom_rot_yaw_var: self.odom_rot_yaw_var,
-            odom_trans_xy_var: self.odom_trans_xy_var,
-            odom_trans_z_var: self.odom_trans_z_var,
-            anchor_roll_pitch_var: self.anchor_roll_pitch_var,
-            per_keyframe_roll_pitch_prior: self.per_keyframe_roll_pitch_prior,
-            per_keyframe_roll_pitch_var: self.per_keyframe_roll_pitch_var,
-            use_scan_context: self.use_scan_context,
-            scan_context_num_rings: self.scan_context_num_rings,
-            scan_context_num_sectors: self.scan_context_num_sectors,
-            scan_context_max_range_m: self.scan_context_max_range_m,
-            scan_context_top_k: self.scan_context_top_k,
-            scan_context_match_threshold: self.scan_context_match_threshold,
-            scan_context_lidar_height_m: self.scan_context_lidar_height_m,
-        };
-        config.apply_conservativeness(self.loop_conservativeness);
-        config
-    }
-}
-
-/// Serializable mirror of `LoopCandidateDiag` (the core struct carries no serde
-/// derive so the PGO library stays dependency-free). NaN metrics serialize as
-/// JSON null, marking a value the rejecting path never computed.
-#[derive(Serialize)]
-struct LoopDiag {
-    outcome: String,
-    source_id: usize,
-    source_time: f64,
-    source_xyz: [f64; 3],
-    target_id: i64,
-    target_time: f64,
-    target_xyz: [f64; 3],
-    from_scan_context: bool,
-    descriptor_structure: f32,
-    descriptor_occupancy: i32,
-    scan_context_best: f32,
-    scan_context_second: f32,
-    lowe_ratio: f32,
-    candidate_distance: f64,
-    degeneracy_min: f32,
-    icp_converged: bool,
-    icp_fitness: f64,
-    icp_translation_norm: f64,
-    yank_translation: f64,
-    yank_rotation_deg: f64,
-}
-
-/// A committed loop's ICP-refined relative pose (target frame -> source), so an
+/// A committed closure's ICP-refined relative pose (target frame -> source), so an
 /// offline PCM pass can compose it with odometry. `rotation` is row-major 3x3.
 #[derive(Serialize)]
-struct CommittedLoopEdge {
+struct CommittedClosureEdge {
     source_id: usize,
     target_id: usize,
     rotation: [[f64; 3]; 3],
@@ -278,42 +68,15 @@ struct CommittedLoopEdge {
     gnc_weight: f64,
 }
 
-impl From<&CommittedLoop> for CommittedLoopEdge {
-    fn from(edge: &CommittedLoop) -> CommittedLoopEdge {
-        CommittedLoopEdge {
+impl From<&CommittedClosure> for CommittedClosureEdge {
+    fn from(edge: &CommittedClosure) -> CommittedClosureEdge {
+        CommittedClosureEdge {
             source_id: edge.source_id,
             target_id: edge.target_id,
             rotation: edge.rotation_offset,
             translation: edge.translation_offset,
             score: edge.score,
             gnc_weight: edge.gnc_weight,
-        }
-    }
-}
-
-impl From<&LoopCandidateDiag> for LoopDiag {
-    fn from(diag: &LoopCandidateDiag) -> LoopDiag {
-        LoopDiag {
-            outcome: diag.outcome.to_string(),
-            source_id: diag.source_id,
-            source_time: diag.source_time,
-            source_xyz: diag.source_xyz,
-            target_id: diag.target_id,
-            target_time: diag.target_time,
-            target_xyz: diag.target_xyz,
-            from_scan_context: diag.from_scan_context,
-            descriptor_structure: diag.descriptor_structure,
-            descriptor_occupancy: diag.descriptor_occupancy,
-            scan_context_best: diag.scan_context_best,
-            scan_context_second: diag.scan_context_second,
-            lowe_ratio: diag.lowe_ratio,
-            candidate_distance: diag.candidate_distance,
-            degeneracy_min: diag.degeneracy_min,
-            icp_converged: diag.icp_converged,
-            icp_fitness: diag.icp_fitness,
-            icp_translation_norm: diag.icp_translation_norm,
-            yank_translation: diag.yank_translation,
-            yank_rotation_deg: diag.yank_rotation_deg,
         }
     }
 }
@@ -339,34 +102,23 @@ struct EvalOutput {
     data_duration_s: f64,
     runtime_s: f64,
     realtime_factor: f64,
-    /// Per processed scan: [ts, wall ms spent in the PGO for it, keyframes so far, ms of that in the GNC
-    /// solve and iSAM2 rebuild (the part the live module runs on its background worker)].
-    frame_timing: Vec<[f64; 4]>,
-    /// When the batch GNC ran: "each-loop" or "final" (see `Args::gnc_mode`).
-    gnc_mode: String,
-    /// With --loop-snapshots: after each loop closure, [ts, every keyframe's global xyz].
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    loop_snapshots: Vec<(f64, Vec<[f32; 3]>)>,
-    /// Every `RSS_SAMPLE_EVERY` processed scans: [ts, process resident memory in MB] (from `ps`).
-    rss_samples: Vec<[f64; 2]>,
-    /// With --map-voxel, per processed scan: [ts, ms adding it to the corrected map].
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    map_timing: Vec<[f64; 2]>,
-    /// With --map-voxel, per re-warp of the map: [ts, wall ms, cpu ms (all threads), map points,
-    /// graph nodes kept, largest keyframe move that triggered it (m)].
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    reforms: Vec<[f64; 6]>,
-    /// Count of loop-search outcomes by gate name (accepted + each reject gate).
+    /// Per keyframe, ms the scan thread spends on it (add_key_pose + closure search), in order.
+    keyframe_scan_thread_ms: Vec<f32>,
+    /// Per keyframe, ms in `update` (adopting a finished solve, waiting for it when due, and starting the next).
+    keyframe_gnc_ms: Vec<f32>,
+    /// Cumulative wall seconds per GSC stage (GscPgo::stage_seconds).
+    stage_seconds: BTreeMap<String, f64>,
+    /// Count of closure-search outcomes by gate name (accepted + each reject gate).
     gate_counts: BTreeMap<String, usize>,
-    /// One record per loop-search evaluation (accepted + rejected), with the
+    /// One record per closure-search evaluation (accepted + rejected), with the
     /// metric at each gate and the source/target locations.
-    loop_diagnostics: Vec<LoopDiag>,
+    closure_diagnostics: Vec<ClosureCandidateDiag>,
     /// Total nonlinear error of the final factor graph (½·Σ whitened residual²,
     /// robust kernels applied) — how much all the constraints conflict.
     graph_error: f64,
-    /// Every committed loop's refined relative pose (target->source), in commit
+    /// Every committed closure's refined relative pose (target->source), in commit
     /// order — the raw constraints an offline consistency pass needs.
-    committed_loop_edges: Vec<CommittedLoopEdge>,
+    committed_closure_edges: Vec<CommittedClosureEdge>,
 }
 
 struct Args {
@@ -380,16 +132,18 @@ struct Args {
     /// body←lidar static as "x,y,z,qx,qy,qz,qw" — applied to every scan's
     /// points, for lidar streams not already expressed in the odom body frame.
     lidar_tf: Option<[f64; 7]>,
-    /// Record every keyframe's global position after each loop closure.
-    loop_snapshots: bool,
-    /// When the batch GNC re-solve runs: "each-loop" (default; inline after every
-    /// closure, adopted with its iSAM2 rebuild swapped in, as the live module ends up doing) or
-    /// "final" (once over the whole recording after the drive, which live never does).
-    gnc_mode: String,
-    /// Keep a corrected global map at this voxel size (m; 0 = off) and re-warp it with fast-reform
-    /// after a closure that moves a keyframe more than `reform_min_shift` m.
-    map_voxel: f64,
-    reform_min_shift: f64,
+    /// new-body pose in the odom body frame as "x,y,z,qx,qy,qz,qw": re-expresses every odom
+    /// pose and scan in that frame, e.g. a level frame for an odometry whose body is a tilted
+    /// sensor (FAST-LIO on a pitched Mid-360), since closure search assumes level clouds.
+    body_tf: Option<[f64; 7]>,
+    /// Write the keyframes (`<path>`, as the module's dump_path) and every
+    /// keyframe pose change as the module publishes it (`<path>.closures`).
+    event_dump: Option<PathBuf>,
+    /// A replay adopts each pose-graph solve once the map has grown by this fraction of the solve's free
+    /// keyframes (at least one), waiting for it if needed, so it gives the same graph on any machine; a solve's
+    /// cost grows with the map, so the delay does. 1% is about a Jetson's solve time (huge_loop's 14 s Mac
+    /// solve at 5k keyframes is ~0.5%).
+    solve_delay_fraction: f64,
 }
 
 fn parse_lidar_tf(text: &str) -> Result<[f64; 7], String> {
@@ -411,10 +165,9 @@ fn parse_args() -> Result<Args, String> {
     let mut scan_stride = 1usize;
     let mut odom_stride = 1usize;
     let mut lidar_tf = None;
-    let mut loop_snapshots = false;
-    let mut gnc_mode = "each-loop".to_string();
-    let mut map_voxel = 0.0;
-    let mut reform_min_shift = 0.1;
+    let mut body_tf = None;
+    let mut event_dump = None;
+    let mut solve_delay_fraction = 0.01;
 
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -428,11 +181,10 @@ fn parse_args() -> Result<Args, String> {
             "--scan-stride" => scan_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--odom-stride" => odom_stride = value()?.parse().map_err(|e| format!("{e}"))?,
             "--lidar-tf" => lidar_tf = Some(parse_lidar_tf(&value()?)?),
-            "--loop-snapshots" => loop_snapshots = true,
-            "--gnc" => gnc_mode = value()?,
-            "--map-voxel" => map_voxel = value()?.parse().map_err(|e| format!("{e}"))?,
-            "--reform-min-shift" => {
-                reform_min_shift = value()?.parse().map_err(|e| format!("{e}"))?
+            "--body-tf" => body_tf = Some(parse_lidar_tf(&value()?)?),
+            "--event-dump" => event_dump = Some(PathBuf::from(value()?)),
+            "--solve-delay-fraction" => {
+                solve_delay_fraction = value()?.parse().map_err(|e| format!("{e}"))?
             }
             other => return Err(format!("unknown flag {other}")),
         }
@@ -447,13 +199,9 @@ fn parse_args() -> Result<Args, String> {
         scan_stride: scan_stride.max(1),
         odom_stride: odom_stride.max(1),
         lidar_tf,
-        loop_snapshots,
-        gnc_mode: match gnc_mode.as_str() {
-            "each-loop" | "final" => gnc_mode,
-            other => return Err(format!("--gnc must be each-loop or final, got {other}")),
-        },
-        map_voxel,
-        reform_min_shift,
+        body_tf,
+        event_dump,
+        solve_delay_fraction,
     })
 }
 
@@ -508,26 +256,6 @@ fn advance_latest<'a>(odoms: &'a [OdomRow], ts: f64, cursor: &mut usize) -> Opti
     Some(&odoms[*cursor])
 }
 
-const RSS_SAMPLE_EVERY: usize = 300;
-
-/// This process's resident memory in MB, via `ps` (no extra crate; Mac and Linux).
-fn resident_megabytes() -> Option<f64> {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
-        .output()
-        .ok()?;
-    let kilobytes: f64 = String::from_utf8(output.stdout).ok()?.trim().parse().ok()?;
-    Some(kilobytes / 1024.0)
-}
-
-/// CPU seconds this process has used, all threads (user + system).
-fn cpu_seconds() -> f64 {
-    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 * 1e-6;
-    seconds(usage.ru_utime) + seconds(usage.ru_stime)
-}
-
 fn run() -> Result<(), String> {
     let args = parse_args()?;
 
@@ -543,13 +271,32 @@ fn run() -> Result<(), String> {
         Connection::open_with_flags(&args.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| format!("open {:?}: {e}", args.db))?;
 
-    let odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    let mut odoms = read_odometry(&connection, &args.odom_stream, args.odom_stride)?;
+    let body_tf = args
+        .body_tf
+        .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
+    if let Some((body_rotation, body_translation)) = &body_tf {
+        for row in &mut odoms {
+            row.translation = mat3::add(
+                &row.translation,
+                &mat3::mat_vec(&row.rotation, body_translation),
+            );
+            row.rotation = mat3::mat_mul(&row.rotation, body_rotation);
+            let [qw, qx, qy, qz] = mat3::quat_from_mat(&row.rotation);
+            row.quaternion_xyzw = [qx, qy, qz, qw];
+        }
+    }
+    let scans = read_scans(&connection, &args.lidar_stream, args.scan_stride)?;
 
     let odom_frame = unique_frame(odoms.iter().map(|row| row.frame_id.clone()), "odom stream")?;
     let odom_body_frame = unique_frame(
         odoms.iter().map(|row| row.child_frame_id.clone()),
         "odom child",
     )?;
+    let lidar_frame = unique_frame(scans.iter().map(|row| row.frame_id.clone()), "lidar stream")?;
+    if args.lidar_tf.is_none() {
+        check_same_frame(&lidar_frame, &odom_body_frame)?;
+    }
     let lidar_tf = args
         .lidar_tf
         .map(|[x, y, z, qx, qy, qz, qw]| (mat3::mat_from_quat(&[qw, qx, qy, qz]), [x, y, z]));
@@ -571,47 +318,50 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let mut pgo = GscPgo::new(config.to_pgo());
+    let mut pgo = GscPgo::new(config.pgo.clone());
     let mut cursor = 0usize;
     let mut closures = 0usize;
     let mut scans_processed = 0usize;
-    let mut frame_timing: Vec<[f64; 4]> = Vec::new();
-    let mut rss_samples: Vec<[f64; 2]> = Vec::new();
-    let mut loop_snapshots: Vec<(f64, Vec<[f32; 3]>)> = Vec::new();
-    let mut lidar_frame: Option<String> = None;
-    let mut scan_span: Option<(f64, f64)> = None;
-    let mut pgo_s = 0.0f64;
-    let mut map = (args.map_voxel > 0.0)
-        .then(|| reform_map::ReformMap::new(args.map_voxel, args.reform_min_shift));
-    let mut map_timing: Vec<[f64; 2]> = Vec::new();
-    let mut reforms: Vec<[f64; 6]> = Vec::new();
 
-    for_each_scan(&connection, &args.lidar_stream, args.scan_stride, |scan| {
-        match &lidar_frame {
-            None => {
-                if args.lidar_tf.is_none() {
-                    check_same_frame(&scan.frame_id, &odom_body_frame)?;
-                }
-                lidar_frame = Some(scan.frame_id.clone());
-            }
-            Some(frame) if *frame != scan.frame_id => {
-                return Err(format!(
-                    "lidar stream mixes frames [{frame:?}, {:?}]; expected one",
-                    scan.frame_id
-                ));
-            }
-            Some(_) => {}
-        }
-        scan_span = Some((scan_span.map_or(scan.ts, |(first, _)| first), scan.ts));
+    // Each keyframe's pose as the module last published it, and the event file.
+    let mut published: Vec<(mat3::Mat3, mat3::Vec3)> = Vec::new();
+    let mut events = match &args.event_dump {
+        Some(path) => Some(
+            std::fs::File::create(format!("{}.closures", path.display()))
+                .map_err(|e| format!("create event dump: {e}"))?,
+        ),
+        None => None,
+    };
+    // Closure-edge events as packed records (`<path>.edges`), written as they happen.
+    let mut edges = match &args.event_dump {
+        Some(path) => Some(
+            std::fs::File::create(format!("{}.edges", path.display()))
+                .map_err(|e| format!("create edge dump: {e}"))?,
+        ),
+        None => None,
+    };
+    let mut edges_written = 0usize;
+    let started = Instant::now();
+    let mut keyframe_scan_thread_ms: Vec<f32> = Vec::new();
+    let mut keyframe_gnc_ms: Vec<f32> = Vec::new();
+    for scan in &scans {
         let Some(latest) = advance_latest(&odoms, scan.ts, &mut cursor) else {
-            return Ok(());
+            continue;
         };
         scans_processed += 1;
-        let frame_started = Instant::now();
 
-        let mut cloud = scan.points;
+        let mut cloud = scan.points.clone();
         if let Some((rotation, translation)) = &lidar_tf {
             cloud = pointcloud::transform_cloud(&cloud, rotation, translation);
+        }
+        if let Some((body_rotation, body_translation)) = &body_tf {
+            let inverse = mat3::transpose(body_rotation);
+            let offset = mat3::mat_vec(&inverse, body_translation);
+            cloud = pointcloud::transform_cloud(
+                &cloud,
+                &inverse,
+                &[-offset[0], -offset[1], -offset[2]],
+            );
         }
         if config.subtract_odom_from_cloud && !cloud.is_empty() {
             let rotation_inverse = mat3::transpose(&latest.rotation);
@@ -629,79 +379,60 @@ fn run() -> Result<(), String> {
         let nanos = ((latest.ts - seconds as f64) * 1e9) as u32;
         pose.set_time(seconds, nanos);
 
-        let cloud = Arc::new(cloud);
         let cloud_with_pose = CloudWithPose {
-            cloud: Some(cloud.clone()),
+            cloud: Some(Arc::new(cloud)),
             pose,
             frame_id: latest.frame_id.clone(),
         };
 
-        let mut closed = false;
-        let mut background_s = 0.0;
-        if pgo.add_key_pose(&cloud_with_pose) {
-            pgo.search_for_loop_pairs();
-            if pgo.has_loop() {
-                closures += 1;
-                closed = true;
-            }
-            pgo.smooth_and_update();
-            if closed && args.gnc_mode == "each-loop" {
-                background_s = pgo.resolve_gnc_now();
-            }
+        let step_started = Instant::now();
+        if !pgo.add_key_pose(&cloud_with_pose) {
+            continue;
         }
-        let frame_s = frame_started.elapsed().as_secs_f64();
-        if let Some(map) = &mut map {
-            let map_started = Instant::now();
-            map.add(
-                &cloud,
-                &latest.rotation,
-                &latest.translation,
-                scan.ts,
-                pgo.key_poses(),
-            );
-            map_timing.push([scan.ts, map_started.elapsed().as_secs_f64() * 1e3]);
-            if closed {
-                let (wall, cpu) = (Instant::now(), cpu_seconds());
-                if let (shift, Some(nodes)) = map.after_closure(pgo.key_poses()) {
-                    reforms.push([
-                        scan.ts,
-                        wall.elapsed().as_secs_f64() * 1e3,
-                        (cpu_seconds() - cpu) * 1e3,
-                        map.len() as f64,
-                        nodes as f64,
-                        shift,
-                    ]);
-                }
-            }
-        }
-        if closed && args.loop_snapshots {
-            let xyz = pgo
-                .key_poses()
+        published.extend(
+            pgo.key_poses()[published.len()..]
                 .iter()
-                .map(|key_pose| key_pose.translation_global.map(|value| value as f32))
-                .collect();
-            loop_snapshots.push((scan.ts, xyz));
+                .map(|kp| (kp.rotation_global, kp.translation_global)),
+        );
+        pgo.search_for_closure_pairs();
+        let had_closure = pgo.has_closure();
+        if had_closure {
+            closures += 1;
         }
-        pgo_s += frame_s;
-        frame_timing.push([
-            scan.ts,
-            frame_s * 1e3,
-            pgo.key_poses().len() as f64,
-            background_s * 1e3,
-        ]);
-        if scans_processed % RSS_SAMPLE_EVERY == 1 {
-            if let Some(megabytes) = resident_megabytes() {
-                rss_samples.push([scan.ts, megabytes]);
+        keyframe_scan_thread_ms.push((step_started.elapsed().as_secs_f64() * 1e3) as f32);
+        let gnc_started = Instant::now();
+        match pgo.solve_started() {
+            Some((keyframes, free))
+                if pgo.key_poses().len()
+                    < keyframes
+                        + ((free as f64 * args.solve_delay_fraction).ceil() as usize).max(1) => {}
+            Some(_) => {
+                pgo.wait_for_solve();
+            }
+            None => {
+                pgo.update();
             }
         }
-        Ok(())
-    })?;
-    let finalize_started = Instant::now();
-    if args.gnc_mode == "final" {
-        pgo.finalize_gnc();
+        keyframe_gnc_ms.push((gnc_started.elapsed().as_secs_f64() * 1e3) as f32);
+        if let Some(events) = &mut events {
+            write_pose_changes(events, &pgo, &mut published, had_closure, latest.ts)?;
+        }
+        if let Some(edges) = &mut edges {
+            write_closure_edges(edges, &pgo, &mut edges_written)?;
+        }
     }
-    let runtime_s = pgo_s + finalize_started.elapsed().as_secs_f64();
-    let lidar_frame = lidar_frame.unwrap_or_default();
+    pgo.finish();
+    if let Some(events) = &mut events {
+        let ts = pgo.key_poses().last().map_or(0.0, |kp| kp.time);
+        write_pose_changes(events, &pgo, &mut published, false, ts)?;
+    }
+    if let Some(edges) = &mut edges {
+        write_closure_edges(edges, &pgo, &mut edges_written)?;
+    }
+    if let Some(path) = &args.event_dump {
+        write_keyframes(path, &pgo)?;
+    }
+    let runtime_s = started.elapsed().as_secs_f64();
 
     let graph: Vec<[f64; 8]> = pgo
         .key_poses()
@@ -721,7 +452,10 @@ fn run() -> Result<(), String> {
         })
         .collect();
 
-    let data_duration_s = scan_span.map_or(0.0, |(first, last)| last - first);
+    let data_duration_s = match (scans.first(), scans.last()) {
+        (Some(first), Some(last)) => last.ts - first.ts,
+        _ => 0.0,
+    };
     let realtime_factor = if runtime_s > 0.0 {
         data_duration_s / runtime_s
     } else {
@@ -729,16 +463,15 @@ fn run() -> Result<(), String> {
     };
 
     let mut gate_counts: BTreeMap<String, usize> = BTreeMap::new();
-    for diag in pgo.loop_diagnostics() {
+    for diag in pgo.closure_diagnostics() {
         *gate_counts.entry(diag.outcome.to_string()).or_insert(0) += 1;
     }
-    let loop_diagnostics: Vec<LoopDiag> =
-        pgo.loop_diagnostics().iter().map(LoopDiag::from).collect();
+    let closure_diagnostics = pgo.closure_diagnostics().to_vec();
     let graph_error = pgo.graph_error();
-    let committed_loop_edges: Vec<CommittedLoopEdge> = pgo
-        .committed_loops()
+    let committed_closure_edges: Vec<CommittedClosureEdge> = pgo
+        .committed_closures()
         .iter()
-        .map(CommittedLoopEdge::from)
+        .map(CommittedClosureEdge::from)
         .collect();
 
     let output = EvalOutput {
@@ -759,16 +492,17 @@ fn run() -> Result<(), String> {
         data_duration_s,
         runtime_s,
         realtime_factor,
-        frame_timing,
-        loop_snapshots,
-        gnc_mode: args.gnc_mode.clone(),
-        rss_samples,
-        map_timing,
-        reforms,
+        keyframe_scan_thread_ms,
+        keyframe_gnc_ms,
+        stage_seconds: pgo
+            .stage_seconds()
+            .iter()
+            .map(|(k, v)| (k.to_string(), *v))
+            .collect(),
         gate_counts,
-        loop_diagnostics,
+        closure_diagnostics,
         graph_error,
-        committed_loop_edges,
+        committed_closure_edges,
     };
 
     let json = serde_json::to_string_pretty(&output).map_err(|e| e.to_string())?;
@@ -785,6 +519,108 @@ fn run() -> Result<(), String> {
         args.output,
     );
     Ok(())
+}
+
+/// A keyframe pose change smaller than this waits to add up, as in the module.
+const POSE_CHANGE_M: f64 = 1e-3;
+const POSE_CHANGE_RAD: f64 = 1e-4;
+
+/// Append the closure-edge events since the last call as packed records.
+fn write_closure_edges(
+    file: &mut std::fs::File,
+    pgo: &GscPgo,
+    written: &mut usize,
+) -> Result<(), String> {
+    use std::io::Write;
+    let events = &pgo.closure_edge_events()[*written..];
+    if events.is_empty() {
+        return Ok(());
+    }
+    let mut data = Vec::with_capacity(events.len() * CLOSURE_EDGE_RECORD_BYTES);
+    for event in events {
+        event.put_record(&mut data, pgo.key_poses());
+    }
+    file.write_all(&data)
+        .map_err(|e| format!("write edge dump: {e}"))?;
+    *written += events.len();
+    Ok(())
+}
+
+/// Append, as the module's loop_closure_records would, every keyframe's pose
+/// change since `published` when a closure closed or any keyframe moved:
+/// f64 ts, u32 count, then per keyframe pre xyz, id, ts, pre q (xyzw), dt, dq (f32).
+fn write_pose_changes(
+    out: &mut std::fs::File,
+    pgo: &GscPgo,
+    published: &mut Vec<(mat3::Mat3, mat3::Vec3)>,
+    closure_closed: bool,
+    ts: f64,
+) -> Result<(), String> {
+    use std::io::Write;
+    let poses = pgo.key_poses();
+    let moved = poses
+        .iter()
+        .zip(published.iter())
+        .any(|(kp, (rotation, translation))| {
+            let shift = mat3::sub(&kp.translation_global, translation);
+            let turn = mat3::mat_mul(&kp.rotation_global, &mat3::transpose(rotation));
+            let cos = ((turn[0][0] + turn[1][1] + turn[2][2] - 1.0) / 2.0).clamp(-1.0, 1.0);
+            mat3::norm(&shift) > POSE_CHANGE_M || cos.acos() > POSE_CHANGE_RAD
+        });
+    if !closure_closed && !moved {
+        return Ok(());
+    }
+    let count = poses.len().min(published.len());
+    let mut data: Vec<u8> = Vec::with_capacity(12 + count * 68);
+    data.extend_from_slice(&ts.to_le_bytes());
+    data.extend_from_slice(&(count as u32).to_le_bytes());
+    let f32s = |data: &mut Vec<u8>, values: &[f64]| {
+        for v in values {
+            data.extend_from_slice(&(*v as f32).to_le_bytes());
+        }
+    };
+    for (i, ((pre_rotation, pre_translation), post)) in published.iter().zip(poses).enumerate() {
+        let delta = mat3::mat_mul(&post.rotation_global, &mat3::transpose(pre_rotation));
+        let dt = mat3::sub(
+            &post.translation_global,
+            &mat3::mat_vec(&delta, pre_translation),
+        );
+        let q = mat3::quat_from_mat(pre_rotation);
+        let dq = mat3::quat_from_mat(&delta);
+        f32s(&mut data, pre_translation);
+        data.extend_from_slice(&(i as u32).to_le_bytes());
+        data.extend_from_slice(&post.time.to_le_bytes());
+        f32s(&mut data, &[q[1], q[2], q[3], q[0]]);
+        f32s(&mut data, &dt);
+        f32s(&mut data, &[dq[1], dq[2], dq[3], dq[0]]);
+    }
+    out.write_all(&data)
+        .map_err(|e| format!("write event dump: {e}"))?;
+    *published = poses
+        .iter()
+        .map(|kp| (kp.rotation_global, kp.translation_global))
+        .collect();
+    Ok(())
+}
+
+/// Each keyframe as little-endian f64s: ts, raw xyz qx qy qz qw, corrected xyz qx qy qz qw.
+fn write_keyframes(path: &std::path::Path, pgo: &GscPgo) -> Result<(), String> {
+    let mut bytes = Vec::new();
+    for kp in pgo.key_poses() {
+        let mut values = vec![kp.time];
+        for (rotation, translation) in [
+            (&kp.rotation_local, &kp.translation_local),
+            (&kp.rotation_global, &kp.translation_global),
+        ] {
+            let q = mat3::quat_from_mat(rotation);
+            values.extend_from_slice(translation);
+            values.extend_from_slice(&[q[1], q[2], q[3], q[0]]);
+        }
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    std::fs::write(path, bytes).map_err(|e| format!("write keyframes: {e}"))
 }
 
 fn main() {

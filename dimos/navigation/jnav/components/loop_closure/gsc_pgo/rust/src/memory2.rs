@@ -68,23 +68,6 @@ fn read_stream<T>(
     stride: usize,
     mut decode: impl FnMut(f64, &[u8]) -> Option<T>,
 ) -> Result<Vec<T>, String> {
-    let mut out = Vec::new();
-    for_each_row(connection, stream, stride, |ts, data| {
-        if let Some(value) = decode(ts, data) {
-            out.push(value);
-        }
-        Ok(())
-    })?;
-    Ok(out)
-}
-
-/// Visit every `stride`-th row of a stream in ts order without holding the stream in memory.
-fn for_each_row(
-    connection: &Connection,
-    stream: &str,
-    stride: usize,
-    mut visit: impl FnMut(f64, &[u8]) -> Result<(), String>,
-) -> Result<(), String> {
     let stride = stride.max(1);
     let table = quote_ident(stream)?;
     let blob_table = quote_ident(&format!("{stream}_blob"))?;
@@ -100,14 +83,17 @@ fn for_each_row(
             Ok((ts, data))
         })
         .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
     for (index, row) in rows.enumerate() {
         if index % stride != 0 {
             continue;
         }
         let (ts, data) = row.map_err(|e| e.to_string())?;
-        visit(ts, &data)?;
+        if let Some(value) = decode(ts, &data) {
+            out.push(value);
+        }
     }
-    Ok(())
+    Ok(out)
 }
 
 fn odom_from_odometry(ts: f64, message: &Odometry) -> OdomRow {
@@ -225,33 +211,25 @@ fn extract_xyz(message: &PointCloud2) -> Option<Vec<[f32; 3]>> {
     Some(points)
 }
 
-/// Stream a lidar stream of PointCloud2 scans one at a time, so a long recording is never held
-/// in memory. Returns how many scans decoded.
-pub fn for_each_scan(
+/// Read a lidar stream of PointCloud2 scans.
+pub fn read_scans(
     connection: &Connection,
     stream: &str,
     stride: usize,
-    mut visit: impl FnMut(ScanRow) -> Result<(), String>,
-) -> Result<usize, String> {
-    let mut decoded = 0usize;
-    for_each_row(connection, stream, stride, |ts, data| {
-        let Ok(message) = PointCloud2::decode(data) else {
-            return Ok(());
-        };
-        let Some(points) = extract_xyz(&message) else {
-            return Ok(());
-        };
-        decoded += 1;
-        visit(ScanRow {
+) -> Result<Vec<ScanRow>, String> {
+    let rows = read_stream(connection, stream, stride, |ts, data| {
+        let message = PointCloud2::decode(data).ok()?;
+        let points = extract_xyz(&message)?;
+        Some(ScanRow {
             ts,
             points,
             frame_id: message.header.frame_id.clone(),
         })
     })?;
-    if decoded == 0 {
+    if rows.is_empty() {
         return Err(format!(
             "lidar stream {stream:?} decoded no PointCloud2 rows"
         ));
     }
-    Ok(decoded)
+    Ok(rows)
 }
