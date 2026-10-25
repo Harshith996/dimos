@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from functools import cache
 
+import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -34,16 +36,36 @@ from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 
 class R1ProLioConfig(StaticTfPublisherConfig):
     base_frame: str = "base_link"
-    # Point-LIO's moving sensor frame (its sensor_frame_id).
+    # Point-LIO's moving sensor frame (its sensor_frame_id): the Mid-360's IMU, whose pose and cloud Point-LIO reports.
     lidar_frame: str = "lidar_pointlio_link"
-    # The URDF's name for the same lidar.
+    # The URDF's name for the lidar itself.
     chassis_lidar_frame: str = "lidar_chassis_left_link"
+    # Point-LIO's IMU -> lidar extrinsic; hanging its IMU frame at the lidar put every point 44 mm high.
+    extrinsic_t: list[float] = PointLioConfig.model_fields["extrinsic_t"].default_factory()
+    extrinsic_r: list[float] = PointLioConfig.model_fields["extrinsic_r"].default_factory()
+    # What the URDF and extrinsic leave: the Mid-360's floor fit 2.1 cm high on recording controller_1792896758 (3.5-8 m),
+    # enough to split a 7 cm voxel floor into two layers.
+    mount_z_trim_m: float = -0.021
+
+
+def lidar_to_imu(extrinsic_t: list[float], extrinsic_r: list[float]) -> Transform:
+    """Where Point-LIO's IMU sits in the lidar's frame: the inverse of its IMU -> lidar extrinsic."""
+    imu_to_lidar = Transform(
+        translation=Vector3(*extrinsic_t),
+        rotation=Quaternion.from_rotation_matrix(np.reshape(extrinsic_r, (3, 3))),
+    )
+    return -imu_to_lidar
 
 
 @cache
-def lio_model(lidar_frame: str, chassis_lidar_frame: str) -> LoadedRobotModel:
-    """The R1 URDF with Point-LIO's frame added at the chassis lidar, loaded on first use so importing a blueprint needs no robot assets."""
-    return R1PRO_MODEL.with_fixed_frame(lidar_frame, chassis_lidar_frame).load()
+def lio_model(
+    lidar_frame: str,
+    chassis_lidar_frame: str,
+    xyz: tuple[float, float, float],
+    rpy: tuple[float, float, float],
+) -> LoadedRobotModel:
+    """The R1 URDF with Point-LIO's frame added at ``xyz``/``rpy`` under the chassis lidar, loaded on first use so importing a blueprint needs no robot assets."""
+    return R1PRO_MODEL.with_fixed_frame(lidar_frame, chassis_lidar_frame, xyz=xyz, rpy=rpy).load()
 
 
 def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
@@ -59,7 +81,14 @@ def joint_transform(model: LoadedRobotModel, child_link: str) -> Transform:
 
 def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
-    model = lio_model(config.lidar_frame, config.chassis_lidar_frame)
+    imu = lidar_to_imu(config.extrinsic_t, config.extrinsic_r)
+    euler = imu.rotation.to_euler()
+    model = lio_model(
+        config.lidar_frame,
+        config.chassis_lidar_frame,
+        (imu.translation.x, imu.translation.y, imu.translation.z + config.mount_z_trim_m),
+        (euler.x, euler.y, euler.z),
+    )
     base_to_chassis_lidar = joint_transform(model, config.chassis_lidar_frame)
     assert base_to_chassis_lidar.frame_id == config.base_frame
     base_to_lidar = base_to_chassis_lidar + joint_transform(model, config.lidar_frame)
