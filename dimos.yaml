@@ -25,8 +25,9 @@ provides:
     /config:
       get:
         description: >-
-          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory): the one
-          answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
+          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory), and which
+          of them a DIMOS_APP override is answering rather than the file: the one answer to re-read after a `config`
+          event on zenoh, so nothing has to read the file on a hot path
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)
