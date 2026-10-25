@@ -59,11 +59,13 @@ class RoboPlanBodyFilter:
         joint_positions: Mapping[str, float],
         joint_motions: Mapping[str, NDArray[np.float64]],
     ) -> NDArray[np.bool_] | None:
-        q = self.configuration(joint_positions, joint_motions)
-        if q is None:
+        joint_configuration = self.configuration(joint_positions, joint_motions)
+        if joint_configuration is None:
             return None
         # This Scene is rooted at the URDF root, so its world is the root frame.
-        return ~np.asarray(self._body_filter.computeMask(q, root_points), dtype=bool)
+        return ~np.asarray(
+            self._body_filter.computeMask(joint_configuration, root_points), dtype=bool
+        )
 
     def configuration(
         self,
@@ -72,7 +74,7 @@ class RoboPlanBodyFilter:
     ) -> NDArray[np.float64] | None:
         """RoboPlan's q for the state, or None when a joint it moves is missing or a planar motion leaves its plane."""
         # Start from the model's neutral configuration, never its latest state.
-        q = self._neutral_q.copy()
+        joint_configuration = self._neutral_q.copy()
         for name in self._scene.getJointNames():
             info = self._scene.getJointInfo(name)
             if info.num_velocity_dofs == 1:
@@ -100,5 +102,5 @@ class RoboPlanBodyFilter:
                     ]
                 else:
                     raise ValueError(f"Unsupported robot joint layout: {name}")
-            q[self._scene.getJointPositionIndices([name])] = values
-        return q
+            joint_configuration[self._scene.getJointPositionIndices([name])] = values
+        return joint_configuration
