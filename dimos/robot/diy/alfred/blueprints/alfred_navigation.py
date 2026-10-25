@@ -25,8 +25,6 @@ planner and the arms' CAN is left alone, so the box has its cores for navigation
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
-from dimos.robot.diy.alfred.blueprints._nav import _alfred_rerun_config
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     alfred_base_transports,
     alfred_coordinator,
@@ -35,13 +33,12 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
 )
 from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_lidar_hardware
 from dimos.robot.diy.alfred.pillar_connection import PillarConnection
-from dimos.visualization.vis_module import vis_module
 
 alfred_navigation = (
     autoconnect(
         _alfred_lidar_hardware,
         *alfred_nav_modules(),
-        vis_module(global_config.viewer, rerun_config=_alfred_rerun_config()),
+        # No Rerun bridge (see alfred_manipulation): the Desktop reads zenoh itself.
         PillarConnection.blueprint(),
         alfred_urdf_manager(),
         alfred_coordinator(arms=False, follower=True),

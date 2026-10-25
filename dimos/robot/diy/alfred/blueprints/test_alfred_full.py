@@ -582,11 +582,15 @@ def test_the_bench_stack_can_run_graspgenx_instead_of_the_heuristic() -> None:
     }, "GraspGenX is a GPU model"
 
 
-@pytest.mark.parametrize(
-    "stack", [alfred_full, alfred_manipulation, alfred_navigation], ids=["full", "bench", "nav"]
-)
-def test_the_rerun_bridge_keeps_little_for_late_viewers(stack: Blueprint) -> None:
+def test_the_rerun_bridge_keeps_little_for_late_viewers() -> None:
     """A quarter of the Orin's RAM (the bridge's default) is what the models run in: that
     worker reached 6.4 GB and was OOM-killed, with the box thrashing first."""
-    (bridge,) = _atoms(stack, RerunBridgeModule)
+    (bridge,) = _atoms(alfred_full, RerunBridgeModule)
     assert bridge.kwargs["memory_limit"] == "256MB"
+
+
+@pytest.mark.parametrize("stack", [alfred_manipulation, alfred_navigation], ids=["bench", "nav"])
+def test_the_split_stacks_run_no_rerun_bridge(stack: Blueprint) -> None:
+    """The Desktop reads zenoh itself; the bridge only cost the Orin memory (the OOM above)."""
+    modules = {atom.module for atom in stack.blueprints}
+    assert not ({RerunBridgeModule, RerunWebSocketServer} & modules)

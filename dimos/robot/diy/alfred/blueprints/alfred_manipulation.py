@@ -31,11 +31,9 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     BASE_FRAME,
     ODOM_FRAME,
-    _rerun_config,
     alfred_arm_modules,
     alfred_base_transports,
     alfred_coordinator,
@@ -47,7 +45,6 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
-from dimos.visualization.vis_module import vis_module
 
 
 def alfred_bench_modules(*, grasp: GraspGenerator = "heuristic") -> tuple[Any, ...]:
@@ -57,7 +54,8 @@ def alfred_bench_modules(*, grasp: GraspGenerator = "heuristic") -> tuple[Any, .
         AlfredMountTf.blueprint(),
         AlfredHighLevel.blueprint(),
         WheelOdometryRelay.blueprint(world_frame=ODOM_FRAME, base_frame=BASE_FRAME),
-        vis_module(global_config.viewer, rerun_config=_rerun_config()),
+        # No Rerun bridge: the Desktop reads zenoh itself, and the bridge's late-viewer buffer
+        # is what grew to 6.4 GB and got this stack OOM-killed (2026-10-25).
         *alfred_arm_modules(),
         alfred_coordinator(arms=True, follower=False),
         # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and
