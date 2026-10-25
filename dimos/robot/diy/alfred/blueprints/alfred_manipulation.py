@@ -52,7 +52,9 @@ alfred_manipulation = (
         vis_module(global_config.viewer, rerun_config=_rerun_config()),
         *alfred_arm_modules(),
         alfred_coordinator(arms=True, follower=False),
-        *alfred_perception_modules(),
+        # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and its
+        # frame memory pushed the Orin into swap beside it.
+        *alfred_perception_modules(localize=False),
     )
     .transports(alfred_base_transports())
     .global_config(n_workers=10, robot_model="alfred")

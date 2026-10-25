@@ -77,7 +77,10 @@ LOCALIZE_SEGMENTER = "none"
 LOCALIZE_FEED_FRAMES = 45
 LOCALIZE_HORIZON_S = 120.0
 # Objects further than this from the camera are not registered: the bench, not the room.
-SCENE_MAX_DISTANCE_M = 1.5
+SCENE_MAX_DISTANCE_M = 2.5
+# OWLv2's scores on a cluttered bench peak around 0.3-0.6 (measured: can 0.50, box 0.57,
+# tape 0.30); the module's default 0.6 registered nothing.
+SCENE_DETECTOR_CONFIDENCE = 0.3
 # What only runs with a GPU: the models, and the pick pipeline that is nothing without them.
 GPU_MODULES = (
     PerceptionLocalize,
@@ -87,12 +90,16 @@ GPU_MODULES = (
 )
 
 
-def alfred_perception_modules(*, gpu: bool | None = None) -> tuple[Any, ...]:
+def alfred_perception_modules(*, gpu: bool | None = None, localize: bool = True) -> tuple[Any, ...]:
     """What the mast D455 adds to a stack: colour for the camera panel, a self-filtered depth
     cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run it,
     the perception stack's localize. On the venv's CPU-only torch SigLIP embeds a frame in ~30 s
     and OWLv2 detects in ~90 s, which would peg the box: localize is left out until the CUDA
-    torch for JetPack is in (then it is ~0.5 s a scan). ``gpu`` overrides the probe."""
+    torch for JetPack is in (then it is ~0.5 s a scan). ``gpu`` overrides the probe.
+
+    ``localize=False`` leaves PerceptionLocalize out and keeps the scene registration: the two
+    each load OWLv2 and EdgeTAM, and together with a localize window they filled the Orin's
+    16 GB and swapped. The bench stack picks through the scene registration alone."""
     modules: list[Any] = [
         RealSenseCamera.blueprint(
             width=D455_WIDTH,
@@ -174,6 +181,7 @@ def alfred_perception_modules(*, gpu: bool | None = None) -> tuple[Any, ...]:
             target_frame=BASE_FRAME,
             detector_backend="owlv2",
             segmentation_backend="edgetam",
+            detector_confidence=SCENE_DETECTOR_CONFIDENCE,
             detect_on_request=True,
             distance_threshold=0.08,
             min_detections_for_permanent=3,
@@ -184,6 +192,12 @@ def alfred_perception_modules(*, gpu: bool | None = None) -> tuple[Any, ...]:
         HeuristicGraspModule.blueprint(),
     ]
     present = gpu if gpu is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]
+    if not localize:
+        modules = [
+            m
+            for m in modules
+            if all(atom.module is not PerceptionLocalize for atom in m.blueprints)
+        ]
     if not present:
         modules = [
             m for m in modules if all(atom.module not in GPU_MODULES for atom in m.blueprints)

@@ -330,6 +330,7 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         if atom.module is ObjectSceneRegistrationModule
     )
     assert scene.kwargs["target_frame"] == BASE_FRAME, "objects where the arm plans"
+    assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
     assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
     assert not alfred_perception_modules(gpu=False) or all(
         atom.module is not PerceptionLocalize
@@ -351,6 +352,7 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
         RoboPlanPointCloudSelfFilter,
     } <= modules
     assert not {PointLio, MLSPlannerNative, LocalPlannerNative, LocalMapRelocalization} & modules
+    assert PerceptionLocalize not in modules, "the bench picks through the scene registration"
     tasks = _tasks(alfred_manipulation)
     assert NAV_FOLLOWER_TASK_NAME not in tasks, "no path to follow here"
     assert {BASE_VELOCITY_TASK_NAME, BASE_TRAJECTORY_TASK_NAME, "hold_arms"} <= set(tasks)
