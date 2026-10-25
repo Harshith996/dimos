@@ -53,11 +53,26 @@ def test_ik_frames_match_feedback_rendering_and_fingers_follow_opening(artifact,
         np.testing.assert_allclose(
             Rotation.from_quat(arms[side]["orientation"]).as_matrix(), expected.rotation, atol=1e-12
         )
-    assert renderer.data["left"].joint("left_finger").qpos[0] == pytest.approx(0.8 * GRIPPER_STROKE)
+    assert renderer.data["left"].joint("left_finger").qpos[0] == pytest.approx(0.2 * GRIPPER_STROKE)
     assert renderer.data["right"].joint("right_finger").qpos[0] == pytest.approx(
-        -0.2 * GRIPPER_STROKE
+        -0.8 * GRIPPER_STROKE
     )
     assert model.nq == 12
+
+
+def test_larger_displayed_opening_separates_the_fingers(artifact):
+    renderer = KnownYamModel(load_yam_artifact(artifact))
+    positions = {f"{side}_joint{i}": 0.0 for side in ("left", "right") for i in range(1, 7)}
+    positions.update({"left_arm/gripper": 0.0, "right_arm/gripper": 1.0})
+    arms = renderer.feedback(positions)
+    closed = renderer.data["left"]
+    opened = renderer.data["right"]
+    closed_gap = np.linalg.norm(closed.body("left").xpos - closed.body("right").xpos)
+    open_gap = np.linalg.norm(opened.body("left").xpos - opened.body("right").xpos)
+    assert closed_gap == pytest.approx(0)
+    assert open_gap == pytest.approx(0.071)
+    assert arms["left"]["opening"] == 0
+    assert arms["right"]["opening"] == 1
 
 
 @pytest.fixture
@@ -95,12 +110,12 @@ def adapter(artifact, mocker):
         device.disconnect()
 
 
-def test_sim_adapter_keeps_arm_order_and_reverses_gripper_closure(adapter):
+def test_sim_adapter_preserves_arm_order_and_normalized_gripper_opening(adapter):
     device, clients = adapter
     state = device.read_motor_states()
     assert state[0].q == 0
     assert state[6].q == 0.2
-    assert [m.q for m in state[-2:]] == pytest.approx([0.8, 0.3])
+    assert [m.q for m in state[-2:]] == pytest.approx([0.2, 0.7])
     commands = [MotorCommand(q=m.q, dq=0) for m in state]
     assert device.write_motor_commands(commands)
     for client in clients:

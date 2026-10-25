@@ -161,9 +161,9 @@ class KnownYamModel:
         for side, data in self.data.items():
             for i, name in enumerate(MODEL_JOINTS[:6]):
                 data.joint(name).qpos[0] = positions[f"{side}_joint{i + 1}"]
-            closure = (1.0 - positions[f"{side}_arm/gripper"]) * GRIPPER_STROKE
-            data.joint("left_finger").qpos[0] = closure
-            data.joint("right_finger").qpos[0] = -closure
+            displacement = positions[f"{side}_arm/gripper"] * GRIPPER_STROKE
+            data.joint("left_finger").qpos[0] = displacement
+            data.joint("right_finger").qpos[0] = -displacement
             data.mocap_pos[0] = BASE_POSITIONS[side]
             mujoco.mj_forward(self.model, data)
             transforms = []

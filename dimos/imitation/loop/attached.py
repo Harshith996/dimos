@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import RunEntry, is_pid_alive, list_runs
+from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -39,12 +40,6 @@ from dimos.porcelain.dimos import Dimos
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import ControlCoordinator
-
-
-class EpisodeRecorder(Protocol):
-    def get_status(self) -> dict[str, Any]: ...
-    def record(self, task: str, split: str = "train") -> dict[str, Any]: ...
-    def finish(self, keep: bool, outcome: str = "ungraded") -> dict[str, Any]: ...
 
 
 class WebViewProvider(Protocol):
@@ -66,7 +61,7 @@ class Attachment:
     controls: dict[str, dict[str, str]]
     views: list[dict[str, Any]]
     simulation: bool
-    collection: EpisodeRecorder | None = None
+    collection: EpisodeCollectionSpec | None = None
     cameras: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -169,7 +164,7 @@ class AttachedBlueprint:
                         raise RuntimeError(
                             "Multiple recorders are available; collection is ambiguous"
                         )
-                    recorder = cast("EpisodeRecorder", handle)
+                    recorder = cast("EpisodeCollectionSpec", handle)
             binding = Attachment(
                 run,
                 resources,

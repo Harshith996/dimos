@@ -39,3 +39,14 @@ test('lost tracking and pinch away from a handle cannot activate an arm', () => 
   assert.deepEqual(hand.update(.01, false), {grab:false, pressed:true});
   assert.equal(hand.update(.01, true).grab, false);
 });
+test('an episode button pinch cannot acquire an arm until the hand releases', () => {
+  const hand=new ToolPinch();
+  const update=(distance,target)=>hand.update(distance,target,[0,0,0],[1,0,0],1,.12);
+  update(.05,null);
+  assert.equal(update(.01,'ui:record').action,'ui:record');
+  assert.equal(update(.01,'move').action,'ui:record');
+  assert.equal(update(.05,'move').action,null);
+  assert.equal(update(.01,'move').action,'move');
+  hand.reset();
+  assert.equal(update(.01,'move').action,null);
+});

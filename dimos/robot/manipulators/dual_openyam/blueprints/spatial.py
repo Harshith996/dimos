@@ -20,10 +20,12 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_cameras import OpenYamSpatialCameras
 from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
     WORKSPACE_CAMERA,
+    WRIST_CAMERA,
     OpenYamSpatialCoordinator,
     OpenYamSpatialSimulation,
 )
@@ -65,6 +67,13 @@ openyam_spatial_sim = (
         OpenYamSpatialSimulation.blueprint(sim_id="openyam-spatial"),
         OpenYamSpatialCoordinator.blueprint(instance_name="SpatialControlCoordinator"),
         OpenYamSpatialTeleop.blueprint(),
+        DualOpenYamCollection.blueprint(
+            camera_source="streams",
+            camera_ids=("sim2:left/wrist", "sim2:right/wrist"),
+            width=WRIST_CAMERA.width,
+            height=WRIST_CAMERA.height,
+            fps=15,
+        ),
         OpenYamSpatialCameras.blueprint(
             instance_name="spatial_cameras", sensor=WORKSPACE_CAMERA, rate_hz=30
         ),
@@ -74,6 +83,8 @@ openyam_spatial_sim = (
         [
             (OpenYamSpatialTeleop, "left_controller_output", "left_cartesian_command"),
             (OpenYamSpatialTeleop, "right_controller_output", "right_cartesian_command"),
+            (DualOpenYamCollection, "left_image", "left_wrist"),
+            (DualOpenYamCollection, "right_image", "right_wrist"),
         ]
     )
 )

@@ -9,7 +9,8 @@ served by the existing WebXR HTTPS server at `/spatial`.
 Both simulated grippers start fully open. The station overrides the active and
 passive finger startup positions without modifying the shared robot artifact.
 Native initialization and reset were checked with the exported YAM model;
-the six spatial-model tests pass. Physical connections retain measured state.
+zero means closed, and positive finger displacement opens the jaws. Full opening
+is a measured 71 mm mesh gap. Physical connections retain measured state.
 
 ## Run
 
@@ -46,11 +47,37 @@ ahead again; the desktop **Place workspace ahead** button also requests this.
   pinched cannot switch actions. Middle-finger position has no control effect.
 - Tracking loss, stale observations, disconnection, or leaving the immersive
   session releases control. Open the hand before grabbing again.
+- Point at **Hold control** on the headset panel and pinch to pause both hands.
+  **Resume** enables fresh grabs; it does not resume an earlier movement.
 - Pinching while pointing away from a handle selects a surface in the observed
   cloud and publishes `perception_focus`. Recognition needs a connected consumer.
 
 Use Ctrl-C in the launching terminal to stop. Restart the blueprint after a
 simulation reset: the device adapter rejects commands from a changed generation.
+
+## Cameras and episodes
+
+The spatial panel shows labeled left-wrist, workspace and right-wrist images,
+per-arm movement/opening/hold status, and recording state. Stale camera frames
+are replaced by an unavailable indicator. The timer and saved/discarded counters
+come from the blueprint's recorder.
+
+Set the task before entering the immersive session. Engage each arm and its
+opening control once after startup, establishing the actual accepted command
+history. The panel explains this requirement until recording becomes ready.
+Point at **Record** and pinch; demonstrate the task, then **Save** or **Discard**.
+An episode-button pinch cannot become an arm grab without a release. Save shows
+SAVING until the native recorder has finalized the take; failures stay visible.
+The same recorder is available through Desktop's existing episode controls.
+
+`DualOpenYamCollection` owns MCAP recording in a dedicated worker. In sim it
+subscribes to the two existing wrist streams; on hardware it retains ownership
+of the two configured cameras. Both record fourteen measured joints, accepted
+joint commands, task/status and two wrist images. The central image remains an
+operator view. Data goes to `dualopenyamcollection.directory`, defaulting to
+`~/.local/state/dimos/recordings/dual-openyam`. The viewer calls the shared
+`EpisodeCollectionSpec`; it does not create another recorder or exporter.
+Dual-arm ACT training and rollout are still a separate integration step.
 
 ## DimOS Desktop
 
@@ -123,7 +150,7 @@ forward and down at 45 degrees from a pole. This is an example arrangement,
 not a calibration of the office station or a RealSense sensor-noise model.
 
 The immersive scene contains the latest observed depth surface, the known robot meshes,
-measured gripper handles, and wrist images. The table and task objects enter
+measured gripper handles, three camera panels and episode controls. The table and task objects enter
 only through camera pixels and depth. The viewer does not consume `sim_truth`
 or load the simulation scene. Occluded surfaces remain absent. Each observation
 replaces the previous one; this is not a persistent reconstructed map.
@@ -134,6 +161,7 @@ replaces the previous one; this is not a persistent reconstructed map.
 | `OpenYamSpatialCameras` | Read-only sim2 sensor snapshots | Central RGB/depth/intrinsics/cloud/TF; two wrist RGB feeds |
 | `OpenYamSpatialTeleop` | Registered RGB/depth/intrinsics + timestamped TF; measured joints; tracked hands | Sensor-derived surface; independent pose/opening actions through existing teleop streams; optional focus request |
 | `OpenYamSpatialCoordinator` | Per-arm teleop streams | Existing per-arm IK tasks; one writer for both sim2 arm devices |
+| `DualOpenYamCollection` | Measured joints, accepted commands, two wrist images | Existing native MCAP recorder and episode RPCs shared with Desktop |
 
 All three existing CameraDevices run sequentially in one dedicated sensor
 worker. Physics and control run separately. Concurrent native camera workers
@@ -180,10 +208,40 @@ geometry for planning. The raw cloud includes the robot itself, so this
 prototype does not feed it directly into a collision planner. Teleoperation
 currently uses IK with joint/tracking limits, not collision-avoiding planning.
 The default blueprint loads no semantic model and says so in the interface.
-It also does not attach the collection recorder or ACT training loop yet; those
-remain on the base OpenYAM workflow.
+The spatial blueprint attaches the existing collection recorder. It does not
+yet supply bimanual ACT training or policy rollout.
 
 ## Verification
+
+Spatial UX integration and gripper correction, 2026-10-25:
+
+- Corrected the erroneous `1-opening` sim conversion in commands, feedback and
+  startup. Actual asset jaw meshes meet at zero and separate with positive
+  displacement; body origins alone had led to the wrong interpretation.
+- Native HTTPS/WebSocket input moved only the requested arm and exercised the
+  opening control separately. Measured opening/gap changed from approximately
+  1.0 / 71 mm to 0.503 / 35.7 mm, then back to 0.997 / 70.8 mm. The other
+  gripper stayed open. Gap measurement uses the actual mesh vertices and live
+  display transforms, independently of the percentage label.
+- The five-module sim recorded and finalized a two-camera MCAP episode through
+  the same episode RPCs used by Desktop. A subsequent discard did not add a
+  saved episode. Native recorder tests also read back images and fourteen-joint
+  accepted targets and exercise failed finalization.
+- Focused validation: 39 Python tests, eight JavaScript tests, five blueprint
+  registry checks, and strict mypy on seven production files. Private browser
+  checks cover live cameras and a view-only preview with no control WebSocket.
+- The installed Desktop shell displays all three live images and discovers the
+  recorder. A browser harness exercises the actual spatial UI's ray/button hit,
+  Record/Save/Discard requests and Hold/Resume callbacks. It supplies connection
+  state for those UI checks; it does not emulate actual Vision Pro hand tracking.
+  Both browser runs report zero JavaScript errors. Native MCAP readback finds
+  state, accepted actions, both camera channels and two episode boundaries.
+
+Evidence and reproducible scripts are outside the engine repository at
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-ux-20261025/`.
+Actual headset ergonomics and physical deployment remain unverified by these
+checks. Earlier opening percentages below used the inverted convention and
+must not be treated as proof of actual jaw direction.
 
 Scene clarity and tool controls verified in the native simulation, 2026-10-25:
 

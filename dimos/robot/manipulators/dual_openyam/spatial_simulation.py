@@ -53,6 +53,7 @@ from dimos.robot.manipulators.dual_openyam.spatial_model import (
 )
 from dimos.robot.manipulators.dual_openyam.teleop_ik import DualOpenYamPinkPoseTargetSolver
 from dimos.robot.manipulators.openyam.simulation import (
+    GRIPPER_STROKE,
     PASSIVE_JOINT,
     TARGET_LIMITS,
     YamArtifact,
@@ -103,9 +104,12 @@ def spatial_world(artifact: YamArtifact) -> WorldConfig:
     robot = artifact.robot_instance()
     robot = replace(
         robot,
-        # Native YAM coordinates are closure; zero opens both coupled fingers.
-        initial_positions={**robot.initial_positions, "arm/gripper": 0.0},
-        passive_joint_positions={**robot.passive_joint_positions, PASSIVE_JOINT: 0.0},
+        # The jaw meshes meet at zero; opposite 35.5 mm strokes open a 71 mm gap.
+        initial_positions={**robot.initial_positions, "arm/gripper": 1.0},
+        passive_joint_positions={
+            **robot.passive_joint_positions,
+            PASSIVE_JOINT: -GRIPPER_STROKE,
+        },
         controller={**robot.controller, "gravity_compensation": "ideal_robot_links"},
         config=replace(
             robot.config, sensors=(WRIST_CAMERA,), configure_physics=_station_robot_physics
@@ -209,9 +213,9 @@ class DualYamSimAdapter:
             )
             grippers.append(
                 MotorState(
-                    1 - float(values["position"][6]),
-                    -float(values["velocity"][6]),
-                    -float(values["effort"][6]),
+                    float(values["position"][6]),
+                    float(values["velocity"][6]),
+                    float(values["effort"][6]),
                 )
             )
         return arms + grippers
@@ -242,7 +246,7 @@ class DualYamSimAdapter:
         if any(c.dq != 0 or c.kp != 0 or c.kd != 0 or c.tau != 0 for c in commands):
             return False
         for i, (side, client) in enumerate(self.clients.items()):
-            values = [*targets[i * 6 : i * 6 + 6], 1.0 - targets[12 + i]]
+            values = [*targets[i * 6 : i * 6 + 6], targets[12 + i]]
             client.write_positions(values, observed=self.frames[side])
         return True
 

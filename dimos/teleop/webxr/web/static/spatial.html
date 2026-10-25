@@ -6,6 +6,14 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#11181d;color:#edf5f4;font:14px system-ui}canvas{display:block}header{position:fixed;top:20px;left:24px;right:24px;display:flex;align-items:center;gap:16px;pointer-events:none}h1{font-size:18px;margin:0}header span{color:#a7bfbd;font-size:12px}#panel{position:fixed;bottom:24px;left:24px;max-width:520px;padding:18px 22px;background:#17232bea;border:1px solid #36484d;border-radius:12px}p{line-height:1.5;margin:8px 0}button{background:#76e2c1;border:0;padding:11px 16px;border-radius:7px;font:600 14px system-ui;cursor:pointer;margin:6px 7px 6px 0}button:disabled{opacity:.4;cursor:default}#status{color:#f3bf77}#cameras{position:fixed;right:24px;bottom:24px;display:flex;gap:12px}figure{margin:0;background:#17232b;border-radius:9px;overflow:hidden;width:190px}figure img{width:190px;height:142px;object-fit:contain}figcaption{padding:8px;color:#b9cecf;font-size:12px}.muted{color:#9db0b8;font-size:12px}@media(max-width:800px){#cameras{top:70px;bottom:auto}figure,figure img{width:120px}figure img{height:90px}#panel{right:24px}}
 .embedded header,.embedded #cameras,.embedded #panel>:not(#status){display:none}.embedded #panel{bottom:12px;left:12px;padding:8px 12px;max-width:calc(100% - 24px);font-size:12px;pointer-events:none}</style>
+<style>
+#episode-controls{margin-top:12px;border-top:1px solid #36484d;padding-top:12px}
+#task{display:block;width:100%;margin:6px 0 10px;padding:9px;background:#0c141b;color:#edf5f4;border:1px solid #526771;border-radius:6px;font:inherit}
+#episode-state{font-weight:700;color:#76e2c1}#episode-hint{font-size:12px;color:#b9cecf}
+#cameras{gap:8px}figure,figure img{width:160px}figure img{height:120px}
+figure{min-height:150px}#panel{max-width:490px;padding:14px 18px}
+@media(max-width:1000px){#cameras{top:70px;bottom:auto}figure,figure img{width:110px}figure img{height:82px}figure{min-height:115px}}
+</style>
 <script>if(new URLSearchParams(location.search).has('embedded'))document.documentElement.classList.add('embedded');</script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
 </head>
@@ -16,10 +24,16 @@
 <p>Pinch thumb and index finger at a round tool handle to move that arm. Pinch its opening control and slide toward OPEN or CLOSE to adjust the jaws while the arm holds. Release to hold.</p>
 <p class="muted">Solid markers show measured opening; the white outline shows your request. Pinch while pointing at the scene to select an observed surface. Surfaces come from RGB-D; arms follow joint feedback.</p>
 <button id="enter" disabled>Enter immersive view</button><button id="place">Place workspace ahead</button>
+<div id="episode-controls">
+<label for="task">Demonstration task</label><input id="task" maxlength="256" value="Pick up the cube and place it in the tray">
+<div id="episode-state">Connecting to recorder…</div><p id="episode-hint"></p>
+<button data-action="record" disabled>Record</button><button data-action="save" disabled>Save</button><button data-action="discard" disabled>Discard</button><button data-action="hold" disabled>Hold control</button>
+<p class="muted">In the headset, point at a button and pinch. The timer and saved count come from this blueprint's recorder.</p>
+</div>
 <p id="perception" class="muted">Object recognition: no detector connected.</p>
 <p id="model-note" class="muted" hidden></p>
 <p class="muted">Desktop: drag to orbit, scroll to zoom. Motion control requires tracked hands.</p>
 </div>
-<div id="cameras"><figure><img id="left-camera" alt="Left wrist camera"><figcaption>Left wrist RGB</figcaption></figure><figure><img id="right-camera" alt="Right wrist camera"><figcaption>Right wrist RGB</figcaption></figure></div>
+<div id="cameras"><figure><img id="left-camera" alt="Left wrist camera" hidden><figcaption id="left-caption">Left wrist · Waiting</figcaption></figure><figure><img id="workspace-camera" alt="Workspace camera" hidden><figcaption id="workspace-caption">Workspace · Waiting</figcaption></figure><figure><img id="right-camera" alt="Right wrist camera" hidden><figcaption id="right-caption">Right wrist · Waiting</figcaption></figure></div>
 <script type="module" src="./static/spatial.js"></script>
 </body></html>

@@ -117,7 +117,7 @@ and 16:9 aspect ratio. This is model calibration; real camera extrinsics and har
 gripper calibration still need measurement. Overview RGB and
 scene geometry are operator views and never enter ACT. Arm actions are absolute public
 joint positions in radians. In this artifact the public gripper coordinate increases
-closure: 0..1 maps to left-finger displacement 0..0.0355 m. Older prototype coordinates
+opening: 0..1 maps to left-finger displacement 0..0.0355 m. Older prototype coordinates
 and checkpoints require an explicit migration and are rejected.
 
 The shared Rust-backed CollectionRecorder writes typed `JointState`/`Image` MCAP channels, the shared

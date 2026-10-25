@@ -30,6 +30,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -80,6 +81,12 @@ class SpatialInput(BaseModel):
     focus: tuple[float, float, float] | None = None
 
 
+class CollectionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["record", "save", "discard"]
+    task: str = Field(default="OpenYAM manipulation demonstration", min_length=1, max_length=256)
+
+
 class SpatialViewerConfig(WebXRTeleopConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
     robot_model: RobotModelConfig | None = None
@@ -103,6 +110,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
     """
 
     config: SpatialViewerConfig
+    _collection: EpisodeCollectionSpec
     coordinator_joint_state: In[JointState]
     color_image: In[Image]
     depth_image: In[Image]
@@ -155,6 +163,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             (self.tf, self._transforms.receive_tfmessage),
             (self.left_wrist, lambda image: self._on_image("left", image)),
             (self.right_wrist, lambda image: self._on_image("right", image)),
+            (self.color_image, lambda image: self._on_image("workspace", image)),
             (self.objects, self._on_objects),
         ]
         for port, callback in subscriptions:
@@ -216,14 +225,30 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             )
 
         @app.get("/spatial/wrist/{side}")
-        def wrist(side: str) -> Response:
+        @app.get("/spatial/camera/{side}")
+        def camera(side: str) -> Response:
             with self._lock:
                 image = self._images.get(side)
             if image is None or time.time() - image[0] > self.config.observation_timeout_s:
                 raise HTTPException(503, "Camera unavailable")
             return Response(
-                image[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+                image[1],
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-store", "X-Frame-Timestamp": str(image[0])},
             )
+
+        @app.get("/spatial/collection")
+        def collection() -> dict[str, Any]:
+            return self._collection.get_status()
+
+        @app.post("/spatial/collection")
+        def collection_action(command: CollectionAction) -> dict[str, Any]:
+            try:
+                if command.action == "record":
+                    return self._collection.record(command.task)
+                return self._collection.finish(command.action == "save")
+            except (RuntimeError, ValueError) as error:
+                raise HTTPException(409, str(error)) from error
 
     @rpc
     def get_web_views(self) -> list[dict[str, Any]]:

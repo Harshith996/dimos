@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {ToolPinch} from './spatial_input.mjs';
 import {decodeSurface, SurfaceGrid} from './spatial_surface.mjs';
+import {SpatialUI} from './spatial_ui.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 if (embedded) document.body.classList.add('embedded');
@@ -69,26 +70,12 @@ focusMarker.visible = false; stage.add(focusMarker);
 let feedback = null, feedbackAt = 0, cloudAt = 0, cloudTS = 0, sequence = 0, socket = null;
 let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
-// HTML is not visible inside immersive-vr; keep instructions in the scene too.
-const cardCanvas = document.createElement('canvas'); cardCanvas.width = 1024; cardCanvas.height = 256;
-const cardContext = cardCanvas.getContext('2d');
-const cardTexture = new THREE.CanvasTexture(cardCanvas); cardTexture.colorSpace = THREE.SRGBColorSpace;
-const card = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), new THREE.MeshBasicMaterial({map: cardTexture, side: THREE.DoubleSide}));
-card.position.set(0.8, 0, 0.85);
-card.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0)));
-stage.add(card); card.visible = !embedded;
-let cardStatus = '';
-function updateCard(text) {
-  if (text === cardStatus) return; cardStatus = text;
-  cardContext.fillStyle = '#17232b'; cardContext.fillRect(0,0,1024,256);
-  cardContext.fillStyle = '#76e2c1'; cardContext.font = 'bold 30px sans-serif';
-  cardContext.fillText('OpenYAM · spatial workstation', 30, 46);
-  cardContext.fillStyle = '#edf5f4'; cardContext.font = '26px sans-serif';
-  cardContext.fillText('Pinch index + thumb at a handle. Move your hand. Release to hold.', 30, 98);
-  cardContext.fillText('Pinch and slide the tool’s opening control to adjust its jaws.', 30, 140);
-  cardContext.fillStyle = '#f3bf77'; cardContext.font = '24px sans-serif'; cardContext.fillText(text, 30, 208);
-  cardTexture.needsUpdate = true;
-}
+let paused = false, inputGeneration=0;
+const ui = new SpatialUI(stage,endpoint,{embedded,onAction:()=>{
+  paused=!paused; resetHands(); send({});
+}});
+const uiPointer=new THREE.Mesh(new THREE.SphereGeometry(0.007,8,6),new THREE.MeshBasicMaterial({color:0xffffff,depthTest:false}));
+scene.add(uiPointer); uiPointer.visible=false;
 const geometry = await fetch(endpoint('model')).then(check).then(r => r.json()).catch(error => {
   status.textContent = `Cannot load station: ${error.message}. Reload after the blueprint is running.`;
   throw error;
@@ -122,8 +109,8 @@ async function poll(path, interval, accept) {
 function connect() {
   if (!controlRequested) return;
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  socket.onopen = () => { sequence = 0; resetHands(); };
-  socket.onclose = () => { resetHands(); if (!stopped && controlRequested) setTimeout(connect, 1500); };
+  socket.onopen = () => { sequence = 0; entryError=''; resetHands(); };
+  socket.onclose = event => { resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
 poll(endpoint('state'), 35, async response => {
   feedback = await response.json(); feedbackAt = performance.now();
@@ -187,25 +174,7 @@ async function pollSurface() {
   }
 }
 pollSurface();
-// Wrist feeds also live inside the immersive scene, as optional contextual panels.
-for (const [i, side] of (embedded ? [] : ['left', 'right']).entries()) {
-  const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.21), new THREE.MeshBasicMaterial({side: THREE.DoubleSide}));
-  panel.position.set(0.68, i ? -0.43 : 0.43, 0.55);
-  panel.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0)));
-  stage.add(panel); panel.visible = false;
-  let oldURL = null, imageAt = 0;
-  poll(endpoint(`wrist/${side}`), 150, async response => {
-    const blob = await response.blob(); const bitmap = await createImageBitmap(blob, {imageOrientation: 'flipY'});
-    const texture = new THREE.Texture(bitmap); texture.colorSpace = THREE.SRGBColorSpace; texture.needsUpdate = true;
-    if (panel.material.map) { panel.material.map.image.close(); panel.material.map.dispose(); }
-    panel.material.map = texture; panel.material.needsUpdate = true; panel.visible = true; imageAt = performance.now();
-    const url = URL.createObjectURL(blob); document.querySelector(`#${side}-camera`).src = url;
-    if (oldURL) URL.revokeObjectURL(oldURL); oldURL = url;
-  });
-  setInterval(() => { if (performance.now()-imageAt > 500) { panel.visible = false; document.querySelector(`#${side}-camera`).removeAttribute('src'); } }, 200);
-}
-
-function resetHands() { for (const state of Object.values(gestures)) state.reset(); }
+function resetHands() { inputGeneration++; for (const state of Object.values(gestures)) state.reset(); }
 function fresh() {
   const now=feedback?.server_time+(performance.now()-feedbackAt)/1000;
   return feedback?.arms && performance.now()-feedbackAt < 350 && performance.now()-cloudAt < 500
@@ -227,7 +196,7 @@ enter.onclick = async () => {
   entryError = '';
   try {
     const session = await navigator.xr.requestSession('immersive-vr', {requiredFeatures: ['local-floor', 'hand-tracking']});
-    controlRequested = true;
+    controlRequested = true; paused=false;
     session.addEventListener('end', () => { controlRequested = false; resetHands(); send({}); socket?.close(); enter.disabled = false; orbit.enabled = true; });
     session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') { resetHands(); send({}); } });
     await renderer.xr.setSession(session); connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
@@ -243,6 +212,8 @@ function send(hands, focus = null) {
 }
 function track(frame, reference) {
   const inputs = {}, seen = new Set(); let focus = null;
+  const generation=inputGeneration;
+  ui.hovered=null; uiPointer.visible=false;
   stage.updateMatrixWorld(true); inverseStage.copy(stage.matrixWorld).invert();
   const rotation = new THREE.Quaternion().setFromRotationMatrix(inverseStage);
   for (const source of frame.session.inputSources) {
@@ -264,27 +235,31 @@ function track(frame, reference) {
     const c=openingControls[side], arm=feedback.arms[side];
     const axis=new THREE.Vector3(1,0,0).applyQuaternion(c.group.quaternion);
     const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
-    const target=pinchPosition.distanceTo(knob)<0.045 ? 'opening'
+    const knuckle = poses['index-finger-metacarpal'];
+    const direction=knuckle?indexPosition.clone().sub(new THREE.Vector3().copy(knuckle.transform.position)):null;
+    const ray=direction?.length()>0.01?new THREE.Raycaster(indexPosition,direction.normalize(),0,3):null;
+    const uiHit=ray?ui.hit(ray):null;
+    const toolTarget=paused?null:pinchPosition.distanceTo(knob)<0.045 ? 'opening'
       : pinchPosition.distanceTo(handles[side].position)<0.10 ? 'move' : null;
+    const target=toolTarget || (uiHit?`ui:${uiHit.action}`:null);
+    if(!toolTarget && uiHit) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
     const gesture=gestures[side].update(indexPosition.distanceTo(thumbPosition),target,
       pinchPosition.toArray(),axis.toArray(),arm.opening,feedback.opening_handle_travel_m);
     const orientation = rotation.clone().multiply(new THREE.Quaternion().copy(wrist.transform.orientation));
     inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
-      pinched:gesture.pinched, action:gesture.action};
+      pinched:gesture.pinched, action:['move','opening'].includes(gesture.action)?gesture.action:null};
+    if(gesture.pressed && gesture.action?.startsWith('ui:')) ui.activate(gesture.action.slice(3));
     handles[side].material.opacity = gesture.action==='move' ? 1 : 0.45;
     c.measured.material.opacity=target==='opening' || gesture.action==='opening' ? 1 : 0.55;
     if (gesture.pressed && target===null) {
-      const knuckle = poses['index-finger-metacarpal'];
-      if (knuckle) {
-        const direction = indexPosition.clone().sub(new THREE.Vector3().copy(knuckle.transform.position)).normalize();
-        const ray = new THREE.Raycaster(indexPosition, direction, 0, 2);
+      if (ray) {
         const hit = ray.intersectObject(cloud)[0];
         if (hit) { focus = hit.point.clone().applyMatrix4(inverseStage).toArray(); focusMarker.position.fromArray(focus); focusMarker.visible = true; }
       }
     }
   }
   for (const side of ['left', 'right']) if (!seen.has(side)) { gestures[side].reset(); for (const dot of handDots[side]) dot.visible = false; }
-  send(inputs, focus);
+  send(generation===inputGeneration?inputs:{}, focus);
 }
 renderer.setAnimationLoop((time, frame) => {
   const ready = !!fresh();
@@ -297,8 +272,9 @@ renderer.setAnimationLoop((time, frame) => {
   cloud.visible = ready;
   detections.visible=ready;
   if(!ready) focusMarker.visible=false;
-  status.textContent = entryError || (ready ? `Live · ${surfaceGrid?.valid || 0} depth samples · ${Math.round((feedback.server_time-cloudTS)*1000)} ms old · ${!controlRequested ? 'desktop preview' : socket?.readyState === WebSocket.OPEN ? 'control connected' : 'control disconnected'}` : (feedback?.observation_error || 'Waiting for fresh arm feedback and RGB-D observations · control held'));
-  updateCard(ready ? (!controlRequested ? 'Desktop preview' : socket?.readyState === WebSocket.OPEN ? 'Live observations · control connected' : 'Control disconnected · arms held') : 'Observations stale · release your pinch; control held');
+  status.textContent = entryError || (ready ? `Live · ${surfaceGrid?.valid || 0} depth samples · ${Math.round((feedback.server_time-cloudTS)*1000)} ms old · ${!controlRequested ? 'desktop preview' : paused ? 'control paused' : socket?.readyState === WebSocket.OPEN ? 'control connected' : 'control disconnected'}` : (feedback?.observation_error || 'Waiting for fresh arm feedback and RGB-D observations · control held'));
+  ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
+    ready,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);
@@ -306,10 +282,10 @@ renderer.setAnimationLoop((time, frame) => {
     if (time-lastSend > 20) {
       lastSend = time;
       if (ready && frame.session.visibilityState === 'visible') track(frame, reference);
-      else { resetHands(); send({}); }
+      else { resetHands(); uiPointer.visible=false; send({}); }
     }
   } else orbit.update();
   renderer.render(scene, camera);
 });
 addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); });
+addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); });

@@ -20,7 +20,7 @@ import math
 from pathlib import Path
 from threading import RLock
 import time
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import Field
@@ -46,6 +46,7 @@ from dimos.teleop.webxr.controller_types import Buttons
 class DualOpenYamCollectionConfig(ModuleConfig):
     directory: Path = STATE_DIR / "recordings" / "dual-openyam"
     camera_ids: tuple[str, ...] = ()
+    camera_source: Literal["devices", "streams"] = "devices"
     width: int = Field(default=640, gt=0)
     height: int = Field(default=480, gt=0)
     fps: int = Field(default=15, gt=0)
@@ -53,10 +54,13 @@ class DualOpenYamCollectionConfig(ModuleConfig):
 
 
 class DualOpenYamCollection(Module):
+    dedicated_worker = True
     config: DualOpenYamCollectionConfig
     coordinator_joint_state: In[JointState]
     coordinator_joint_command: In[JointState]
     button_pressed: In[Buttons]
+    left_image: In[Image]
+    right_image: In[Image]
     camera1: Out[Image]
     camera2: Out[Image]
     status: Out[String]
@@ -126,6 +130,15 @@ class DualOpenYamCollection(Module):
             Disposable(self.coordinator_joint_command.subscribe(partial(self._joints, "action")))
         )
         self.register_disposable(Disposable(self.button_pressed.subscribe(self._buttons)))
+        if self.config.camera_source == "streams":
+            for port, name in ((self.left_image, "camera1"), (self.right_image, "camera2")):
+                self.register_disposable(Disposable(port.subscribe(partial(self._image, name))))
+        else:
+            self._open_cameras()
+        self.register_disposable(rx.interval(0.2).subscribe(lambda _: self._health()))
+        self._publish_status()
+
+    def _open_cameras(self) -> None:
         self._camera_ids = self.config.camera_ids or tuple(
             sorted(camera.id for camera in discover_webcams() if "usb" in camera.name.lower())
         )
@@ -147,8 +160,6 @@ class DualOpenYamCollection(Module):
                         on_error=partial(self._camera_error, name),
                     )
                 )
-        self.register_disposable(rx.interval(0.2).subscribe(lambda _: self._health()))
-        self._publish_status()
 
     def _joints(self, name: str, message: JointState) -> None:
         if (
@@ -175,8 +186,9 @@ class DualOpenYamCollection(Module):
                 self._capture.write(name, message)
 
     def _image(self, name: str, image: Image) -> None:
-        output = self.camera1 if name == "camera1" else self.camera2
-        output.publish(image)
+        if self.config.camera_source == "devices":
+            output = self.camera1 if name == "camera1" else self.camera2
+            output.publish(image)
         with self._lock:
             if image.shape != (self.config.height, self.config.width, 3):
                 self._camera_error(name, ValueError(f"Unexpected image shape: {image.shape}"))
@@ -246,6 +258,7 @@ class DualOpenYamCollection(Module):
                 "robot_type": "dual_openyam",
                 "joint_names": DUAL_OPENYAM_JOINTS,
                 "camera_ids": list(self._camera_ids),
+                "camera_source": self.config.camera_source,
                 "fps": self.config.fps,
                 "action_semantics": "driver_accepted_joint_position_updates",
                 "started_at": self._started,
@@ -351,6 +364,10 @@ class DualOpenYamCollection(Module):
                     else None
                 ),
                 "recording": self._capture.directory.name if self._capture is not None else None,
+                "started_at": self._started if self._capture is not None else None,
+                "episodes_saved": self._saved,
+                "episodes_discarded": self._discarded,
+                "last_event": self._event,
                 "recorded_frames": min(
                     self._capture.counts.get("camera1", 0), self._capture.counts.get("camera2", 0)
                 )

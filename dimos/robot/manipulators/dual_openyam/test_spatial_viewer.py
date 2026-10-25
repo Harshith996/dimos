@@ -18,9 +18,12 @@ import json
 from pathlib import Path
 import time
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 import numpy as np
 import pytest
 
+from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -187,3 +190,23 @@ def test_rgbd_requires_timestamped_camera_mount_and_expires_when_depth_disappear
     viewer._surface = SurfaceFrame(now - 1, b"", np.zeros((1, 3)))
     assert not send(viewer, 0, left=True)
     assert viewer._controllers[Hand.LEFT] is None
+
+
+def test_spatial_episode_controls_call_the_existing_owner_and_report_rejected_saves(viewer, mocker):
+    owner = mocker.create_autospec(EpisodeCollectionSpec, instance=True)
+    owner.get_status.return_value = {"recording": None, "episodes_saved": 2}
+    owner.record.return_value = {"recording": "take-3", "episodes_saved": 2}
+    owner.finish.side_effect = RuntimeError("Camera stopped; discard this take")
+    viewer.set_module_ref("_collection", owner)
+    viewer._web_server = mocker.Mock(app=FastAPI())
+    viewer._setup_routes()
+    with TestClient(viewer._web_server.app) as client:
+        assert client.get("/spatial/collection").json()["episodes_saved"] == 2
+        result = client.post("/spatial/collection", json={"action": "record", "task": "pick cube"})
+        assert result.json()["recording"] == "take-3"
+        owner.record.assert_called_once_with("pick cube")
+        result = client.post("/spatial/collection", json={"action": "save"})
+        assert result.status_code == 409
+        assert result.json()["detail"] == "Camera stopped; discard this take"
+        owner.finish.assert_called_once_with(True)
+        assert client.post("/spatial/collection", json={"action": "move"}).status_code == 422
