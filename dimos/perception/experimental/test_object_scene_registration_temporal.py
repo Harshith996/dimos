@@ -23,7 +23,9 @@ from unittest.mock import ANY, MagicMock, call
 import numpy as np
 import pytest
 
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
@@ -521,3 +523,73 @@ def test_object_db_keeps_first_sighting_pending_above_threshold() -> None:
     object_db.add_objects([newer])
 
     assert object_db.get_objects() == [detected]
+
+
+class _RecordingTransport:
+    """A tf transport that only remembers who subscribed."""
+
+    def __init__(self) -> None:
+        self.callbacks: list[Any] = []
+
+    def subscribe(self, callback: Any, selfstream: Any = None) -> Any:
+        self.callbacks.append(callback)
+        return lambda: self.callbacks.remove(callback)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
+def test_start_subscribes_tf_before_the_first_on_request_scan(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(target_frame="map", detect_on_request=True)
+    module._detector_class = MagicMock()
+    monkeypatch.setattr(module, "_create_segmenter", lambda: None)
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.align_timestamped", MagicMock()
+    )
+    monkeypatch.setattr(
+        "dimos.perception.experimental.object_scene_registration.backpressure", MagicMock()
+    )
+    module.camera_info = MagicMock()
+    module.color_image = MagicMock()
+    module.depth_image = MagicMock()
+    transport = _RecordingTransport()
+    module.tf.transport = transport  # type: ignore[assignment]
+
+    module.start()
+
+    # The mount chain published between start and the first scan is in the buffer by then.
+    assert len(transport.callbacks) == 1
+    transport.callbacks[0](TFMessage(Transform(frame_id="map", child_frame_id="camera", ts=1.0)))
+    assert module.tfbuffer.get("map", "camera", 1.0, 0.1, warn=False) is not None
+    module.stop()
+
+
+def test_tf_lookup_uses_the_configured_tolerances(monkeypatch: Any) -> None:
+    module = ObjectSceneRegistrationModule(
+        target_frame="map",
+        detector_backend="owlv2",
+        tf_tolerance_s=0.3,
+        tf_forward_tolerance_s=0.4,
+    )
+    tf = _FakeTF(MagicMock(name="transform"))
+    module._tf = tf  # type: ignore[assignment]
+    module._camera_info = MagicMock()
+    module._detector = MagicMock()
+    module._text_prompts = ["mug"]
+    module.detections_2d = MagicMock()
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8),
+        format=ImageFormat.BGR,
+        frame_id="camera",
+        ts=4.0,
+    )
+    module._detector.query_detections.return_value = ImageDetections2D(color, [])
+    monkeypatch.setattr(module, "_process_3d_detections", MagicMock())
+
+    module._process_images(color, _image(4.0))
+
+    assert tf.calls == [(("map", "camera", 4.0, 0.3), {"forward_tolerance": 0.4})]
+    module.stop()

@@ -187,6 +187,10 @@ def alfred_perception_modules(*, gpu: bool | None = None, localize: bool = True)
             min_detections_for_permanent=3,
             max_distance=SCENE_MAX_DISTANCE_M,
             use_aabb=True,
+            # The camera's pose comes through AlfredMountTf's 5 Hz chain (see the voxel map):
+            # at the module's 0.1 s a scan's one frame now and then has no edge close enough.
+            tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
         ).remappings([(ObjectSceneRegistrationModule, "pointcloud", "scene_objects_pointcloud")]),
         PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME),
         HeuristicGraspModule.blueprint(),

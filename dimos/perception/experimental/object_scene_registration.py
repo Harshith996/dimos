@@ -65,6 +65,11 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     max_distance: float = 0.0
     use_aabb: bool = False
     max_obstacle_width: float = 0.0
+    # The camera's pose is read off tf at the frame's stamp: how far from the stamp an edge may be,
+    # and how long to wait for one still in flight. A rigid mount chain published at a few Hz
+    # wants more than the defaults (as the self filter's tf_tolerance_s does).
+    tf_tolerance_s: float = 0.1
+    tf_forward_tolerance_s: float = 0.2
 
 
 class ObjectSceneRegistrationModule(Module):
@@ -151,6 +156,11 @@ class ObjectSceneRegistrationModule(Module):
             )
 
         self._segmenter = self._create_segmenter()
+
+        # tfbuffer subscribes on first touch. With detect_on_request nothing touches it before
+        # the first scan, whose lookup then starts from an empty buffer and finds no camera
+        # pose; subscribe now so the chain is buffered by the time a scan asks for it.
+        self.tfbuffer  # noqa: B018
 
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
@@ -427,8 +437,8 @@ class ObjectSceneRegistrationModule(Module):
                 self._target_frame,
                 color_image.frame_id,
                 color_image.ts,
-                0.1,
-                forward_tolerance=0.2,
+                self.config.tf_tolerance_s,
+                forward_tolerance=self.config.tf_forward_tolerance_s,
             )
 
         detections_2d: ImageDetections2D[Any]
