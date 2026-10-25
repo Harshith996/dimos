@@ -96,7 +96,7 @@ def test_only_sources_and_installs_wake_the_blueprint_watcher() -> None:
     assert not events.is_installed_package(added, "/site-packages/numpy")
 
 
-def test_the_shared_config_changing_the_recordings_dir_is_one_config_event(
+def test_a_shared_config_change_is_one_event_on_the_topic_of_the_setting_that_moved(
     home: Path, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
     config_file = home / "dimos_home" / "config.yaml"
@@ -116,9 +116,10 @@ def test_the_shared_config_changing_the_recordings_dir_is_one_config_event(
         watcher.cancel()
 
     asyncio.run(scenario())
-    assert [key for key, _ in sent] == ["ns/dimos/events/config"] * 2
+    # the topic names the setting, so a listener subscribes to the one it reads
+    assert [key for key, _ in sent] == ["ns/dimos/events/config/recordingsDir"] * 2
     # a bust signal, not the values: GET /config is the one answer
-    assert [payload for _, payload in sent] == [{"type": "config"}] * 2
+    assert [payload for _, payload in sent] == [{"type": "config", "setting": "recordingsDir"}] * 2
 
 
 def launch_phases(sent: list[tuple[str, Any]]) -> list[str]:

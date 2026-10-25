@@ -77,10 +77,20 @@ class Bus:
         self.launch_key: tuple[Any, ...] | None = None
         self.live_run_id: str | None = None
 
-    def send(self, event: dict[str, Any]) -> None:
+    def send(self, event: dict[str, Any], path: str | None = None) -> None:
+        """Publishes one event under this bus's namespace.
+
+        `path` names what the event is about and extends the topic
+        (`<ns>/dimos/events/config/recordingsDir`), so a listener can subscribe to the one thing it
+        reads instead of waking on every change. A listener that wants all of them subscribes to
+        `<ns>/dimos/events/**`: a single `*` matches one chunk and would miss these.
+        """
         if self.put is None or self.namespace is None:
             return
-        self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
+        topic = f"{self.namespace}/dimos/events/{event['type']}"
+        if path:
+            topic = f"{topic}/{path}"
+        self.put(topic, json.dumps(event).encode())
 
     def launch(self, launch: dict[str, Any] | None) -> None:
         launch_part = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
@@ -228,14 +238,18 @@ async def watch_blueprints(
 
 
 async def watch_config(
-    changed: Callable[[], None], debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
+    changed: Callable[[list[str]], None], debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
 ) -> None:
-    """Calls `changed` when the shared config.yaml changes what `GET /config` answers.
+    """Calls `changed` with the settings whose answer moved, whenever the shared config.yaml changes
+    what `GET /config` would say.
 
     Its directory is watched and not the file itself, because Desktop (the file's writer; the gateway
     only reads it) saves it by renaming a temporary file over it, which replaces the inode a watch of
     the file would hold. The directory is created if missing so the first config.yaml a machine ever
     gets is seen too.
+
+    Only the settings that actually moved are reported: a save that rewrites the file without
+    changing an answer, or that changes a key the gateway does not read, is not news.
     """
     home = shared_config.dimos_home()
     home.mkdir(parents=True, exist_ok=True)
@@ -255,8 +269,11 @@ async def watch_config(
             await wake.wait()
             wake.clear()
             current = store.shared_settings()
-            if current != settings:
+            moved = sorted(
+                key for key in {*settings, *current} if settings.get(key) != current.get(key)
+            )
+            if moved:
                 settings = current
-                changed()
+                changed(moved)
     finally:
         watcher.cancel()

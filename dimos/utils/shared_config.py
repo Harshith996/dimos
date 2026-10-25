@@ -22,6 +22,7 @@ after this module is imported.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -29,11 +30,37 @@ from typing import Any
 import yaml
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+def app_env() -> dict[str, Any]:
+    """``DIMOS_APP``, as Desktop started this process with it: which component this is and the home it
+    belongs to, as one JSON object instead of a variable per setting. Children inherit the variable.
+
+    Unusable JSON is said out loud and then ignored rather than being fatal: what is in here locates a
+    file that also has a default, so there is something to fall back to.
+    """
+    text = os.environ.get("DIMOS_APP")
+    if not text:
+        return {}
+    try:
+        loaded = json.loads(text)
+    except ValueError as error:
+        logger.warning("DIMOS_APP is not usable, so the home in it is ignored", error=str(error))
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def dimos_home() -> Path:
-    """``$DIMOS_HOME``, or ``~/.dimos``."""
-    return Path(os.environ.get("DIMOS_HOME") or Path.home() / ".dimos")
+    """``DIMOS_APP``'s ``home``, else ``$DIMOS_HOME``, else ``~/.dimos``.
+
+    ``DIMOS_HOME`` is still read because that is what every Desktop before 0.2.228 set, and because
+    someone running this by hand exports it.
+    """
+    home = app_env().get("home") or os.environ.get("DIMOS_HOME")
+    return Path(home) if home else Path.home() / ".dimos"
 
 
 def config_file() -> Path:
