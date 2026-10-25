@@ -35,7 +35,7 @@ from dimos.robot.manipulators.common.topics import (
     COORDINATOR_FRAME_ID,
     EEF_TWIST_TASK_NAME,
 )
-from dimos.robot.urdf_manager import UrdfManagerPointClearing
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 
 class TeleopBinding(TypedDict):

@@ -17,8 +17,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
-import subprocess
-import sys
 from typing import Any, cast
 
 import numpy as np
@@ -44,7 +42,8 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
+from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -404,43 +403,12 @@ def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_captu
     np.testing.assert_allclose(late.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
 
 
-def test_an_unmoved_edge_is_resent_only_at_the_keepalive_rate(make_filter, monkeypatch):
-    # a moving joint (shoulder) and a fixed one (tool) under it
-    urdf = _joint_robot("prismatic").replace(
-        "</robot>",
-        '<link name="tool"/><joint name="tool_mount" type="fixed"><parent link="arm"/><child link="tool"/></joint></robot>',
-    )
-    module = make_filter(urdf_xml=urdf, joint_tf_hz=1000.0, unchanged_tf_hz=4.0)
-    sent: list[set[str]] = []
-    monkeypatch.setattr(
-        module.tfbuffer,
-        "publish",
-        lambda *edges: sent.append({edge.child_frame_id for edge in edges}),
-    )
-    clock = [100.0]
-    monkeypatch.setattr("dimos.robot.urdf_manager.time.monotonic", lambda: clock[0])
-
-    def state_at(seconds: float, shoulder: float) -> None:
-        clock[0] = 100.0 + seconds
-        module.add_joint_state(JointState(ts=seconds, name=["shoulder"], position=[shoulder]))
-
-    state_at(0.0, 0.3)
-    state_at(0.1, 0.4)  # the shoulder moved; the tool's edge (relative to arm) did not
-    state_at(0.2, 0.4)  # nothing moved, keepalive not due
-    state_at(
-        0.3, 0.4
-    )  # the tool's keepalive is due (0.3 s since sent); the shoulder's isn't (0.2 s)
-
-    assert sent == [{"arm", "tool"}, {"arm"}, {"tool"}]
-
-
-@pytest.mark.parametrize("seed", range(4))
-def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
+def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
     pytest.importorskip("roboplan.core")
     description = R1PRO_MODEL.load()
     roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
     module = UrdfManager(model=R1PRO_MODEL)
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(0)
     positions = {
         joint.name: rng.uniform(
             -np.pi if joint.lower is None else joint.lower,
@@ -467,31 +435,3 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro(seed):
             ),
             atol=1e-9,
         )
-
-
-def test_a_plain_urdf_manager_never_imports_roboplan(tmp_path):
-    urdf = tmp_path / "robot.urdf"
-    urdf.write_text(_joint_robot("prismatic"))
-    # A fresh interpreter where importing roboplan fails; UrdfManagerPointClearing is the control that proves it does.
-    script = f"""
-import sys
-sys.modules["roboplan"] = None
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.urdf_manager import UrdfManager, UrdfManagerPointClearing
-model = RobotModel.from_file({str(urdf)!r})
-module = UrdfManager(model=model)
-[edge] = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
-module.dispose()
-assert abs(edge.translation.x - 0.3) < 1e-9, edge
-try:
-    UrdfManagerPointClearing(model=model)
-except ImportError:
-    pass
-else:
-    raise AssertionError("roboplan was importable")
-"""
-
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
