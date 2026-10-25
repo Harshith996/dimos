@@ -46,6 +46,8 @@ edgetam-dimos = false
 lcm = false
 md-babel-py = false
 roboplan = false
+torch = false
+torchvision = false
 
 [manifest]
 constraints = [
@@ -59,9 +61,11 @@ overrides = [
     { name = "opencv-python", marker = "sys_platform == 'never'" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "pytest", specifier = "==8.3.5" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = "==2.8.0", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = "==0.23.0", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
 ]
 
@@ -86,8 +90,9 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/8e/ac2a9566747a93f8be36ee08532eb0160558b07630a081a6056a9f89bf1d/accelerate-1.12.0.tar.gz", hash = "sha256:70988c352feb481887077d2ab845125024b2a137a5090d6d7a32b57d03a45df6", size = 398399, upload-time = "2025-11-21T11:27:46.973Z" }
 wheels = [
@@ -2362,11 +2367,13 @@ lint = [
     { name = "sounddevice" },
     { name = "tensorboard" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torchreid" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "transformers", extra = ["torch"] },
     { name = "trimesh" },
     { name = "types-pyaudio" },
@@ -2396,11 +2403,13 @@ project-deps = [
     { name = "sentencepiece" },
     { name = "tensorboard" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torchreid" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "xacro" },
@@ -2448,11 +2457,13 @@ tests = [
     { name = "sentencepiece" },
     { name = "tensorboard" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torchreid" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "tqdm" },
     { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
@@ -2509,11 +2520,13 @@ tests-self-hosted = [
     { name = "sentencepiece" },
     { name = "tensorboard" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "torchreid" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "tqdm" },
     { name = "traitlets" },
     { name = "transformers", extra = ["torch"] },
@@ -2724,10 +2737,12 @@ lint = [
     { name = "sounddevice", specifier = ">=0.5.5" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.1,<2.8", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.16,<0.23", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "trimesh", specifier = ">=4.12" },
@@ -2758,10 +2773,12 @@ project-deps = [
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.1,<2.8", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.16,<0.23", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", extras = ["torch"], specifier = "==4.53.3" },
     { name = "ultralytics", specifier = ">=8.3.70" },
@@ -2811,10 +2828,12 @@ tests = [
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.1,<2.8", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.16,<0.23", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = ">=4.67" },
     { name = "traitlets", specifier = ">=5.14" },
@@ -2874,10 +2893,12 @@ tests-self-hosted = [
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tokenizers", specifier = ">=0.21" },
-    { name = "torch", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=2.1,<2.8" },
+    { name = "torch", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=2.1,<2.8", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torch", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=2.1,<2.8", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchreid", specifier = "==0.2.5" },
-    { name = "torchvision", marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=0.16,<0.23" },
+    { name = "torchvision", marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.16,<0.23", index = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" },
     { name = "torchvision", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'", specifier = ">=0.16,<0.23", index = "https://download.pytorch.org/whl/cu128" },
     { name = "tqdm", specifier = ">=4.67" },
     { name = "traitlets", specifier = ">=5.14" },
@@ -3066,10 +3087,12 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pillow" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/3f/6517d2cf72c5fde86254599b249986437148372b4610374b3df34d393ecc/edgetam_dimos-1.0.1.tar.gz", hash = "sha256:f194fe8a7ac2295703d2e603f381d3527f05a9cc2bdad42eba64bfe7c3eafbf5", size = 85046, upload-time = "2026-08-13T06:56:50.332Z" }
@@ -6635,8 +6658,8 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" } },
     { name = "packaging" },
     { name = "protobuf" },
-    { name = "sympy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "sympy", version = "1.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "sympy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "sympy", version = "1.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/35/d6/311b1afea060015b56c742f3531168c1644650767f27ef40062569960587/onnxruntime-1.23.2-cp310-cp310-macosx_13_0_arm64.whl", hash = "sha256:a7730122afe186a784660f6ec5807138bf9d792fa1df76556b27307ea9ebcbe3", size = 17195934, upload-time = "2025-10-27T23:06:14.143Z" },
@@ -6840,8 +6863,9 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tiktoken" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "tqdm" },
     { name = "triton", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'aarch64' and sys_platform == 'linux2'" },
     { name = "triton", version = "3.3.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -10131,7 +10155,6 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
@@ -10156,6 +10179,7 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'win32'",
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
 ]
 dependencies = [
@@ -10391,10 +10415,12 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f4/9d/0ea45640be447445c8664ce2b10c74f763b0b0b9ed11620d41a4d4baa10c/timm-1.0.24.tar.gz", hash = "sha256:c7b909f43fe2ef8fe62c505e270cd4f1af230dfbc37f2ee93e3608492b9d9a40", size = 2412239, upload-time = "2026-01-07T00:26:17.541Z" }
 wheels = [
@@ -10491,15 +10517,14 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
-    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux')" },
     { name = "setuptools", marker = "python_full_version >= '3.12'" },
     { name = "sympy", version = "1.13.1", source = { registry = "https://pypi.org/simple" } },
     { name = "typing-extensions" },
@@ -10567,6 +10592,25 @@ wheels = [
 ]
 
 [[package]]
+name = "torch"
+version = "2.8.0"
+source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }
+resolution-markers = [
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "filelock" },
+    { name = "fsspec" },
+    { name = "jinja2" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "sympy", version = "1.14.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/62a/1beee9f2f1470/torch-2.8.0-cp310-cp310-linux_aarch64.whl", hash = "sha256:62a1beee9f2f147076a974d2942c90060c12771c94740830327cae705b2595fc" },
+]
+
+[[package]]
 name = "torchreid"
 version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
@@ -10592,12 +10636,11 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
-    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
     "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux')" },
     { name = "pillow" },
     { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" } },
 ]
@@ -10645,6 +10688,22 @@ wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.1%2Bcu128-cp311-cp311-win_amd64.whl", hash = "sha256:85ecd729c947151eccea502853be6efc2c0029dc26e6e5148e04684aed008390", upload-time = "2025-06-03T18:37:28Z" },
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.1%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:f64ef9bb91d71ab35d8384912a19f7419e35928685bc67544d58f45148334373", upload-time = "2025-06-03T18:37:28Z" },
     { url = "https://download-r2.pytorch.org/whl/cu128/torchvision-0.22.1%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:650561ba326d21021243f5e064133dc62dc64d52f79623db5cd76637a9665f96", upload-time = "2025-06-03T18:37:28Z" },
+]
+
+[[package]]
+name = "torchvision"
+version = "0.23.0"
+source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }
+resolution-markers = [
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "pillow" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" } },
+]
+wheels = [
+    { url = "https://pypi.jetson-ai-lab.io/jp6/cu126/+f/907/c4c1933789645/torchvision-0.23.0-cp310-cp310-linux_aarch64.whl", hash = "sha256:907c4c1933789645ebb20dd9181d40f8647978e6bd30086ae7b01febb937d2d1" },
 ]
 
 [[package]]
@@ -10711,8 +10770,9 @@ wheels = [
 [package.optional-dependencies]
 torch = [
     { name = "accelerate" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 
 [[package]]
@@ -10993,10 +11053,12 @@ dependencies = [
     { name = "requests" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
-    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "torchvision", version = "0.21.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torchvision", version = "0.22.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torchvision", version = "0.23.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
     { name = "ultralytics-thop" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3c/dc/7947df41679c009bc33b61e10d6274a8ec885206b726ebb6027d5f204b35/ultralytics-8.4.14.tar.gz", hash = "sha256:360dff28ecb6cc7bf561aadf5bfe208c3900380bf1d4b2b190cb8db60e7b7626", size = 1014432, upload-time = "2026-02-10T11:31:51.342Z" }
@@ -11011,8 +11073,9 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "torch", version = "2.6.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", version = "2.7.1+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or sys_platform == 'win32'" },
+    { name = "torch", version = "2.8.0", source = { registry = "https://pypi.jetson-ai-lab.io/jp6/cu126/+simple" }, marker = "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1f/63/21a32e1facfeee245dbdfb7b4669faf7a36ff7c00b50987932bdab126f4b/ultralytics_thop-2.0.18.tar.gz", hash = "sha256:21103bcd39cc9928477dc3d9374561749b66a1781b35f46256c8d8c4ac01d9cf", size = 34557, upload-time = "2025-10-29T16:58:13.526Z" }
 wheels = [
