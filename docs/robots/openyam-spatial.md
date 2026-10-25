@@ -153,3 +153,15 @@ connected by the test. This short exercise is not a latency benchmark or
 hardware-transfer acceptance. Component validation: 74 Python tests, two Node
 gesture tests, strict mypy on the four implementation files, and a headless
 preview with zero JavaScript errors and zero desktop control connections.
+
+Desktop attachment verified on macOS, 2026-10-25: the installed Workcell app
+discovers the four-module native run, receives fourteen measured joints and
+three RGB streams, and embeds this renderer through its existing backend.
+A headless browser opens the actual Desktop shell and nested preview, reports
+zero JavaScript errors and no control WebSocket, and uses a joint increment
+button through the coordinator. A 0.025 rad request reaches 0.0241 rad during
+the sampled settling interval; the other arm remains stationary. Stale run
+preview URLs return HTTP 410. The existing Desktop service stays running.
+Component checks: 179 Python tests, 17 app tests, strict Python/TypeScript
+checks, Desktop API-contract validation and the packaged macOS Nix build.
+This does not verify headset ergonomics or add recording to this blueprint.

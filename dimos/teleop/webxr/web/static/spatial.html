@@ -5,7 +5,8 @@
 <title>OpenYAM · Spatial teleoperation</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#11181d;color:#edf5f4;font:14px system-ui}canvas{display:block}header{position:fixed;top:20px;left:24px;right:24px;display:flex;align-items:center;gap:16px;pointer-events:none}h1{font-size:18px;margin:0}header span{color:#a7bfbd;font-size:12px}#panel{position:fixed;bottom:24px;left:24px;max-width:520px;padding:18px 22px;background:#17232bea;border:1px solid #36484d;border-radius:12px}p{line-height:1.5;margin:8px 0}button{background:#76e2c1;border:0;padding:11px 16px;border-radius:7px;font:600 14px system-ui;cursor:pointer;margin:6px 7px 6px 0}button:disabled{opacity:.4;cursor:default}#status{color:#f3bf77}#cameras{position:fixed;right:24px;bottom:24px;display:flex;gap:12px}figure{margin:0;background:#17232b;border-radius:9px;overflow:hidden;width:190px}figure img{width:190px;height:142px;object-fit:contain}figcaption{padding:8px;color:#b9cecf;font-size:12px}.muted{color:#9db0b8;font-size:12px}@media(max-width:800px){#cameras{top:70px;bottom:auto}figure,figure img{width:120px}figure img{height:90px}#panel{right:24px}}
-.embedded header,.embedded #panel,.embedded #cameras{display:none}</style>
+.embedded header,.embedded #cameras,.embedded #panel>:not(#status){display:none}.embedded #panel{bottom:12px;left:12px;padding:8px 12px;max-width:calc(100% - 24px);font-size:12px;pointer-events:none}</style>
+<script>if(new URLSearchParams(location.search).has('embedded'))document.documentElement.classList.add('embedded');</script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
 </head>
 <body>
