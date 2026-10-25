@@ -198,5 +198,63 @@
       "Static gravity deflection remains in the exported native servos.",
       "Bounded simulation response, not hardware calibration or physical Quest acceptance."
     ]
+  },
+  "reconciliation": {
+    "date": "2026-10-24",
+    "status": "native simulation loop verified; physical station unverified; Desktop update pending",
+    "branch": "pim/refactor/openyam-learning-reconciled",
+    "base_commit": "a7bb57c64c4e44ffd66f80fa4fd16c9c031fe29d",
+    "evidence_directory": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation",
+    "full_loop": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation/complete-loop-result.json",
+    "checks": {
+      "focused_host_passed": 182,
+      "focused_host_skipped": 1,
+      "isolated_framework_passed": 25,
+      "policy_runtime_passed": 36,
+      "native_capture_passed": 5,
+      "rust_recorder_passed": 18,
+      "registry_passed": 5,
+      "host_mypy_files": 15,
+      "native_mypy_files": 2
+    },
+    "models": [
+      {
+        "id": "act-20261024-171058-cf274",
+        "weights_sha256": "a30067b3d81856572d6ae570b346950ee947703d3351fdae6e55e3738ccd0c1b",
+        "steps": 2,
+        "dataset_frames": 159,
+        "dataset_segments": 1,
+        "loss": 63.67781,
+        "parent_model_sha256": null
+      },
+      {
+        "id": "act-20261024-171121-8d6cd",
+        "weights_sha256": "0ba3f8a2bc40dd136a5d54de9d47d971961b5dcb11717fe78b96330cce5aaa41",
+        "steps": 2,
+        "dataset_frames": 258,
+        "dataset_segments": 2,
+        "loss": 43.99353,
+        "parent_model_sha256": "a30067b3d81856572d6ae570b346950ee947703d3351fdae6e55e3738ccd0c1b"
+      }
+    ],
+    "shared_runtime_chunks": 11,
+    "takeover_reset_and_stop": "passed",
+    "policy_bundle_export_import": "passed",
+    "fixed_target_final_2s_max_arm_peak_to_peak_deg": 3.027424459102898e-07,
+    "physical": "four adapter boundary tests; no hardware opened or activated",
+    "limits": [
+      "Two optimizer steps prove plumbing, not learned manipulation.",
+      "Physical camera, arm, headset and two-arm operation are unverified.",
+      "The complete loop used scripted joint controls; physical Quest acceptance remains pending."
+    ],
+    "quest": {
+      "scripted_wss": "passed",
+      "rollout_chunks": 15,
+      "correction_frames": 68,
+      "jpeg_frames": 124,
+      "release": "hold",
+      "reset_held": "hold",
+      "evidence": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/reconciliation/quest-reconciled/quest-result.json"
+    }
   }
 }

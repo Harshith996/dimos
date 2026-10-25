@@ -148,7 +148,7 @@ See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
-Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
+Example: rebind a few streams from the default backend to `ROSTransport` (defined at [`core/transport.py`](/dimos/core/transport.py#L187)) so you can visualize in **rviz2**.
 
 ```python skip
 nav = autoconnect(

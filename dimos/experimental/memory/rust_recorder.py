@@ -16,17 +16,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from threading import Condition
+import time
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
@@ -108,6 +112,7 @@ class RustRecorderConfig(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
+    publish_status: bool = False
 
     store: RustRecordingStoreConfig = Field(
         default_factory=RustSqliteStoreConfig,
@@ -188,6 +193,40 @@ class RustRecorder(NativeModule):
 
     config: RustRecorderConfig
     tf: In[TFMessage]
+    recording_status: Out[String]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._receipt = Condition()
+        self._ready = False
+        self._written: dict[str, int] = {}
+
+    def _on_recording_status(self, message: String) -> None:
+        status = json.loads(message.data)
+        with self._receipt:
+            self._ready = status["ready"]
+            self._written = status["written"]
+            self._receipt.notify_all()
+
+    def wait_written(self, expected: dict[str, int], timeout: float = 10.0) -> None:
+        """Wait for native store receipts; an empty count map waits for readiness.
+
+        Call after producers stop, before stopping the recorder, to drain the
+        transport and encoder queues. Finalization still requires stop().
+        """
+        if not self.config.publish_status:
+            raise RuntimeError("Recorder acknowledgments require publish_status=True")
+        deadline = time.monotonic() + timeout
+        with self._receipt:
+            while not self._ready or any(
+                self._written.get(name, 0) < count for name, count in expected.items()
+            ):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"Recorder did not acknowledge {expected}; received {self._written}"
+                    )
+                self._receipt.wait(remaining)
 
     @rpc
     def build(self) -> None:
@@ -213,6 +252,16 @@ class RustRecorder(NativeModule):
 
         self._prepare_store(specs)
         self.config.streams = specs
+        if self.config.publish_status:
+            if self.recording_status.transport is None:
+                raise ValueError("Recorder acknowledgments require a recording_status transport")
+            self.register_disposable(
+                Disposable(
+                    self.recording_status.transport.subscribe(
+                        self._on_recording_status, self.recording_status
+                    )
+                )
+            )
         super().start()
 
     def _stream_specs(self) -> list[RustStreamSpec]:
@@ -257,6 +306,8 @@ class RustRecorder(NativeModule):
     def _collect_topics(self) -> dict[str, str]:
         topics = super()._collect_topics()
         enabled_ports = {spec.port for spec in self.config.streams}
+        if self.config.publish_status:
+            enabled_ports.add("recording_status")
         return {port: topic for port, topic in topics.items() if port in enabled_ports}
 
     @staticmethod

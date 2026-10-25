@@ -11,13 +11,13 @@ recording, model handoff and app worker; it contains no separate web interface.
 flowchart LR
   Desktop[DimOS Desktop] --> Session[Session: authority + episode acceptance]
   Quest[Existing WebXR module] --> IK[Existing teleop IK task]
-  Session --> Target[YAM persistent position target task]
-  ACT[Isolated ACT inference] --> Session
+  Session --> Target[Shared trajectory task: persistent setpoints]
+  ACT[Shared isolated LeRobot policy runtime] --> Coordinator
   IK --> Coordinator[ControlCoordinator]
   Target --> Coordinator
-  Coordinator --> Device[YamPositionDevice: sole writable client]
-  Device --> Sim[Existing sim2 + exported YAM artifact]
-  Sim -->|joint feedback + acknowledged commands| Capture[Typed MCAP + provenance]
+  Coordinator --> Device[Sim2 device or physical Damiao adapter]
+  Device --> Sim[Sim2 workcell or configured physical station]
+  Sim -->|joint feedback + accepted commands| Capture[Shared native CollectionRecorder]
   Sim -->|wrist RGB| Capture
   Sim -->|wrist RGB + joint positions| Session
   Session --> ACT
@@ -30,9 +30,10 @@ flowchart LR
 The exported YAM artifact is the physical robot definition. `openyam/workcell.py`
 adds the task scene and cameras. It preserves native position servos and the passive
 finger reset contract; it does not import the RL trainer or add a second PD loop.
-The existing coordinator owns task timing and arbitration. Its local `YamTargetTask`
-rate-limits slider/ACT setpoints from the last commanded reference and continues to
-emit the final target until authority changes. Re-executing finite trajectories here
+The existing coordinator owns task timing and arbitration. The shared `JointTrajectoryTask`
+has an opt-in `hold_final_position` mode that retains the last commanded reference and
+continues to emit the final target until authority changes. Ordinary finite trajectories
+keep their existing default behavior. Re-executing finite trajectories here
 would restart completed joints from gravity-deflected feedback and produce oscillation.
 Takeover, task preemption and reset clear the reference before a new owner starts.
 `YamPositionDevice` fences in-flight writes when authority changes and journals accepted
@@ -44,11 +45,12 @@ slightly overshoot them; one overtraveling finger must not invalidate the whole 
 The exported servos still exhibit static gravity deflection. Persistent setpoints remove
 the command-induced shaking; they do not add gravity compensation or retune the model.
 
-The session changes authority and submits targets. It never writes a simulator client.
-A takeover invalidates queued and in-flight policy predictions, including after a later
-resume. ACT steps that elapsed during inference are skipped. At the end of a prediction
-horizon the controller holds measured position while requesting a new observation-based
-chunk. Inference taking over 500 ms, stale observations, reset or an operator Hold require
+The session changes authority and submits manual targets. The shared LeRobot runtime
+submits policy chunks directly to the coordinator. Cancellation generations reject delayed
+submissions after takeover, including after a later resume. ACT steps that elapsed during
+inference are skipped; the trajectory task retains its final commanded target between
+chunks. Observation age is checked again after inference, before dispatch. Expired inputs,
+an exhausted action horizon, reset or an operator Hold require
 an explicit policy restart. Fresh Quest input can maintain the operator lease independently
 of the Desktop page. This worker configures a unique loopback-only simulation namespace.
 
@@ -59,29 +61,38 @@ Prepare a normal DimOS worktree and its isolated trainer:
 ```sh
 uv sync --extra all
 uv sync --frozen --project native/python/lerobot
+cd dimos/experimental/memory/rust
+nix build
 ```
 
 In the separate OpenYAM Workcell app's **Setup**, choose this checkout and the directory
 containing the exported `contract.json`, `robot.xml` and assets. The artifact loader checks
-its hashes and physical contract. No runtime download or training checkout is required.
+its hashes and physical contract. The native recorder uses the existing DimOS Nix build;
+a cold build can take substantial time. Provision it before an office collection session.
 Changing Setup requires an idle experiment. Each app installation has its own data folder.
 
-1. Start the simulation, held. Set a task instruction before collecting.
+1. Select simulation or a physical station. Physical setup requires a station name, CAN
+   interface (Linux) or adapter USB serial (macOS), and the RealSense camera serial.
+   Connect opens the station with motors disabled. Check the wrist preview, then explicitly
+   Enable arm; activation calibrates the gripper. Set a task instruction before collecting.
 2. Start Quest teleop on an available port and open the displayed HTTPS address on the
    headset. Hold the right grip to move through the existing IK task; the trigger closes
    the gripper. Release holds. A starts/saves a **training** episode; B discards it. Wrist
    video and recording state appear in the headset. Desktop also offers joint controls.
 3. Save useful episodes; discard the rest. Use Desktop's eval split for held-out collection.
-4. Train ACT. The simulation stops while the training subprocess owns the job. Normal
+4. Train ACT. The robot session stops while the training subprocess owns the job. Normal
    training uses ResNet18, a 512-dimensional transformer and 50-action chunks. A short
    run checks integration; the default 2,000 steps is a budget, not a success guarantee.
-5. Load a completed checkpoint. Record a rollout, Run policy, and take over with the grip
+5. Load a completed checkpoint and wait for preflight. Run & record, then take over with the grip
    or joint controls. Saving accepts the human corrections. Fine-tune from that checkpoint
-   using the expanded dataset. Fine-tuning starts a fresh optimizer and retains the
-   parent's normalization processors and file identity.
+   using the expanded dataset. The official LeRobot trainer starts a fresh optimizer and
+   uses the selected dataset's normalization statistics. Parent model identity is retained.
+6. Download the policy bundle, then import it on a machine with the same station contract.
+   Import verifies runtime file hashes; preflight still checks the live observations.
 
-Opening the app alone does not start simulation. Closing a session discards an unfinished
-recording. No physical arm connection is created by this application.
+Opening the app alone starts an idle worker. Closing a session discards an unfinished
+recording. Physical calibration and task reset remain operator actions. This version has
+one seven-dimensional arm policy; neither bimanual nor leader/follower teleoperation is wired.
 
 ## Data and compatibility
 
@@ -94,12 +105,17 @@ joint positions in radians. In this artifact the public gripper coordinate incre
 closure: 0..1 maps to left-finger displacement 0..0.0355 m. Older prototype coordinates
 and checkpoints require an explicit migration and are rejected.
 
-Each raw episode contains native typed `JointState`/`Image` MCAP channels, the shared
+The shared Rust-backed CollectionRecorder writes typed `JointState`/`Image` MCAP channels, the shared
 `CollectionProfile`/`RecordingSchema`, authority and reset generations, exact acknowledged
 command sequences, dispatch timestamps, task/split/acceptance, and policy identity.
 Sensor timestamps follow sim2's clock. Acknowledged action samples use that same clock;
 original host dispatch time and command age remain separate provenance. They must not be
-subtracted as if the two clocks were identical.
+subtracted as if the two clocks were identical. Physical recordings identify driver-accepted
+commands, not firmware-applied sequences. Station/camera identity is part of their contract,
+so simulation checkpoints are not silently treated as compatible physical policies.
+Save waits for recorder write receipts and finalized MCAP counts before publishing metadata.
+Unfinalized files cannot enter training. Provenance segment times use the encoded sensor
+timestamps so nanosecond quantization cannot discard a boundary frame.
 
 Training selects finalized, saved **human/correction** segments in the train split.
 Policy actions, holds, unacknowledged commands, discarded/partial recordings and evaluation
@@ -137,10 +153,11 @@ python -m pytest dimos/imitation/loop dimos/imitation/dataprep dimos/imitation/c
 uv run --frozen --project native/python/lerobot --group tests --with-editable . python -m pytest -c native/python/lerobot/pyproject.toml native/python/lerobot/dimos_lerobot/act_loop_tests.py native/python/lerobot/dimos_lerobot/dataprep_tests.py
 ```
 
-This reuses the collection profile/schema and native export design from
+This composes the CollectionRecorder, profile/schema and native export design from
 `cc/feat/flexible-policy-module` at `fde4d8e047729de20cb2e4162e2b60698b5738bc`, the existing
 coordinator/WebXR/IK stack, and the reusable sim2 YAM integration. It does not merge the
-competing station recorders or add a second hardware control path. Future physical use
-needs a verified hardware adapter, sensor/action calibration and measured teleoperation
+competing station recorders or add a second hardware control path. The physical boundary
+uses the existing Damiao adapter and RealSense camera; its coordinate/acceptance behavior
+has mock coverage, but real-arm operation still needs station calibration, teleoperation
 and policy evaluations. RL, SONIC, bimanual stations, cloud training, semantic labeling and
 policy chaining remain separate extensions.

@@ -16,22 +16,24 @@
 
 from __future__ import annotations
 
-from collections import deque
-from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from threading import RLock
 import time
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.imitation.collection.episode import EpisodeEvent, EpisodeStatus
-from dimos.imitation.loop.act import ActWorker
-from dimos.imitation.loop.device import Observation, OpenYamSimulation
+from dimos.imitation.loop.act import PolicyRunner
+from dimos.imitation.loop.device import Observation
 from dimos.imitation.loop.recording import CONTRACT_KEYS, Episode, encode_image
 from dimos.robot.manipulators.openyam.control import YamControl
 from dimos.robot.manipulators.openyam.device import AuthorityMode
+
+
+class LearningDevice(Protocol):
+    def command(self, action: NDArray[np.float64], timestamp: float) -> None: ...
 
 
 class Authority:
@@ -41,29 +43,13 @@ class Authority:
         self.generation = 0
         self.mode = "human"
         self.target = initial.copy()
-        self.actions: deque[NDArray[np.float64]] = deque()
 
     def switch(self, mode: str, measured: NDArray[np.float64]) -> None:
         if mode not in ("human", "correction", "policy", "hold"):
             raise ValueError(f"unknown authority: {mode}")
         self.generation += 1
         self.mode = mode
-        self.actions.clear()
         self.target = measured.copy()
-
-    def accept(self, generation: int, actions: list[list[float]]) -> bool:
-        values = np.asarray(actions, dtype=np.float64)
-        if (
-            values.ndim != 2
-            or values.shape[1] != len(self.target)
-            or not len(values)
-            or not np.isfinite(values).all()
-        ):
-            raise ValueError("policy returned a malformed action chunk")
-        if self.mode != "policy" or generation != self.generation:
-            return False
-        self.actions.extend(values)
-        return True
 
 
 class LearningSession:
@@ -81,6 +67,7 @@ class LearningSession:
         observation_profile: str = "unspecified",
         artifact_contract_sha256: str = "",
         control: YamControl | None = None,
+        source: str = "sim2",
     ) -> None:
         self.root, self.fps = root, fps
         self.contract: dict[str, Any] = dict(
@@ -96,20 +83,14 @@ class LearningSession:
         if control is not None:
             control.on_authority = self.switch
             control.on_record = self._record_button
-        self.task = task
+        self.task, self.source = task, source
         self.lower, self.upper = np.asarray(lower), np.asarray(upper)
         self.authority = Authority(np.asarray(initial, dtype=np.float64))
         self.lock = RLock()
         self.latest: Observation | None = None
         self.episode: Episode | None = None
-        self.policy: ActWorker | None = None
-        self._future: Future[list[list[float]]] | None = None
-        self._request_generation = -1
-        self._request_observed_at = 0.0
-        self._chunk_expires = 0.0
-        self._chunk_index = 0
+        self.policy: PolicyRunner | None = None
         self._last_recorded_image = -1.0
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="act-request")
         self.error: str | None = None
         self.chunks = 0
         self.run_record: str | None = None
@@ -139,7 +120,7 @@ class LearningSession:
                 )
             )
 
-    def load(self, worker: ActWorker) -> None:
+    def load(self, worker: PolicyRunner) -> None:
         with self.lock:
             if self.policy is not None:
                 raise RuntimeError("restart the session to load a different checkpoint")
@@ -158,9 +139,21 @@ class LearningSession:
             if mode == "human" and self.policy is not None:
                 mode = "correction"
             measured = self.latest.state if self.latest is not None else self.authority.target
+            previous = self.authority.mode
             self.authority.switch(mode, measured)
             if self.control is not None:
                 self.authority.generation = self.control.transition(mode)
+            if self.policy is not None:
+                if previous == "policy":
+                    self.policy.stop_rollout()
+                if mode == "policy":
+                    try:
+                        self.policy.start_rollout()
+                    except BaseException:
+                        self.authority.switch("hold", measured)
+                        if self.control is not None:
+                            self.authority.generation = self.control.transition("hold")
+                        raise
             self.error = None
 
     def set_target(self, index: int, value: float) -> None:
@@ -182,7 +175,10 @@ class LearningSession:
                     "task": self.task,
                     "split": split,
                     "policy_sha256": self.policy.identity if self.policy else None,
-                    "source": "sim2",
+                    "source": self.source,
+                    "command_acknowledgment": "driver-accepted"
+                    if self.source == "hardware"
+                    else "sim2-applied-sequence",
                     "demonstrator": demonstrator,
                     "sim2_run_record": self.run_record,
                 },
@@ -195,14 +191,20 @@ class LearningSession:
         with self.lock:
             if self.episode is None:
                 raise RuntimeError("no episode is recording")
-            path = self.episode.finish(keep=keep, outcome=outcome)
+            episode = self.episode
             self.episode = None
+            try:
+                path = episode.finish(keep=keep, outcome=outcome)
+            except Exception:
+                self._discarded += 1
+                self._report_recording("discard")
+                raise
             self._saved += int(keep)
             self._discarded += int(not keep)
             self._report_recording("save" if keep else "discard")
             return path
 
-    def tick(self, device: OpenYamSimulation, observation: Observation) -> None:
+    def tick(self, device: LearningDevice, observation: Observation) -> None:
         with self.lock:
             if self.latest is None and self.authority.mode == "hold":
                 self.authority.target = observation.state.copy()
@@ -212,64 +214,20 @@ class LearningSession:
             self.latest = observation
             self._record_observation(observation)
             authority = self.authority
-            if self._future is not None and self._future.done():
-                try:
-                    actions = self._future.result()
-                    if time.time() - self._request_observed_at < 0.5:
-                        if authority.accept(self._request_generation, actions):
-                            self.chunks += 1
-                            self._chunk_index = 0
-                            self._chunk_expires = self._request_observed_at + min(
-                                0.5, len(actions) / self.fps
-                            )
-                    elif (
-                        authority.mode == "policy"
-                        and self._request_generation == authority.generation
-                    ):
+            if self.policy is not None:
+                self.policy.observe(observation)
+                status = self.policy.status
+                if status is not None:
+                    self.chunks = status["chunks_accepted"]
+                    if authority.mode == "policy" and not status["active"]:
                         self.switch("hold")
-                        self.error = "Inference finished after the observation deadline"
-                except Exception as exc:
-                    if (
-                        authority.mode == "policy"
-                        and self._request_generation == authority.generation
-                    ):
-                        self.switch("hold")
-                        self.error = str(exc)
-                finally:
-                    self._future = None
-            mode = authority.mode
-            if mode == "hold":
+                        self.error = status["last_error"] or "Policy rollout stopped"
+            if authority.mode in ("hold", "policy"):
                 return
-            if mode == "policy":
-                if authority.actions and time.time() >= self._chunk_expires:
-                    authority.actions.clear()
-                # ACT predicts a time-indexed horizon from its input observation.
-                # Skip elapsed steps instead of replaying delayed predictions slowly.
-                elapsed_steps = max(0, int((time.time() - self._request_observed_at) * self.fps))
-                while authority.actions and self._chunk_index < elapsed_steps:
-                    authority.actions.popleft()
-                    self._chunk_index += 1
-                if not authority.actions and self._future is None:
-                    assert self.policy is not None
-                    self._request_generation = authority.generation
-                    self._request_observed_at = min(observation.state_ts, observation.image_ts)
-                    self._future = self._executor.submit(
-                        self.policy.predict,
-                        {
-                            "state": observation.state.tolist(),
-                            "image_png": encode_image(observation.image),
-                        },
-                    )
-                if authority.actions:
-                    desired = authority.actions.popleft()
-                    self._chunk_index += 1
-                else:
-                    desired = observation.state
-            else:
-                if self.control is not None and self.control.teleop_engaged:
-                    authority.target = observation.state.copy()
-                    return
-                desired = authority.target
+            if self.control is not None and self.control.teleop_engaged:
+                authority.target = observation.state.copy()
+                return
+            desired = authority.target
             # The coordinator's persistent target task owns velocity limits.
             action = np.clip(desired, self.lower, self.upper)
             device.command(action, time.time())
@@ -319,4 +277,3 @@ class LearningSession:
                 self.finish(keep=False, outcome="interrupted")
         if self.policy is not None:
             self.policy.close()
-        self._executor.shutdown(wait=True, cancel_futures=True)

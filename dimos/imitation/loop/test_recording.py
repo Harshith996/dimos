@@ -24,6 +24,15 @@ from dimos.imitation.loop.recording import (
     read_episode,
     snapshot_samples,
 )
+from dimos.imitation.loop.transport import learning_bus
+
+pytestmark = pytest.mark.native_e2e
+
+
+@pytest.fixture(autouse=True)
+def isolated_bus():
+    with learning_bus():
+        yield
 
 
 @pytest.fixture

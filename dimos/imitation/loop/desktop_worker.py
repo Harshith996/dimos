@@ -40,11 +40,13 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.global_config import global_config
-from dimos.imitation.loop.act import ActWorker, command
+from dimos.imitation.loop.act import PolicyRunner, command
+from dimos.imitation.loop.checkpoint import export_policy, import_policy
 from dimos.imitation.loop.device import OpenYamSimulation
+from dimos.imitation.loop.hardware import OpenYamHardware, StationConfig
 from dimos.imitation.loop.recording import export_snapshot
 from dimos.imitation.loop.session import LearningSession
+from dimos.imitation.loop.transport import learning_bus
 from dimos.robot.manipulators.openyam.device import AuthorityMode
 from dimos.robot.manipulators.openyam.joints import OPENYAM_JOINTS
 from dimos.robot.manipulators.openyam.simulation import YamArtifact, load_yam_artifact
@@ -62,14 +64,20 @@ def jpeg(image: NDArray[np.uint8]) -> str:
 
 
 class DesktopExperiment:
-    def __init__(self, root: Path, artifact_directory: Path | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        artifact_directory: Path | None = None,
+        station: StationConfig | None = None,
+    ) -> None:
         self.root = root
         self.artifact_directory = artifact_directory
+        self.station = station
         self.artifact: YamArtifact | None = None
         self.root.mkdir(parents=True, exist_ok=True)
         self.stack = ExitStack()
         self.session: LearningSession | None = None
-        self.robot: OpenYamSimulation | None = None
+        self.robot: OpenYamSimulation | OpenYamHardware | None = None
         self.run_id: str | None = None
         self.model_id: str | None = None
         self.task = "Move the cube onto the green target"
@@ -127,6 +135,8 @@ class DesktopExperiment:
         session = self.session
         return {
             "running": self.robot is not None,
+            "environment": "hardware" if self.station else "simulation",
+            "station": self.robot.preflight() if isinstance(self.robot, OpenYamHardware) else None,
             "run_id": self.run_id,
             "task": self.task,
             "mode": session.authority.mode if session else "idle",
@@ -134,6 +144,7 @@ class DesktopExperiment:
             "recording": session.episode.directory.name if session and session.episode else None,
             "recorded_frames": session.episode.frames if session and session.episode else 0,
             "chunks": session.chunks if session else 0,
+            "policy": session.policy.status if session and session.policy else None,
             "joints": session.latest.state.tolist() if session and session.latest else [],
             "targets": session.authority.target.tolist() if session else [],
             "joint_names": list(OPENYAM_JOINTS),
@@ -184,7 +195,13 @@ class DesktopExperiment:
         self.stop()
         try:
             self.artifact = artifact
-            self.robot = self.stack.enter_context(OpenYamSimulation(artifact, self.root / "sim2"))
+            if self.station:
+                self.robot = self.stack.enter_context(OpenYamHardware(artifact, self.station))
+            else:
+                self.robot = self.stack.enter_context(
+                    OpenYamSimulation(artifact, self.root / "sim2")
+                )
+            physical = isinstance(self.robot, OpenYamHardware)
             session = LearningSession(
                 self.root,
                 list(OPENYAM_JOINTS),
@@ -194,15 +211,21 @@ class DesktopExperiment:
                 task=self.task,
                 fps=FPS,
                 image_shape=(HEIGHT, WIDTH, 3),
-                observation_profile=OBSERVATION_PROFILE,
-                artifact_contract_sha256=artifact.contract_sha256,
+                observation_profile=self.robot.observation_profile
+                if isinstance(self.robot, OpenYamHardware)
+                else OBSERVATION_PROFILE,
+                artifact_contract_sha256=self.robot.contract_sha256
+                if isinstance(self.robot, OpenYamHardware)
+                else artifact.contract_sha256,
+                source="hardware" if physical else "sim2",
                 control=self.robot.control,
             )
             self.stack.callback(session.close)
             if checkpoint:
-                worker = ActWorker(checkpoint, device=device)
+                worker = PolicyRunner(checkpoint, device=device)
                 try:
-                    worker.start()
+                    assert self.robot.control is not None
+                    worker.start(self.robot.control, self.task)
                     session.load(worker)
                 except BaseException:
                     worker.close()
@@ -210,7 +233,11 @@ class DesktopExperiment:
             self.session = session
             self.model_id = model_id
             self.run_id = uuid4().hex
-            session.run_record = self.robot.module.describe()["run_record"]
+            session.run_record = (
+                self.robot.module.describe()["run_record"]
+                if isinstance(self.robot, OpenYamSimulation)
+                else None
+            )
             session.authority.switch("hold", np.asarray(home))
             self._last_observation = self.last_heartbeat = time.monotonic()
             self.last_error = None
@@ -228,7 +255,8 @@ class DesktopExperiment:
         return path
 
     def _scene(self) -> dict[str, Any]:
-        assert self.robot is not None
+        if not isinstance(self.robot, OpenYamSimulation):
+            return {"meshes": {}, "geometries": [], "run_id": self.run_id}
         model = self.robot.cameras[0].reader.model
         meshes: dict[str, Any] = {}
         geometries = []
@@ -276,6 +304,10 @@ class DesktopExperiment:
         elif action == "stop":
             self._require_finished_episode()
             self.stop()
+        elif action == "enable_arm":
+            if not isinstance(self.robot, OpenYamHardware):
+                raise RuntimeError("Connect a physical station first")
+            self.robot.enable()
         elif action == "target":
             index = params.get("index")
             if (
@@ -301,7 +333,10 @@ class DesktopExperiment:
                 "hold": "hold",
                 "rollout": "policy",
             }
-            self._require_session().switch(modes[action])
+            session = self._require_session()
+            if action == "rollout" and params.get("record") and session.episode is None:
+                session.record(split=str(params.get("split", "train")))
+            session.switch(modes[action])
         elif action == "teleop":
             self._require_session()
             assert self.robot is not None and self.robot.control is not None
@@ -312,9 +347,19 @@ class DesktopExperiment:
             assert self.robot is not None
             session.switch("hold")
             session.latest = None
+            if not isinstance(self.robot, OpenYamSimulation):
+                raise RuntimeError("Physical tasks must be reset by the operator")
             self.robot.module.reset()
         elif action == "load":
             self.start(str(params["model_id"]), str(params.get("device", "cpu")))
+        elif action == "export_policy":
+            model_id = str(params["model_id"])
+            path = export_policy(
+                self._checkpoint(model_id), self.root / "bundles" / f"{model_id}.zip"
+            )
+            return {"path": str(path), "name": path.name}
+        elif action == "import_policy":
+            import_policy(Path(str(params["path"])), self.root / "models")
         elif action == "train":
             self._train(params)
         elif action == "cancel_training":
@@ -394,6 +439,10 @@ class DesktopExperiment:
                 self._finish_job()
         if self.robot is None or self.session is None:
             return
+        if isinstance(self.robot, OpenYamHardware):
+            preview = self.robot.preview
+            if preview is not None:
+                self.frames = {"wrist": jpeg(preview.data)}
         observation = self.robot.observe()
         now = time.monotonic()
         if observation is None:
@@ -413,11 +462,12 @@ class DesktopExperiment:
             overview = self.robot.overview
             if overview is not None:
                 self.frames["overview"] = jpeg(overview)
-            data = self.robot.cameras[0].reader.data
-            self.poses = [
-                np.concatenate((data.geom_xpos[i], data.geom_xmat[i])).tolist()
-                for i in range(len(data.geom_xpos))
-            ]
+            if isinstance(self.robot, OpenYamSimulation):
+                data = self.robot.cameras[0].reader.data
+                self.poses = [
+                    np.concatenate((data.geom_xpos[i], data.geom_xmat[i])).tolist()
+                    for i in range(len(data.geom_xpos))
+                ]
             self._next_frame = now + 0.1
 
     def close(self) -> None:
@@ -441,20 +491,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--artifact", type=Path)
+    parser.add_argument("--station", help="JSON station configuration; omitted for simulation")
     args = parser.parse_args()
-    # This worker owns a local simulated world, independent of Desktop's robot settings.
-    global_config.update(
-        robot_ip=None,
-        robot_ips=None,
-        zenoh_mode="peer",
-        zenoh_connect="",
-        zenoh_scouting=False,
-        zenoh_interface="",
-        zenoh_multicast=False,
-        zenoh_gossip=False,
-        zenoh_domain=f"yam-learning-{uuid4().hex}",
-        listen_host="127.0.0.1",
-    )
+    with learning_bus():
+        serve(args)
+
+
+def serve(args: argparse.Namespace) -> None:
     wire: TextIO = sys.stdout
     sys.stdout = sys.stderr  # Imported modules/loggers must not corrupt the JSON protocol.
     stopped = Event()
@@ -479,7 +522,11 @@ def main() -> None:
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, stop_signal)
     Thread(target=receive, daemon=True, name="desktop-requests").start()
-    experiment = DesktopExperiment(args.root.expanduser().resolve(), args.artifact)
+    experiment = DesktopExperiment(
+        args.root.expanduser().resolve(),
+        args.artifact,
+        StationConfig.model_validate_json(args.station) if args.station else None,
+    )
     emit({"event": "ready", "data": experiment.state()})
     next_status = 0.0
     try:

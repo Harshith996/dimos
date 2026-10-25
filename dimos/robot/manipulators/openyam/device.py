@@ -18,7 +18,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from threading import RLock, local
 import time
-from typing import Literal
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -39,6 +39,17 @@ class AcceptedTarget:
     authority: AuthorityMode
     segment: int
     generation: int
+
+
+class LearningControlDevice(Protocol):
+    """Device operations shared by the sim2 and calibrated CAN boundaries."""
+
+    def connect(self) -> bool: ...
+    def disconnect(self) -> None: ...
+    def activate(self) -> bool: ...
+    def get_limits(self) -> JointLimits: ...
+    def transition(self, mode: AuthorityMode) -> int: ...
+    def observed_generation(self) -> int: ...
 
 
 class _TickObservation(local):

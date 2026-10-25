@@ -100,6 +100,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         self._last_error = None
         self._active = False
         self._manual_control = False
+        self._trajectory_generation: int | None = None
 
     @rpc
     def start(self) -> None:
@@ -108,8 +109,14 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         self.register_disposable(
             Disposable(self.coordinator_joint_state.subscribe(self._on_joint_state))
         )
-        self.register_disposable(Disposable(self.button_pressed.subscribe(self._on_button_pressed)))
-        self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_teleop_buttons)))
+        if self.button_pressed.transport is not None:
+            self.register_disposable(
+                Disposable(self.button_pressed.subscribe(self._on_button_pressed))
+            )
+        if self.teleop_buttons.transport is not None:
+            self.register_disposable(
+                Disposable(self.teleop_buttons.subscribe(self._on_teleop_buttons))
+            )
 
     @rpc
     def stop(self) -> None:
@@ -172,7 +179,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 return self._status_locked()
             try:
                 self._snapshot_observation(time.time())
-            except RuntimeError as exc:
+                self._trajectory_generation = self._control.get_trajectory_generation()
+            except Exception as exc:
                 self._last_error = str(exc)
                 return self._status_locked()
 
@@ -256,7 +264,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     def _snapshot_observation(
         self, now: float
-    ) -> tuple[NDArray[np.uint8], NDArray[np.float32], float]:
+    ) -> tuple[NDArray[np.uint8], NDArray[np.float32], float, float]:
         if self._latest_image is None:
             raise RuntimeError("no camera image has been received")
         if self._latest_joint_state is None:
@@ -280,7 +288,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         )
         if not np.all(np.isfinite(vector)):
             raise RuntimeError("joint state contains non-finite positions")
-        return image.copy(), vector, state.ts
+        return image.copy(), vector, state.ts, image_ts
 
     def _load_policy(self) -> _LoadedPolicy:
         register_third_party_plugins()
@@ -396,7 +404,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
             while not self._stop_event.is_set():
                 with self._lock:
-                    image, state, state_ts = self._snapshot_observation(time.time())
+                    image, state, state_ts, image_ts = self._snapshot_observation(time.time())
                 action_chunk = self._predict(loaded_policy, image, state, task=self.config.task)
                 expected_width = len(self.config.joint_names)
                 if action_chunk.ndim != 3 or action_chunk.shape[0] != 1:
@@ -436,7 +444,24 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = bounded_actions
                 if self._stop_event.is_set():
                     break
-                result = self._control.execute_trajectory(self._trajectory(state, actions))
+                # Freshness is checked again after inference. A camera/state pair
+                # that was current before a slow prediction is no longer actionable.
+                age = time.time() - min(state_ts, image_ts)
+                if age > self.config.max_observation_age_s:
+                    raise RuntimeError("Inference finished after the observation deadline")
+                elapsed_steps = max(0, int(age * self.config.fps))
+                actions = actions[elapsed_steps:]
+                if len(actions) == 0:
+                    raise RuntimeError("Inference exhausted the action horizon")
+                result = self._control.execute_trajectory(
+                    self._trajectory(state, actions),
+                    expected_generation=self._trajectory_generation,
+                )
+                if (
+                    result.status is TrajectoryExecutionStatus.STALE_REQUEST
+                    and self._stop_event.is_set()
+                ):
+                    break
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
                     self._wait_for_newer_joint_state(state_ts)
                     continue
@@ -446,7 +471,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                     )
                 with self._lock:
                     self._chunks_accepted += 1
-                self._stop_event.wait(loaded_policy.n_action_steps / self.config.fps)
+                self._stop_event.wait(len(actions) / self.config.fps)
         except Exception as exc:
             with self._lock:
                 self._last_error = str(exc)
@@ -525,7 +550,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     def _cancel_trajectory(self) -> str | None:
         try:
-            result = self._control.cancel_trajectory()
+            result = self._control.cancel_trajectory(
+                expected_generation=self._trajectory_generation
+            )
         except Exception as exc:
             logger.exception(
                 "Failed to cancel policy trajectory",

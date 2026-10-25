@@ -21,29 +21,27 @@ episode, so the dataset API pads action chunks at correction boundaries.
 from __future__ import annotations
 
 import argparse
-import base64
-from contextlib import redirect_stdout
 import hashlib
 import json
+import logging
+import math
 from pathlib import Path
-import sys
+import shutil
 import time
 from typing import Any
 
-import cv2
 from dimos_lerobot.dataprep import write as write_dataset
+from lerobot.configs.default import DatasetConfig
 from lerobot.configs.policies import PreTrainedConfig
+from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_pre_post_processors
-import numpy as np
+from lerobot.scripts.lerobot_train import train as lerobot_train
+from lerobot.utils.logging_utils import MetricsTracker
 import torch
-from torch.utils.data import DataLoader
 
 from dimos.imitation.dataprep.schema import OutputConfig
-from dimos.imitation.loop.act import read_checkpoint
+from dimos.imitation.loop.checkpoint import read_checkpoint
 from dimos.imitation.loop.recording import (
     CONTRACT_KEYS,
     collection_profile,
@@ -109,6 +107,28 @@ def prepare_dataset(snapshot: Path, manifest: dict[str, Any]) -> Path:
     return dataset
 
 
+class TrainingProgress(logging.Filter):
+    """Mirror official trainer metrics into the Desktop job artifact."""
+
+    def __init__(self, output: Path, steps: int) -> None:
+        super().__init__()
+        self.output, self.steps = output, steps
+        self.metrics: list[dict[str, int | float]] = []
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not isinstance(record.msg, MetricsTracker):
+            return True
+        metrics = record.msg.to_dict()
+        if not math.isfinite(metrics["loss"]):
+            raise RuntimeError("LeRobot reported a non-finite training loss")
+        self.metrics.append(metrics)
+        partial = self.output / "progress.json.partial"
+        partial.write_text(json.dumps(metrics))
+        partial.replace(self.output / "progress.json")
+        print(f"ACT step {metrics['steps']}/{self.steps}: loss={metrics['loss']:.5f}", flush=True)
+        return True
+
+
 def train(
     snapshot: Path, output: Path, *, steps: int, device: str, smoke: bool, initial: Path | None
 ) -> None:
@@ -134,7 +154,6 @@ def train(
     job_path = output / "job.json"
     job_path.write_text(json.dumps(job, indent=2))
     try:
-        torch.manual_seed(0)
         torch.set_num_threads(2)
         dataset_path = prepare_dataset(snapshot, manifest)
         job["dataset_index_sha256"] = digest(snapshot / "dataset.json")
@@ -160,7 +179,6 @@ def train(
                 n_vae_encoder_layers=1 if smoke else 4,
                 pretrained_backbone_weights=None if smoke else "ResNet18_Weights.IMAGENET1K_V1",
             )
-            policy = ACTPolicy(config)
         else:
             original = read_checkpoint(initial)
             smoke = bool(original["smoke"])
@@ -173,54 +191,50 @@ def train(
                 raise ValueError("initial checkpoint must be ACT")
             config = loaded_config
             config.device = device
-            policy = ACTPolicy.from_pretrained(initial, config=config)
+            config.pretrained_path = initial
+            config.push_to_hub = False
             job["parent_model_sha256"] = original["model_sha256"]
-        dataset = LeRobotDataset(
-            repo_id="local/openyam",
-            root=dataset_path,
-            delta_timestamps={
-                "action": [index / manifest["fps"] for index in range(config.chunk_size)]
-            },
-            video_backend="pyav",
+        dataset_info = json.loads((dataset_path / "meta" / "info.json").read_text())
+        job["dataset_frames"] = dataset_info["total_frames"]
+        job["dataset_episodes"] = dataset_info["total_episodes"]
+        job["trainer"] = "lerobot.scripts.lerobot_train.train"
+        job["normalization"] = "official trainer: statistics from the selected training dataset"
+        training = TrainPipelineConfig(
+            dataset=DatasetConfig(
+                repo_id="local/openyam", root=str(dataset_path), video_backend="pyav"
+            ),
+            policy=config,
+            output_dir=output / "training",
+            job_name="openyam-act",
+            seed=0,
+            num_workers=0,
+            batch_size=min(8, job["dataset_frames"]),
+            steps=steps,
+            env_eval_freq=0,
+            log_freq=1 if steps < 100 else 100,
+            save_freq=steps,
         )
-        job["dataset_frames"] = len(dataset)
-        job["dataset_episodes"] = dataset.num_episodes
-        if initial is None:
-            pre, post = make_pre_post_processors(config, dataset_stats=dataset.meta.stats)
-        else:
-            pre, post = make_pre_post_processors(
-                config,
-                pretrained_path=str(initial),
-                preprocessor_overrides={"device_processor": {"device": device}},
-            )
-        policy.to(device).train()
-        optimizer = config.get_optimizer_preset().build(policy.get_optim_params())
-        loader = DataLoader(dataset, batch_size=min(8, len(dataset)), shuffle=True, num_workers=0)
-        batches = iter(loader)
-        losses = []
-        for step in range(steps):
-            try:
-                batch = next(batches)
-            except StopIteration:
-                batches = iter(loader)
-                batch = next(batches)
-            loss, _ = policy.forward(pre(batch))
-            if not torch.isfinite(loss):
-                raise RuntimeError("non-finite ACT loss")
-            optimizer.zero_grad()
-            torch.autograd.backward(loss)
-            torch.nn.utils.clip_grad_norm_(policy.parameters(), 10)
-            optimizer.step()
-            value = float(loss.detach().cpu())
-            losses.append(value)
-            if step == 0 or (step + 1) % 100 == 0 or step == steps - 1:
-                print(f"ACT step {step + 1}/{steps}: loss={value:.5f}", flush=True)
-        policy.save_pretrained(output)
-        pre.save_pretrained(output)
-        post.save_pretrained(output)
+        progress = TrainingProgress(output, steps)
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+        logger.addFilter(progress)
+        try:
+            lerobot_train(training)
+        finally:
+            logger.removeFilter(progress)
+        if not progress.metrics:
+            raise RuntimeError("LeRobot completed without reporting training metrics")
+        saved = output / "training" / "checkpoints" / "last" / "pretrained_model"
+        if not (saved / "model.safetensors").is_file():
+            raise RuntimeError("LeRobot did not publish its final checkpoint")
+        for path in saved.iterdir():
+            if path.is_file():
+                shutil.copyfile(path, output / path.name)
         (output / "snapshot.json").write_text(json.dumps(manifest, indent=2))
-        (output / "losses.json").write_text(json.dumps(losses))
-        job.update(status="complete", finished_at=time.time(), last_loss=losses[-1])
+        (output / "metrics.json").write_text(json.dumps(progress.metrics, indent=2))
+        job.update(
+            status="complete", finished_at=time.time(), last_loss=progress.metrics[-1]["loss"]
+        )
         contract = {key: manifest[key] for key in CONTRACT_KEYS}
         (output / "loop.json").write_text(
             json.dumps(
@@ -246,54 +260,9 @@ def train(
         job_path.write_text(json.dumps(job, indent=2) + "\n")
 
 
-def serve(checkpoint: Path, device: str) -> None:
-    read_checkpoint(checkpoint)
-    wire = sys.stdout
-    with redirect_stdout(sys.stderr):
-        torch.set_num_threads(2)
-        config = PreTrainedConfig.from_pretrained(checkpoint)
-        if not isinstance(config, ACTConfig):
-            raise ValueError("checkpoint must be ACT")
-        config.device = device
-        policy = ACTPolicy.from_pretrained(checkpoint, config=config).to(device).eval()
-        pre, post = make_pre_post_processors(
-            config,
-            pretrained_path=str(checkpoint),
-            preprocessor_overrides={"device_processor": {"device": device}},
-        )
-    wire.write(json.dumps({"ready": True}) + "\n")
-    wire.flush()
-    for line in sys.stdin:
-        try:
-            request = json.loads(line)
-            raw = cv2.imdecode(
-                np.frombuffer(base64.b64decode(request["image_png"]), np.uint8), cv2.IMREAD_COLOR
-            )
-            if raw is None:
-                raise ValueError("invalid RGB observation")
-            rgb = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
-            with torch.inference_mode(), redirect_stdout(sys.stderr):
-                batch = {
-                    "observation.state": torch.tensor(request["state"], dtype=torch.float32),
-                    "observation.images.wrist": torch.tensor(
-                        rgb.transpose(2, 0, 1).copy(), dtype=torch.float32
-                    )
-                    / 255,
-                }
-                chunk = post(policy.predict_action_chunk(pre(batch)))[0, : config.n_action_steps]
-            actions = chunk.cpu().numpy()
-            if not np.isfinite(actions).all():
-                raise ValueError("ACT returned non-finite actions")
-            response = {"actions": actions.tolist()}
-        except Exception as exc:
-            response = {"error": str(exc)}
-        wire.write(json.dumps(response, allow_nan=False) + "\n")
-        wire.flush()
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["train", "serve"])
+    parser.add_argument("mode", choices=["train"])
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--steps", type=int, default=2000)
@@ -312,8 +281,6 @@ def main() -> None:
             smoke=args.smoke,
             initial=args.initial,
         )
-    else:
-        serve(args.input, args.device)
 
 
 if __name__ == "__main__":

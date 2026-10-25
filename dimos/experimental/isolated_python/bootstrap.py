@@ -27,6 +27,7 @@ from typing import Any
 
 import typer
 
+from dimos.core.global_config import global_config
 from dimos.experimental.isolated_python.module import IsolatedPythonModule, contract_rpc_names
 from dimos.spec.utils import _signatures_compatible
 
@@ -84,6 +85,12 @@ def main(
 ) -> None:
     module: IsolatedPythonModule | None = None
     try:
+        kwargs = pickle.load(sys.stdin.buffer)
+        # Match ordinary Python workers: RPC/transport factories read the
+        # process singleton, not ModuleConfig.g. Inherit the parent's domain
+        # and endpoints before constructing any module or RPC service.
+        global_config.update(**kwargs["g"])
+        kwargs["g"] = global_config
         declaration_class = load_class(declaration)
         runtime_class = load_class(implementation)
         if not issubclass(declaration_class, IsolatedPythonModule):
@@ -91,7 +98,6 @@ def main(
         if not issubclass(runtime_class, IsolatedPythonModule):
             raise TypeError(f"{implementation!r} is not an IsolatedPythonModule subclass")
         validate_runtime(declaration_class, runtime_class)
-        kwargs = pickle.load(sys.stdin.buffer)
         kwargs["instance_name"] = instance_name
         module = runtime_class(_isolated_python_runtime=True, **kwargs)
         os.write(handshake_fd, b"READY\n")

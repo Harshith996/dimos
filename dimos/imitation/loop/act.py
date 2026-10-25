@@ -16,14 +16,23 @@
 
 from __future__ import annotations
 
-import json
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
-import select
 import subprocess
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
+from dimos.core.transport import ZenohTransport
 from dimos.experimental.isolated_python.module import isolated_python_run_command
-from dimos.imitation.loop.recording import digest
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule, RolloutStatus
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+if TYPE_CHECKING:
+    from dimos.imitation.loop.device import Observation
+    from dimos.robot.manipulators.openyam.control import YamControl
+from dimos.imitation.loop.checkpoint import read_checkpoint
 
 PROJECT = Path(__file__).resolve().parents[3] / "native" / "python" / "lerobot"
 
@@ -64,74 +73,87 @@ def train(
     subprocess.run(command(*args), check=True)
 
 
-def read_checkpoint(checkpoint: Path) -> dict[str, Any]:
-    """Verify weights, processors and configuration before loading either runtime."""
-    manifest: dict[str, Any] = json.loads((checkpoint / "loop.json").read_text())
-    files = manifest.get("files")
-    if not isinstance(files, dict) or "model.safetensors" not in files:
-        raise ValueError("checkpoint has no immutable runtime file manifest")
-    for name, expected in files.items():
-        if Path(name).name != name or digest(checkpoint / name) != expected:
-            raise ValueError(f"checkpoint file changed: {name}")
-    if files["model.safetensors"] != manifest["model_sha256"]:
-        raise ValueError("checkpoint model identity differs from its file manifest")
-    return manifest
+class PolicyRunner:
+    """Desktop lifecycle for the shared isolated LeRobot policy module."""
 
-
-class ActWorker:
     def __init__(self, checkpoint: Path, *, device: str = "cpu") -> None:
         self.checkpoint = checkpoint.resolve()
-        self.device = device
         self.manifest = read_checkpoint(checkpoint)
         self.identity: str = self.manifest["model_sha256"]
-        self.process: subprocess.Popen[str] | None = None
-
-    def start(self) -> None:
-        if self.process is not None:
-            raise RuntimeError("ACT worker is already started")
-        self.process = subprocess.Popen(
-            command("serve", str(self.checkpoint), "--device", self.device),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            text=True,
-            bufsize=1,
+        self._stack = ExitStack()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="policy-preflight")
+        self._preflight: Future[RolloutStatus] | None = None
+        self.status: RolloutStatus | None = None
+        self._next_status = 0.0
+        self._inputs: dict[str, ZenohTransport[Any]] = {}
+        height, width, _ = self.manifest["image_shape"]
+        self.module = LeRobotPolicyModule(
+            policy_path=str(self.checkpoint),
+            device=device,
+            task="OpenYAM task",
+            joint_names=self.manifest["joint_names"],
+            fps=self.manifest["fps"],
+            image_height=height,
+            image_width=width,
+            robot_type=self.manifest["robot_type"],
+            startup_timeout=120.0,
+            extra_env={"OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2"},
         )
+
+    def start(self, control: YamControl, task: str) -> None:
+        self.module.config.task = task
+        proxy = control.policy_control()
+        self._stack.callback(proxy.stop_rpc_client)
+        self.module.set_module_ref("_control", proxy)
+        for name, kind in (("color_image", Image), ("coordinator_joint_state", JointState)):
+            transport: ZenohTransport[Any] = ZenohTransport(
+                f"{control.coordinator.config.rpc_name}/policy/{name}", kind
+            )
+            self._stack.callback(transport.stop)
+            self.module.set_transport(name, transport)
+            self._inputs[name] = transport
+        self._stack.callback(self.module.stop)
         try:
-            result = self._receive(120)
-            if result != {"ready": True}:
-                raise RuntimeError(f"ACT worker did not initialize: {result}")
+            self.module.build()
+            self.module.start()
         except BaseException:
             self.close()
             raise
 
-    def _receive(self, timeout: float) -> dict[str, Any]:
-        assert self.process is not None and self.process.stdout is not None
-        if not select.select([self.process.stdout], [], [], timeout)[0]:
-            raise TimeoutError("ACT worker timed out")
-        line = self.process.stdout.readline()
-        if not line:
-            raise RuntimeError(f"ACT worker exited ({self.process.poll()})")
-        result: dict[str, Any] = json.loads(line)
-        if "error" in result:
-            raise RuntimeError(result["error"])
-        return result
+    def observe(self, observation: Observation) -> None:
+        self._inputs["coordinator_joint_state"].broadcast(
+            None,
+            JointState(
+                name=self.manifest["joint_names"],
+                position=observation.state.tolist(),
+                ts=observation.state_ts,
+            ),
+        )
+        self._inputs["color_image"].broadcast(
+            None,
+            Image.from_numpy(observation.image, format=ImageFormat.RGB, ts=observation.image_ts),
+        )
+        if self._preflight is None:
+            self._preflight = self._executor.submit(self.module.preflight_rollout)
+        elif self._preflight.done() and time.monotonic() >= self._next_status:
+            if self.status is None:
+                self.status = self._preflight.result()
+            else:
+                self.status = self.module.rollout_status()
+            self._next_status = time.monotonic() + 0.2
 
-    def predict(self, observation: dict[str, Any]) -> list[list[float]]:
-        assert self.process is not None and self.process.stdin is not None
-        self.process.stdin.write(json.dumps(observation, allow_nan=False) + "\n")
-        self.process.stdin.flush()
-        return list(self._receive(30)["actions"])
+    def start_rollout(self) -> None:
+        if self.status is None:
+            raise RuntimeError("Checkpoint preflight is still running")
+        if not self.status["policy_ready"]:
+            raise RuntimeError(self.status["last_error"] or "Checkpoint preflight failed")
+        self.status = self.module.start_rollout()
+        if not self.status["active"]:
+            raise RuntimeError(self.status["last_error"] or "Policy did not start")
+
+    def stop_rollout(self) -> None:
+        self.status = self.module.stop_rollout()
 
     def close(self) -> None:
-        if self.process is None:
-            return
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        for stream in (self.process.stdin, self.process.stdout):
-            if stream is not None:
-                stream.close()
+        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._stack.close()

@@ -22,7 +22,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use crossbeam_utils::sync::WaitGroup;
-use dimos_module::{worker_pool, Builder, Input, Module};
+use dimos_module::{worker_pool, Builder, Input, Module, Output};
+use lcm_msgs::std_msgs::String as StringMsg;
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
@@ -88,6 +89,7 @@ pub struct RecorderConfig {
     #[validate(range(min = 1))]
     pub encoding_threads: usize,
     pub streams: Vec<StreamConfig>,
+    pub publish_status: bool,
 }
 
 #[derive(Clone)]
@@ -147,6 +149,7 @@ pub struct RecorderEngine {
     handle: RecorderHandle,
     writer: Option<JoinHandle<Result<WriterStats>>>,
     failure: Receiver<String>,
+    written: Arc<Mutex<BTreeMap<String, u64>>>,
 }
 
 impl RecorderEngine {
@@ -175,11 +178,13 @@ impl RecorderEngine {
             sequence: Arc::new(AtomicU64::new(0)),
         };
 
+        let written = Arc::new(Mutex::new(BTreeMap::new()));
+        let writer_written = Arc::clone(&written);
         let writer_config = config.clone();
         let writer = thread::Builder::new()
             .name("mem2-writer".to_string())
             .spawn(move || {
-                let result = writer_loop(writer_config, write_rx, permit_rx);
+                let result = writer_loop(writer_config, write_rx, permit_rx, writer_written);
                 if let Err(error) = &result {
                     let _ = failure_tx.send(format!("{error:#}"));
                 }
@@ -191,6 +196,7 @@ impl RecorderEngine {
             handle,
             writer: Some(writer),
             failure: failure_rx,
+            written,
         })
     }
 
@@ -269,6 +275,7 @@ pub struct MemoryRecorder {
     engine: Option<RecorderEngine>,
     inputs: Vec<RecorderInput>,
     forwarders: JoinSet<()>,
+    status: Option<Output<StringMsg>>,
 }
 
 impl MemoryRecorder {
@@ -293,6 +300,9 @@ impl Module for MemoryRecorder {
     type Config = RecorderConfig;
 
     fn build(builder: &mut Builder, config: Self::Config) -> Self {
+        let status = config
+            .publish_status
+            .then(|| builder.output("recording_status", StringMsg::encode));
         let engine = RecorderEngine::start(config.clone())
             .expect("failed to start memory recorder pipeline");
         let inputs = config
@@ -310,6 +320,7 @@ impl Module for MemoryRecorder {
             engine: Some(engine),
             inputs,
             forwarders: JoinSet::new(),
+            status,
         }
     }
 
@@ -329,6 +340,20 @@ impl Module for MemoryRecorder {
             });
         }
         info!(streams = self.forwarders.len(), "memory recorder ready");
+        if let Some(status) = self.status.take() {
+            let written = Arc::clone(&self.engine.as_ref().expect("engine is running").written);
+            self.forwarders.spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(50));
+                loop {
+                    interval.tick().await;
+                    let counts = written.lock().expect("writer counters poisoned").clone();
+                    let data = serde_json::json!({"ready": true, "written": counts}).to_string();
+                    if status.publish(&StringMsg { data }).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
     }
 
     async fn handle(&mut self) {
@@ -358,6 +383,7 @@ fn writer_loop(
     config: RecorderConfig,
     receiver: Receiver<EncodedBatch>,
     permits: Receiver<()>,
+    written: Arc<Mutex<BTreeMap<String, u64>>>,
 ) -> Result<WriterStats> {
     let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
 
@@ -376,11 +402,11 @@ fn writer_loop(
                     next_sequence += 1;
                 }
                 if ready.len() >= WRITE_BATCH_SIZE {
-                    write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
+                    write_ready(store.as_mut(), &mut ready, &mut stats, &permits, &written)?;
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats, &permits, &written)?;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 while let Some(batch) = pending.remove(&next_sequence) {
@@ -390,7 +416,7 @@ fn writer_loop(
                 if !pending.is_empty() {
                     return Err(anyhow!("encoder results ended with a sequence gap"));
                 }
-                write_ready(store.as_mut(), &mut ready, &mut stats, &permits)?;
+                write_ready(store.as_mut(), &mut ready, &mut stats, &permits, &written)?;
                 store.finish()?;
                 info!(
                     received = stats.received,
@@ -409,6 +435,7 @@ fn write_ready(
     ready: &mut Vec<EncodedBatch>,
     stats: &mut WriterStats,
     permits: &Receiver<()>,
+    written: &Mutex<BTreeMap<String, u64>>,
 ) -> Result<()> {
     if ready.is_empty() {
         return Ok(());
@@ -438,6 +465,12 @@ fn write_ready(
         }
     }
     store.write_batch(&stored_observations)?;
+    {
+        let mut counts = written.lock().expect("writer counters poisoned");
+        for observation in &stored_observations {
+            *counts.entry(observation.stream.name.clone()).or_default() += 1;
+        }
+    }
     stats.written += stored_observations.len() as u64;
     debug!(
         jobs = completed_jobs,
@@ -601,6 +634,7 @@ mod tests {
     fn writer_restores_arrival_order_after_parallel_encoding() {
         let file = NamedTempFile::new().unwrap();
         let config = RecorderConfig {
+            publish_status: false,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -609,8 +643,12 @@ mod tests {
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
+        let written = Arc::new(Mutex::new(BTreeMap::new()));
+        let writer_written = Arc::clone(&written);
         let writer_config = config.clone();
-        let writer = thread::spawn(move || writer_loop(writer_config, receiver, permit_receiver));
+        let writer = thread::spawn(move || {
+            writer_loop(writer_config, receiver, permit_receiver, writer_written)
+        });
         for sequence in [1, 0, 2] {
             permit_sender.send(()).unwrap();
             sender
@@ -627,6 +665,7 @@ mod tests {
         }
         drop(sender);
         let stats = writer.join().unwrap().unwrap();
+        assert_eq!(written.lock().unwrap().get("samples"), Some(&3));
 
         let connection = Connection::open(file.path()).unwrap();
         let values = connection
@@ -759,6 +798,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let raw = stream("raw", Codec::Lcm, false);
         let config = RecorderConfig {
+            publish_status: false,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -772,7 +812,9 @@ mod tests {
         let handle = engine.handle();
         handle.record(raw.clone(), b"one");
         handle.record(raw, b"two");
+        let counts = Arc::clone(&engine.written);
         let stats = engine.shutdown().unwrap();
+        assert_eq!(counts.lock().unwrap().get("raw"), Some(&2));
         assert_eq!(stats.written, 2);
         assert_eq!(stats.encode_errors, 0);
     }
@@ -782,6 +824,7 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let image = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
         let config = RecorderConfig {
+            publish_status: false,
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
             },
@@ -802,6 +845,7 @@ mod tests {
     #[test]
     fn zero_encoding_threads_fail_native_config_validation() {
         let config = RecorderConfig {
+            publish_status: false,
             store: store::RecordingStoreConfig::Sqlite {
                 path: "unused.db".to_string(),
             },

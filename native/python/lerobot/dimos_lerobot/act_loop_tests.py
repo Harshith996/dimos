@@ -21,6 +21,13 @@ import numpy as np
 import pytest
 
 from dimos.imitation.loop.recording import Episode, encode_image, export_snapshot
+from dimos.imitation.loop.transport import learning_bus
+
+
+@pytest.fixture(autouse=True)
+def isolated_bus():
+    with learning_bus():
+        yield
 
 
 @pytest.fixture

@@ -22,16 +22,18 @@ from contextlib import ExitStack
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import cv2
 from mcap.reader import make_reader
-from mcap.writer import Writer
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.core.transport import ZenohTransport
+from dimos.imitation.collection.episode import EpisodeEvent, EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
+from dimos.imitation.collection.recorder import CollectionRecorder, collection_recorder
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import inspect_episode_quality, iter_episode_samples
 from dimos.imitation.dataprep.schema import (
@@ -44,6 +46,9 @@ from dimos.imitation.dataprep.schema import (
 from dimos.imitation.dataprep.sources.mcap import open_recording
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.std_msgs.String import String
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 
 CONTRACT_KEYS = (
     "joint_names",
@@ -128,74 +133,101 @@ class Episode:
 
     def __init__(self, root: Path, metadata: dict[str, Any]) -> None:
         self.directory = root / "episodes" / uuid4().hex
-        self.directory.mkdir(parents=True)
+        self.directory.parent.mkdir(parents=True, exist_ok=True)
         self.metadata = {"schema_version": 2, **metadata}
-        schema = collection_profile(metadata).to_schema()
-        (self.directory / "schema.json").write_text(schema.model_dump_json(indent=2) + "\n")
-        self._file = (self.directory / "recording.mcap.partial").open("wb")
-        self._writer = Writer(self._file)
-        self._writer.start()
-        self._channels: dict[str, int] = {}
-        for topic, kind in (("state", JointState), ("action", JointState), ("wrist", Image)):
-            self._channels[topic] = self._writer.register_channel(
-                topic,
-                "lcm",
-                0,
-                metadata={"dimos.payload_type": f"{kind.__module__}.{kind.__name__}"},
-            )
-        schema_id = self._writer.register_schema(
-            "dimos.learning.provenance.v2", "jsonschema", b'{"type":"object"}'
+        self._stack = ExitStack()
+        self._counts: dict[str, int] = {}
+        self._transports: dict[str, ZenohTransport[Any]] = {}
+        blueprint = collection_recorder(
+            profile=collection_profile(metadata),
+            recording=self.directory,
+            extra_inputs={"provenance": String},
+            publish_status=True,
+            stream_codecs={"provenance": "json"},
+            stream_timestamp_fields={"provenance": "state_ts"},
+            stream_json_schemas={"provenance": {"type": "object"}},
+            rpc_name=f"recording-{self.directory.name}",
         )
-        self._channels["provenance"] = self._writer.register_channel(
-            "provenance", "json", schema_id
-        )
+        atom = blueprint.blueprints[0]
+        self._recorder = cast("CollectionRecorder", atom.module(**atom.kwargs))
+        try:
+            ports: dict[str, type[Any]] = dict(self._recorder.recording_inputs)
+            ports["recording_status"] = String
+            for name, kind in ports.items():
+                transport: ZenohTransport[Any] = ZenohTransport(
+                    Topic(
+                        f"recording/{self.directory.name}/{name}",
+                        kind,
+                        qos=None if name == "recording_status" else QOS_NEVER_DROP,
+                    )
+                )
+                self._transports[name] = transport
+                self._stack.callback(transport.stop)
+                self._recorder.set_transport(name, transport)
+            self._stack.callback(self._recorder.stop)
+            self._recorder.build()
+            self._recorder.start()
+            self._recorder.wait_written({})
+        except BaseException:
+            self._stack.close()
+            raise
         self.frames = 0
         self.training_frames = 0
+        self._last_timestamp = 0.0
         self._closed = False
 
-    def _write(self, channel: str, timestamp: float, payload: bytes) -> None:
-        stamp = round(timestamp * 1e9)
-        self._writer.add_message(
-            self._channels[channel],
-            log_time=stamp,
-            publish_time=stamp,
-            data=payload,
-            sequence=self.frames,
+    def _write(self, channel: str, message: Any) -> None:
+        self._transports[channel].broadcast(None, message)
+        self._counts[channel] = self._counts.get(channel, 0) + 1
+
+    def _status(self, event: EpisodeEvent, timestamp: float, keep: bool = False) -> None:
+        self._write(
+            "status",
+            String(
+                EpisodeStatus(
+                    ts=timestamp,
+                    state="recording" if event == "start" else "idle",
+                    episodes_saved=int(keep),
+                    episodes_discarded=int(event == "discard"),
+                    last_event=event,
+                    task_label=self.metadata["task"],
+                ).to_json()
+            ),
         )
 
     def append(self, frame: dict[str, Any]) -> None:
         if self._closed:
             raise RuntimeError("episode is closed")
         names = self.metadata["joint_names"]
-        self._write(
-            "state",
-            frame["state_ts"],
-            JointState(name=names, position=frame["state"], ts=frame["state_ts"]).lcm_encode(),
-        )
+        # Use the timestamps preserved by the LCM headers. Their nanosecond
+        # quantization must also define segment bounds in the provenance;
+        # otherwise a boundary image can fall just outside its own segment.
+        state_ts = Header(float(frame["state_ts"])).timestamp
+        image_ts = Header(float(frame["image_ts"])).timestamp
+        if self.frames == 0:
+            self._status("start", min(state_ts, image_ts))
+        self._last_timestamp = max(state_ts, image_ts)
+        self._write("state", JointState(name=names, position=frame["state"], ts=frame["state_ts"]))
         self._write(
             "wrist",
-            frame["image_ts"],
             Image.from_numpy(
                 decode_image(frame["image_png"]), format=ImageFormat.RGB, ts=frame["image_ts"]
-            ).lcm_encode(),
+            ),
         )
         if frame["applied"]:
             action_ts = frame.get("applied_ts", frame["command_ts"])
             self._write(
-                "action",
-                action_ts,
-                JointState(
-                    name=names, position=frame["accepted_action"], ts=action_ts
-                ).lcm_encode(),
+                "action", JointState(name=names, position=frame["accepted_action"], ts=action_ts)
             )
         provenance = {
             key: value
             for key, value in frame.items()
             if key not in ("state", "image_png", "accepted_action")
         }
-        self._write(
-            "provenance", frame["state_ts"], json.dumps(provenance, allow_nan=False).encode()
-        )
+        provenance.update(state_ts=state_ts, image_ts=image_ts)
+        if frame["applied"]:
+            provenance["applied_ts"] = Header(float(action_ts)).timestamp
+        self._write("provenance", String(json.dumps(provenance, allow_nan=False)))
         self.frames += 1
         if frame["applied"] and frame["authority"] in ("human", "correction"):
             self.training_frames += 1
@@ -205,14 +237,33 @@ class Episode:
             raise RuntimeError("episode already closed")
         self._closed = True
         try:
-            self._writer.finish()  # type: ignore[no-untyped-call]  # MCAP omits this annotation.
+            self._status(
+                "save" if keep else "discard", self._last_timestamp + 1 / self.metadata["fps"], keep
+            )
+            self._recorder.wait_written(self._counts)
         finally:
-            self._file.close()
-        self.metadata.update(
-            frames=self.frames, training_frames=self.training_frames, kept=keep, outcome=outcome
-        )
+            self._stack.close()
         final = self.directory / "recording.mcap"
-        (self.directory / "recording.mcap.partial").replace(final)
+        # Native receipts cover accepted writes. Verify finalized MCAP counts as
+        # well: process failure or an incomplete index must never become training data.
+        with final.open("rb") as source:
+            summary = make_reader(source).get_summary()
+            if summary is None or summary.statistics is None:
+                raise RuntimeError("Native recording did not finalize its MCAP index")
+            counts = {
+                summary.channels[channel].topic: count
+                for channel, count in summary.statistics.channel_message_counts.items()
+            }
+        if counts != self._counts:
+            raise RuntimeError(f"Recording counts differ: expected {self._counts}, found {counts}")
+        self.metadata.update(
+            frames=self.frames,
+            training_frames=self.training_frames,
+            kept=keep,
+            outcome=outcome,
+            recorder="dimos.imitation.collection.CollectionRecorder",
+            stream_counts=counts,
+        )
         self.metadata["mcap_sha256"] = digest(final)
         self.metadata["schema_sha256"] = digest(self.directory / "schema.json")
         partial = self.directory / "metadata.json.partial"

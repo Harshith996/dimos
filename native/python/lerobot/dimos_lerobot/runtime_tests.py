@@ -29,7 +29,10 @@ import pytest_mock
 import torch
 from torch import Tensor
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
     TrajectoryCancellationResult,
     TrajectoryCancellationStatus,
     TrajectoryExecutionResult,
@@ -139,6 +142,9 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
     mocker.patch.object(LCMRPC, "serve_module_rpc", return_value=None)
     mocker.patch.object(LCMRPC, "start", return_value=None)
     mocker.patch.object(LCMRPC, "stop", return_value=None)
+    # Controller lifecycle tests do not advance the observation clock while
+    # waiting on thread barriers. Freshness tests advance this clock explicitly.
+    mocker.patch.object(policy_runtime.time, "time", return_value=100.0)
     built: list[LeRobotPolicyRuntime] = []
 
     def _make(
@@ -202,6 +208,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             TrajectoryCancellationStatus.ALREADY_STOPPED
         )
         control.list_tasks.return_value = ["joint_trajectory"]
+        control.get_trajectory_generation.return_value = 0
         mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
         return module, control
@@ -241,6 +248,27 @@ def _preflight(module: LeRobotPolicyRuntime) -> None:
     assert status["last_error"] is None
 
 
+def test_desktop_can_start_and_preflight_without_quest_inputs(
+    make_runtime: RuntimeFactory, mocker: pytest_mock.MockerFixture
+) -> None:
+    module, control = make_runtime(FakePolicy(_action_chunk()))
+    images = mocker.MagicMock()
+    states = mocker.MagicMock()
+    module.color_image.transport = images
+    module.coordinator_joint_state.transport = states
+
+    module.start()
+    images.subscribe.call_args.args[0](
+        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=100.0)
+    )
+    states.subscribe.call_args.args[0](
+        JointState(ts=100.0, name=JOINTS, position=[0.0] * len(JOINTS))
+    )
+
+    _preflight(module)
+    control.execute_trajectory.assert_not_called()
+
+
 def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: RuntimeFactory) -> None:
     actions = _action_chunk()
     policy = FakePolicy(actions, n_action_steps=2)
@@ -254,7 +282,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
 
     call = control.execute_trajectory.call_args_list[0]
     trajectory = call.args[0]
-    assert call.kwargs == {}
+    assert call.kwargs == {"expected_generation": 0}
     assert trajectory.joint_names == JOINTS
     assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
     np.testing.assert_allclose(trajectory.points[0].positions, positions)
@@ -383,7 +411,7 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
 
     assert stop_finished.is_set()
     assert control.execute_trajectory.call_count == 1
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> None:
@@ -402,6 +430,52 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
 
     assert status["active"] is False
     assert status["last_error"] == "coordinator did not confirm cancellation"
+
+
+def test_stop_timeout_rejects_delayed_submission_at_coordinator(
+    make_runtime: RuntimeFactory, mocker: pytest_mock.MockerFixture
+) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
+    coordinator = ControlCoordinator(publish_joint_state=False)
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=JOINTS))
+    coordinator.add_task(task, task_type="trajectory")
+    reading = Event()
+    release = Event()
+    results: list[TrajectoryExecutionResult] = []
+    _, positions, _ = _provide_observation(module)
+
+    def delayed_positions() -> dict[str, float]:
+        reading.set()
+        assert release.wait(timeout=2.0)
+        return dict(zip(JOINTS, positions, strict=True))
+
+    def execute_trajectory(*args: Any, **kwargs: Any) -> TrajectoryExecutionResult:
+        result = coordinator.execute_trajectory(*args, **kwargs)
+        results.append(result)
+        return result
+
+    mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
+    mocker.patch.object(policy_runtime, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
+    control.get_trajectory_generation.side_effect = coordinator.get_trajectory_generation
+    control.execute_trajectory.side_effect = execute_trajectory
+    control.cancel_trajectory.side_effect = coordinator.cancel_trajectory
+    _preflight(module)
+    try:
+        module.start_rollout()
+        assert reading.wait(timeout=2.0)
+        status = module.stop_rollout()
+        assert "did not stop" in (status["last_error"] or "")
+        assert not task.is_active()
+    finally:
+        release.set()
+        if module._thread is not None:
+            module._thread.join(timeout=2.0)
+        coordinator.stop()
+
+    assert results[0].status is TrajectoryExecutionStatus.STALE_REQUEST
+    assert module.rollout_status()["chunks_accepted"] == 0
+    assert "did not stop" in (module.rollout_status()["last_error"] or "")
 
 
 @pytest.mark.parametrize(
@@ -425,7 +499,7 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert message in (module.rollout_status()["last_error"] or "")
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 def test_trajectory_rejection_cancels_and_latches_rollout_off(
@@ -444,7 +518,7 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert module.rollout_status()["last_error"] == "outside hardware limits"
-    control.cancel_trajectory.assert_called_with()
+    control.cancel_trajectory.assert_called_with(expected_generation=0)
 
 
 @pytest.mark.parametrize(
@@ -724,3 +798,56 @@ def test_stopping_inactive_policy_leaves_planner_trajectory_alone(
     held.right_grip = True
     module._on_teleop_buttons(held)
     control.cancel_trajectory.assert_not_called()
+
+
+@pytest.mark.parametrize("stale_source", ["image", "state"])
+def test_observation_expiring_during_inference_is_never_dispatched(
+    make_runtime, mocker, stale_source
+):
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    clock = [100.0]
+    mocker.patch.object(policy_runtime.time, "time", side_effect=lambda: clock[0])
+    _provide_observation(module, ts=100.0)
+    if stale_source == "image":
+        module._latest_joint_state.ts = 100.4
+    else:
+        image, _ = module._latest_image
+        module._latest_image = (image, 100.4)
+    _preflight(module)
+
+    def predict(*args, **kwargs):
+        clock[0] = 100.6
+        return policy.action_chunk
+
+    mocker.patch.object(policy, "predict_action_chunk", side_effect=predict)
+    module.start_rollout()
+    module._thread.join(timeout=2)
+    assert not module.rollout_status()["active"]
+    assert "observation deadline" in module.rollout_status()["last_error"]
+    control.execute_trajectory.assert_not_called()
+
+
+def test_elapsed_action_steps_are_not_replayed_after_inference(make_runtime, mocker):
+    policy = FakePolicy(_action_chunk(4), n_action_steps=4)
+    module, control = make_runtime(policy)
+    clock = [100.0]
+    mocker.patch.object(policy_runtime.time, "time", side_effect=lambda: clock[0])
+    _provide_observation(module, ts=100.0)
+    _preflight(module)
+
+    def predict(*args, **kwargs):
+        clock[0] = 100.045  # More than two 50 Hz action steps have elapsed.
+        return policy.action_chunk
+
+    def execute(trajectory, **kwargs):
+        module._stop_event.set()
+        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+
+    mocker.patch.object(policy, "predict_action_chunk", side_effect=predict)
+    control.execute_trajectory.side_effect = execute
+    module.start_rollout()
+    module._thread.join(timeout=2)
+    trajectory = control.execute_trajectory.call_args.args[0]
+    assert len(trajectory.points) == 3  # current pose and only the two remaining steps
+    np.testing.assert_allclose(trajectory.points[1].positions, policy.action_chunk[0, 2].numpy())

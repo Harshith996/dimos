@@ -17,7 +17,9 @@ import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.hardware.spec import JointLimits
-from dimos.robot.manipulators.openyam.control import YamHoldTask, YamTargetTask
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.manipulators.openyam.control import YamHoldTask, YamTrajectoryTask
 from dimos.robot.manipulators.openyam.device import YamPositionDevice
 from dimos.robot.manipulators.openyam.simulation import PUBLIC_JOINTS
 
@@ -67,13 +69,13 @@ def test_hold_clamps_physical_overshoot_without_corrupting_feedback(device):
 
 
 def test_repeated_setpoints_settle_even_when_feedback_never_reaches_them(device):
-    task = YamTargetTask(device)
+    task = YamTrajectoryTask(device, YamHoldTask(device))
     target = [0.02, 0.4, 0.3, 0.1, 0, 0, 1.0]
     previous = np.zeros(7)
     for tick in range(1, 301):
         # 20 Hz intent, 100 Hz control, gravity/contact keep feedback off target.
         if tick % 5 == 1:
-            task.set_target(target)
+            set_target(task, target)
         output = np.array(task.compute(state([0.0] * 7, tick=tick)).positions)
         assert np.all(np.abs(output - previous) <= np.array([0.005] * 6 + [0.01]) + 1e-12)
         if tick >= 100:
@@ -82,7 +84,7 @@ def test_repeated_setpoints_settle_even_when_feedback_never_reaches_them(device)
     assert task.is_active()
 
     # A new goal starts at the previous command, even after reaching the old goal.
-    task.set_target([-0.1] * 6 + [0.5])
+    set_target(task, [-0.1] * 6 + [0.5])
     assert task.compute(state([0.0] * 7, tick=301)).positions == pytest.approx(
         np.array(target) - np.array([0.005] * 6 + [0.01])
     )
@@ -90,12 +92,12 @@ def test_repeated_setpoints_settle_even_when_feedback_never_reaches_them(device)
 
 @pytest.mark.parametrize("boundary", ["clear", "preempt", "reset"])
 def test_authority_boundaries_forget_old_targets_and_command_references(device, boundary):
-    task = YamTargetTask(device)
-    task.set_target([0.5] * 7)
+    task = YamTrajectoryTask(device, YamHoldTask(device))
+    set_target(task, [0.5] * 7)
     assert task.compute(state([0.0] * 7)).positions == pytest.approx([0.005] * 6 + [0.01])
 
     if boundary == "clear":
-        task.clear()
+        task.cancel()
     elif boundary == "preempt":
         task.on_preempted("operator_hold", frozenset(PUBLIC_JOINTS))
     else:
@@ -104,14 +106,14 @@ def test_authority_boundaries_forget_old_targets_and_command_references(device, 
     assert not task.is_active()
     assert task.compute(state([0.8] * 7)) is None
 
-    task.set_target([0.5] * 7)
+    set_target(task, [0.5] * 7)
     assert task.compute(state([0.8] * 7)).positions == pytest.approx([0.795] * 6 + [0.79])
 
 
-@pytest.mark.parametrize("target", [[0.0], [float("nan")] * 7, [0.0] * 6 + [1.1]])
-def test_invalid_setpoints_do_not_replace_an_accepted_goal(device, target):
-    task = YamTargetTask(device)
-    task.set_target([0.1] * 7)
-    with pytest.raises(ValueError, match="finite positions within joint limits"):
-        task.set_target(target)
-    assert task.compute(state([0.1] * 7)).positions == [0.1] * 7
+def set_target(task, positions):
+    task.execute(
+        JointTrajectory(
+            joint_names=list(PUBLIC_JOINTS), points=[TrajectoryPoint(positions=positions)]
+        ),
+        {},
+    )

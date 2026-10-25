@@ -19,20 +19,16 @@ from contextlib import ExitStack
 from dataclasses import replace
 from threading import RLock
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import numpy as np
-from numpy.typing import NDArray
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
-    BaseControlTask,
-    ControlMode,
     CoordinatorState,
     JointCommandOutput,
-    ResourceClaim,
 )
 from dimos.control.tasks.gripper_task.gripper_task import (
     GripperControlTask,
@@ -44,108 +40,66 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
     TeleopIKTask,
     TeleopIKTaskConfig,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
+from dimos.core.rpc_client import RPCClient
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.std_msgs.String import String
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
-from dimos.robot.manipulators.openyam.device import AuthorityMode, YamPositionDevice
+from dimos.robot.manipulators.openyam.device import AuthorityMode, LearningControlDevice
 from dimos.robot.manipulators.openyam.simulation import PUBLIC_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.teleop.webxr.extensions import VideoArmTeleopModule
 
 
-class YamTargetTask(BaseControlTask):
-    """Persistent setpoints, rate-limited on the coordinator's clock.
+class YamTrajectoryTask(JointTrajectoryTask):
+    """Use the shared trajectory controller, fencing simulation world resets."""
 
-    A completed finite trajectory releases its command reference. Streaming
-    that same trajectory again would then ramp from gravity-deflected feedback.
-    Keep this reference until authority changes, including after reaching a goal.
-    Native artifact servos remain responsible for tracking these positions.
-    """
-
-    def __init__(self, device: YamPositionDevice) -> None:
-        self._name = "yam_target"
-        self._device = device
+    def __init__(self, device: LearningControlDevice, hold: OperatorHoldTask) -> None:
         limits = device.get_limits()
-        self._lower = np.asarray(limits.position_lower, dtype=np.float64)
-        self._upper = np.asarray(limits.position_upper, dtype=np.float64)
-        self._velocity = np.asarray(limits.velocity_max, dtype=np.float64)
-        if (
-            any(
-                values.shape != (len(PUBLIC_JOINTS),)
-                for values in (self._lower, self._upper, self._velocity)
+        velocities = {
+            name: value
+            for name, value in zip(PUBLIC_JOINTS, limits.velocity_max, strict=True)
+            if value is not None
+        }
+        super().__init__(
+            JointTrajectoryTaskConfig(
+                joint_names=PUBLIC_JOINTS,
+                velocity_limits=velocities,
+                hold_final_position=True,
             )
-            or not np.isfinite([self._lower, self._upper, self._velocity]).all()
-            or np.any(self._lower >= self._upper)
-            or np.any(self._velocity <= 0)
-        ):
-            raise ValueError("YAM target control requires finite position and velocity limits")
-        self._lock = RLock()
-        self._target: NDArray[np.float64] | None = None
-        self._command: NDArray[np.float64] | None = None
+        )
+        self._device = device
+        self._hold = hold
         self._generation: int | None = None
 
-    def claim(self) -> ResourceClaim:
-        return ResourceClaim(frozenset(PUBLIC_JOINTS), 10, ControlMode.SERVO_POSITION)
-
-    def is_active(self) -> bool:
-        return self._target is not None
-
-    def set_target(self, positions: list[float]) -> None:
-        values = np.asarray(positions, dtype=np.float64)
-        if (
-            values.shape != self._lower.shape
-            or not np.isfinite(values).all()
-            or np.any(values < self._lower)
-            or np.any(values > self._upper)
-        ):
-            raise ValueError("target must contain seven finite positions within joint limits")
-        with self._lock:
-            self._target = values
-
-    def clear(self) -> None:
-        with self._lock:
-            self._target = None
-            self._command = None
-            self._generation = None
-
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        self.clear()
-
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        with self._lock:
-            if self._target is None:
-                return None
-            generation = self._device.observed_generation()
-            if self._generation is not None and generation != self._generation:
-                self.clear()
-                return None
+        generation = self._device.observed_generation()
+        if self._generation is not None and generation != self._generation:
+            self.cancel()
+            self._hold.request("manual", "Simulation reset; explicit resume required")
             self._generation = generation
-            if self._command is None:
-                measured = np.asarray(
-                    [state.joints.get_position(name) for name in PUBLIC_JOINTS], dtype=np.float64
-                )
-                if not np.isfinite(measured).all():
-                    return None
-                self._command = np.clip(measured, self._lower, self._upper)
-            step = self._velocity * max(0.0, state.dt)
-            self._command += np.clip(self._target - self._command, -step, step)
-            return JointCommandOutput(
-                joint_names=list(PUBLIC_JOINTS),
-                positions=self._command.tolist(),
-                mode=ControlMode.SERVO_POSITION,
-            )
+            return None
+        self._generation = generation
+        return super().compute(state)
 
 
 class YamHoldTask(OperatorHoldTask):
     """Reseed the existing hold from the same tick that observes a world reset."""
 
-    def __init__(self, device: YamPositionDevice) -> None:
+    def __init__(self, device: LearningControlDevice) -> None:
         super().__init__()
         self._device = device
         self._generation: int | None = None
@@ -185,8 +139,15 @@ class YamHoldTask(OperatorHoldTask):
 class YamControl:
     """Own coordinator/teleop lifetimes; the coordinator alone writes the device."""
 
-    def __init__(self, device: YamPositionDevice) -> None:
+    def __init__(
+        self, device: LearningControlDevice, component: HardwareComponent | None = None
+    ) -> None:
         self.device = device
+        self.component = component or HardwareComponent(
+            hardware_id="openyam",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=list(PUBLIC_JOINTS),
+        )
         self._stack = ExitStack()
         self._teleop_stack = ExitStack()
         self._lock = RLock()
@@ -203,26 +164,23 @@ class YamControl:
         self._id = f"yam-learning-{uuid4().hex}"
         self.teleop_port: int | None = None
         self.coordinator = ControlCoordinator(publish_joint_state=False, rpc_name=self._id)
-        self._target = YamTargetTask(device)
         self._hold = YamHoldTask(device)
+        self._target = YamTrajectoryTask(device, self._hold)
         self._gripper = GripperControlTask(
             "yam_gripper",
             GripperControlTaskConfig([PUBLIC_JOINTS[-1]], priority=20, hold_duration=0.2),
             [(0.0, 1.0)],
         )
 
-    def start(self) -> None:
+    def start(self, *, enable: bool = True) -> None:
         try:
-            self.device.connect()
+            if not self.device.connect():
+                raise RuntimeError("OpenYAM connection failed")
             self._stack.callback(self.device.disconnect)
-            self.device.activate()
+            if enable and not self.device.activate():
+                raise RuntimeError("OpenYAM activation failed")
             self.coordinator.add_hardware(
-                self.device,
-                HardwareComponent(
-                    hardware_id="openyam",
-                    hardware_type=HardwareType.MANIPULATOR,
-                    joints=list(PUBLIC_JOINTS),
-                ),
+                cast("ManipulatorAdapter | WholeBodyAdapter", self.device), self.component
             )
             self.coordinator.add_task(self._target)
             self.coordinator.add_task(self._hold)
@@ -239,7 +197,7 @@ class YamControl:
             if mode == "hold" and self._grip:
                 self._await_release = True
             epoch = self.device.transition(mode)
-            self._target.clear()
+            self.coordinator.cancel_trajectory()
             self._hold.request("manual", "Authority changed")
             if self._ik is not None:
                 self._ik.set_estop(True)
@@ -248,6 +206,8 @@ class YamControl:
             self._gripper.set_estop(False)
             self._mode = mode
             self._grip = False
+            if mode == "policy":
+                self._hold.acknowledge()
             return epoch
 
     @property
@@ -259,8 +219,25 @@ class YamControl:
         with self._lock:
             if self._mode == "hold" or self._grip:
                 return
+            values = np.asarray(positions)
+            limits = self.device.get_limits()
+            if (
+                values.shape != (len(PUBLIC_JOINTS),)
+                or not np.isfinite(values).all()
+                or np.any(values < limits.position_lower)
+                or np.any(values > limits.position_upper)
+            ):
+                raise ValueError("target must contain seven finite positions within joint limits")
             self._hold.acknowledge()
-            self._target.set_target(positions)
+            self.coordinator.execute_trajectory(
+                JointTrajectory(
+                    joint_names=list(PUBLIC_JOINTS), points=[TrajectoryPoint(positions=positions)]
+                )
+            )
+
+    def policy_control(self) -> RPCClient:
+        """Bind the isolated policy to this coordinator's unique RPC endpoint."""
+        return RPCClient.remote(ControlCoordinator, remote_name=self._id)
 
     def start_teleop(self, port: int) -> None:
         if not 1 <= port <= 65535:

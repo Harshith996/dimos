@@ -58,12 +58,17 @@ def joint_trajectory_task(
     priority: int = 10,
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
+    hold_final_position: bool = False,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
     from dimos.control.coordinator import TaskConfig
 
-    params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
+    params: dict[str, Any] = {
+        "start_position_tolerance": start_position_tolerance,
+    }
+    if hold_final_position:
+        params["hold_final_position"] = True
     if velocity_limits is not None:
         params["velocity_limits"] = dict(velocity_limits)
     return TaskConfig(
@@ -85,6 +90,7 @@ class TrajectoryExecutionStatus(Enum):
     START_STATE_MISMATCH = auto()
     ALREADY_EXECUTING = auto()
     ESTOPPED = auto()
+    STALE_REQUEST = auto()
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,8 @@ class JointTrajectoryTaskConfig:
             position and the first trajectory point.
         velocity_limits: Optional positive velocity limit for every configured
             joint. Defaults to 1 rad/s per joint.
+        hold_final_position: Keep commanding completed joints until cancelled or
+            preempted. Opt in for streaming position servos with gravity sag.
     """
 
     joint_names: Annotated[
@@ -153,6 +161,7 @@ class JointTrajectoryTaskConfig:
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    hold_final_position: bool = False
 
 
 @dataclass
@@ -251,7 +260,9 @@ class JointTrajectoryTask(BaseControlTask):
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
-        return self._state == TrajectoryState.EXECUTING
+        return self._state == TrajectoryState.EXECUTING or (
+            self._config.hold_final_position and bool(self._commanded_positions)
+        )
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
@@ -264,10 +275,15 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             JointCommandOutput with positions, or None if not executing
         """
-        if not self._motions:
+        if not self.is_active():
             return None
 
-        output_names = [name for name in self._joint_names_list if name in self._motions]
+        output_names = [
+            name
+            for name in self._joint_names_list
+            if name in self._motions
+            or (self._config.hold_final_position and name in self._commanded_positions)
+        ]
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
             if run.start_time is None:
@@ -311,13 +327,15 @@ class JointTrajectoryTask(BaseControlTask):
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
-        # Emit the final command, then forget joints we no longer control.
-        # Another task may move them before the next execution.
-        self._commanded_positions = {
-            name: position
-            for name, position in self._commanded_positions.items()
-            if name in self._motions
-        }
+        # Finite tasks release completed joints. Streaming position controllers
+        # retain their command reference until cancellation or preemption, so
+        # gravity-deflected feedback cannot restart the ramp on every update.
+        if not self._config.hold_final_position:
+            self._commanded_positions = {
+                name: position
+                for name, position in self._commanded_positions.items()
+                if name in self._motions
+            }
         return output
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
@@ -490,7 +508,7 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Semantic cancellation result.
         """
-        if self._state != TrajectoryState.EXECUTING:
+        if not self.is_active():
             return TrajectoryCancellationResult(TrajectoryCancellationStatus.ALREADY_STOPPED)
         self._state = TrajectoryState.ABORTED
         self._clear_active_trajectory()
@@ -589,6 +607,7 @@ class JointTrajectoryTaskParams(BaseConfig):
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    hold_final_position: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -603,5 +622,6 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
+            hold_final_position=params.hold_final_position,
         ),
     )

@@ -46,6 +46,10 @@ mypy_path = "../../.."
 
 [[tool.mypy.overrides]]
 module = [
+    "lerobot.configs.default",
+    "lerobot.configs.train",
+    "lerobot.scripts.lerobot_train",
+    "lerobot.utils.logging_utils",
     "lerobot.configs.policies",
     "lerobot.configs.types",
     "lerobot.policies.act.configuration_act",
