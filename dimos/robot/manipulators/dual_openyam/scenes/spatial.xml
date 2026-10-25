@@ -1,0 +1,20 @@
+<mujoco model="dual-openyam-spatial">
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic" iterations="10" ls_iterations="20" impratio="10"/>
+  <visual><headlight ambient=".4 .4 .4" diffuse=".5 .5 .5"/></visual>
+  <worldbody>
+    <light pos="0 0 2"/>
+    <geom name="floor" type="plane" pos="0 0 -.75" size="2 2 .02" rgba=".25 .28 .3 1"/>
+    <geom name="table" type="box" pos=".3 0 -.03" size=".65 .65 .03" rgba=".57 .61 .64 1"/>
+    <geom name="camera_pole" type="cylinder" pos="-.35 0 .45" size=".015 .45" rgba=".15 .15 .17 1"/>
+    <!-- Optical axis: forward (+X) and down (-Z), 45 degrees. -->
+    <camera name="workspace" pos="-.35 0 .95" xyaxes="0 -1 0 .70710678 0 .70710678" fovy="58"/>
+    <body name="red_cube" pos=".4 .1 .035">
+      <freejoint/>
+      <geom type="box" size=".035 .035 .035" mass=".08" rgba=".85 .12 .06 1" friction="1 .01 .001"/>
+    </body>
+    <body name="blue_cube" pos=".4 -.12 .035">
+      <freejoint/>
+      <geom type="box" size=".035 .035 .035" mass=".08" rgba=".06 .3 .9 1" friction="1 .01 .001"/>
+    </body>
+  </worldbody>
+</mujoco>

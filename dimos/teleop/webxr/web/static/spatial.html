@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenYAM · Spatial teleoperation</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#11181d;color:#edf5f4;font:14px system-ui}canvas{display:block}header{position:fixed;top:20px;left:24px;right:24px;display:flex;align-items:center;gap:16px;pointer-events:none}h1{font-size:18px;margin:0}header span{color:#a7bfbd;font-size:12px}#panel{position:fixed;bottom:24px;left:24px;max-width:520px;padding:18px 22px;background:#17232bea;border:1px solid #36484d;border-radius:12px}p{line-height:1.5;margin:8px 0}button{background:#76e2c1;border:0;padding:11px 16px;border-radius:7px;font:600 14px system-ui;cursor:pointer;margin:6px 7px 6px 0}button:disabled{opacity:.4;cursor:default}#status{color:#f3bf77}#cameras{position:fixed;right:24px;bottom:24px;display:flex;gap:12px}figure{margin:0;background:#17232b;border-radius:9px;overflow:hidden;width:190px}figure img{width:190px;height:142px;object-fit:contain}figcaption{padding:8px;color:#b9cecf;font-size:12px}.muted{color:#9db0b8;font-size:12px}@media(max-width:800px){#cameras{top:70px;bottom:auto}figure,figure img{width:120px}figure img{height:90px}#panel{right:24px}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
+</head>
+<body>
+<header><h1>OpenYAM</h1><span>SPATIAL TELEOP · SIMULATION</span></header>
+<div id="panel">
+<div id="status">Connecting to the station…</div>
+<p>Pinch thumb and index finger near a coloured gripper handle to grab it. Move and rotate your hand; release to hold. Bring thumb and middle finger together to close the gripper.</p>
+<p class="muted">Pinch while pointing at the cloud to select an observed surface. Geometry comes from the workspace RGB-D camera; solid arms follow joint feedback.</p>
+<button id="enter" disabled>Enter immersive view</button><button id="place">Place workspace ahead</button>
+<p id="perception" class="muted">Object recognition: no detector connected.</p>
+<p class="muted">Desktop: drag to orbit, scroll to zoom. Motion control requires tracked hands.</p>
+</div>
+<div id="cameras"><figure><img id="left-camera" alt="Left wrist camera"><figcaption>Left wrist RGB</figcaption></figure><figure><img id="right-camera" alt="Right wrist camera"><figcaption>Right wrist RGB</figcaption></figure></div>
+<script type="module" src="/static/spatial.js"></script>
+</body></html>
