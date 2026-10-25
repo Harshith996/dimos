@@ -308,5 +308,25 @@
       "Two-step simulation training verifies plumbing, not task competence"
     ],
     "camera_enumeration_reference": "https://github.com/opencv/opencv/blob/4.13.0/modules/videoio/src/cap_avfoundation_mac.mm"
+  },
+  "dual_arm_attachment_2026_10_24": {
+    "status": "installed Workcell reads both USB cameras; physical control awaits recovery of existing blueprint USB/CAN fault",
+    "app_commit": "0c2900f",
+    "source": "dimos/imitation/loop/attached.py",
+    "checks": {
+      "python_tests": 13,
+      "app_tests": 13,
+      "mypy": "passed",
+      "ruff": "passed",
+      "app_build_and_install": "passed"
+    },
+    "evidence": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/workcell-hardware/attached-live-status.json",
+    "runtime": "Attached to existing run 20261024-183757-d93a-teleop-webxr-dual-openyam, PID 53356. Installed API returns HTTP 200 and two valid JPEGs.",
+    "feedback": "Direct read initially returned 14 joints; later the blueprint reported gs_usb bulk-IN failed (0xe00002ed). Viewer now subscribes to published coordinator_joint_state instead of repeatedly reading hardware through RPC.",
+    "limits": [
+      "No physical commands sent or robot restart performed. Restart approval is pending because startup enables arms and calibrates grippers.",
+      "Dual-run recording and ACT training are not connected; existing single-arm learning implementation is retained.",
+      "No browser or native UI automation; rendered live page not visually rechecked."
+    ]
   }
 }
