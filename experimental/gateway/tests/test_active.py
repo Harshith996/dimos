@@ -28,7 +28,7 @@ import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches
+from experimental.gateway import launches, store
 from experimental.gateway.state import State
 
 
@@ -260,8 +260,16 @@ def test_logs_of_the_active_run_and_past_ones(client: TestClient, home: Path) ->
 
 
 def test_recordings_is_the_standard_directory(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, checkout: Path
 ) -> None:
+    # the served checkout isn't the gateway's own (Desktop's pinned copy serves the user's): its default, as its own
+    # dimos would pick it, never the copy's recordings/ (replaced on the next move)
+    assert client.get("/history/recordings").json() == {
+        "path": str(tmp_path / "state" / "recordings")
+    }
+    (checkout / ".git").mkdir()
+    assert client.get("/history/recordings").json() == {"path": str(checkout / "recordings")}
+    store.serve(DIMOS_PROJECT_ROOT)
     assert client.get("/history/recordings").json() == {"path": str(RECORDINGS_DIR)}
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(

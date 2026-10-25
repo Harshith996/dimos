@@ -37,7 +37,7 @@ from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "8.0.0"
+API_VERSION = "8.1.0"
 
 
 @dataclass
@@ -96,6 +96,7 @@ def site_dirs(dimos_dir: Path) -> list[Path]:
 
 def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     bus = bus or events.Bus()
+    store.serve(dimos_dir)
     uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
     return State(

@@ -36,6 +36,10 @@ class ServerInfo(Body):
     kind: Literal["dimos"]
     startedAt: int
     zenohNamespace: str | None
+    # the gateway's own code, which may be a copy apart from the checkout it serves (Desktop pins one per tag)
+    gatewayDir: str
+    gatewayCommit: str | None
+    gatewayTag: str | None
 
 
 class Paths(Body):

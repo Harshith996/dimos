@@ -22,7 +22,7 @@ import sys
 import tempfile
 from typing import Any
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.utils import shared_config
 
 if sys.version_info >= (3, 11):
@@ -44,14 +44,30 @@ def setting(section: str, key: str) -> Any:
     return shared_config.setting(section, key)
 
 
+# the checkout the gateway serves (new_state), when it isn't the gateway's own (Desktop's pinned copy)
+_served: Path | None = None
+
+
+def serve(dimos_dir: Path) -> None:
+    global _served
+    _served = None if dimos_dir.resolve() == DIMOS_PROJECT_ROOT.resolve() else dimos_dir
+
+
 def recordings_dir() -> Path:
     """Where recordings go, which `GET /history/recordings` is the one answer to.
 
     dimos resolves it the same way (`dimos.utils.shared_config`) so a run started in a terminal
     agrees with one Desktop launched; `launches.start` hands the launch this very directory, so
-    the endpoint's answer and the path a run writes to cannot drift apart.
+    the endpoint's answer and the path a run writes to cannot drift apart. With nothing
+    configured, the served checkout's default (its `recordings/`), never the folder of a gateway
+    copy that runs apart from it: that one is replaced on the next move.
     """
-    return shared_config.recordings_dir()
+    from dimos.core.global_config import global_config
+
+    configured = global_config.record_dir or setting("recordings", "dir")
+    if configured or _served is None:
+        return shared_config.recordings_dir()
+    return _served / "recordings" if (_served / ".git").exists() else STATE_DIR / "recordings"
 
 
 def write_atomic(path: Path, text: str) -> None:

@@ -392,7 +392,8 @@ def current_launch() -> dict[str, Any] | None:
     pid = int(record["pid"])
     entry = next((run for run in registry_runs() if int(run["pid"]) == pid), None)
     if entry and not record.get("run_id"):
-        record.update(run_id=str(entry["run_id"]), ever_ran=True)
+        # where the run logs is its own dimos's to say: the served checkout's logs/, not this gateway's
+        record.update(run_id=str(entry["run_id"]), log_dir=entry.get("log_dir"), ever_ran=True)
         _save(record)
     running = is_launched_process(record)
     stopping = bool(record.get("stopping"))
@@ -407,7 +408,9 @@ def current_launch() -> dict[str, Any] | None:
     else:
         phase = "failed"
     run_id = record.get("run_id")
-    log_dir = LOG_DIR / run_id if run_id else None
+    log_dir = (
+        Path(record["log_dir"]) if record.get("log_dir") else LOG_DIR / run_id if run_id else None
+    )
     output = _tail(launch_log(), constants.LAUNCH_OUTPUT_TAIL_BYTES)
     launch: dict[str, Any] = {
         "blueprint": record["blueprint"],

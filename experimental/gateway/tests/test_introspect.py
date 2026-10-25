@@ -137,3 +137,23 @@ def test_another_checkout_is_introspected_with_this_file_and_its_own_dimos(tmp_p
     )
     with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"], python=sys.executable))
+
+
+def test_a_checkout_with_an_older_gateway_of_its_own_is_introspected_with_this_one(
+    tmp_path: Path,
+) -> None:
+    # Desktop runs a pinned copy of the gateway against the user's checkout, which may hold an older gateway (an
+    # untracked experimental/gateway/ on a dev branch): neither its introspect.py nor its helpers may be the ones run
+    robot = tmp_path / "dimos" / "robot"
+    robot.mkdir(parents=True)
+    (tmp_path / "dimos" / "__init__.py").write_text("")
+    (robot / "__init__.py").write_text("")
+    (robot / "get_all_blueprints.py").write_text(
+        "def get_by_name(name):\n    raise LookupError(f'{name} from the branch checkout')\n"
+    )
+    old = tmp_path / "experimental" / "gateway"
+    old.mkdir(parents=True)
+    for helper in ("introspect.py", "constants.py", "launches.py", "store.py"):
+        (old / helper).write_text("raise SystemExit('the checkout\\'s own older gateway ran')\n")
+    with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
+        asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"]))
