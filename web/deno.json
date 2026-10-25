@@ -10,6 +10,10 @@
     "net"
   ],
   "nodeModulesDir": "auto",
+  "lock": {
+    "path": "./deno.lock",
+    "frozen": true
+  },
   "imports": {
     "@std/assert": "jsr:@std/assert@^1",
     "@std/cli": "jsr:@std/cli@^1",
