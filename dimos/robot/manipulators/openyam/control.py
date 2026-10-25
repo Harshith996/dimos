@@ -140,9 +140,14 @@ class YamControl:
     """Own coordinator/teleop lifetimes; the coordinator alone writes the device."""
 
     def __init__(
-        self, device: LearningControlDevice, component: HardwareComponent | None = None
+        self,
+        device: LearningControlDevice,
+        component: HardwareComponent | None = None,
+        *,
+        hand: Literal["left", "right"] = "right",
     ) -> None:
         self.device = device
+        self.hand = hand
         self.component = component or HardwareComponent(
             hardware_id="openyam",
             hardware_type=HardwareType.MANIPULATOR,
@@ -251,7 +256,7 @@ class YamControl:
                 TeleopIKTaskConfig(
                     joint_names=PUBLIC_JOINTS[:6],
                     robot_model=model,
-                    bindings=(TeleopHandBinding("right", "gripper_tip"),),
+                    bindings=(TeleopHandBinding(self.hand, "gripper_tip"),),
                     pink=PinkKinematicsConfig(
                         posture_cost=0.01, joint_limit_posture_margin=0.3, lm_damping=0.01, gain=1.0
                     ),
@@ -274,8 +279,18 @@ class YamControl:
                 self.coordinator.add_task(ik)
                 stack.callback(self.coordinator.remove_task, ik.name)
                 self._ik = ik
-                stack.callback(module.right_controller_output.subscribe(self._pose))
-                stack.callback(module.right_gripper_command.subscribe(self._gripper_target))
+                poses = (
+                    module.left_controller_output
+                    if self.hand == "left"
+                    else module.right_controller_output
+                )
+                gripper = (
+                    module.left_gripper_command
+                    if self.hand == "left"
+                    else module.right_gripper_command
+                )
+                stack.callback(poses.subscribe(self._pose))
+                stack.callback(gripper.subscribe(self._gripper_target))
                 stack.callback(module.teleop_buttons.subscribe(self._buttons))
                 # Stop the producer before disconnecting its subscriptions.
                 stack.callback(module.stop)
@@ -294,19 +309,26 @@ class YamControl:
     def _pose(self, pose: PoseStamped) -> None:
         with self._lock:
             if self._ik is not None:
-                self._ik.on_right_cartesian_command(pose, time.monotonic())
+                if self.hand == "left":
+                    self._ik.on_left_cartesian_command(pose, time.monotonic())
+                else:
+                    self._ik.on_right_cartesian_command(pose, time.monotonic())
 
     def _buttons(self, buttons: Buttons) -> None:
         with self._lock:
+            pressed = buttons.left_grip if self.hand == "left" else buttons.right_grip
             if self._await_release:
-                if buttons.right_grip:
+                if pressed:
                     return
                 self._await_release = False
             previous = self._grip
-            pressed = buttons.right_grip
             callback = self.on_authority
             record_callback = self.on_record
-            primary, secondary = buttons.right_primary, buttons.right_secondary
+            primary, secondary = (
+                (buttons.left_primary, buttons.left_secondary)
+                if self.hand == "left"
+                else (buttons.right_primary, buttons.right_secondary)
+            )
             start_save = primary and not self._record_buttons[0]
             discard = secondary and not self._record_buttons[1]
             self._record_buttons = (primary, secondary)

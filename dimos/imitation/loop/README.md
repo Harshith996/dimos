@@ -72,8 +72,12 @@ a cold build can take substantial time. Provision it before an office collection
 Changing Setup requires an idle experiment. Each app installation has its own data folder.
 
 1. Select simulation or a physical station. Physical setup requires a station name, CAN
-   interface (Linux) or adapter USB serial (macOS), and the RealSense camera serial.
-   Connect opens the station with motors disabled. Check the wrist preview, then explicitly
+   interface (Linux) or adapter USB serial (macOS), a USB wrist camera or RealSense serial,
+   and the Quest controller hand. Desktop discovers CAN adapters and USB camera identities,
+   previews each camera without opening an arm, and saves named station configurations.
+   Stop any standalone arm run in its terminal before connecting in Workcell; a registered
+   run owning the selected CAN adapter is rejected before connection. Connect does not
+   enable motors. Check the wrist preview, then explicitly
    Enable arm; activation calibrates the gripper. Set a task instruction before collecting.
 2. Start Quest teleop on an available port and open the displayed HTTPS address on the
    headset. Hold the right grip to move through the existing IK task; the trigger closes
@@ -157,7 +161,9 @@ This composes the CollectionRecorder, profile/schema and native export design fr
 `cc/feat/flexible-policy-module` at `fde4d8e047729de20cb2e4162e2b60698b5738bc`, the existing
 coordinator/WebXR/IK stack, and the reusable sim2 YAM integration. It does not merge the
 competing station recorders or add a second hardware control path. The physical boundary
-uses the existing Damiao adapter and RealSense camera; its coordinate/acceptance behavior
-has mock coverage, but real-arm operation still needs station calibration, teleoperation
+uses the existing Damiao adapter and Webcam/RealSense drivers. Saved webcam identities are
+resolved at connect time; absent devices fail instead of opening another camera index.
+Its coordinate/acceptance behavior has mock coverage and both office USB cameras produced
+previews on macOS. Real-arm operation still needs station calibration, teleoperation
 and policy evaluations. RL, SONIC, bimanual stations, cloud training, semantic labeling and
 policy chaining remain separate extensions.

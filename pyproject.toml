@@ -100,6 +100,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "pyobjc-core>=12.1; sys_platform == 'darwin'", # Stable AVFoundation camera identities.
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",

@@ -19,9 +19,10 @@ from dimos.control.task import CoordinatorState, JointStateSnapshot
 from dimos.hardware.spec import JointLimits
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.openyam.control import YamHoldTask, YamTrajectoryTask
+from dimos.robot.manipulators.openyam.control import YamControl, YamHoldTask, YamTrajectoryTask
 from dimos.robot.manipulators.openyam.device import YamPositionDevice
 from dimos.robot.manipulators.openyam.simulation import PUBLIC_JOINTS
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 @pytest.fixture
@@ -117,3 +118,35 @@ def set_target(task, positions):
         ),
         {},
     )
+
+
+@pytest.mark.parametrize("hand", ["left", "right"])
+def test_only_selected_hand_can_take_over_record_or_release(device, hand, mocker):
+    mocker.patch("dimos.robot.manipulators.openyam.control.ControlCoordinator", autospec=True)
+    control = YamControl(device, hand=hand)
+    control.on_authority = mocker.Mock(side_effect=control.transition)
+    control.on_record = mocker.Mock()
+    other = "left" if hand == "right" else "right"
+    try:
+        control._buttons(
+            Buttons(
+                data=(1 << Buttons.BITS[f"{other}_grip"]) | (1 << Buttons.BITS[f"{other}_primary"])
+            )
+        )
+        control.on_authority.assert_not_called()
+        control.on_record.assert_not_called()
+        control._buttons(
+            Buttons(
+                data=(1 << Buttons.BITS[f"{hand}_grip"]) | (1 << Buttons.BITS[f"{hand}_primary"])
+            )
+        )
+        control.on_authority.assert_called_once_with("human")
+        control.on_record.assert_called_once_with("toggle")
+        assert control.teleop_engaged
+        control._buttons(Buttons())
+        assert control.on_authority.call_args.args == ("hold",)
+        assert not control.teleop_engaged
+        control._buttons(Buttons(data=1 << Buttons.BITS[f"{hand}_secondary"]))
+        assert control.on_record.call_args.args == ("discard",)
+    finally:
+        control.close()

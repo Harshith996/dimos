@@ -15,7 +15,7 @@
 import cv2
 import pytest
 
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import Webcam, WebcamDevice
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def webcam(mocker, request):
         ("linux", " 2 ", 2, cv2.CAP_ANY),
         ("linux", " -1 ", -1, cv2.CAP_ANY),
         ("linux", "rtsp://camera/stream", "rtsp://camera/stream", cv2.CAP_ANY),
-        ("darwin", 0, 0, cv2.CAP_ANY),
+        ("darwin", 0, 0, cv2.CAP_AVFOUNDATION),
         ("darwin", "/dev/video0", "/dev/video0", cv2.CAP_ANY),
     ],
     indirect=["webcam"],
@@ -51,3 +51,29 @@ def test_capture_backend(platform, webcam, device, backend, mocker):
     webcam.start()
 
     video_capture.assert_called_once_with(device, backend)
+
+
+@pytest.mark.parametrize("webcam", ["avfoundation:chosen"], indirect=True)
+def test_saved_camera_identity_is_resolved_again_after_usb_reordering(webcam, mocker):
+    mocker.patch("sys.platform", "darwin")
+    inventory = mocker.patch(
+        "dimos.hardware.sensors.camera.webcam.discover_webcams",
+        return_value=[WebcamDevice("avfoundation:chosen", "USB camera", 2)],
+    )
+    capture = mocker.patch("cv2.VideoCapture")
+    webcam.start()
+    capture.assert_called_once_with(2, cv2.CAP_AVFOUNDATION)
+    webcam.stop()
+    webcam._capture_thread = None
+    inventory.return_value = [WebcamDevice("avfoundation:chosen", "USB camera", 1)]
+    webcam.start()
+    assert capture.call_args.args == (1, cv2.CAP_AVFOUNDATION)
+
+
+@pytest.mark.parametrize("webcam", ["avfoundation:missing"], indirect=True)
+def test_missing_saved_camera_never_opens_a_different_device(webcam, mocker):
+    mocker.patch("dimos.hardware.sensors.camera.webcam.discover_webcams", return_value=[])
+    capture = mocker.patch("cv2.VideoCapture")
+    with pytest.raises(RuntimeError, match="unavailable"):
+        webcam.start()
+    capture.assert_not_called()

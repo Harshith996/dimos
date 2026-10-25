@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-arm office station using the existing CAN and RealSense drivers.
+"""Single-arm office station using the existing CAN and camera drivers.
 
 The shared controller uses closure (0=open, 1=closed). The CAN adapter uses
 opening. Only this device boundary converts that coordinate. A successful
@@ -22,21 +22,23 @@ write acknowledges driver acceptance, not a measured motor target sequence.
 from __future__ import annotations
 
 from contextlib import ExitStack
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 from importlib import import_module
 import json
 from threading import RLock, local
 import time
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 import cv2
 import numpy as np
 from pydantic import BaseModel, Field
 
+from dimos.core.run_registry import list_runs
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.webcam import Webcam, discover_webcams
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
@@ -53,9 +55,59 @@ class StationConfig(BaseModel):
     name: str = Field(min_length=1)
     can_device: str = Field(min_length=1)
     camera_serial: str = Field(min_length=1)
+    camera_kind: Literal["realsense", "webcam"] = "realsense"
+    controller_hand: Literal["left", "right"] = "right"
     camera_width: int = Field(default=848, gt=0)
     camera_height: int = Field(default=480, gt=0)
     camera_fps: int = Field(default=30, gt=0)
+
+    @property
+    def observation_profile(self) -> str:
+        camera = self.model_dump(exclude={"can_device", "controller_hand"})
+        identity = hashlib.sha256(json.dumps(camera, sort_keys=True).encode()).hexdigest()[:16]
+        return f"openyam-physical-wrist-v2:{self.name}:{identity}"
+
+
+def station_owners(can_device: str | None = None) -> list[dict[str, Any]]:
+    """Registered OpenYAM runs must be stopped by their operator before handoff."""
+    owners = []
+    for run in list_runs():
+        if "openyam" not in run.blueprint:
+            continue
+        ports = [
+            str(value) for key, value in run.config_overrides.items() if "can" in key and value
+        ]
+        argv = run.original_argv or run.cli_args
+        for index, arg in enumerate(argv):
+            option, separator, value = arg.partition("=")
+            if option in ("--can-port", "--left-can-port", "--right-can-port"):
+                if separator:
+                    ports.append(value)
+                elif index + 1 < len(argv):
+                    ports.append(argv[index + 1])
+        if can_device is None or not ports or can_device in ports:
+            owners.append({"run_id": run.run_id, "blueprint": run.blueprint, "pid": run.pid})
+    return owners
+
+
+def discover_station() -> dict[str, Any]:
+    """Read USB inventory and run metadata without connecting to motors."""
+    errors = []
+    adapters = []
+    cameras = []
+    try:
+        driver = import_module("can_motor_control")
+        adapters = [
+            {"serial": device.serial_number, "index": device.index}
+            for device in driver.list_gs_usb_devices(vendor_id=0x1D50, product_id=0x606F)
+        ]
+    except (ImportError, RuntimeError, OSError) as error:
+        errors.append(f"CAN discovery: {error}")
+    try:
+        cameras = [asdict(camera) for camera in discover_webcams()]
+    except (RuntimeError, OSError) as error:
+        errors.append(f"Camera discovery: {error}")
+    return {"adapters": adapters, "cameras": cameras, "owners": station_owners(), "errors": errors}
 
 
 class PhysicalYamDevice:
@@ -177,12 +229,13 @@ class OpenYamHardware:
         component = openyam_hardware(bus_devices={"openyam": station.can_device})
         component.auto_enable = False
         component.limits = limits
-        self.control = YamControl(self.device, component)
+        self.control = YamControl(self.device, component, hand=station.controller_hand)
         self._stack = ExitStack()
         self._image: Image | None = None
+        self._camera_error: str | None = None
         self._lock = RLock()
         identity = {
-            "station": station.model_dump(exclude={"can_device"}),
+            "station": station.model_dump(exclude={"can_device", "controller_hand"}),
             "model": artifact.contract_sha256,
             "coordinates": "joint-radians-and-gripper-closure",
             "acknowledgment": "driver-accepted",
@@ -190,13 +243,35 @@ class OpenYamHardware:
         self.contract_sha256 = hashlib.sha256(
             json.dumps(identity, sort_keys=True).encode()
         ).hexdigest()
-        self.observation_profile = f"openyam-physical-wrist-v1:{station.name}"
+        self.observation_profile = station.observation_profile
 
     def __enter__(self) -> OpenYamHardware:
         try:
+            owners = station_owners(self.station.can_device)
+            if owners:
+                owner = owners[0]
+                raise RuntimeError(
+                    f"Arm is in use by {owner['blueprint']} (PID {owner['pid']}). "
+                    "Stop that run with Ctrl-C in its terminal, then Connect station here. "
+                    "Workcell has not connected or changed motor state."
+                )
             self._stack.callback(self.control.close)
             self.control.start(enable=False)
-            camera = RealSenseCamera(
+            if self.station.camera_kind == "webcam":
+                camera = Webcam(
+                    camera_index=self.station.camera_serial,
+                    width=self.station.camera_width,
+                    height=self.station.camera_height,
+                    fps=self.station.camera_fps,
+                )
+                subscription = camera.image_stream().subscribe(
+                    self._on_image, on_error=self._on_camera_error
+                )
+                self._stack.callback(subscription.dispose)
+                if self._camera_error:
+                    raise RuntimeError(self._camera_error)
+                return self
+            realsense = RealSenseCamera(
                 serial_number=self.station.camera_serial,
                 width=self.station.camera_width,
                 height=self.station.camera_height,
@@ -207,15 +282,20 @@ class OpenYamHardware:
             )
             transport: ZenohTransport[Image] = ZenohTransport(f"yam-camera/{uuid4().hex}", Image)
             self._stack.callback(transport.stop)
-            camera.set_transport("color_image", transport)
-            self._stack.callback(camera.color_image.subscribe(self._on_image))
-            self._stack.callback(camera.stop)
-            camera.build()
-            camera.start()
+            realsense.set_transport("color_image", transport)
+            self._stack.callback(realsense.color_image.subscribe(self._on_image))
+            self._stack.callback(realsense.stop)
+            realsense.build()
+            realsense.start()
             return self
         except BaseException:
             self._stack.close()
             raise
+
+    def _on_camera_error(self, error: Exception) -> None:
+        with self._lock:
+            self._camera_error = str(error)
+            self._image = None
 
     def _on_image(self, image: Image) -> None:
         rgb = cv2.resize(image.to_rgb().data, (WIDTH, HEIGHT))
@@ -240,6 +320,10 @@ class OpenYamHardware:
             "arm_connected": self.device.is_connected(),
             "camera_ready": image is not None and time.time() - image.ts < 0.5,
             "enabled": self.device.enabled,
+            "camera_error": self._camera_error,
+            "can_device": self.station.can_device,
+            "camera_id": self.station.camera_serial,
+            "controller_hand": self.station.controller_hand,
             "acknowledgment": "driver-accepted",
         }
 

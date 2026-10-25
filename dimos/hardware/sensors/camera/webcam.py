@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import cache
+from pathlib import Path
 import sys
 import threading
 import time
 from typing import Annotated, Any, Literal
 
+import cv2
 from pydantic import BeforeValidator, Field
 from reactivex import create
 from reactivex.observable import Observable
@@ -26,6 +29,45 @@ from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.reactive import backpressure
+
+if sys.platform == "darwin":
+    import objc  # type: ignore[import-untyped]
+
+
+@dataclass(frozen=True)
+class WebcamDevice:
+    id: str
+    name: str
+    index: int | str
+
+
+def discover_webcams() -> list[WebcamDevice]:
+    """Enumerate cameras without opening them; IDs survive index reordering."""
+    if sys.platform == "darwin":
+        objc.loadBundle(
+            "AVFoundation", {}, bundle_path="/System/Library/Frameworks/AVFoundation.framework"
+        )
+        devices = objc.lookUpClass("AVCaptureDevice").devicesWithMediaType_("vide")
+        return [
+            WebcamDevice(f"avfoundation:{device.uniqueID()}", str(device.localizedName()), index)
+            for index, device in enumerate(devices)
+        ]
+    if sys.platform == "linux":
+        paths = sorted(Path("/dev/v4l/by-id").glob("*"))
+        if not paths:
+            paths = sorted(Path("/dev").glob("video*"))
+        return [WebcamDevice(f"v4l2:{path}", path.name, str(path)) for path in paths]
+    return []
+
+
+def resolve_webcam(device: int | str) -> int | str:
+    """Resolve a saved identity at connection time, never fall back to another camera."""
+    if isinstance(device, str) and device.startswith(("avfoundation:", "v4l2:")):
+        matches = [camera for camera in discover_webcams() if camera.id == device]
+        if len(matches) != 1:
+            raise RuntimeError(f"Camera {device} is unavailable. Reconnect it or select it again.")
+        return matches[0].index
+    return device
 
 
 def _parse_camera_device(value: Any) -> Any:
@@ -86,24 +128,28 @@ class Webcam(CameraHardware):
         return backpressure(create(subscribe))
 
     def start(self):  # type: ignore[no-untyped-def]
-        import cv2
-
         if self._capture_thread and self._capture_thread.is_alive():
             return
 
         # Device paths otherwise let FFmpeg open the camera, which cannot apply
         # the requested capture dimensions and frame rate through set().
-        device = self.config.camera_index
+        device = resolve_webcam(self.config.camera_index)
         backend = cv2.CAP_ANY
+        if sys.platform == "darwin" and isinstance(device, int):
+            backend = cv2.CAP_AVFOUNDATION
         if sys.platform == "linux" and isinstance(device, str) and device.startswith("/dev/"):
             backend = cv2.CAP_V4L2
         self._capture = cv2.VideoCapture(device, backend)  # type: ignore[assignment]
         if not self._capture.isOpened():  # type: ignore[attr-defined]
+            self._capture.release()  # type: ignore[attr-defined]
+            self._capture = None
             raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
 
         # Set camera properties
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)  # type: ignore[attr-defined]
         self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)  # type: ignore[attr-defined]
+        if self.config.fps > 0:
+            self._capture.set(cv2.CAP_PROP_FPS, self.config.fps)  # type: ignore[attr-defined]
 
         # Clear stop event and start the capture thread
         self._stop_event.clear()
@@ -116,7 +162,11 @@ class Webcam(CameraHardware):
         self._stop_event.set()
 
         # Wait for thread to finish
-        if self._capture_thread and self._capture_thread.is_alive():
+        if (
+            self._capture_thread
+            and self._capture_thread.is_alive()
+            and self._capture_thread is not threading.current_thread()
+        ):
             timeout = 0.1 if self.config.fps <= 0 else (1.0 / self.config.fps) + 0.1
             self._capture_thread.join(timeout=timeout)
 
@@ -133,8 +183,6 @@ class Webcam(CameraHardware):
 
     def capture_frame(self) -> Image:
         # Read frame
-        import cv2
-
         ret, frame = self._capture.read()  # type: ignore[attr-defined]
         if not ret:
             raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
@@ -168,7 +216,12 @@ class Webcam(CameraHardware):
         next_frame_time = time.time()
 
         while self._capture and not self._stop_event.is_set():
-            image = self.capture_frame()
+            try:
+                image = self.capture_frame()
+            except Exception as error:
+                if self._observer and not self._stop_event.is_set():
+                    self._observer.on_error(error)
+                return
 
             # Emit the image to the observer only if not stopping
             if self._observer and not self._stop_event.is_set():

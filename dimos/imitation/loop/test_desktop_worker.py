@@ -40,7 +40,7 @@ def test_catalog_and_heartbeat_do_not_start_simulation(experiment, mocker):
 
     experiment.dispatch("heartbeat", {})
     state = experiment.state()
-    with pytest.raises(RuntimeError, match="Start the simulation"):
+    with pytest.raises(RuntimeError, match="Connect the station or start the simulation"):
         experiment.dispatch("target", {"index": 0, "value": 0.2})
 
     simulator.assert_not_called()

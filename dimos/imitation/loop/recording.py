@@ -289,7 +289,9 @@ def read_episode(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return metadata, frames
 
 
-def export_snapshot(root: Path, destination: Path) -> Path:
+def export_snapshot(
+    root: Path, destination: Path, *, observation_profile: str | None = None
+) -> Path:
     """Freeze raw input identities and select segments; conversion is an offline job."""
     if destination.exists():
         raise FileExistsError(f"snapshot already exists: {destination}")
@@ -299,6 +301,10 @@ def export_snapshot(root: Path, destination: Path) -> Path:
     for path in sorted((root / "episodes").glob("*/recording.mcap")):
         if not path.with_name("metadata.json").exists():
             continue
+        if observation_profile is not None:
+            metadata = json.loads(path.with_name("metadata.json").read_text())
+            if metadata.get("observation_profile") != observation_profile:
+                continue
         meta, frames = read_episode(path)
         if not meta["kept"] or meta["split"] != "train":
             continue

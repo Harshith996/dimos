@@ -46,6 +46,7 @@ def record(tmp_path):
         host_offset=0.0,
         applied_delay=0.0,
         segment_size=2,
+        profile="test",
     ):
         episode = Episode(
             tmp_path,
@@ -56,7 +57,7 @@ def record(tmp_path):
                 image_shape=[2, 3, 3],
                 robot_type="openyam",
                 action_semantics="absolute_native_joint_position",
-                observation_profile="test",
+                observation_profile=profile,
                 artifact_contract_sha256="test-artifact",
                 task="move the cube",
             ),
@@ -81,6 +82,15 @@ def record(tmp_path):
         return episode.finish(keep=keep)
 
     return create
+
+
+def test_station_snapshot_excludes_other_arm_and_simulation_data(record, tmp_path):
+    record(["human"] * 4, segment_size=4, profile="right")
+    record(["human"] * 4, segment_size=4, profile="left")
+    snapshot = export_snapshot(tmp_path, tmp_path / "right-only", observation_profile="right")
+    manifest = json.loads((snapshot / "manifest.json").read_text())
+    assert manifest["observation_profile"] == "right"
+    assert len(manifest["episodes"]) == 1
 
 
 def test_export_excludes_policy_eval_discarded_and_unacknowledged_frames(tmp_path, record):

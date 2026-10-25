@@ -40,13 +40,15 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.imitation.loop.act import PolicyRunner, command
 from dimos.imitation.loop.checkpoint import export_policy, import_policy
 from dimos.imitation.loop.device import OpenYamSimulation
-from dimos.imitation.loop.hardware import OpenYamHardware, StationConfig
+from dimos.imitation.loop.hardware import OpenYamHardware, StationConfig, discover_station
 from dimos.imitation.loop.recording import export_snapshot
 from dimos.imitation.loop.session import LearningSession
 from dimos.imitation.loop.transport import learning_bus
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.manipulators.openyam.device import AuthorityMode
 from dimos.robot.manipulators.openyam.joints import OPENYAM_JOINTS
 from dimos.robot.manipulators.openyam.simulation import YamArtifact, load_yam_artifact
@@ -61,6 +63,35 @@ def jpeg(image: NDArray[np.uint8]) -> str:
     if not ok:
         raise ValueError("could not encode camera")
     return base64.b64encode(encoded).decode("ascii")
+
+
+def preview_camera(camera_id: str) -> dict[str, str]:
+    """Open only the selected camera, return a frame and release it."""
+    if not camera_id.startswith(("avfoundation:", "v4l2:")):
+        raise ValueError("Choose a discovered USB camera")
+    ready = Event()
+    frames: list[Image] = []
+    errors: list[str] = []
+
+    def receive(image: Image) -> None:
+        if not frames:
+            frames.append(image)
+            ready.set()
+
+    def failed(error: Exception) -> None:
+        errors.append(str(error))
+        ready.set()
+
+    camera = Webcam(camera_index=camera_id, width=640, height=480, fps=30)
+    subscription = camera.image_stream().subscribe(receive, on_error=failed)
+    try:
+        if not ready.wait(5):
+            raise RuntimeError("No camera frame. Check its USB connection and macOS camera access.")
+        if errors:
+            raise RuntimeError(errors[0])
+        return {"camera_id": camera_id, "jpeg": jpeg(frames[0].to_rgb().data)}
+    finally:
+        subscription.dispose()
 
 
 class DesktopExperiment:
@@ -100,6 +131,8 @@ class DesktopExperiment:
                 episodes.append(
                     {
                         "id": path.parent.name,
+                        "compatible": meta.get("observation_profile") == self.observation_profile,
+                        "observation_profile": meta.get("observation_profile"),
                         **{
                             k: meta.get(k)
                             for k in (
@@ -123,6 +156,7 @@ class DesktopExperiment:
             models.append(
                 {
                     "id": path.parent.name,
+                    "compatible": meta.get("observation_profile") == self.observation_profile,
                     "steps": meta["training_job"]["steps"],
                     "smoke": meta["smoke"],
                     "loss": meta["training_job"]["last_loss"],
@@ -131,11 +165,16 @@ class DesktopExperiment:
             )
         return {"episodes": episodes, "models": models}
 
+    @property
+    def observation_profile(self) -> str:
+        return self.station.observation_profile if self.station else OBSERVATION_PROFILE
+
     def state(self) -> dict[str, Any]:
         session = self.session
         return {
             "running": self.robot is not None,
             "environment": "hardware" if self.station else "simulation",
+            "controller_hand": self.station.controller_hand if self.station else "right",
             "station": self.robot.preflight() if isinstance(self.robot, OpenYamHardware) else None,
             "run_id": self.run_id,
             "task": self.task,
@@ -164,7 +203,7 @@ class DesktopExperiment:
 
     def _require_session(self) -> LearningSession:
         if self.session is None or self.robot is None:
-            raise RuntimeError("Start the simulation first")
+            raise RuntimeError("Connect the station or start the simulation first")
         return self.session
 
     def _require_finished_episode(self) -> None:
@@ -252,6 +291,9 @@ class DesktopExperiment:
         path = self.root / "models" / model_id
         if not (path / "loop.json").is_file():
             raise ValueError("Checkpoint has not finished training")
+        manifest = json.loads((path / "loop.json").read_text())
+        if manifest.get("observation_profile") != self.observation_profile:
+            raise ValueError("This checkpoint belongs to a different station or simulation setup")
         return path
 
     def _scene(self) -> dict[str, Any]:
@@ -295,6 +337,12 @@ class DesktopExperiment:
         self.last_heartbeat = time.monotonic()
         if action == "heartbeat":
             return {"ok": True}
+        if action == "devices":
+            return discover_station()
+        if action == "preview_camera":
+            if self.robot is not None:
+                raise RuntimeError("Stop the session before previewing a different camera")
+            return preview_camera(str(params["camera_id"]))
         if action == "start":
             task = str(params.get("task", self.task)).strip()
             if not task:
@@ -384,7 +432,11 @@ class DesktopExperiment:
         initial = self._checkpoint(str(params["initial"])) if params.get("initial") else None
         self.stop()
         job_id = f"act-{time.strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:5]}"
-        snapshot = export_snapshot(self.root, self.root / "snapshots" / job_id)
+        snapshot = export_snapshot(
+            self.root,
+            self.root / "snapshots" / job_id,
+            observation_profile=self.observation_profile,
+        )
         output = self.root / "models" / job_id
         output.parent.mkdir(parents=True, exist_ok=True)
         log = self.root / "jobs" / f"{job_id}.log"
