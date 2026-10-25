@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One mesh file's bytes as found on disk (STL, DAE, OBJ, ...), named by the URI a URDF uses for it."""
+"""One file's bytes as found on disk (a URDF, a mesh, a texture, ...), named by the URI it was requested by."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from dimos.types.timestamped import Timestamped
 _HEADER = struct.Struct("<dI")
 
 
-class MeshFile(Timestamped):
-    msg_name = "files.MeshFile"
+class File(Timestamped):
+    msg_name = "files.File"
 
     def __init__(self, uri: str, data: bytes, ts: float | None = None) -> None:
         self.uri = uri
@@ -37,7 +37,7 @@ class MeshFile(Timestamped):
         return _HEADER.pack(self.ts, len(uri)) + uri + self.data
 
     @classmethod
-    def lcm_decode(cls, data: bytes, **kwargs: object) -> MeshFile:
+    def lcm_decode(cls, data: bytes, **kwargs: object) -> File:
         ts, uri_length = _HEADER.unpack_from(data)
         start = _HEADER.size + uri_length
         return cls(data[_HEADER.size : start].decode(), bytes(data[start:]), ts)
