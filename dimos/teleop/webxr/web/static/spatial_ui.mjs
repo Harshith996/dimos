@@ -4,6 +4,8 @@ import * as THREE from 'three';
 const panelRotation = new THREE.Matrix4().makeBasis(
   new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,1), new THREE.Vector3(-1,0,0));
 const cameraViews = [['left','LEFT WRIST',0.48],['workspace','WORKSPACE',0],['right','RIGHT WRIST',-0.48]];
+const RAIL_LENGTH = 0.9;
+const RAIL_GRAB_RADIUS = 0.05; // Maximum physical XR radius; shrink with miniature views.
 
 function panel(parent, width, height, position, pixels) {
   const canvas=document.createElement('canvas'); [canvas.width,canvas.height]=pixels;
@@ -31,7 +33,22 @@ export class SpatialUI {
     this.abort=new AbortController(); this.stopped=false; this.pending=null; this.version=0;
     this.collection=null; this.collectionAt=0; this.error=''; this.pollError=''; this.hovered=null; this.drawn='';
     this.cameras=new Map(); this.buttons=[];
+    this.workspaceButtons=[]; this.workspaceDrawn='';
     this.hud=panel(parent,0.84,0.315,[0.82,0,1.05],[1024,384]);
+    this.workspacePanel=panel(parent,0.84,0.15,[0.2,0,-0.16],[1024,184]);
+    // Keep arrangement affordances readable through the observed tabletop, like tool labels.
+    this.workspacePanel.mesh.material.depthTest=false;
+    this.workspacePanel.mesh.material.depthWrite=false;
+    this.workspacePanel.mesh.renderOrder=10;
+    this.rail=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,RAIL_LENGTH,12),
+      new THREE.MeshBasicMaterial({color:0xb9cecf,depthTest:false,depthWrite:false}));
+    this.rail.renderOrder=11;
+    this.rail.position.set(0.2,0,-0.05); parent.add(this.rail);
+    for(const y of [-RAIL_LENGTH/2,RAIL_LENGTH/2]) {
+      const end=new THREE.Mesh(new THREE.SphereGeometry(0.018,12,8),this.rail.material);
+      end.renderOrder=11;
+      end.position.y=y; this.rail.add(end);
+    }
     for(const [name,title,y] of cameraViews) {
       const view=panel(parent,0.42,0.3465,[0.78,y,0.68],[640,528]);
       Object.assign(view,{name,title,ts:0,url:null,stale:true}); this.cameras.set(name,view);
@@ -107,8 +124,8 @@ export class SpatialUI {
   }
 
   async activate(action) {
-    if(!this.buttons.some(button=>button.action===action && button.enabled)) return;
-    if(action==='hold') { this.onAction(action); return; }
+    if(![...this.buttons,...this.workspaceButtons].some(button=>button.action===action && button.enabled)) return;
+    if(['hold','actual_size','place_ahead'].includes(action)) { this.onAction(action); return; }
     if(this.pending) return;
     this.pending=action; this.version++; this.error='';
     try {
@@ -121,7 +138,8 @@ export class SpatialUI {
     finally { this.pending=null; }
   }
 
-  update({now,ready,connected,paused,actions,preview}) {
+  update({now,ready,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
+    this.updateWorkspace(workspaceScale,workspaceActive,!preview);
     for(const view of this.cameras.values()) {
       if(!view.stale && now-view.ts>0.5) this.cameraStatus(view,false);
     }
@@ -130,19 +148,19 @@ export class SpatialUI {
     const recording=available && !!state.recording;
     const elapsed=recording?Math.max(0,Math.floor(now-state.started_at)):0;
     const timer=`${Math.floor(elapsed/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}`;
-    const active=connected && !preview;
+    const active=connected && !preview && !workspaceActive;
     this.buttons=[
       {action:'record',label:'Record',enabled:active && ready && available && state.collection_ready && !recording && !!document.querySelector('#task').value.trim()},
       {action:'save',label:'Save',enabled:active && recording},
       {action:'discard',label:'Discard',enabled:active && recording},
       {action:'hold',label:paused?'Resume':'Hold control',enabled:active && (paused?ready:true)},
     ].map((button,i)=>({...button,x:24+i*250,y:292,w:232,h:68,enabled:button.enabled && (!this.pending || button.action==='hold')}));
-    const control=preview?'VIEW ONLY':!connected?'CONTROL DISCONNECTED':!ready?'OBSERVATIONS STALE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
+    const control=preview?'VIEW ONLY':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'CONTROL DISCONNECTED':!ready?'OBSERVATIONS STALE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
     const hint=this.error || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
-    const arms=['left','right'].map(side=>`${side.toUpperCase()} ${ready&&!paused?(actions?.[side]==='move'?'MOVING':actions?.[side]==='opening'?'JAWS':'HELD'):'HELD'}`).join('   ·   ');
+    const arms=['left','right'].map(side=>`${side.toUpperCase()} ${ready&&!paused&&!workspaceActive?(actions?.[side]==='move'?'MOVING':actions?.[side]==='opening'?'JAWS':'HELD'):'HELD'}`).join('   ·   ');
     const summary=`${take} · ${state?.episodes_saved??0} saved · ${state?.episodes_discarded??0} discarded`;
     document.querySelector('#episode-state').textContent=summary;
     document.querySelector('#episode-hint').textContent=hint;
@@ -169,19 +187,53 @@ export class SpatialUI {
   }
 
   hit(ray) {
-    const hit=ray.intersectObject(this.hud.mesh)[0];
+    const hit=ray.intersectObjects([this.hud.mesh,this.workspacePanel.mesh])[0];
     if(!hit) return null;
-    const x=hit.uv.x*1024,y=(1-hit.uv.y)*384;
-    const button=this.buttons.find(b=>b.enabled && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h);
+    const workspace=hit.object===this.workspacePanel.mesh;
+    const x=hit.uv.x*1024,y=(1-hit.uv.y)*(workspace?184:384);
+    const button=(workspace?this.workspaceButtons:this.buttons).find(b=>b.enabled && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h);
     return button?{action:button.action,point:hit.point}:null;
+  }
+
+  nearWorkspace(point) {
+    const start=new THREE.Vector3(0,-RAIL_LENGTH/2,0).applyMatrix4(this.rail.matrixWorld);
+    const end=new THREE.Vector3(0,RAIL_LENGTH/2,0).applyMatrix4(this.rail.matrixWorld);
+    const nearest=new THREE.Line3(start,end).closestPointToPoint(point,true,new THREE.Vector3());
+    const scale=this.rail.matrixWorld.getMaxScaleOnAxis();
+    return nearest.distanceTo(point)<RAIL_GRAB_RADIUS*Math.min(1,scale);
+  }
+
+  workspaceAnchor() { return this.rail.getWorldPosition(new THREE.Vector3()).toArray(); }
+
+  updateWorkspace(scale,active,immersive) {
+    this.workspaceButtons=[['actual_size','Actual size'],['place_ahead','Place ahead']].map(([action,label],i)=>({
+      action,label,x:24+i*500,y:100,w:476,h:64,enabled:immersive&&!active,
+    }));
+    const signature=JSON.stringify([Math.round(scale*100),active,immersive,this.hovered]);
+    if(signature===this.workspaceDrawn) return; this.workspaceDrawn=signature;
+    this.rail.material.color.set(active?0x76e2c1:0xb9cecf);
+    const c=this.workspacePanel.context;
+    c.fillStyle='#13232d'; c.fillRect(0,0,1024,184); c.textAlign='left';
+    c.fillStyle='#edf5f4'; c.font='bold 29px system-ui';
+    c.fillText(`WORKSPACE · ${Math.round(scale*100)}%${active?' · ARMS HELD':''}`,24,38);
+    c.fillStyle='#b9cecf'; c.font='24px system-ui';
+    c.fillText('Pinch rail to move · Two hands to resize and turn',24,77);
+    for(const button of this.workspaceButtons) {
+      c.fillStyle=!button.enabled?'#25333e':this.hovered===button.action?'#c0f4e7':'#76e2c1';
+      c.fillRect(button.x,button.y,button.w,button.h);
+      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font='bold 27px system-ui'; c.textAlign='center';
+      c.fillText(button.label,button.x+button.w/2,button.y+42);
+    }
+    this.workspacePanel.texture.needsUpdate=true;
   }
 
   dispose() {
     this.stopped=true; this.abort.abort();
-    for(const view of [this.hud,...this.cameras.values()]) {
+    for(const view of [this.hud,this.workspacePanel,...this.cameras.values()]) {
       view.texture.dispose(); view.mesh.geometry.dispose(); view.mesh.material.dispose(); view.mesh.removeFromParent();
       if(view.url) URL.revokeObjectURL(view.url);
     }
+    this.rail.traverse(mesh=>mesh.geometry.dispose()); this.rail.material.dispose(); this.rail.removeFromParent();
     for(const button of document.querySelectorAll('[data-action]')) button.onclick=null;
   }
 }

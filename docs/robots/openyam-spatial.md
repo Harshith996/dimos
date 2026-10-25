@@ -35,6 +35,21 @@ placed at metre scale ahead of the current head direction. The same transform
 maps both displayed geometry and hand commands. Exit and re-enter to place it
 ahead again; the desktop **Place workspace ahead** button also requests this.
 
+In immersive view, pinch the rail beneath the workspace to move the entire view.
+Add the other hand to resize and turn it, keeping it upright. Release either
+hand to continue dragging with the remaining hand; release both to leave it
+in place. Scale is bounded to 25–200%. The rail shows the current percentage,
+**Actual size** restores 100% around the rail, and **Place ahead** recenters
+without changing the chosen scale. These controls remain available with stale
+robot observations because they only arrange the local view.
+
+Arrangement releases both robot gestures. Open your hand and make a fresh tool
+grab afterward to resume operation. Calibration and robot coordinates stay
+unchanged; all displayed observations and controls share the same transform.
+At 200%, a 2 cm hand translation becomes a 1 cm robot translation. Hand
+orientation uses only the transform's rotation, independent of display scale.
+Tracking loss freezes the view and requires release before re-grabbing the rail.
+
 - Open your hand, then pinch index and thumb near the corresponding coloured
   gripper handle. Move and rotate that hand to move that arm independently.
 - Release the pinch to hold. Re-grabbing captures new hand and robot references.
@@ -212,6 +227,20 @@ The spatial blueprint attaches the existing collection recorder. It does not
 yet supply bimanual ACT training or policy rollout.
 
 ## Verification
+
+Workspace arrangement, later 2026-10-25: sixteen JavaScript tests cover existing
+pinch/surface behavior and eight new workspace cases, including one/two-hand
+transitions, scale limits, coincident/vertical hands and tracking loss. A private
+browser harness runs the real hand-input path against live sim observations,
+using synthetic tracked-hand samples and a captured command socket. It checks
+same-frame release of an active arm when the other hand grabs the rail, empty
+arm commands throughout arrangement, fresh-grab gating, 2:1 translation mapping,
+unit orientation quaternions, Actual size/Place ahead callbacks and local
+arrangement during stale observations. Miniature rail and tool targets remain
+distinct. Browser errors and actual control WebSockets: zero. No robot is
+commanded by this browser test. Evidence and the reproducible harness are at
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-workspace-20261025/`.
+Actual Vision Pro tracking and gesture comfort still require operator testing.
 
 Spatial UX integration and gripper correction, 2026-10-25:
 
