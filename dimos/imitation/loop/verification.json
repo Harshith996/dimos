@@ -328,5 +328,25 @@
       "Dual-run recording and ACT training are not connected; existing single-arm learning implementation is retained.",
       "No browser or native UI automation; rendered live page not visually rechecked."
     ]
+  },
+  "automatic_attachment_2026_10_24": {
+    "status": "installed; live API attached to current dual-arm run with 14 fresh joint readings and two JPEG feeds",
+    "app_commit": "1d350b054d22911bbf83a657181cf848b2b92e2f",
+    "checks": {
+      "python_tests": 17,
+      "app_tests": 14,
+      "mypy": "passed",
+      "ruff": "passed",
+      "app_typecheck_lint_build_install": "passed"
+    },
+    "evidence": "/Users/pimvandenbosch/Desktop/openyam-learning-validation-20261024/workcell-hardware/reconnect-live-status.json",
+    "run_id": "20261024-203419-1d4e-teleop-webxr-dual-openyam",
+    "pid": 88998,
+    "behavior": "Follows blueprint run replacement, retries coordinator startup, discards old feedback and pending controls; first-page-before-blueprint supported.",
+    "limits": [
+      "Run replacement verified with mocked coordinator/registry tests; installed read-only API verified against the new physical run.",
+      "No robot restart or motor commands issued by this assistant. Physical jogs untested.",
+      "No browser or native UI automation."
+    ]
   }
 }

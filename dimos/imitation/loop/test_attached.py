@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import closing
 from pathlib import Path
 import time
 
@@ -38,6 +39,7 @@ def attached(mocker, monkeypatch, tmp_path):
     monkeypatch.setattr("dimos.core.run_registry.REGISTRY_DIR", tmp_path)
     mocker.patch("dimos.imitation.loop.attached.global_config")
     mocker.patch("dimos.imitation.loop.attached.is_pid_alive", return_value=True)
+    mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=100.0)
     mocker.patch("dimos.imitation.loop.attached.discover_webcams", return_value=[])
     model = mocker.patch("dimos.imitation.loop.attached.DUAL_OPENYAM_MODEL")
     model.load.return_value = LoadedRobotModel(
@@ -66,7 +68,8 @@ def attached(mocker, monkeypatch, tmp_path):
     mocker.patch("dimos.imitation.loop.attached.Dimos.connect", return_value=app)
     run = RunEntry("test-run", 1234, "teleop-webxr-dual-openyam", "", "")
     run.save()
-    viewer = AttachedDualArm(run)
+    mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=run)
+    viewer = AttachedDualArm()
     try:
         viewer.start()
         coordinator.get_stream.return_value.subscribe.call_args.args[0](
@@ -136,7 +139,7 @@ def test_stale_run_or_invalid_target_never_sends_a_command(attached, params):
 def test_stopped_blueprint_is_not_replaced_with_another_session(attached, mocker):
     viewer, coordinator, _ = attached
     mocker.patch("dimos.imitation.loop.attached.is_pid_alive", return_value=False)
-    with pytest.raises(RuntimeError, match="blueprint stopped"):
+    with pytest.raises(RuntimeError, match="reconnects automatically"):
         viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.2})
     coordinator.execute_trajectory.assert_not_called()
 
@@ -148,3 +151,84 @@ def test_lost_viewer_heartbeat_cancels_its_inflight_jog(attached, mocker):
     clock.return_value = 103.0
     viewer.update()
     coordinator.cancel_trajectory.assert_called_once_with(expected_generation=4)
+
+
+@pytest.mark.parametrize("stop_between", [False, True])
+def test_follows_replacement_run_without_replaying_controls(attached, mocker, stop_between):
+    viewer, coordinator, app = attached
+    old_feedback = coordinator.get_stream.return_value.subscribe.call_args.args[0]
+    viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.2})
+    replacement = RunEntry("replacement", 5678, "teleop-webxr-dual-openyam", "", "")
+    replacement.save()
+    discovery = mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=None)
+    clock = mocker.patch("dimos.imitation.loop.attached.time.monotonic", return_value=101.0)
+    if stop_between:
+        viewer.update()
+        assert viewer.state()["mode"] == "Waiting for blueprint"
+        assert viewer.state()["run_id"] is None
+        assert viewer.state()["joints"] == []
+    discovery.return_value = replacement
+    clock.return_value = 102.0
+
+    viewer.update()
+    old_feedback(JointState(name=DUAL_OPENYAM_JOINTS, position=[0.8] * 14, ts=time.time()))
+    assert viewer.state()["joints"] == []
+    assert viewer.state()["running"] is False
+    assert viewer.state()["run_id"] == "replacement"
+    assert viewer.state()["attached"]["pid"] == 5678
+    with pytest.raises(RuntimeError, match="displayed run changed"):
+        viewer.dispatch("target", {"run_id": "test-run", "index": 0, "value": 0.4})
+    coordinator.get_stream.return_value.subscribe.call_args.args[0](
+        JointState(name=DUAL_OPENYAM_JOINTS, position=[0.3] * 14, ts=time.time())
+    )
+    assert viewer.state()["running"] is True
+    assert viewer.state()["targets"] == [0.3] * 14
+    assert viewer.state()["error"] is None
+    app.stop.assert_called_once_with()
+    coordinator.execute_trajectory.assert_called_once()
+    coordinator.cancel_trajectory.assert_not_called()
+    coordinator.start.assert_not_called()
+    coordinator.stop.assert_not_called()
+    coordinator.task_invoke.assert_not_called()
+
+
+def test_viewer_opened_before_blueprint_attaches_when_it_appears(attached, mocker):
+    viewer, coordinator, _ = attached
+    run = viewer.run
+    viewer.close()
+    discovery = mocker.patch("dimos.imitation.loop.attached.running_dual_arm", return_value=None)
+    with closing(AttachedDualArm()) as waiting:
+        waiting.start()
+        assert waiting.state()["mode"] == "Waiting for blueprint"
+        assert waiting.state()["attached"]["pid"] is None
+        discovery.return_value = run
+        waiting.update()
+        coordinator.get_stream.return_value.subscribe.call_args.args[0](
+            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.2] * 14, ts=time.time())
+        )
+        assert waiting.state()["running"] is True
+        assert waiting.state()["run_id"] == "test-run"
+    coordinator.execute_trajectory.assert_not_called()
+    coordinator.start.assert_not_called()
+    coordinator.stop.assert_not_called()
+
+
+def test_blueprint_not_ready_yet_is_retried_without_restarting_worker(attached, mocker):
+    viewer, coordinator, app = attached
+    viewer.close()
+    mocker.patch(
+        "dimos.imitation.loop.attached.Dimos.connect",
+        side_effect=[RuntimeError("Coordinator is starting"), app],
+    )
+    with closing(AttachedDualArm()) as waiting:
+        waiting.start()
+        assert waiting.state()["running"] is False
+        assert "Coordinator is starting" in waiting.state()["error"]
+        waiting.update()
+        coordinator.get_stream.return_value.subscribe.call_args.args[0](
+            JointState(name=DUAL_OPENYAM_JOINTS, position=[0.2] * 14, ts=time.time())
+        )
+        assert waiting.state()["running"] is True
+        assert waiting.state()["error"] is None
+        assert len(waiting.state()["lower"]) == 14
+    coordinator.execute_trajectory.assert_not_called()

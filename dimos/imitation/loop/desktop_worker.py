@@ -546,10 +546,10 @@ def main() -> None:
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--artifact", type=Path)
     parser.add_argument("--station", help="JSON station configuration; omitted for simulation")
+    parser.add_argument("--follow-blueprint", action="store_true")
     args = parser.parse_args()
-    run = running_dual_arm()
-    if run is not None:
-        serve(args, AttachedDualArm(run))
+    if args.follow_blueprint or running_dual_arm() is not None:
+        serve(args, AttachedDualArm())
     else:
         with learning_bus():
             serve(args)

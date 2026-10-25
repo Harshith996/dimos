@@ -41,10 +41,11 @@ if TYPE_CHECKING:
     from dimos.control.coordinator import ControlCoordinator
 
 JOG_SPEED = 0.25  # rad/s; explicit Workcell input still uses coordinator arbitration.
+BLUEPRINT = "teleop-webxr-dual-openyam"
 
 
 def running_dual_arm() -> RunEntry | None:
-    runs = [run for run in list_runs() if run.blueprint == "teleop-webxr-dual-openyam"]
+    runs = [run for run in list_runs() if run.blueprint == BLUEPRINT]
     if len(runs) > 1:
         raise RuntimeError("Multiple dual-arm blueprints are running; select one before attaching")
     return runs[0] if runs else None
@@ -53,8 +54,8 @@ def running_dual_arm() -> RunEntry | None:
 class AttachedDualArm:
     """No arm drivers or robot lifecycle: only the existing blueprint's RPC handle."""
 
-    def __init__(self, run: RunEntry) -> None:
-        self.run = run
+    def __init__(self) -> None:
+        self.run: RunEntry | None = None
         self.stack = ExitStack()
         self.coordinator: ControlCoordinator | None = None
         self.session = None
@@ -66,24 +67,21 @@ class AttachedDualArm:
         self._camera_lock = Lock()
         self._positions: dict[str, float] = {}
         self._joint_lock = Lock()
+        self._feedback_run_id: str | None = None
         self._targets: dict[str, float] = {}
         self._lower: list[float] = []
         self._upper: list[float] = []
         self._updated_at = 0.0
         self._next_update = 0.0
+        self._next_discovery = 0.0
+        self._config: dict[str, Any] = {}
         self._generation: int | None = None
         self._heartbeat = time.monotonic()
         self._jog_until = 0.0
         self.teleop_port = WebXRTeleopConfig.model_fields["server_port"].default
 
     def start(self) -> None:
-        # This worker has its own process. Use the selected run's bus, never the
-        # private simulation bus, and never select another run after attaching.
-        global_config.update(**self.run.config_overrides)
-        app = Dimos.connect()
-        self.stack.callback(app.stop)  # Remote Dimos.stop closes only the client.
-        handle = app.get_module("ControlCoordinator")
-        self.coordinator = cast("ControlCoordinator", handle)
+        self._config = global_config.model_dump()
         model = DUAL_OPENYAM_MODEL.load()
         for name in DUAL_OPENYAM_JOINTS:
             joint = model.get_joint(name)
@@ -95,13 +93,41 @@ class AttachedDualArm:
             else:
                 self._lower.append(joint.lower)
                 self._upper.append(joint.upper)
+        self._follow_run()
+
+    def _follow_run(self) -> None:
+        try:
+            run = running_dual_arm()
+            if run is not None and self.run is not None and run.run_id == self.run.run_id:
+                return
+            self._disconnect()
+            self.last_error = None
+            if run is not None:
+                self._attach(run)
+        except (OSError, RuntimeError, LookupError) as exc:
+            self._disconnect()
+            self.last_error = f"Waiting for blueprint connection: {exc}"
+
+    def _attach(self, run: RunEntry) -> None:
+        # Each run may use a different bus. Never inherit the previous run's overrides.
+        global_config.update(**{**self._config, **run.config_overrides})
+        app = Dimos.connect(timeout=1.0)
+        self.stack.callback(app.stop)  # Remote Dimos.stop closes only the client.
+        handle = app.get_module("ControlCoordinator")
+        self.coordinator = cast("ControlCoordinator", handle)
+        self.run = run
+        with self._joint_lock:
+            self._feedback_run_id = run.run_id
         self.stack.callback(
-            handle.get_stream("coordinator_joint_state").subscribe(self._joint_state)
+            handle.get_stream("coordinator_joint_state").subscribe(
+                partial(self._joint_state, run.run_id)
+            )
         )
-        for index, arg in enumerate(self.run.cli_args):
+        self.teleop_port = WebXRTeleopConfig.model_fields["server_port"].default
+        for index, arg in enumerate(run.cli_args):
             option, separator, value = arg.partition("=")
             if option in ("--server-port", "--armteleopmodule.server-port"):
-                self.teleop_port = int(value if separator else self.run.cli_args[index + 1])
+                self.teleop_port = int(value if separator else run.cli_args[index + 1])
         # Prefer image streams already published by the blueprint. The existing
         # office teleop blueprint has none, so view its USB cameras locally.
         streams = [s for s in app.list_streams() if s.direction == "out" and s.type_name == "Image"]
@@ -121,6 +147,21 @@ class AttachedDualArm:
                 )
                 self.stack.callback(subscription.dispose)
 
+    def _disconnect(self) -> None:
+        self.run = None
+        self.coordinator = None
+        self._generation = None
+        self._targets.clear()
+        with self._joint_lock:
+            self._feedback_run_id = None
+            self._positions.clear()
+            self._updated_at = 0.0
+        self.stack.close()
+        with self._camera_lock:
+            self._images.clear()
+            self.cameras.clear()
+        self.frames.clear()
+
     def _image(self, key: str, image: Image) -> None:
         with self._camera_lock:
             self._images[key] = image
@@ -132,14 +173,18 @@ class AttachedDualArm:
             self.cameras[key]["error"] = str(error)
 
     def _require_run(self) -> "ControlCoordinator":
-        if not is_pid_alive(self.run.pid) or not self.run.registry_path.exists():
+        if (
+            self.run is None
+            or not is_pid_alive(self.run.pid)
+            or not self.run.registry_path.exists()
+        ):
             raise RuntimeError(
-                "The attached blueprint stopped. Run it again, then reconnect Workcell."
+                "Waiting for the dual-arm blueprint. Workcell reconnects automatically."
             )
         assert self.coordinator is not None
         return self.coordinator
 
-    def _joint_state(self, state: JointState) -> None:
+    def _joint_state(self, run_id: str, state: JointState) -> None:
         positions = dict(zip(state.name, state.position, strict=True))
         if any(
             name not in positions or not math.isfinite(positions[name])
@@ -149,6 +194,8 @@ class AttachedDualArm:
         if abs(time.time() - state.ts) > 1.0:
             return
         with self._joint_lock:
+            if run_id != self._feedback_run_id:
+                return
             self._positions = positions
             self._updated_at = time.monotonic()
 
@@ -167,11 +214,15 @@ class AttachedDualArm:
                 dict(camera, ready=key in self.frames) for key, camera in self.cameras.items()
             ]
         return {
-            "attached": {"blueprint": self.run.blueprint, "pid": self.run.pid},
-            "run_id": self.run.run_id,
+            "attached": {"blueprint": BLUEPRINT, "pid": self.run.pid if self.run else None},
+            "run_id": self.run.run_id if self.run else None,
             "running": fresh,
             "environment": "hardware",
-            "mode": "Attached" if fresh else "Feedback unavailable",
+            "mode": "Waiting for blueprint"
+            if self.run is None
+            else "Attached"
+            if fresh
+            else "Feedback unavailable",
             "controller_hand": "right",
             "station": None,
             "learning_available": False,
@@ -190,7 +241,11 @@ class AttachedDualArm:
             "recording": None,
             "policy": None,
             "error": self.last_error
-            or (None if fresh else "The blueprint is not publishing fresh joint feedback"),
+            or (
+                None
+                if fresh or self.run is None
+                else "The blueprint is not publishing fresh joint feedback"
+            ),
         }
 
     def dispatch(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -199,8 +254,8 @@ class AttachedDualArm:
             return {"ok": True}
         if action == "scene":
             return {"meshes": {}, "geometries": []}
-        if params.get("run_id") != self.run.run_id:
-            raise RuntimeError("The displayed run changed; refresh before controlling the arms")
+        if self.run is None or params.get("run_id") != self.run.run_id:
+            raise RuntimeError("The displayed run changed; Workcell reconnects automatically")
         coordinator = self._require_run()
         if action == "target":
             index, value = params.get("index"), params.get("value")
@@ -259,7 +314,16 @@ class AttachedDualArm:
         if time.monotonic() < self._next_update:
             return
         self._next_update = time.monotonic() + 0.1
-        self._require_run()
+        if self.run is not None and (
+            not is_pid_alive(self.run.pid) or not self.run.registry_path.exists()
+        ):
+            self._disconnect()
+            self._next_discovery = 0.0
+        if time.monotonic() >= self._next_discovery:
+            self._next_discovery = time.monotonic() + 1.0
+            self._follow_run()
+        if self.run is None:
+            return
         self._targets.clear()
         if time.monotonic() > self._jog_until:
             self._generation = None
@@ -274,7 +338,7 @@ class AttachedDualArm:
 
     def close(self) -> None:
         try:
-            if self._generation is not None and is_pid_alive(self.run.pid):
+            if self.run is not None and self._generation is not None and is_pid_alive(self.run.pid):
                 self.dispatch("hold", {"run_id": self.run.run_id})
         finally:
-            self.stack.close()
+            self._disconnect()
