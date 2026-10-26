@@ -21,7 +21,7 @@ from threading import Condition
 import numpy as np
 import pytest
 
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import LCMTransport
 from dimos.message_utils import image, occupancy, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
@@ -35,8 +35,7 @@ from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_real_headless_physics_emits_canonical_odom_imu_and_owns_cleanup(tmp_path, mocker, backend):
+def test_real_headless_physics_emits_canonical_odom_imu_and_owns_cleanup(tmp_path, mocker):
     mocker.patch(
         "dimos.simulation.engines.mujoco_sim_module.time.time_ns",
         return_value=1_789_654_321_000_000_001,
@@ -56,17 +55,7 @@ def test_real_headless_physics_emits_canonical_odom_imu_and_owns_cleanup(tmp_pat
         "dimos.utils.data.get_data",
         side_effect=AssertionError("no model/scene download in this test"),
     )
-    options = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
+    options = {"url": "memq://"}
     values = {}
     condition = Condition()
 
@@ -88,11 +77,7 @@ def test_real_headless_physics_emits_canonical_odom_imu_and_owns_cleanup(tmp_pat
         )
         cleanup.callback(module.stop)
         for name, kind in [("odom", PoseStamped), ("imu", Imu)]:
-            wire = (
-                LCMTransport("physics_" + name, kind, **options)
-                if backend == "lcm"
-                else ZenohTransport("physics_" + name, kind, **options)
-            )
+            wire = LCMTransport("physics_" + name, kind, **options)
             cleanup.callback(wire.stop)
             module.set_transport(name, wire)
             cleanup.callback(wire.subscribe(partial(receive, name)))
@@ -120,21 +105,8 @@ def test_real_headless_physics_emits_canonical_odom_imu_and_owns_cleanup(tmp_pat
     assert module._engine is None and module._shm is None
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at_cdr_ports(
-    mocker, backend
-):
-    options = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
+def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at_cdr_ports(mocker):
+    options = {"url": "memq://"}
     pixels = np.full((2, 2, 3), [255, 0, 0], dtype=np.uint8)
     frame = CameraFrame(
         rgb=pixels,
@@ -169,11 +141,7 @@ def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at
             ("camera_info", CameraInfo),
             ("depth_camera_info", CameraInfo),
         ]:
-            wire = (
-                LCMTransport("rgbd_" + name, kind, **options)
-                if backend == "lcm"
-                else ZenohTransport("rgbd_" + name, kind, **options)
-            )
+            wire = LCMTransport("rgbd_" + name, kind, **options)
             cleanup.callback(wire.stop)
             module.set_transport(name, wire)
             cleanup.callback(wire.subscribe(partial(receive, name)))
