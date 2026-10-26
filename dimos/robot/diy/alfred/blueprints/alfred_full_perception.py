@@ -34,7 +34,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.pick_and_place_module import ArmReach, PickAndPlaceModule
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
@@ -70,6 +70,20 @@ MANIP_GRACE_DEPTH_M = 0.05
 MANIP_GRAZE_COS = 0.3
 SELF_FILTER_PADDING_M = 0.05
 MANIP_MAP_EMIT_EVERY = 5  # of the camera's 5 Hz: 1 Hz
+# How far an OpenArm gets on its own: shoulder (link1, on tf from the planner) to wrist with
+# the arm straight, 0.066 + 0.154 + 0.096 + 0.121 m of URDF offsets, and the v1.0 hand's
+# 0.186 m from wrist to grasp_frame. A bench object 0.70 m out needs the wrist 0.58 m from
+# the shoulder for a top-down grasp: a pick says so at once instead of 12 s of IK.
+OPENARM_REACH_M = 0.44
+OPENARM_WRIST_TO_TIP_M = 0.186
+ALFRED_ARM_REACH = {
+    f"{side}_manipulator": ArmReach(
+        radius=OPENARM_REACH_M,
+        shoulder_frame=f"openarm_{side}_link1",
+        wrist_to_tip=OPENARM_WRIST_TO_TIP_M,
+    )
+    for side in ("left", "right")
+}
 
 D455_WIDTH, D455_HEIGHT, D455_FPS = 848, 480, 15
 
@@ -224,7 +238,7 @@ def alfred_perception_modules(
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
             tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
         ).remappings([(ObjectSceneRegistrationModule, "pointcloud", "scene_objects_pointcloud")]),
-        PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME),
+        PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME, reach=ALFRED_ARM_REACH),
         _grasp_generator(grasp),
     ]
     present = gpu if gpu is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]

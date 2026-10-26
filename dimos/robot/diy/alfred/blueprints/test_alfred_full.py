@@ -351,6 +351,16 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert scene.kwargs["target_frame"] == BASE_FRAME, "objects where the arm plans"
     assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
     assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
+    pick = next(
+        atom
+        for f in alfred_perception_modules(gpu=True)
+        for atom in f.blueprints
+        if atom.module is PickAndPlaceModule
+    )
+    for side in ("left", "right"):
+        reach = pick.kwargs["reach"][f"{side}_manipulator"]
+        assert reach.shoulder_frame == f"openarm_{side}_link1", "a frame the planner puts on tf"
+        assert 0.40 <= reach.radius <= 0.45 and abs(reach.wrist_to_tip - 0.186) < 1e-9
     assert not alfred_perception_modules(gpu=False) or all(
         atom.module is not PerceptionLocalize
         for fragment in alfred_perception_modules(gpu=False)
