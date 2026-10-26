@@ -16,7 +16,6 @@
 import itertools
 from typing import cast
 
-from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 import reactivex as rx
@@ -108,19 +107,13 @@ def test_repair_stale_ts_calibration_boundary_one_differs() -> None:
 
 
 @pytest.mark.parametrize(
-    "stamps,expected",
+    "stamps",
     [
-        (
-            [1700000000123456789, 1700000000123456790, 1700000000123456791],
-            [1700000000123456789, 1700000000123456790, 1700000000123456791],
-        ),
-        (
-            [1700000000123456789, 1700000000123456789, 1700000000253456789],
-            [1700000000123456789, 1700000000253456789, 1700000000383456789],
-        ),
+        [1700000000123456789, 1700000000123456790, 1700000000123456791],
+        [1700000000123456789, 1700000000123456789, 1700000000253456789],
     ],
 )
-def test_generated_stale_repair_uses_nanoseconds_and_preserves_source(stamps, expected):
+def test_generated_stale_repair_retains_float_algorithm_and_mutation(stamps):
     clouds = [
         pointcloud.from_xyz(
             np.array([[1, 2, 3]], dtype=np.float32),
@@ -128,11 +121,15 @@ def test_generated_stale_repair_uses_nanoseconds_and_preserves_source(stamps, ex
         )
         for stamp in stamps
     ]
-    originals = [encode(cloud) for cloud in clouds]
+    legacy = [Timestamped(message_time.to_seconds(cloud.header.stamp)) for cloud in clouds]
+    expected = []
+    rx.from_iterable(legacy).pipe(repair_stale_ts()).subscribe(
+        lambda item: expected.append(item.ts)
+    )
     received = []
     rx.from_iterable(clouds).pipe(repair_stale_ts()).subscribe(received.append)
-    assert [message_time.to_nanoseconds(cloud.header.stamp) for cloud in received] == expected
-    assert [encode(cloud) for cloud in clouds] == originals
+    assert [message_time.to_seconds(cloud.header.stamp) for cloud in received] == expected
+    assert all(result is source for result, source in zip(received, clouds, strict=True))
     assert [cloud.header.frame_id for cloud in received] == ["world"] * 3
     assert all(pointcloud.xyz(cloud).tolist() == [[1, 2, 3]] for cloud in received)
 
@@ -146,15 +143,14 @@ def test_generated_frozen_firmware_uses_clock_after_same_calibration_window():
         )
         for _ in range(13)
     ]
-    before = [encode(cloud) for cloud in clouds]
+    legacy = [Timestamped(message_time.to_seconds(cloud.header.stamp)) for cloud in clouds]
+    expected = []
+    rx.from_iterable(legacy).pipe(
+        repair_stale_ts(calibration_frames=10, now=lambda: 999.0)
+    ).subscribe(lambda item: expected.append(item.ts))
     received = []
     rx.from_iterable(clouds).pipe(
         repair_stale_ts(calibration_frames=10, now=lambda: 999.0)
     ).subscribe(received.append)
-    assert [message_time.to_nanoseconds(cloud.header.stamp) for cloud in received[:10]] == [
-        stamp + i * 130000000 for i in range(10)
-    ]
-    assert [message_time.to_nanoseconds(cloud.header.stamp) for cloud in received[10:]] == [
-        999000000000
-    ] * 3
-    assert [encode(cloud) for cloud in clouds] == before
+    assert [message_time.to_seconds(cloud.header.stamp) for cloud in received] == expected
+    assert all(result is source for result, source in zip(received, clouds, strict=True))

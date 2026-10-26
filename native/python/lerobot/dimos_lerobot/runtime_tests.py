@@ -798,7 +798,7 @@ def test_runtime_consumes_actual_cdr_ports_with_padded_pixels_and_owned_state(
         np.testing.assert_array_equal(observed, np.arange(60, dtype=np.uint8).reshape(4, 5, 3))
         np.testing.assert_allclose(joints, [0.0, 0.1, 0.2, 0.3])
         assert module._latest_joint_state.header.stamp.nanosec == 1
-        # Direct callback ownership also holds before the transport has copied anything.
+        # Packing padded rows and copying joint state also isolate these direct inputs.
         module._on_color_image(image)
         module._on_joint_state(state)
         image.data[:] = 0
