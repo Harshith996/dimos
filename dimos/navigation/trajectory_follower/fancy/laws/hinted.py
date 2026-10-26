@@ -202,14 +202,8 @@ class RustHintedController:
         # the law reads only stamp deltas: a precision profile, not a schedule
         ts = np.ascontiguousarray(
             np.array(
-                [
-                    message_time.to_nanoseconds(p.header.stamp)
-                    - message_time.to_nanoseconds(path.poses[0].header.stamp)
-                    for p in path.poses
-                ],
-                dtype=np.float64,
+                [message_time.to_seconds(p.header.stamp) for p in path.poses], dtype=np.float64
             ).reshape(-1)
-            / 1_000_000_000
         )
         vx, vy, wz = self._mod.update_hinted(
             (

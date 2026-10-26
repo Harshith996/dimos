@@ -121,17 +121,17 @@ def test_drive_drops_stale(module: Go2CommandModule) -> None:
 def test_drive_drops_future(module: Go2CommandModule) -> None:
     module._on_cmd_vel_in(_twist(time.time() + 5.0))
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ns == 0.0  # future stamp must not poison the guard
+    assert module._last_cmd_ts == 0.0  # future stamp must not poison the guard
 
 
 def test_drive_drops_in_window_future_without_poisoning_guard(module: Go2CommandModule) -> None:
     # A future stamp SMALLER than cmd_stale_after_sec (clock skew) must still be
-    # rejected and must NOT advance _last_cmd_ns — otherwise every subsequent
+    # rejected and must NOT advance _last_cmd_ts — otherwise every subsequent
     # in-order frame would be dropped as out-of-order until wall-clock catches
     # up, stalling drive. Regression guard for the in-window future case.
     module._on_cmd_vel_in(_twist(time.time() + 0.2))  # +0.2s < 0.5s stale window
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ns == 0.0
+    assert module._last_cmd_ts == 0.0
     # a normal fresh frame right after must still be forwarded
     module._on_cmd_vel_in(_twist(time.time()))
     module.tele_cmd_vel.publish.assert_called_once()
@@ -139,7 +139,7 @@ def test_drive_drops_in_window_future_without_poisoning_guard(module: Go2Command
 
 def test_drive_drops_out_of_order(module: Go2CommandModule) -> None:
     ts = time.time()
-    module._last_cmd_ns = message_time.to_nanoseconds(message_time.time_from_seconds(ts))
+    module._last_cmd_ts = message_time.to_seconds(message_time.time_from_seconds(ts))
     module._on_cmd_vel_in(_twist(ts - 0.1))
     module.tele_cmd_vel.publish.assert_not_called()
 
@@ -148,7 +148,7 @@ def test_drive_forwards_fresh(module: Go2CommandModule) -> None:
     ts = time.time()
     module._on_cmd_vel_in(_twist(ts))
     module.tele_cmd_vel.publish.assert_called_once()
-    assert module._last_cmd_ns == message_time.to_nanoseconds(message_time.time_from_seconds(ts))
+    assert module._last_cmd_ts == message_time.to_seconds(message_time.time_from_seconds(ts))
 
 
 def test_drive_suppresses_idle_zero_stream(module: Go2CommandModule) -> None:
@@ -178,13 +178,13 @@ def test_estopped_drive_is_dropped(module: Go2CommandModule) -> None:
 
 
 def test_drive_drops_nan_timestamp(module: Go2CommandModule) -> None:
-    # A NaN ts passes every comparison and would poison _last_cmd_ns (ts <= NaN
+    # A NaN ts passes every comparison and would poison _last_cmd_ts (ts <= NaN
     # is False forever → reorder guard permanently disabled). Must be rejected.
     frame = _twist(time.time())
     frame.header.stamp.sec = float("nan")  # malformed direct call; impossible on the CDR wire
     module._on_cmd_vel_in(frame)
     module.tele_cmd_vel.publish.assert_not_called()
-    assert module._last_cmd_ns == 0.0  # guard not poisoned
+    assert module._last_cmd_ts == 0.0  # guard not poisoned
 
 
 def test_drive_drops_non_finite_velocity(module: Go2CommandModule) -> None:
@@ -411,28 +411,26 @@ def test_drive_rejects_unnormalized_time_without_advancing_guard(module, invalid
     value = _twist(time.time())
     value.header.stamp.nanosec = invalid
     module._on_cmd_vel_in(value)
-    assert module._last_cmd_ns == 0
+    assert module._last_cmd_ts == 0
     module.tele_cmd_vel.publish.assert_not_called()
 
 
-def test_drive_preserves_epoch_nanoseconds_and_does_not_clamp_the_input(module, mocker):
-    mocker.patch(
-        "dimos.teleop.hosted.go2_command.time.time_ns", return_value=1_789_654_321_000_000_100
-    )
+def test_drive_retains_float_ordering_and_input_clamping(module, mocker):
+    mocker.patch("dimos.teleop.hosted.go2_command.time.time", return_value=1_789_654_321.2)
     first = TwistStamped(
         Header(Time(1_789_654_321, 1), "operator"),
         Twist(Vector3(99.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)),
     )
-    original = deepcopy(first)
     module._on_cmd_vel_in(first)
     second = deepcopy(first)
     second.header.stamp.nanosec = 2
     module._on_cmd_vel_in(second)
-    module._on_cmd_vel_in(first)  # same float-second value, but genuinely older
-    assert module._last_cmd_ns == 1_789_654_321_000_000_002
-    assert module.tele_cmd_vel.publish.call_count == 2
+    module._on_cmd_vel_in(first)  # same float-second value
+    assert module._last_cmd_ts == 1_789_654_321.0
+    assert module.tele_cmd_vel.publish.call_count == 1
     assert module.tele_cmd_vel.publish.call_args.args[0].linear.x == 1.5
-    assert first == original
+    assert first.twist.linear.x == 1.5
+    assert first.header.stamp.nanosec == 1
 
 
 @pytest.mark.parametrize("speed,moving", [(1e-9, False), (1e-8, False), (1.1e-8, True)])
