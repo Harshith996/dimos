@@ -218,6 +218,17 @@ def test_owlv2_yolo_constructs_box_prompt_segmenter(mocker: Any) -> None:
     segmenter_factory.assert_called_once_with(confidence=0.04)
 
 
+def test_owlv2_without_a_segmenter_lifts_its_boxes(mocker: Any) -> None:
+    """On a CPU EdgeTAM refuses to run: "none" leaves the detector's boxes as they are."""
+    module = ObjectSceneRegistrationModule(detector_backend="owlv2", segmentation_backend="none")
+    yolo = mocker.patch("dimos.perception.experimental.object_scene_registration.YoloeBoxSegmenter")
+    try:
+        assert module._create_segmenter() is None
+    finally:
+        module.stop()
+    yolo.assert_not_called()
+
+
 def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(target_frame="camera", detector_backend="moondream")
     module._camera_info = MagicMock()

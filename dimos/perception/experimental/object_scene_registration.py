@@ -56,7 +56,8 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     target_frame: str = "base_link"
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
-    segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    # "none": no masks, the detector's boxes lift as they are (EdgeTAM needs CUDA or MPS).
+    segmentation_backend: Literal["yolo", "edgetam", "none"] = "yolo"
     detector_confidence: float = 0.6
     segmentation_confidence: float = 0.05
     detect_on_request: bool = False
@@ -173,6 +174,8 @@ class ObjectSceneRegistrationModule(Module):
         backpressure(aligned_frames).subscribe(self._on_aligned_frames)
 
     def _create_segmenter(self) -> BoxPromptImageSegmenter | None:
+        if self._segmentation_backend == "none":
+            return None
         if self._segmentation_backend == "yolo":
             if self._detector_backend == "yoloe":
                 return None
