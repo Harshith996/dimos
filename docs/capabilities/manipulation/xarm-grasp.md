@@ -57,20 +57,35 @@ the registered objects:
 
 ```
 camera pointcloud
-  -> RoboPlanPointCloudSelfFilter   drops robot surface returns using RoboPlan
+  -> UrdfManager                   drops robot surface returns using RoboPlan
   -> RayTracingVoxelMap             accumulates occupied cells in the world frame
+  -> PointCloudBoxFilter            leaves out the cells inside named boxes
   -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
 ```
 
-`XARM_GRASP_VOXEL_SIZE` is shared by the mapper and planner octree so their
-cells line up. The blueprint enables the camera's `pointcloud` output, which is
-off by default on both the RealSense and MuJoCo camera. The self filter drops a
-whole cloud if its full joint state or sensor/base TF is missing at capture time.
+The blueprint adds this chain with `manipulation_mapping()` from
+`dimos/robot/manipulators/common/blueprints.py`. `XARM_GRASP_VOXEL_SIZE` is
+shared by the mapper and planner octree so their cells line up. The blueprint
+enables the camera's `pointcloud` output, which is off by default on both the
+RealSense and MuJoCo camera. The self filter drops a whole cloud if its full
+joint state or sensor/base TF is missing at capture time.
 
 Because the target object is itself mapped geometry, a collision-checked plan
 into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
+
+For that checked approach, and for every plan made while the object is held,
+`PickAndPlaceModule` asks `PointCloudBoxFilter.set_box` to leave out the cells
+in a box around the target's point cloud, grown by `target_clearance` (3 cm on
+each side, which also covers the table cells under it). Once the jaws have
+closed on the object, the same box is set again on the tool tip's TF frame, so
+it moves with the gripper: the wrist camera keeps mapping whatever the gripper
+holds. Each change re-sends the last map at once. The box is cleared when the
+pick ends without holding anything, or once the arm has backed away after a
+release. Neighbouring objects stay obstacles: a pregrasp that would sweep the
+gripper into the object next to the target is still refused, with
+`IK failed: COLLISION` as the reason.
 
 ## Seeing the proposals
 
@@ -173,10 +188,9 @@ A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset
 does not respawn them. Restart the blueprint between pick attempts that need a
 pristine scene.
 
-The generic `PointCloudSelfFilter` handles streams and point fields; subclasses
-supply a capture-time keep mask. The xArm blueprint selects
-`RoboPlanPointCloudSelfFilter`, which delegates geometry loading, kinematics,
-mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
+The xArm blueprint uses `UrdfManager`'s self filter (its `self_filter` option, on by
+default; its joint tf off, since `ManipulationModule` owns those frames), which delegates
+geometry loading, kinematics, mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
 joint state and TF to the capture timestamp, preserves point fields, and drops
 unaligned captures. The xArm blueprint filters only the arm using a model without
 the gripper. Gripper points may enter the map; separate gripper control and grasp

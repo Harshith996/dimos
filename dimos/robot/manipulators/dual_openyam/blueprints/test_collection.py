@@ -19,33 +19,25 @@ import pytest
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
-    DUAL_OPENYAM_COLLECTION_HOME_JOINTS,
     DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
-    DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
     DUAL_OPENYAM_COLLECTION_STREAMS,
-    DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
-    DUAL_OPENYAM_PLANNING_GROUPS,
-    DUAL_OPENYAM_WRIST_CAMERA_SERIALS,
-    DualOpenYamCollectionRecorder,
-    DualOpenYamCollectionTeleopModule,
-    DualOpenYamHomeButtonConfig,
-    DualOpenYamHomeButtonModule,
-    DualOpenYamLeaderCollectionRecorder,
-    dual_openyam_collection_teleop_task,
-    dual_openyam_home_targets,
+    DUAL_OPENYAM_COLLECTION_ZERO_BUTTON,
+    dual_openyam_collection_teleop_tasks,
     dual_openyam_wrist_camera,
-    scale_controller_pose,
     teleop_webxr_dual_openyam_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+from dimos.robot.manipulators.dual_openyam.collection import (
+    DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
+    DualOpenYamCollectionRecorder,
+    DualOpenYamCollectionTeleopModule,
+    scale_controller_pose,
+)
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -56,31 +48,38 @@ def _tasks(blueprint: Blueprint) -> list[TaskConfig]:
     return cast("list[TaskConfig]", coordinator.kwargs["tasks"])
 
 
-def _teleop_task(blueprint: Blueprint) -> TaskConfig:
-    return next(task for task in _tasks(blueprint) if task.type == "teleop_ik")
+def _teleop_tasks(blueprint: Blueprint) -> list[TaskConfig]:
+    return [task for task in _tasks(blueprint) if task.type == "teleop_ik"]
 
 
 def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
-    ours = dual_openyam_collection_teleop_task()
-    stock = _teleop_task(teleop_webxr_dual_openyam)
+    ours = dual_openyam_collection_teleop_tasks()
+    stock = _teleop_tasks(teleop_webxr_dual_openyam)
+    assert len(ours) == len(stock) == 2
 
     speed_keys = {"max_joint_velocity_rad_s", "joint_velocity_limits_rad_s"}
-    assert ours.params["max_joint_velocity_rad_s"] == DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
-    assert ours.params["max_joint_velocity_rad_s"] < stock.params["max_joint_velocity_rad_s"]
-    assert ours.params["joint_velocity_limits_rad_s"] == {
-        "left_joint1": DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
-        "right_joint1": DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
-    }
+    for our_task, stock_task in zip(ours, stock, strict=True):
+        assert our_task.params["max_joint_velocity_rad_s"] == (
+            DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
+        )
+        assert (
+            our_task.params["max_joint_velocity_rad_s"]
+            < (stock_task.params["max_joint_velocity_rad_s"])
+        )
+        base_joint = our_task.joint_names[0]
+        assert our_task.params["joint_velocity_limits_rad_s"] == {
+            base_joint: DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S
+        }
+        assert {k: v for k, v in our_task.params.items() if k not in speed_keys} == {
+            k: v for k, v in stock_task.params.items() if k not in speed_keys
+        }
+        assert (our_task.name, our_task.priority, our_task.joint_names) == (
+            stock_task.name,
+            stock_task.priority,
+            stock_task.joint_names,
+        )
     assert (
         DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S < DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
-    )
-    assert {k: v for k, v in ours.params.items() if k not in speed_keys} == {
-        k: v for k, v in stock.params.items() if k not in speed_keys
-    }
-    assert (ours.name, ours.priority, ours.joint_names) == (
-        stock.name,
-        stock.priority,
-        stock.joint_names,
     )
 
 
@@ -97,29 +96,33 @@ def test_controller_pose_scale_keeps_orientation_and_stamp() -> None:
     assert issubclass(DualOpenYamCollectionTeleopModule, ArmTeleopModule)
 
 
-def test_collection_graph_only_swaps_the_teleop_task_and_module() -> None:
+def test_collection_graph_only_swaps_the_teleop_tasks_module_and_zero_button() -> None:
     stock = teleop_webxr_dual_openyam
     ours = teleop_webxr_dual_openyam_collection
 
     assert sorted(ours.remapping_map.values()) == sorted(stock.remapping_map.values())
-    ours_modules = [atom.module for atom in ours.blueprints]
-    stock_modules = [atom.module for atom in stock.blueprints]
-    assert len(ours_modules) == len(stock_modules)
-    for a, b in zip(ours_modules, stock_modules, strict=True):
-        assert a is b or (b is ArmTeleopModule and a is DualOpenYamCollectionTeleopModule)
-    stock_task, our_task = _teleop_task(stock), _teleop_task(ours)
-    assert our_task.name == stock_task.name
-    assert our_task.joint_names == stock_task.joint_names
-    assert our_task.params["bindings"] == stock_task.params["bindings"]
-    assert our_task.params["solver_type"] is stock_task.params["solver_type"]
-    assert our_task.params != stock_task.params
+    assert len(ours.blueprints) == len(stock.blueprints)
     for a, b in zip(ours.blueprints, stock.blueprints, strict=True):
-        if a.module is not DualOpenYamCoordinator:
-            assert a.kwargs == b.kwargs
-            assert a.module is b.module or issubclass(a.module, b.module)
+        if b.module is ArmTeleopModule:
+            assert a.module is DualOpenYamCollectionTeleopModule
+            assert a.kwargs == {**b.kwargs, "zero_button": DUAL_OPENYAM_COLLECTION_ZERO_BUTTON}
+        elif b.module is DualOpenYamCoordinator:
+            assert a.module is b.module
+        else:
+            assert (a.module, a.kwargs) == (b.module, b.kwargs)
+    for our_task, stock_task in zip(_teleop_tasks(ours), _teleop_tasks(stock), strict=True):
+        assert our_task.params["bindings"] == stock_task.params["bindings"]
+        assert our_task.params["solver_type"] is stock_task.params["solver_type"]
+        assert our_task.params != stock_task.params
     assert [t for t in _tasks(ours) if t.type != "teleop_ik"] == [
         t for t in _tasks(stock) if t.type != "teleop_ik"
     ]
+
+
+def test_zero_button_does_not_clash_with_the_episode_monitor() -> None:
+    monitor = EpisodeMonitorModule.blueprint(task="x").blueprints[0]
+    taken = set(monitor.kwargs.get("button_map", {}).values()) or {"B", "Y"}
+    assert DUAL_OPENYAM_COLLECTION_ZERO_BUTTON not in taken
 
 
 @pytest.mark.parametrize("side", ["left", "right"])
@@ -127,7 +130,7 @@ def test_wrist_camera_streams_carry_the_side_prefix(side: str) -> None:
     camera = dual_openyam_wrist_camera(side)
     atom = camera.blueprints[0]
 
-    assert atom.kwargs["serial_number"] == DUAL_OPENYAM_WRIST_CAMERA_SERIALS[side]
+    assert "serial_number" not in atom.kwargs
     assert atom.kwargs["enable_depth"] is False
     remapped = {camera.remapping_map[(atom.name, s.name)] for s in atom.streams}
     assert f"{side}_wrist_color_image" in remapped
@@ -144,80 +147,3 @@ def test_recorder_declares_every_collection_stream_as_an_input() -> None:
     inputs = {s.name for s in atom.streams if s.direction == "in"}
 
     assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= inputs
-
-
-def test_home_targets_split_the_pose_per_planning_group() -> None:
-    model = dual_openyam_model_config()
-    assert tuple(g.name for g in model.planning_groups) == DUAL_OPENYAM_PLANNING_GROUPS
-
-    targets = dual_openyam_home_targets(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
-    assert set(targets) == set(DUAL_OPENYAM_PLANNING_GROUPS)
-    names = [n for g in DUAL_OPENYAM_PLANNING_GROUPS for n in targets[g].name]
-    positions = [p for g in DUAL_OPENYAM_PLANNING_GROUPS for p in targets[g].position]
-    assert names == list(DUAL_OPENYAM_ARM_JOINTS)
-    assert positions == DUAL_OPENYAM_COLLECTION_HOME_JOINTS
-    with pytest.raises(ValueError):
-        dual_openyam_home_targets([0.0] * 6)
-
-
-def test_home_button_config_rejects_bad_inputs() -> None:
-    config = DualOpenYamHomeButtonConfig()
-    assert (config.home_button, config.set_home_button) == ("A", "X")
-    assert 0.0 < config.speed_scale < 1.0
-    assert config.home_joints == DUAL_OPENYAM_COLLECTION_HOME_JOINTS
-    with pytest.raises(ValueError):
-        DualOpenYamHomeButtonConfig(home_button="Z")
-    with pytest.raises(ValueError):
-        DualOpenYamHomeButtonConfig(home_joints=[0.0] * 6)
-    with pytest.raises(ValueError):
-        DualOpenYamHomeButtonConfig(speed_scale=1.5)
-
-
-def test_home_button_module_binds_buttons_and_the_planner() -> None:
-    from dimos.imitation.collection.blueprint import learning_collect_webxr_dual_openyam
-
-    atom = next(
-        a
-        for a in learning_collect_webxr_dual_openyam.blueprints
-        if a.module is DualOpenYamHomeButtonModule
-    )
-    inputs = {s.name for s in atom.streams if s.direction == "in"}
-    assert {"button_pressed", "teleop_buttons", "coordinator_joint_state"} <= inputs
-    assert [(r.name, r.spec) for r in atom.module_refs] == [("_manipulation", ManipulationModule)]
-    assert {
-        DualOpenYamHomeButtonConfig().home_button,
-        DualOpenYamHomeButtonConfig().set_home_button,
-    } == {"A", "X"}
-
-
-def test_home_button_skips_the_move_when_already_home() -> None:
-    module = DualOpenYamHomeButtonModule.__new__(DualOpenYamHomeButtonModule)
-    module.config = DualOpenYamHomeButtonConfig()
-    module._lock = __import__("threading").Lock()
-    module._grip_held = False
-    module._worker = None
-    module._home_joints = list(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
-    module._latest_joints = JointState(
-        name=[*DUAL_OPENYAM_ARM_JOINTS, "left_arm/gripper", "right_arm/gripper"],
-        position=[*(v + 0.01 for v in DUAL_OPENYAM_COLLECTION_HOME_JOINTS), 1.0, 1.0],
-    )
-    module._manipulation = None  # must not be touched when already home
-
-    module._go_home()
-    assert module._worker is None
-
-    with module._lock:
-        assert module._distance_to_home_locked() == pytest.approx(0.01)
-    module._latest_joints = None
-    with module._lock:
-        assert module._distance_to_home_locked() is None
-
-
-def test_leader_recorder_declares_every_leader_stream_as_an_input() -> None:
-    atom = DualOpenYamLeaderCollectionRecorder.blueprint().blueprints[0]
-    inputs = {s.name for s in atom.streams if s.direction == "in"}
-
-    assert set(DUAL_OPENYAM_LEADER_COLLECTION_STREAMS) <= inputs
-    assert "coordinator_joint_command" in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS
-    assert "joint_command" in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS
-    assert "teleop_buttons" not in DUAL_OPENYAM_LEADER_COLLECTION_STREAMS

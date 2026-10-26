@@ -36,6 +36,7 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+DUAL_OPENYAM_WRIST_JOINT_INDICES = (3, 4, 5)
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -48,10 +49,13 @@ def dual_openyam_hardware(
     *,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
+    wrist_kp: float | None = None,
+    wrist_kd: float | None = None,
 ) -> HardwareComponent:
     """Select mock hardware or an explicitly configured dual-CAN adapter."""
+    gains = _arm_gains(wrist_kp, wrist_kd)
     if left_can_port is None and right_can_port is None:
-        return dual_openyam_mock_hardware()
+        return dual_openyam_mock_hardware(gains)
     if left_can_port is None or right_can_port is None:
         raise ValueError("Dual OpenYAM hardware requires both left and right CAN ports")
     if left_can_port == right_can_port:
@@ -64,21 +68,41 @@ def dual_openyam_hardware(
                 gravity_comp=True,
             )
         },
+        gains,
     )
 
 
-def dual_openyam_mock_hardware() -> HardwareComponent:
+def dual_openyam_mock_hardware(
+    gains: tuple[tuple[float, ...], tuple[float, ...]] | None = None,
+) -> HardwareComponent:
     """Build an in-memory complete dual-arm actuator component."""
     return _hardware_component(
         "mock_whole_body",
         {"initial_positions": [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0]},
+        gains or _arm_gains(None, None),
     )
+
+
+def _arm_gains(
+    wrist_kp: float | None, wrist_kd: float | None
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    kp = tuple(
+        wrist_kp if wrist_kp is not None and i in DUAL_OPENYAM_WRIST_JOINT_INDICES else value
+        for i, value in enumerate(_ARM_KP)
+    )
+    kd = tuple(
+        wrist_kd if wrist_kd is not None and i in DUAL_OPENYAM_WRIST_JOINT_INDICES else value
+        for i, value in enumerate(_ARM_KD)
+    )
+    return kp, kd
 
 
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
+    gains: tuple[tuple[float, ...], tuple[float, ...]],
 ) -> HardwareComponent:
+    arm_kp, arm_kd = gains
     return HardwareComponent(
         hardware_id=DUAL_OPENYAM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,
@@ -92,8 +116,8 @@ def _hardware_component(
         ),
         adapter_kwargs=adapter_kwargs,
         wb_config=WholeBodyConfig(
-            kp=(*_ARM_KP, *_ARM_KP, 0.0, 0.0),
-            kd=(*_ARM_KD, *_ARM_KD, 0.0, 0.0),
+            kp=(*arm_kp, *arm_kp, 0.0, 0.0),
+            kd=(*arm_kd, *arm_kd, 0.0, 0.0),
         ),
     )
 

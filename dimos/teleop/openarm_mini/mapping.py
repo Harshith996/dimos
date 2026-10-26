@@ -26,10 +26,7 @@ from dimos.teleop.openarm_mini.calibration import OPENARM_MINI_ARM_JOINT_NAMES, 
 LEADER_JOINT_NAMES = OPENARM_MINI_ARM_JOINT_NAMES
 LEADER_MOTOR_NAMES = LEADER_JOINT_NAMES
 
-# Mirrors the measured OpenArm v1.0 follower limits from
-# dimos.hardware.manipulators.openarm.adapter. The sender-side clamp improves
-# teleop behavior; the follower/control stack remains defensive.
-# TODO: for generic arm case need to read these values from urdf
+# Measured OpenArm v1.0 follower limits; a sender-side clamp, the control stack stays defensive.
 OPENARM_FOLLOWER_JOINT_LIMITS: dict[OpenArmMiniSide, tuple[tuple[float, float], ...]] = {
     "left": (
         (-3.45, 1.35),

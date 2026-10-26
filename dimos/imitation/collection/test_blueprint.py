@@ -32,6 +32,8 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
     DUAL_OPENYAM_LEADER_COLLECTION_STREAMS,
+)
+from dimos.robot.manipulators.dual_openyam.collection import (
     DualOpenYamCollectionRecorder,
     DualOpenYamLeaderCollectionRecorder,
 )
@@ -48,7 +50,6 @@ AGGREGATE = "coordinator_joint_state"
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
         learning_collect_webxr_dual_openyam,
-        learning_collect_leader_dual_openyam,
         unitree_g1_teleop,
     ],
 )

@@ -73,9 +73,7 @@ def _read_motor_position(packet_handler: Any, motor_id: int) -> int:
         position = values[0]
     else:
         position = result
-    # STS3215 firmware accumulates multi-turn ticks, so reads legitimately
-    # leave 0..4095 whenever a joint crosses the encoder boundary; wrap to
-    # one turn instead of rejecting.
+    # STS3215 reads accumulate multi-turn ticks; wrap to one turn.
     return int(position) % _FEETECH_ENCODER_TICKS
 
 

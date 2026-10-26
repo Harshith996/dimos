@@ -33,10 +33,8 @@ dimos run learning-collect-webxr-dual-openyam --left-can-port can0 --right-can-p
 This brings up teleop, a RealSense (real only), the episode monitor, and the
 recorder, all wired together. The dual OpenYAM graph also records the
 coordinator's intended joint commands, both wrist cameras, the operator's
-controller poses, gripper commands and button word, and binds two parking
-buttons: **A** plans both arms to the home pose and runs it
-slowly (refused while a grip is held), **X** makes the current pose the home
-pose for the rest of the session. `learning-collect-leader-dual-openyam` records
+controller poses, gripper commands and button word, and binds **A** to the zero joint pose: both arms plan to zero and run there through the
+manipulation module. Release both grips first. `learning-collect-leader-dual-openyam` records
 the same session from the YAM leader arms; episodes are marked with the
 episode monitor's `command` RPC, since the leaders have no buttons.
 
@@ -53,8 +51,8 @@ The headset's forward axis is the robot's +x, fixed where the headset faced when
 WebXR session started: stand behind the arms facing the workspace and recentre the
 headset before engaging.
 
-So a take is: hold the **grip** to move the arm into place → press **B** to start →
-perform the task → press **B** to save (or **Y** to throw it away). The terminal
+So a take is: hold the **grip** to move the arm into place, press **B** to start,
+perform the task, press **B** to save (or **Y** to throw it away). The terminal
 prints one line per transition:
 
 ```

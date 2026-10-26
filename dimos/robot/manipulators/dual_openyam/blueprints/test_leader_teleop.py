@@ -23,9 +23,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.dual_openyam.blueprints import leader_teleop
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.leader_teleop import (
-    DualOpenYamLeaderCoordinator,
     dual_openyam_leader_velocity_limits,
-    with_wrist_gains,
 )
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_hardware
 from dimos.robot.manipulators.dual_openyam.joints import (
@@ -48,7 +46,7 @@ def _types(blueprint: Blueprint) -> list[type]:
 
 
 def _tasks(blueprint: Blueprint) -> list[TaskConfig]:
-    tasks = _kwargs(blueprint, DualOpenYamLeaderCoordinator)["tasks"]
+    tasks = _kwargs(blueprint, DualOpenYamCoordinator)["tasks"]
     assert all(isinstance(task, TaskConfig) for task in tasks)
     return list(tasks)
 
@@ -57,11 +55,10 @@ def test_one_machine_blueprint_streams_both_arms_and_grippers() -> None:
     blueprint = leader_teleop.teleop_dual_openyam_leader
     assert _types(blueprint) == [
         YamLeaderTeleopModule,
-        DualOpenYamLeaderCoordinator,
+        DualOpenYamCoordinator,
         ManipulationModule,
     ]
-    assert issubclass(DualOpenYamLeaderCoordinator, DualOpenYamCoordinator)
-    assert _kwargs(blueprint, DualOpenYamLeaderCoordinator)["instance_name"] == "ControlCoordinator"
+    assert _kwargs(blueprint, DualOpenYamCoordinator)["instance_name"] == "ControlCoordinator"
     for stream in ("joint_command", "left_gripper_command", "right_gripper_command"):
         assert _is_name_unique(blueprint, stream)
 
@@ -100,7 +97,7 @@ def test_operator_blueprint_joins_the_robot_bus_as_a_client() -> None:
 
 def test_follower_blueprint_dials_the_router_and_takes_can_ports() -> None:
     blueprint = leader_teleop.teleop_dual_openyam_leader_follower
-    assert _types(blueprint) == [DualOpenYamLeaderCoordinator, ManipulationModule]
+    assert _types(blueprint) == [DualOpenYamCoordinator, ManipulationModule]
     assert blueprint.global_config_overrides["zenoh_connect"] == leader_teleop.DUAL_OPENYAM_ROUTER
     assert leader_teleop.DUAL_OPENYAM_ROUTER == "tcp/127.0.0.1:7447"
     assert _kwargs(blueprint, ManipulationModule)["visualization"].host == "0.0.0.0"
@@ -134,7 +131,7 @@ def test_wrist_gains_override_only_joints_four_to_six() -> None:
     stock = dual_openyam_hardware()
     assert stock.wb_config is not None and stock.wb_config.kp is not None
 
-    tuned = with_wrist_gains(stock, 80.0, 1.5)
+    tuned = dual_openyam_hardware(wrist_kp=80.0, wrist_kd=1.5)
     assert tuned.wb_config is not None and tuned.wb_config.kp is not None
     assert tuned.wb_config.kd is not None and stock.wb_config.kd is not None
     for index, joint in enumerate(tuned.joints):
@@ -143,7 +140,7 @@ def test_wrist_gains_override_only_joints_four_to_six() -> None:
         else:
             assert tuned.wb_config.kp[index] == stock.wb_config.kp[index]
             assert tuned.wb_config.kd[index] == stock.wb_config.kd[index]
-    assert with_wrist_gains(stock, None, None) is stock
+    assert dual_openyam_hardware().wb_config == stock.wb_config
     assert stock.wb_config.kp[3] == 10.0  # main's wrist gain, untouched on the original
 
 
