@@ -166,7 +166,7 @@ class Detection3DPC(Detection3D):
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
         # Camera position in world frame is the translation part of the transform
-        camera_pos = geometry.inverse_transform(self.transform).transform.translation
+        camera_pos = self.transform.transform.translation
         # Use Vector3 subtraction and magnitude
         distance = np.linalg.norm(
             [

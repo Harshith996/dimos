@@ -56,7 +56,7 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
     assert len(transforms) == 2
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in transforms] == [
         ("base_link", "camera_link"),
-        ("camera_link", "robot/camera_optical"),
+        ("camera_link", "camera_optical"),
     ]
     assert all(edge.header.stamp == info.header.stamp for edge in transforms)
     assert cdr_encode(module.config.transform) == original
