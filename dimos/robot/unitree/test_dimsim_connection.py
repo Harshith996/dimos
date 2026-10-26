@@ -165,9 +165,7 @@ def test_actual_rapier_pose_deadman_and_lidar_keep_ros_coordinates(typescript_re
 
 
 @pytest.mark.parametrize("headless", [False, True])
-def test_python_connection_publishes_canonical_tf_after_pose(
-    headless, mocker, monkeypatch
-):
+def test_python_connection_publishes_canonical_tf_after_pose(headless, mocker, monkeypatch):
     monkeypatch.setattr(transport_module, "LCM", partial(LCM, url="memq://"))
     process = mocker.patch.object(dimsim_connection, "DimSimProcess").return_value
     config = DimSimConfig(headless=headless)
