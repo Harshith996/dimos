@@ -7,9 +7,9 @@ chain then places those points in the robot or world frame.
 
 ![Coordinate frame tree](assets/transforms_tree.svg)
 
-The CDR proposal uses generated `TransformStamped`, `PoseStamped` and
+Transforms use `TransformStamped`, `PoseStamped`, and
 `TFMessage` values from `dimos.messages`. Frame names and source time live in
-`header.frame_id` and `header.stamp`; the destination frame is `child_frame_id`.
+`header.frame_id` and `header.stamp`; `child_frame_id` names the child frame.
 Geometry operations live in `dimos.message_utils.geometry`.
 
 ## Define a mount
@@ -78,8 +78,8 @@ assert pose.pose.position.x == 1.5
 
 Pass `time_point` and `time_tolerance` in seconds to select the nearest sample.
 `forward_tolerance` bounds how long a lookup waits for a missing sample or chain.
-The time index retains integer source nanoseconds and owns its snapshots; the
-existing query arguments remain seconds.
+The buffer indexes samples by floating-point seconds. Returned transforms
+carry the message headers associated with those samples.
 
 ## Attach a stream
 
@@ -93,13 +93,13 @@ transport owns the encoding; callers publish generated values.
 ```python
 from contextlib import ExitStack
 
-from dimos.core.cdr_transport import CdrTransport
+from dimos.core.transport import LCMTransport
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import TF
 
 with ExitStack() as cleanup:
-    wire = CdrTransport("mounts", TFMessage, backend="lcm", url="memq://")
+    wire = LCMTransport("mounts", TFMessage, url="memq://")
     cleanup.callback(wire.stop)
     sender, receiver = TF(wire), TF(wire)
     cleanup.callback(sender.dispose)
@@ -112,8 +112,8 @@ with ExitStack() as cleanup:
     assert result.transform.translation.z == 3.0
 ```
 
-Modules use the existing `tf: In[TFMessage]` or `tf: IO[TFMessage]` port and lazy
-`module.tfbuffer` accessor after stream wiring. Generated ports use the shared CDR codec through the existing LCM or Zenoh
+Modules use `tf: In[TFMessage]` or `tf: IO[TFMessage]` port and lazy
+`module.tfbuffer` accessor after stream wiring. Generated ports use the shared CDR codec through LCM or Zenoh
 transport. See [module composition](/docs/usage/modules.md) for deployment and
 [recording generated CDR](/examples/cdr-recording/README.md) for storage.
 
