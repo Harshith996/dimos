@@ -212,7 +212,7 @@ class ROSTransport(PubSubTransport[DimosMsg]):
         self._kwargs = kwargs
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (partial(ROSTransport, **self._kwargs), (self.topic.topic, self.topic.msg_type))
+        return (ROSTransport, (self.topic.topic, self.topic.msg_type))
 
     def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
         if not isinstance(msg, self.topic.msg_type):

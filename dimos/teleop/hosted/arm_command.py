@@ -156,7 +156,6 @@ class ArmCommandModule(ArmTeleopModule):
         with self._lock:
             self._current_poses[hand] = robot_pose
             self._pose_headers[hand] = deepcopy(wire.header)
-            self._last_pose_update[hand] = time.monotonic()
 
     def _on_twist_bytes(self, data: bytes) -> None:
         """Browser keyboard EE-twist → coordinator's eef_twist task."""
