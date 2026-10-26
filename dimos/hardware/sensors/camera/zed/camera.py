@@ -30,16 +30,13 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.sensors.camera.spec import (
+    OPTICAL_ROTATION,
     DepthCameraConfig,
     DepthCameraHardware,
 )
-from dimos.hardware.sensors.camera.zed.messages import (
-    frame_message,
-    tracking_to_base,
-    transform_from_arrays,
-)
 from dimos.message_utils import (
     camera_info as camera_info_utils,
+    geometry,
     image,
     pointcloud as pointcloud_utils,
     time as message_time,
@@ -265,12 +262,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         child_frame_id: str,
         stamp: Time,
     ) -> TransformStamped:
-        return transform_from_arrays(
-            extrinsics.get_translation().get(),
-            extrinsics.get_orientation().get(),
-            parent=frame_id,
-            child=child_frame_id,
-            stamp=stamp,
+        return TransformStamped(
+            header=Header(frame_id=frame_id, stamp=stamp),
+            child_frame_id=child_frame_id,
+            transform=Transform(
+                translation=geometry.vector_from_array(extrinsics.get_translation().get()),
+                rotation=geometry.quaternion_from_array(extrinsics.get_orientation().get()),
+            ),
         )
 
     def _enable_tracking(self) -> None:
@@ -356,7 +354,14 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._camera_link,
             stamp,
         )
-        return tracking_to_base(pose, self.config.base_transform, self.config.base_frame_id)
+        if self.config.base_transform is None:
+            return pose
+        mount = TransformStamped(
+            header=Header(frame_id=self.config.base_frame_id, stamp=stamp),
+            child_frame_id=self._camera_link,
+            transform=self.config.base_transform,
+        )
+        return geometry.compose_transforms(pose, geometry.inverse_transform(mount))
 
     def _publish_tf(self, stamp: Time) -> None:
         extrinsics = self._extrinsics_to_transform(
@@ -365,16 +370,36 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             self._color_frame,
             stamp,
         )
-        self.tf.publish(
-            frame_message(
-                camera_name=self.config.camera_name,
-                base_frame=self.config.base_frame_id,
-                base_transform=self.config.base_transform,
-                sdk_extrinsics=extrinsics.transform,
-                stamp=stamp,
-                tracking=self._tracking_transform(stamp),
+        transforms = []
+        if self.config.base_transform is not None:
+            transforms.append(
+                TransformStamped(
+                    header=Header(frame_id=self.config.base_frame_id, stamp=stamp),
+                    child_frame_id=self._camera_link,
+                    transform=self.config.base_transform,
+                )
             )
-        )
+        for frame, optical in [
+            (self._depth_frame, self._depth_optical_frame),
+            (self._color_frame, self._color_optical_frame),
+        ]:
+            # Preserve the camera's inverse SDK extrinsics convention.
+            edge = geometry.inverse_transform(extrinsics)
+            edge.header.frame_id, edge.child_frame_id = self._camera_link, frame
+            transforms.append(edge)
+            transforms.append(
+                TransformStamped(
+                    header=Header(frame_id=frame, stamp=stamp),
+                    child_frame_id=optical,
+                    transform=Transform(
+                        rotation=OPTICAL_ROTATION, translation=Vector3(x=0, y=0, z=0)
+                    ),
+                )
+            )
+        tracking = self._tracking_transform(stamp)
+        if tracking is not None:
+            transforms.append(tracking)
+        self.tf.publish(TFMessage(transforms=transforms))
 
     def _generate_pointcloud(self) -> None:
         with self._pointcloud_lock:
