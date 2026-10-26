@@ -59,10 +59,16 @@ RealSenseCamera.dedicated_worker = True
 MANIP_VOXEL_MAP = "ManipVoxelMap"
 """The second voxel map's instance name; its streams are renamed so the nav map's stay put."""
 MANIP_VOXEL_M = 0.05  # ManipulationModule's voxel_map_resolution default, so the octrees line up
-MANIP_MAP_RANGE_M = 2.5  # arm's reach, not a room
+# Measured from the camera on the mast (1.55 m up): to the far edge of the bench, not the
+# floor beyond it. At 2.5 m the map held 7000 voxels, a third of them floor and far walls,
+# and the planner spent 160 ms a collision check on them (2026-10-25).
+MANIP_MAP_RANGE_M = 1.5
 DEPTH_TRUNC_M = 3.0
 
 MOUNT_TF_TOLERANCE_S = 0.3
+MANIP_GRACE_DEPTH_M = 0.05
+MANIP_GRAZE_COS = 0.3
+SELF_FILTER_PADDING_M = 0.05
 
 D455_WIDTH, D455_HEIGHT, D455_FPS = 848, 480, 15
 
@@ -145,6 +151,9 @@ def alfred_perception_modules(
             # a capture lands up to 100 ms from a sample, and a 300 ms old mount edge is exact.
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
             tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            # The filter's fingers are fixed closed; the real ones open 4.4 cm a side, and at
+            # the default 1 cm an open finger in view became a voxel right where the grasp goes.
+            padding_m=SELF_FILTER_PADDING_M,
         ),
         # Kept in the planner's frame, the robot's own: the map rides with the base, so what was
         # seen before a drive sits wrong until the camera sees it again (ray tracing clears it).
@@ -157,6 +166,12 @@ def alfred_perception_modules(
             # base_link -> camera is AlfredMountTf's 5 Hz rigid chain; at the default 0.1 s
             # most clouds found no edge close enough to their stamp and were dropped.
             tf_match_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            # Clearing has to reach the bench. The defaults spare every voxel within 20 cm of
+            # a return (the whole object layer on the top) and never clear a miss on a surface
+            # seen below 45 degrees, and the camera sees the entire bench at 25-54: a table
+            # the robot drove past stayed in the map for the rest of the run.
+            grace_depth=MANIP_GRACE_DEPTH_M,
+            graze_cos=MANIP_GRAZE_COS,
         ).remappings(
             [
                 (MANIP_VOXEL_MAP, "lidar", "filtered_pointcloud"),
