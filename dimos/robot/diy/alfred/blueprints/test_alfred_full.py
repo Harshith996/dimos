@@ -97,7 +97,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
 )
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
     alfred_manipulation,
-    alfred_manipulation_graspgenx,
+    alfred_manipulation_heuristic,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_navigation import alfred_navigation
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
@@ -343,7 +343,7 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert "float16" not in localize.kwargs["detector"], "the registry's fp16 build is for a GPU"
     assert localize.kwargs["segmenter"] == "none", "EdgeTAM needs a GPU"
     with_gpu = {atom.module for f in alfred_perception_modules(gpu=True) for atom in f.blueprints}
-    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, HeuristicGraspModule} <= with_gpu
+    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, GraspGenXModule} <= with_gpu
     without = {atom.module for f in alfred_perception_modules(gpu=False) for atom in f.blueprints}
     assert not ({ObjectSceneRegistrationModule, PickAndPlaceModule} & without)
     scene = next(
@@ -586,20 +586,19 @@ def test_graspgenx_sees_the_v10_gripper_the_urdf_carries() -> None:
     assert gripper.family == "parallel_2f"
 
 
-def test_the_bench_stack_can_run_graspgenx_instead_of_the_heuristic() -> None:
-    """alfred-manipulation-graspgenx: the same stack, GraspGenX answering propose_grasps."""
-    heuristic = {atom.module for atom in alfred_manipulation.blueprints}
-    assert HeuristicGraspModule in heuristic and GraspGenXModule not in heuristic
-    learned = {atom.module for atom in alfred_manipulation_graspgenx.blueprints}
+def test_the_bench_stack_picks_with_graspgenx_and_can_fall_back_to_the_heuristic() -> None:
+    """alfred-manipulation: GraspGenX answers propose_grasps; -heuristic is the same stack with
+    the one-top-down-grasp generator and no second environment."""
+    learned = {atom.module for atom in alfred_manipulation.blueprints}
     assert GraspGenXModule in learned and HeuristicGraspModule not in learned
+    heuristic = {atom.module for atom in alfred_manipulation_heuristic.blueprints}
+    assert HeuristicGraspModule in heuristic and GraspGenXModule not in heuristic
     assert learned - {GraspGenXModule} == heuristic - {HeuristicGraspModule}, "only the generator"
-    (graspgenx,) = _atoms(alfred_manipulation_graspgenx, GraspGenXModule)
+    (graspgenx,) = _atoms(alfred_manipulation, GraspGenXModule)
     assert graspgenx.kwargs["gripper"] == OPENARM_V10_SWEEP_VOLUME
     assert graspgenx.kwargs["grasp_frame_to_tcp"] == OPENARM_V10_GRASP_FRAME_TO_TCP
     assert GraspGenXModule not in {
-        atom.module
-        for f in alfred_perception_modules(gpu=False, grasp="graspgenx")
-        for atom in f.blueprints
+        atom.module for f in alfred_perception_modules(gpu=False) for atom in f.blueprints
     }, "GraspGenX is a GPU model"
 
 

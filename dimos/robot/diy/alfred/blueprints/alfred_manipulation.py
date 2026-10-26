@@ -14,8 +14,8 @@
 
 """Alfred at the bench: the arms, the lift, the whole-body planner and the mast D455, no lidar.
 
-    dimos run alfred-manipulation              # top-down heuristic grasps
-    dimos run alfred-manipulation-graspgenx    # GraspGenX grasps (its own env, synced on first start)
+    dimos run alfred-manipulation              # GraspGenX grasps (its own env, synced on first start)
+    dimos run alfred-manipulation-heuristic    # one top-down grasp per object, no second environment
 
 The Orin NX runs one of two stacks at a time: this one for manipulation, ``alfred-navigation``
 for driving around. Nothing of navigation is here: no Mid-360, no Point-LIO, no planners, no
@@ -47,7 +47,7 @@ from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 
 
-def alfred_bench_modules(*, grasp: GraspGenerator = "heuristic") -> tuple[Any, ...]:
+def alfred_bench_modules(*, grasp: GraspGenerator = "graspgenx") -> tuple[Any, ...]:
     """The bench stack's modules, with one grasp generator answering the pick pipeline."""
     return (
         # The mounts rooted at base_link: no lidar owns a frame above it here.
@@ -65,15 +65,16 @@ def alfred_bench_modules(*, grasp: GraspGenerator = "heuristic") -> tuple[Any, .
 
 
 # The registry scans for module-level autoconnect(...) chains: each stack is spelled out.
+# GraspGenX proposes the grasps (ranked, angled ones an OpenArm can reach; it runs in its own
+# environment, synced on first start, weights downloaded then too); the heuristic's one
+# top-down grasp per object is the fallback stack.
 alfred_manipulation = (
     autoconnect(*alfred_bench_modules())
     .transports(alfred_base_transports())
     .global_config(n_workers=10, robot_model="alfred")
 )
-# The same stack with GraspGenX proposing grasps instead of the top-down heuristic. GraspGenX
-# runs in its own environment, synced on first start (its weights download then too).
-alfred_manipulation_graspgenx = (
-    autoconnect(*alfred_bench_modules(grasp="graspgenx"))
+alfred_manipulation_heuristic = (
+    autoconnect(*alfred_bench_modules(grasp="heuristic"))
     .transports(alfred_base_transports())
     .global_config(n_workers=10, robot_model="alfred")
 )

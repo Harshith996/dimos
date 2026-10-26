@@ -123,7 +123,7 @@ gripper's geometry (``alfred.gripper``)."""
 
 
 def alfred_perception_modules(
-    *, gpu: bool | None = None, localize: bool = True, grasp: GraspGenerator = "heuristic"
+    *, gpu: bool | None = None, localize: bool = True, grasp: GraspGenerator = "graspgenx"
 ) -> tuple[Any, ...]:
     """What the mast D455 adds to a stack: colour for the camera panel, a self-filtered depth
     cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run it,
