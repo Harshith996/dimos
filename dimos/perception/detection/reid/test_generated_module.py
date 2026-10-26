@@ -42,7 +42,7 @@ from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 @pytest.mark.parametrize("align", [align_person, align_reid], ids=["person", "reid"])
 @pytest.mark.parametrize("seconds", [0, 1700000000])
-def test_exact_header_alignment_rejects_adjacent_nanosecond_and_empty_arrays(align, seconds):
+def test_alignment_retains_float_matching_and_filters_empty_arrays(align, seconds):
     image = image_utils.from_array(
         np.zeros((32, 32, 3), dtype=np.uint8),
         encoding="rgb8",
@@ -78,7 +78,7 @@ def test_exact_header_alignment_rejects_adjacent_nanosecond_and_empty_arrays(ali
         assert received[0][0].track_id == 7
         assert received[0][0].bbox == (12, 12, 20, 20)
         images.on_next(image)
-        assert len(received) == 1
+        assert len(received) == (1 if seconds == 0 else 2)
 
 
 def test_person_target_composition_keeps_detection_source_stamp():

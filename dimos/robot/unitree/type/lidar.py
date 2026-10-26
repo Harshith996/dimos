@@ -15,7 +15,6 @@
 """Unitree WebRTC lidar message parsing utilities."""
 
 from collections.abc import Callable
-from copy import deepcopy
 import time
 from typing import TypedDict, TypeVar
 
@@ -102,28 +101,19 @@ def repair_stale_ts(
 
     We calibrate through the first few frames to determine which correction method to use. Once it's been determined, it does not change.
 
-    Generated clouds use integer Header nanoseconds; repaired values own a copy
-    so other subscribers retain the original capture Header. Legacy Timestamped
-    callers retain their existing mutation behavior until their consumers migrate.
     """
-    prev_good: int | None = None
-    prev_raw: int | None = None
+    prev_good: float | None = None
+    prev_raw: float | None = None
     n_seen = 0
     calibrated = False
     use_system_time = False
 
-    period_ns = message_time.to_nanoseconds(message_time.time_from_seconds(default_period))
-
     def _repair(item: T) -> T:
         nonlocal prev_good, prev_raw, n_seen, calibrated, use_system_time
-        raw = (
-            message_time.to_nanoseconds(item.header.stamp)
-            if isinstance(item, CdrCloud)
-            else message_time.to_nanoseconds(message_time.time_from_seconds(item.ts))
-        )
+        raw = message_time.to_seconds(item.header.stamp) if isinstance(item, CdrCloud) else item.ts
         repaired = raw
         if use_system_time:
-            repaired = message_time.to_nanoseconds(message_time.time_from_seconds(now()))
+            repaired = now()
         else:
             if not calibrated:
                 if prev_raw is not None and raw != prev_raw:
@@ -131,7 +121,7 @@ def repair_stale_ts(
                 prev_raw = raw
                 n_seen += 1
             if prev_good is not None and raw <= prev_good:
-                repaired = prev_good + period_ns
+                repaired = prev_good + default_period
             prev_good = repaired
             if not calibrated and n_seen >= calibration_frames:
                 calibrated = True
@@ -143,10 +133,9 @@ def repair_stale_ts(
         if repaired == raw:
             return item
         if isinstance(item, CdrCloud):
-            result = deepcopy(item)
-            result.header.stamp = message_time.time_from_nanoseconds(repaired)
-            return result
-        item.ts = repaired / 1_000_000_000
+            item.header.stamp = message_time.time_from_seconds(repaired)
+            return item
+        item.ts = repaired
         return item
 
     return ops.map(_repair)
