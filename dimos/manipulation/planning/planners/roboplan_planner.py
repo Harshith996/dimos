@@ -224,10 +224,18 @@ class RoboPlanPlanner:
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
-        if self._selection_requires_shared_planner(selection):
+        # Only the selected groups' joints need interval coordinates: RoboPlan's Cartesian
+        # planner tracks the path with its group's joints alone and returns those alone,
+        # while everything outside the group, a planar base's line and circle coordinates
+        # included, stays where the seed put it in the full scene configuration, the same
+        # hold a joint-space plan gives unselected joints.
+        if not self._selection_is_interval_only(selection):
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
-                message="Cartesian waypoint planning requires interval-only joint coordinates",
+                message=(
+                    "Cartesian waypoint planning requires a selection of interval-only "
+                    "joint coordinates"
+                ),
             )
         validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
@@ -296,16 +304,20 @@ class RoboPlanPlanner:
         """Get planner name."""
         return "RoboPlan"
 
-    def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
-        # RoboPlan's native RRT validates the whole scene, not just the selection, and rejects
-        # every start on a model with a coordinate it cannot bound (a planar base's line and
-        # circle joints): "Invalid start configuration requested" even for an arm alone. The
-        # shared planner bounds those itself, so a model with any such coordinate goes there.
+    def _selection_is_interval_only(self, selection: PlanningGroupSelection) -> bool:
         joint_space = self._world.get_prepared_model().joint_space
-        return (
-            not joint_space.is_interval_only
-            or not joint_space.select(selection.joint_names).is_interval_only
-        )
+        return joint_space.select(selection.joint_names).is_interval_only
+
+    def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
+        # RoboPlan's native RRT checks the start against the whole model's position limits
+        # (Scene.isValidConfiguration on the full configuration), not the selected group's.
+        # A planar base's line coordinates reach the scene with the URDF default [0, 0]
+        # limits (the prepared limits are imported as velocity and acceleration only), so
+        # an arm-only start passes only while the base reads exactly zero and is otherwise
+        # refused with "Invalid start configuration requested". The shared planner bounds
+        # the unselected coordinates itself, so every selection on such a model goes there.
+        joint_space = self._world.get_prepared_model().joint_space
+        return not joint_space.is_interval_only or not self._selection_is_interval_only(selection)
 
     def _normalize_selection_start(
         self,
