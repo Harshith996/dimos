@@ -16,7 +16,6 @@
 
 import math
 import time
-from typing import Any
 
 from dimos.messages.builtin_interfaces.msg import Duration, Time
 from dimos.messages.std_msgs.msg import Header
@@ -69,9 +68,3 @@ def duration_from_seconds(value: float) -> Duration:
 def header_now(frame_id: str = "") -> Header:
     """Construct a wall-clock header; generated defaults themselves remain zero."""
     return Header(stamp=time_from_nanoseconds(time.time_ns()), frame_id=frame_id)
-
-
-def message_header(message: Any) -> Header | None:
-    """Return source metadata from a generated stamped value."""
-    header = getattr(message, "header", None)
-    return header if isinstance(header, Header) else None

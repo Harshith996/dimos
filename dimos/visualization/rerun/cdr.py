@@ -22,11 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils.image import (
-    image_from_compressed,
-    image_to_rgb,
-    image_view,
-)
+from dimos.message_utils import image
 from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
@@ -70,14 +66,14 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
     if isinstance(message, CompressedImage):
         name = message.format.lower()
         if "jxl" in name or ("png" in name and name.startswith("16uc1;")):
-            return image_archetype(image_from_compressed(message))
+            return image_archetype(image.from_compressed(message))
         if "jpeg" in name or "jpg" in name:
             return rr.EncodedImage(contents=bytes(message.data), media_type="image/jpeg")
         if "png" in name:
             return rr.EncodedImage(contents=bytes(message.data), media_type="image/png")
         raise ValueError(f"unsupported compressed image format {message.format!r}")
     if message.encoding in ("16UC1", "32FC1", "mono16"):
-        pixels = image_view(message)
+        pixels = image.view(message)
         pixels = np.ascontiguousarray(pixels, dtype=pixels.dtype.newbyteorder("="))
         if message.encoding != "mono16":
             return rr.DepthImage(pixels, meter=1000.0 if message.encoding == "16UC1" else 1.0)
@@ -89,7 +85,7 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
             color_model="L",
         )
     return rr.Image(
-        bytes=image_to_rgb(message).tobytes(),
+        bytes=image.to_rgb(message).tobytes(),
         width=message.width,
         height=message.height,
         datatype=np.uint8,
