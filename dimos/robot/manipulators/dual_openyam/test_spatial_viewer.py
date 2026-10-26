@@ -14,6 +14,7 @@
 
 """Delayed observations preserve grabs; control loss invalidates queued input."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
 from pathlib import Path
@@ -26,6 +27,14 @@ import numpy as np
 import pytest
 
 from dimos.imitation.collection.spec import EpisodeCollectionSpec
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSpec,
+    PlanningGroupInfo,
+    PlanResult,
+    PlanStatus,
+)
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -58,6 +67,128 @@ def viewer(mocker):
     module._surface = SurfaceFrame(time.time(), b"", np.zeros((1, 3)))
     yield module
     module.stop()
+
+
+@pytest.fixture
+def operator_viewer(viewer, mocker):
+    mocker.patch(
+        "dimos.robot.manipulators.dual_openyam.spatial_viewer.time.time", return_value=1000.0
+    )
+    viewer._feedback["ts"] = 1000.0
+    recorder = mocker.Mock(spec=EpisodeCollectionSpec)
+    recorder.get_status.return_value = {"recording": None, "collection_ready": True}
+    mocker.patch.object(viewer, "_collection", recorder, create=True)
+    planner = mocker.Mock(spec=ManipulationSpec)
+    planner.list_planning_groups.return_value = tuple(
+        PlanningGroupInfo(side, (f"{side}/joint1", f"{side}/joint2"), "world", None, True)
+        for side in ("left", "right")
+    )
+    planner.plan_to_joints.return_value = PlanResult(
+        PlanStatus.SUCCEEDED, plan=mocker.Mock(plan_id="home-plan")
+    )
+    planner.execute.return_value = ExecutionResult(ExecutionStatus.ACCEPTED)
+    planner.cancel.return_value = ExecutionResult(ExecutionStatus.ABORTED)
+    mocker.patch.object(viewer, "_manipulation", planner)
+    viewer._web_server = RobotWebInterface()
+    viewer._setup_routes()
+    return viewer
+
+
+def test_browser_records_and_plans_home_without_an_xr_connection(operator_viewer):
+    viewer = operator_viewer
+    with TestClient(viewer._web_server.app) as client:
+        viewer._collection.record.return_value = {"recording": "episode-one"}
+        assert client.post(
+            "/spatial/collection", json={"action": "record", "task": "Pick the can"}
+        ).json() == {"recording": "episode-one"}
+        viewer._collection.record.assert_called_once_with("Pick the can")
+        control = client.get("/spatial/state").json()["control"]
+        response = client.post(
+            "/spatial/control",
+            json={"action": "home", "session": control["session"], "epoch": control["epoch"]},
+        )
+        assert response.status_code == 200
+        assert response.json()["control"]["paused"]
+        assert response.json()["control"]["epoch"] > control["epoch"]
+        targets = viewer._manipulation.plan_to_joints.call_args.args[0]
+        assert set(targets) == {"left", "right"}
+        assert all(list(target.position) == [0.0, 0.0] for target in targets.values())
+        viewer._manipulation.execute.assert_called_once_with(blocking=False, plan_id="home-plan")
+        viewer._collection.finish.assert_not_called()
+
+
+def test_home_rejects_active_recordings_and_stale_sessions(operator_viewer):
+    viewer = operator_viewer
+    with TestClient(viewer._web_server.app) as client:
+        control = client.get("/spatial/state").json()["control"]
+        command = {"action": "home", "session": control["session"], "epoch": control["epoch"]}
+        viewer._collection.get_status.return_value = {"recording": "unfinished"}
+        assert client.post("/spatial/control", json=command).status_code == 409
+        viewer._collection.get_status.return_value = {"recording": None}
+        assert (
+            client.post("/spatial/control", json={**command, "session": "previous-run"}).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/spatial/control", json={**command, "epoch": control["epoch"] + 1}
+            ).status_code
+            == 409
+        )
+        viewer._manipulation.plan_to_joints.assert_not_called()
+        viewer._collection.finish.assert_not_called()
+
+
+def test_hold_cancels_an_inflight_home_plan_without_executing_it(operator_viewer, mocker):
+    viewer = operator_viewer
+    planning, release = threading.Event(), threading.Event()
+    plan = viewer._manipulation.plan_to_joints.return_value
+
+    def blocked_plan(targets):
+        planning.set()
+        assert release.wait(3)
+        return plan
+
+    viewer._manipulation.plan_to_joints.side_effect = blocked_plan
+    epoch = viewer._control_epoch
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(viewer.operator_action, "home", viewer._operator_session, epoch)
+        try:
+            assert planning.wait(3)
+            viewer.operator_action("hold", viewer._operator_session, epoch)
+        finally:
+            release.set()
+        with pytest.raises(RuntimeError, match="cancelled"):
+            future.result(timeout=3)
+    viewer._manipulation.execute.assert_not_called()
+    viewer._manipulation.cancel.assert_called_once()
+    assert viewer._operator_paused
+
+
+def test_resume_requires_a_new_release_before_grabbing(operator_viewer):
+    viewer = operator_viewer
+    viewer.operator_action("hold", viewer._operator_session, viewer._control_epoch)
+    assert not send(viewer, 0, left=False)
+    viewer.operator_action("resume", viewer._operator_session, viewer._control_epoch)
+    send(viewer, 1, left=True)
+    assert not viewer._claims
+    send(viewer, 2, left=False)
+    send(viewer, 3, left=True)
+    assert viewer._claims == {Hand.LEFT: (Hand.LEFT, "move")}
+
+
+def test_home_rechecks_feedback_after_planning(operator_viewer):
+    viewer = operator_viewer
+    plan = viewer._manipulation.plan_to_joints.return_value
+
+    def expired_feedback(targets):
+        viewer._feedback["ts"] = 990.0
+        return plan
+
+    viewer._manipulation.plan_to_joints.side_effect = expired_feedback
+    with pytest.raises(RuntimeError, match="feedback stopped"):
+        viewer.operator_action("home", viewer._operator_session, viewer._control_epoch)
+    viewer._manipulation.execute.assert_not_called()
 
 
 def test_link_reset_discards_queued_grab_and_requires_release_on_reconnect(viewer, mocker):

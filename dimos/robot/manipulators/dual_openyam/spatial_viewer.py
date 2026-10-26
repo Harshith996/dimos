@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 import time
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import HTTPException, WebSocket
 from fastapi.responses import HTMLResponse, Response
@@ -31,6 +32,7 @@ from scipy.spatial.transform import Rotation
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.spec import EpisodeCollectionSpec
+from dimos.manipulation.manipulation_spec import UNCONFIRMED_STOP, PlanStatus
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -107,6 +109,13 @@ class CollectionAction(BaseModel):
     task: str = Field(default="OpenYAM manipulation demonstration", min_length=1, max_length=256)
 
 
+class OperatorAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["home", "hold", "resume"]
+    session: str
+    epoch: int = Field(ge=0)
+
+
 class SpatialViewerConfig(WebXRTeleopConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
     robot_model: RobotModelConfig | None = None
@@ -168,6 +177,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         self._transforms = MultiTBuffer()
         self._sequence = -1
         self._control_epoch = 0
+        self._operator_session = uuid4().hex
+        self._operator_paused = False
+        self._home_epoch: int | None = None
         self._input_mode: Literal["tools", "clutch"] = "tools"
         self._hold_reason: str | None = "Release and pinch a tool to take control"
         self._released = {hand: False for hand in Hand}
@@ -241,7 +253,10 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     "objects_active": now - self._objects_at < 2,
                     "observation_timeout_s": self.config.observation_timeout_s,
                     "control": {
+                        "session": self._operator_session,
                         "epoch": self._control_epoch,
+                        "paused": self._operator_paused,
+                        "home_available": self._manipulation is not None,
                         "mode": self._input_mode,
                         "modes": ["tools", "clutch"],
                         "robot_ready": self._joint_feedback_ready(now),
@@ -288,6 +303,79 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 return self._collection.finish(command.action == "save")
             except (RuntimeError, ValueError) as error:
                 raise HTTPException(409, str(error)) from error
+
+        @app.post("/spatial/control")
+        def operator_action(command: OperatorAction) -> dict[str, Any]:
+            try:
+                self.operator_action(command.action, command.session, command.epoch)
+                return state()
+            except (RuntimeError, ValueError) as error:
+                raise HTTPException(409, str(error)) from error
+
+    @rpc
+    def operator_action(self, action: str, session: str, epoch: int) -> None:
+        """Use the same session controls from Desktop, a browser or XR.
+
+        Home plans both OpenYAM arms to their existing zero posture. It leaves
+        teleop paused and never resets the simulator or discards an episode.
+        """
+        if action not in ("home", "hold", "resume"):
+            raise ValueError("Unknown operator action")
+        with self._lock:
+            if session != self._operator_session or (
+                action != "hold" and epoch != self._control_epoch
+            ):
+                raise RuntimeError("Station control changed; refresh its state and try again")
+            if action != "hold" and not self._joint_feedback_ready(time.time()):
+                raise RuntimeError("Waiting for fresh robot joint feedback")
+            if action == "home":
+                if self._manipulation is None:
+                    raise RuntimeError("This blueprint does not provide motion planning")
+                if self._collection.get_status().get("recording"):
+                    raise RuntimeError("Stop and save or discard the episode before going home")
+            self._operator_paused = True
+            self._hold_control("Teleop paused by operator")
+            if self._home_epoch is not None and self._manipulation is not None:
+                result = self._manipulation.cancel()
+                if result.status in UNCONFIRMED_STOP:
+                    raise RuntimeError(result.message or "Home motion stop was not confirmed")
+                self._home_epoch = None
+            if action == "resume":
+                self._operator_paused = False
+                self._hold_reason = "Release and grab to resume teleop"
+            if action != "home":
+                return
+            home_epoch = self._control_epoch
+            self._home_epoch = home_epoch
+            self._hold_reason = "Planning home motion"
+
+        assert self._manipulation is not None
+        targets = {
+            group.id: JointState(
+                name=list(group.joint_names), position=[0.0] * len(group.joint_names)
+            )
+            for group in self._manipulation.list_planning_groups()
+        }
+        plan = self._manipulation.plan_to_joints(targets)
+        with self._lock:
+            if self._home_epoch != home_epoch or self._control_epoch != home_epoch:
+                raise RuntimeError("Home motion was cancelled before execution")
+            if plan.status == PlanStatus.NO_MOTION:
+                self._home_epoch = None
+                self._hold_reason = "Already home; resume teleop when ready"
+                return
+            if not plan.succeeded or plan.plan is None:
+                self._home_epoch = None
+                self._hold_reason = "Home planning failed; teleop remains paused"
+                raise RuntimeError(plan.message or "Could not plan home motion")
+            if not self._joint_feedback_ready(time.time()):
+                self._home_epoch = None
+                raise RuntimeError("Robot feedback stopped while planning home motion")
+            result = self._manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
+            if not result.succeeded:
+                self._home_epoch = None
+                raise RuntimeError(result.message or "Home motion was rejected")
+            self._hold_reason = "Home motion requested; resume teleop when ready"
 
     @rpc
     def get_web_views(self) -> list[dict[str, Any]]:
@@ -383,6 +471,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             # an old grab if the watchdog thread was delayed by the same stall.
             self._expire_stale_state(time.monotonic())
             if message.control_epoch != self._control_epoch:
+                return False
+            if self._operator_paused:
                 return False
             if message.mode != self._input_mode:
                 self._input_mode = message.mode

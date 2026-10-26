@@ -27,7 +27,7 @@ function wrapped(context, text, x, y, width, lineHeight) {
   context.fillText(line,x,y);
 }
 
-// Owns camera/HUD resources. It only invokes episode RPCs; arm input stays in spatial.js.
+// Browser and XR share session actions; tracked arm input stays in spatial.js.
 export class SpatialUI {
   constructor(parent, endpoint, {embedded, onAction, xrScene=parent}) {
     this.endpoint=endpoint; this.embedded=embedded; this.onAction=onAction;
@@ -140,20 +140,29 @@ export class SpatialUI {
       this.onAction(action); this.hidePalm(); return;
     }
     if(![...this.buttons,...this.workspaceButtons,...this.navigationButtons].some(button=>button.action===action && button.enabled)) return;
-    if(['hold','actual_size','exit_xr'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
-    if(this.pending) return;
-    this.pending=action; this.version++; this.error='';
+    if(['actual_size','exit_xr'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
+    if(this.pending && action!=='hold') return;
+    this.pending=action; const version=++this.version; this.error='';
     try {
-      this.collection=await this.request('collection',{
+      if(['home','hold','resume'].includes(action)) {
+        const result=await this.request('control',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({action,session:this.control.session,epoch:this.control.epoch}),
+        }).then(r=>r.json());
+        if(version===this.version) this.onAction(action,result);
+      } else {
+        const collection=await this.request('collection',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({action,task:document.querySelector('#task').value.trim()}),
-      }).then(r=>r.json());
-      this.collectionAt=performance.now();
-    } catch(error) { this.error=error.message; }
-    finally { this.pending=null; }
+        }).then(r=>r.json());
+        if(version===this.version) { this.collection=collection; this.collectionAt=performance.now(); }
+      }
+    } catch(error) { if(version===this.version) this.error=error.message; }
+    finally { if(version===this.version) this.pending=null; }
   }
 
-  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools'}) {
+  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={}}) {
+    this.control=control;
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[{action:'actual_size',label:'Actual size',x:780,y:424,w:220,h:48,
       enabled:!preview&&!workspaceActive}];
@@ -168,17 +177,18 @@ export class SpatialUI {
     const recording=available && !!state.recording;
     const elapsed=recording?Math.max(0,Math.floor(now-state.started_at)):0;
     const timer=`${Math.floor(elapsed/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}`;
-    const active=connected && !preview && !workspaceActive;
     this.buttons=[
-      {action:'record',label:'Record',enabled:active && ready && available && state.collection_ready && !recording && !!document.querySelector('#task').value.trim()},
-      {action:'save',label:'Save',enabled:active && recording},
-      {action:'discard',label:'Discard',enabled:active && recording},
-      {action:'hold',label:paused?'Resume':'Hold control',enabled:active && (paused?ready:true)},
-    ].map((button,i)=>({...button,x:24+i*250,y:336,w:232,h:68,enabled:button.enabled && (!this.pending || button.action==='hold')}));
-    const control=preview?'VIEW ONLY':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'CONTROL DISCONNECTED':!ready?'ROBOT FEEDBACK UNAVAILABLE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
-    const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING'}[this.pending])
+      {action:'home',label:'Home',enabled:ready && available && !recording && !!control.session && control.home_available},
+      {action:'record',label:'Record',enabled:ready && available && state.collection_ready && !recording && !!document.querySelector('#task').value.trim()},
+      {action:'save',label:'Stop & save',enabled:recording},
+      {action:'discard',label:'Discard',enabled:recording},
+      {action:'hold',label:'Hold',enabled:!!control.session},
+      {action:'resume',label:'Resume',enabled:!!control.session && paused && ready},
+    ].map((button,i)=>({...button,x:24+i*166,y:336,w:152,h:68,enabled:button.enabled && (!this.pending || button.action==='hold')}));
+    const controlLabel=!ready?'ROBOT FEEDBACK UNAVAILABLE':paused?'TELEOP PAUSED':preview?'DESKTOP · STATION CONTROLS':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'XR INPUT DISCONNECTED':'XR INPUT CONNECTED';
+    const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING',home:'PLANNING HOME',hold:'HOLDING',resume:'RESUMING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
-    const hint=this.error || (!preview&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
+    const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;
@@ -192,7 +202,7 @@ export class SpatialUI {
       const element=document.querySelector(`[data-action="${button.action}"]`);
       element.disabled=!button.enabled; element.textContent=button.label;
     }
-    const signature=JSON.stringify([control,summary,arms,hint,this.buttons,this.workspaceButtons,this.hovered,Math.round(workspaceScale*100),mode]);
+    const signature=JSON.stringify([controlLabel,summary,arms,hint,this.buttons,this.workspaceButtons,this.hovered,Math.round(workspaceScale*100),mode]);
     if(signature===this.drawn) return; this.drawn=signature;
     const c=this.hud.context;
     c.fillStyle='#13232d'; c.fillRect(0,0,1024,576); c.textAlign='left';
@@ -200,7 +210,7 @@ export class SpatialUI {
     c.fillStyle='#edf5f4'; c.font='bold 24px system-ui'; c.fillText('SESSION CONTROLS · drag this bar',24,33);
     this.drawPin(this.hud);
     c.textAlign='left';
-    c.fillStyle=active&&ready&&!paused?'#76e2c1':'#f3bf77'; c.font='bold 28px system-ui'; c.fillText(control,24,90);
+    c.fillStyle=ready&&!paused?'#76e2c1':'#f3bf77'; c.font='bold 28px system-ui'; c.fillText(controlLabel,24,90);
     c.fillStyle=recording?'#ff8888':'#edf5f4'; c.font='bold 35px system-ui'; c.fillText(summary,24,145);
     c.fillStyle='#c4dcf2'; c.font='25px system-ui'; c.fillText(arms,24,192);
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,239,976,32);
@@ -210,7 +220,7 @@ export class SpatialUI {
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);
-      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font='bold 27px system-ui'; c.textAlign='center';
+      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font=`bold ${button.w<180?22:27}px system-ui`; c.textAlign='center';
       c.fillText(button.label,button.x+button.w/2,button.y+button.h/2+10);
     }
     this.hud.texture.needsUpdate=true;

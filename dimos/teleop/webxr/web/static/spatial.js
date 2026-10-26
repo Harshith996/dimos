@@ -80,8 +80,8 @@ let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
 let modePreference='auto', activeMode='tools';
-const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:action=>{
-  if(action==='hold') paused=!paused;
+const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
+  if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
   if(action==='bring_here') placeAhead=true;
   if(action.startsWith('mode:')) setInteractionMode(action.slice(5));
@@ -132,7 +132,7 @@ poll(endpoint('state'), 35, async response => {
     entryError='Station controls were updated. Restart the blueprint and reload this page.';
     throw new Error(entryError);
   }
-  feedback = next; feedbackAt = performance.now();
+  feedback = next; feedbackAt = performance.now(); paused=!!next.control.paused;
   if(controlEpoch!==feedback.control.epoch) {
     resetTools(); controlEpoch=feedback.control.epoch;
   }
@@ -413,11 +413,11 @@ renderer.setAnimationLoop((time, frame) => {
   cloud.visible = cloudTS > 0;
   detections.visible=fresh;
   if(!fresh) focusMarker.visible=false;
-  const controlStatus=!controlRequested?'desktop preview':paused?'control paused':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.mode!==activeMode?'changing control mode':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
+  const controlStatus=paused?'teleop paused':!controlRequested?'desktop controls':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.mode!==activeMode?'changing control mode':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
   const viewStatus=fresh?`Live · ${surfaceGrid?.valid || 0} depth samples`:cloudTS>0?'View delayed · showing last surface':feedback?.observation_error || 'Waiting for RGB-D observations';
   status.textContent = entryError || `${viewStatus} · ${controlStatus}`;
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
-    ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
+    ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
     workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();

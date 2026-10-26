@@ -16,6 +16,8 @@ figure{min-height:150px}#panel{max-width:490px;padding:14px 18px}
 @media(max-width:1000px){#cameras{top:70px;bottom:auto}figure,figure img{width:110px}figure img{height:82px}figure{min-height:115px}}
 </style>
 <script>if(new URLSearchParams(location.search).has('embedded'))document.documentElement.classList.add('embedded');</script>
+<script>if(new URLSearchParams(location.search).has('desktop'))document.documentElement.classList.add('desktop');</script>
+<style>.desktop #panel>p,.desktop #panel>label,.desktop #enter,.desktop #place,.desktop header{display:none}.desktop #panel #episode-controls{display:block}.desktop #panel{min-width:300px;pointer-events:auto}.desktop #cameras{top:16px;bottom:auto}</style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
 </head>
 <body>
@@ -34,8 +36,8 @@ figure{min-height:150px}#panel{max-width:490px;padding:14px 18px}
 <div id="episode-controls">
 <label for="task">Demonstration task</label><input id="task" maxlength="256" value="Pick up the bottle and place it in the tray">
 <div id="episode-state">Connecting to recorder…</div><p id="episode-hint"></p>
-<button data-action="record" disabled>Record</button><button data-action="save" disabled>Save</button><button data-action="discard" disabled>Discard</button><button data-action="hold" disabled>Hold control</button>
-<p class="muted">In the headset, point at a button and pinch. The timer and saved count come from this blueprint's recorder.</p>
+<button data-action="home" disabled>Home</button><button data-action="record" disabled>Record</button><button data-action="save" disabled>Stop &amp; save</button><button data-action="discard" disabled>Discard</button><button data-action="hold" disabled>Hold</button><button data-action="resume" disabled>Resume</button>
+<p class="muted">These controls work here and in the headset. Home plans both arms to zero and leaves teleop paused. Stop &amp; save keeps the episode; Discard deletes the take.</p>
 </div>
 <p id="perception" class="muted">Object recognition: no detector connected.</p>
 <p id="model-note" class="muted" hidden></p>
