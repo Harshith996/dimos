@@ -1,7 +1,7 @@
 # Alfred
 
-A DIY mobile manipulator: FlowBase holonomic base, pillar lift, bimanual OpenArm v2.0, a Mid-360 on
-the mast and a D455 facing forward. The robot computer is an Orin NX; DimOS Desktop runs on it and
+A DIY mobile manipulator: FlowBase holonomic base, pillar lift, bimanual OpenArm with the v1.0
+parallel gripper, a Mid-360 on the mast and a D455 facing forward. The robot computer is an Orin NX; DimOS Desktop runs on it and
 its Controller is the UI.
 
 ## Blueprints
@@ -33,9 +33,13 @@ The Orin NX overloads with everything on. Run one stack at a time and switch:
 
 | Stack | Runs | Does not run |
 |-------|------|--------------|
-| `alfred-manipulation` | arms, lift, whole-body planner, D455 (obstacle map; localize with a GPU), teleop, wheel odometry | lidar, Point-LIO, nav planners, follower |
-| `alfred-navigation` | Mid-360, Point-LIO, voxel map, planners, follower, teleop, the lift (parked) | arms' CAN, planner, camera |
-| `alfred-full-perception` | everything | — |
+| `alfred-manipulation` | arms, lift, whole-body planner, D455 (obstacle map, scene registration, the pick pipeline with the top-down heuristic grasps), teleop, wheel odometry | lidar, Point-LIO, nav planners, follower, Rerun |
+| `alfred-manipulation-graspgenx` | the same, GraspGenX proposing grasps in its own environment (first start syncs it, ~5 min) | — |
+| `alfred-navigation` | Mid-360, Point-LIO, voxel map, planners, follower, teleop, the lift (parked) | arms' CAN, planner, camera, Rerun |
+| `alfred-full-perception` | everything, Rerun included (capped at 256 MB: its default quarter of RAM OOM-killed the bench stack once) | — |
+
+Neither split stack runs the Rerun bridge: the Desktop reads zenoh itself, and the bridge's
+late-viewer buffer is what ran the 16 GB Orin out of memory.
 
 The Manipulation app's **Stack** card switches them (stop, then launch); the Launcher does the
 same. After every start the lift must be homed before it moves (**Home the lift** in the app,
@@ -81,6 +85,30 @@ plan leaves them: a restart no longer drops the arms.
 - **Small turns plan, bigger ones do not**: from the hanging pose the wrist (`joint6`, ±45°) and
   the straight elbow (`joint4` ≥ 0) sit at their limits. Go **Preset → Home** (the ready pose)
   first; it is reachable from hanging.
+
+## Picking from the bench
+
+**Scan**, pick an object, pick an arm (or `auto`: the nearer one), **Pick**. What the pick
+pipeline does: one grasp per object (the heuristic's is top-down, GraspGenX's are ranked and
+angled), a pregrasp 10 cm above it through the planner, a straight descent, close, lift.
+
+- **Reach is the limit, not the map.** Shoulder to wrist is 0.44 m with the arm straight, the
+  hand another 0.186 m. A top-down grasp on an object 0.70 m in front of `base_link` needs the
+  wrist 0.58 m from the shoulder: impossible, and before the reach check Pink spent 7-15 s
+  finding that out. Stand so the objects are within ~0.55 m of `base_link` (the base's front
+  face nearly at the bench edge), or let GraspGenX propose a side grasp. The pick refuses an
+  out-of-reach object at once and says by how much.
+- **Scan again after the base moves.** Objects are registered in `base_link`; a drive leaves
+  them where the robot was.
+- **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
+  may then be a base move plus an arm move, executed together; the descent and lift stay the
+  arm's. The base follows its segment through the coordinator's relative planar task on wheel
+  odometry. Measured plant gains (`alfred_posedomain.json`, yaw 2.85x the command) must be in
+  that task's `command_gains` for it to track; without them a yaw segment aborts.
+- The planner's obstacle map is the D455's self-filtered cloud voxelised at 5 cm within 1.5 m of
+  the camera, cleared aggressively (`grace_depth` 0.05, `graze_cos` 0.3): a table the robot
+  drove past used to stay in the map under the bench. Open fingers sit 4.4 cm a side outside
+  the self-filter model (its fingers are fixed closed), covered by 5 cm of padding.
 
 ## How the base is shared
 
