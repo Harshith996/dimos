@@ -15,67 +15,67 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
-from dimos.message_utils.time import (
-    duration_from_nanoseconds,
-    duration_from_seconds,
-    header_now,
-    time_from_nanoseconds,
-    time_from_seconds,
-    to_nanoseconds,
-    to_seconds,
+from dimos.message_utils import time as message_time
+
+
+@pytest.mark.parametrize(
+    "factory", [message_time.time_from_nanoseconds, message_time.duration_from_nanoseconds]
 )
-
-
-@pytest.mark.parametrize("factory", [time_from_nanoseconds, duration_from_nanoseconds])
 @pytest.mark.parametrize("value", [0, -1, -1_250_000_000, 1_700_000_000_123_456_789])
 def test_integer_time_round_trip_preserves_every_nanosecond(factory, value):
     stamp = factory(value)
 
     assert 0 <= stamp.nanosec < 1_000_000_000
-    assert to_nanoseconds(stamp) == value
-    assert to_nanoseconds(cdr_decode(cdr_encode(stamp), stamp.__msgtype__)) == value
+    assert message_time.to_nanoseconds(stamp) == value
+    assert message_time.to_nanoseconds(cdr_decode(cdr_encode(stamp), stamp.__msgtype__)) == value
 
 
-@pytest.mark.parametrize("factory", [time_from_seconds, duration_from_seconds])
+@pytest.mark.parametrize(
+    "factory", [message_time.time_from_seconds, message_time.duration_from_seconds]
+)
 @pytest.mark.parametrize("value,expected", [(-1.25, (-2, 750_000_000)), (0.9999999996, (1, 0))])
 def test_float_conversion_normalizes_negative_values_and_fractional_carry(factory, value, expected):
     stamp = factory(value)
 
     assert (stamp.sec, stamp.nanosec) == expected
-    assert to_seconds(stamp) == pytest.approx(value, abs=1e-9)
+    assert message_time.to_seconds(stamp) == pytest.approx(value, abs=1e-9)
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
 def test_nonfinite_seconds_are_rejected(value):
     with pytest.raises(ValueError, match="finite"):
-        time_from_seconds(value)
+        message_time.time_from_seconds(value)
 
 
 def test_invalid_ros_fraction_is_rejected():
-    stamp = time_from_nanoseconds(0)
+    stamp = message_time.time_from_nanoseconds(0)
     stamp.nanosec = 1_000_000_000
 
     with pytest.raises(ValueError, match="nanosec"):
-        to_nanoseconds(stamp)
+        message_time.to_nanoseconds(stamp)
 
 
 def test_now_reads_integer_clock_and_preserves_frame(monkeypatch):
     monkeypatch.setattr("dimos.message_utils.time.time.time_ns", lambda: 1_700_000_000_123_456_789)
 
-    header = header_now("camera")
+    header = message_time.header_now("camera")
 
-    assert to_nanoseconds(header.stamp) == 1_700_000_000_123_456_789
+    assert message_time.to_nanoseconds(header.stamp) == 1_700_000_000_123_456_789
     assert header.frame_id == "camera"
 
 
-@pytest.mark.parametrize("factory", [time_from_nanoseconds, duration_from_nanoseconds])
+@pytest.mark.parametrize(
+    "factory", [message_time.time_from_nanoseconds, message_time.duration_from_nanoseconds]
+)
 @pytest.mark.parametrize("seconds", [-(2**31), 2**31 - 1])
 def test_ros_seconds_range_boundaries(factory, seconds):
     value = seconds * 1_000_000_000 + 999_999_999
-    assert to_nanoseconds(factory(value)) == value
+    assert message_time.to_nanoseconds(factory(value)) == value
 
 
-@pytest.mark.parametrize("factory", [time_from_nanoseconds, duration_from_nanoseconds])
+@pytest.mark.parametrize(
+    "factory", [message_time.time_from_nanoseconds, message_time.duration_from_nanoseconds]
+)
 @pytest.mark.parametrize("value", [-(2**31) * 1_000_000_000 - 1, 2**31 * 1_000_000_000])
 def test_ros_seconds_overflow_is_explicit(factory, value):
     with pytest.raises(ValueError, match="signed 32-bit"):

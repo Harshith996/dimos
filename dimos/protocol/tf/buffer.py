@@ -21,7 +21,7 @@ from typing import cast
 
 from sortedcontainers import SortedDict  # type: ignore[import-untyped]
 
-from dimos.message_utils.time import time_from_seconds, to_nanoseconds, to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.types.timestamped import to_human_readable
 
@@ -39,7 +39,7 @@ class TBuffer:
         return len(self._entries)
 
     def add(self, transform: TransformStamped) -> None:
-        stamp = to_nanoseconds(transform.header.stamp)
+        stamp = message_time.to_nanoseconds(transform.header.stamp)
         self._entries[stamp] = deepcopy(transform)
         if math.isfinite(self.buffer_size):
             oldest = self._entries.peekitem(-1)[0] - round(self.buffer_size * 1_000_000_000)
@@ -57,7 +57,7 @@ class TBuffer:
     ) -> TransformStamped | None:
         if time_point is None:
             return self.last()
-        stamp = to_nanoseconds(time_from_seconds(time_point))
+        stamp = message_time.to_nanoseconds(message_time.time_from_seconds(time_point))
         if math.isnan(time_tolerance) or time_tolerance < 0:
             raise ValueError("time_tolerance must be nonnegative")
         index = self._entries.bisect_left(stamp)
@@ -75,7 +75,7 @@ class TBuffer:
         first, last = self.first(), self.last()
         if first is None or last is None:
             return "TBuffer(empty)"
-        start, end = to_seconds(first.header.stamp), to_seconds(last.header.stamp)
+        start, end = message_time.to_seconds(first.header.stamp), message_time.to_seconds(last.header.stamp)
         return (
             f"TBuffer({first.header.frame_id} -> {first.child_frame_id}, "
             f"{len(self)} msgs, {end - start:.2f}s "
