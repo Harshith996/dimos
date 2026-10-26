@@ -27,8 +27,7 @@ from scipy.spatial import cKDTree
 
 pytest.importorskip("dimos_trajectory_follower")
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -52,14 +51,16 @@ GOVERNOR = GO2.to_json()
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
-        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, yaw)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=geometry.quaternion_from_euler(0, 0, yaw)
+        ),
     )
 
 
 def _path(states: list[tuple[float, float, float]]) -> Path:
     return Path(
-        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)),
         poses=[_pose(*s) for s in states],
     )
 
@@ -145,10 +146,10 @@ def _cases(seed: int = 20260802, n: int = CASES):  # type: ignore[no-untyped-def
                 path_xy_yaw(path), enc, float(srng.uniform(0.0, 1e9)), GOVERNOR
             )
             for q, t in zip(path.poses, ts, strict=True):
-                q.header.stamp = time_from_seconds(t)
+                q.header.stamp = message_time.time_from_seconds(t)
             if k % 8 == 3:
                 for q in path.poses:
-                    q.header.stamp = time_from_seconds(
+                    q.header.stamp = message_time.time_from_seconds(
                         5.0
                     )  # flat: not the dialect, both must ignore it
 

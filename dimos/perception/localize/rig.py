@@ -23,15 +23,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.tf import StreamTF
-from dimos.message_utils.geometry import inverse_transform, pose_from_transform, vector_array
-from dimos.message_utils.image import image_view
-from dimos.message_utils.pointcloud import (
-    pointcloud_from_rgbd,
-    pointcloud_from_xyz,
-    pointcloud_xyz,
-    transform_cloud,
-)
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -101,7 +93,7 @@ def _camera_span(cameras: dict[str, RigCamera], tf: StreamTF, world: str) -> flo
         ]
         positions = np.array(
             [
-                vector_array(inverse_transform(t).transform.translation)
+                geometry.vector_array(geometry.inverse_transform(t).transform.translation)
                 for t in seen
                 if t is not None
             ]
@@ -159,7 +151,7 @@ class Rig:
             if types[name] is not Image or not store.stream(name).count():
                 continue
             image = store.stream(name).first().data
-            pixels = image_view(image)
+            pixels = image_utils.view(image)
             if (
                 pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2
             ) or pixels.dtype.kind == "f":
@@ -226,7 +218,11 @@ class Rig:
     def camera_pose(self, ts: float, frame: str) -> PoseStamped | None:
         """World pose of a camera's optical frame at ts."""
         transform = self.world_to_optical(ts, frame)
-        return pose_from_transform(inverse_transform(transform)) if transform is not None else None
+        return (
+            geometry.pose_from_transform(geometry.inverse_transform(transform))
+            if transform is not None
+            else None
+        )
 
     def frame_at(self, obs: Observation[Any]) -> Image:
         """The colour frame an index observation refers to.
@@ -270,9 +266,9 @@ class Rig:
                 )
                 if transform is None:
                     continue
-                cloud = transform_cloud(cloud, transform)
-            parts.append(pointcloud_xyz(cloud))
-            source_ns = to_nanoseconds(cloud.header.stamp)
+                cloud = pointcloud.transform(cloud, transform)
+            parts.append(pointcloud.xyz(cloud))
+            source_ns = message_time.to_nanoseconds(cloud.header.stamp)
             newest_ns = source_ns if newest_ns is None else max(newest_ns, source_ns)
         merged = None
         if parts:
@@ -281,9 +277,11 @@ class Rig:
             cells = np.floor(points / LIDAR_CELL).astype(np.int64) + (1 << 20)
             keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
             _, first = np.unique(keys, return_index=True)
-            merged = pointcloud_from_xyz(
+            merged = pointcloud.from_xyz(
                 points[first],
-                header=Header(frame_id=self.world_frame, stamp=time_from_nanoseconds(newest_ns)),
+                header=Header(
+                    frame_id=self.world_frame, stamp=message_time.time_from_nanoseconds(newest_ns)
+                ),
             )
         self._lidar_map = (id(self.lidar), merged)
         return merged
@@ -319,9 +317,9 @@ class Rig:
         transform = self.world_to_optical(ts, frame)
         if transform is None:
             return None
-        return transform_cloud(
-            pointcloud_from_rgbd(
+        return pointcloud.transform(
+            pointcloud.from_rgbd(
                 color, depth, self.cameras[frame].info, depth_scale=0.001, depth_trunc=depth_trunc
             ),
-            inverse_transform(transform),
+            geometry.inverse_transform(transform),
         )

@@ -23,7 +23,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose as CdrPoseValue,
@@ -116,7 +116,7 @@ class R1ProLio(StaticTfPublisher):
         p, q = msg.pose.pose.position, msg.pose.pose.orientation
         # Keep the existing mount composition math behind an explicit value adapter.
         internal = Odometry(
-            ts=to_seconds(msg.header.stamp),
+            ts=message_time.to_seconds(msg.header.stamp),
             frame_id=msg.header.frame_id,
             pose=Pose(position=[p.x, p.y, p.z], orientation=[q.x, q.y, q.z, q.w]),
         )

@@ -24,10 +24,7 @@ import pytest
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import camera_info, image as image_utils, pointcloud, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -45,7 +42,7 @@ from dimos.protocol.tf.tf import MultiTBuffer
 
 def _transform(parent: str, child: str, x: float, ts: float = 2.0) -> TransformStamped:
     return TransformStamped(
-        header=Header(stamp=time_from_seconds(ts), frame_id=parent),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=parent),
         child_frame_id=child,
         transform=Transform(
             translation=Vector3(x=x, y=0.0, z=0.0),
@@ -70,7 +67,7 @@ def test_camera_pose_composes_each_cameras_mount(frame: str, expected_x: float) 
     assert pose is not None and camera is not None
     assert pose.header.frame_id == "world"
     assert pose.pose.position.x == expected_x
-    assert to_seconds(pose.header.stamp) == 2.0
+    assert message_time.to_seconds(pose.header.stamp) == 2.0
     assert camera.header.frame_id == frame
     assert camera.child_frame_id == "world"
     assert camera.transform.translation.x == -expected_x
@@ -85,23 +82,29 @@ def memory():
 
 @pytest.mark.parametrize("depth_dtype", ["<u2", ">u2"])
 def test_from_store_finds_each_cameras_color_and_aligned_depth(memory, depth_dtype) -> None:
-    info = camera_info_from_intrinsics(
-        100, 100, 1, 1, 2, 2, header=Header(frame_id="front", stamp=time_from_seconds(2))
+    info = camera_info.from_intrinsics(
+        100,
+        100,
+        1,
+        1,
+        2,
+        2,
+        header=Header(frame_id="front", stamp=message_time.time_from_seconds(2)),
     )
     for frame in ("front", "rear"):
         info = decode(encode(info), CameraInfo)
         info.header.frame_id = frame
         memory.stream(f"{frame}_info", CameraInfo).append(info, ts=2.0)
         # Wire data is flat; classification must inspect decoded pixels.
-        color = image_from_array(
+        color = image_utils.from_array(
             np.full((2, 2, 3), 100, dtype=np.uint8),
             encoding="rgb8",
-            header=Header(stamp=time_from_seconds(2.0), frame_id=frame),
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=frame),
         )
-        depth = image_from_array(
+        depth = image_utils.from_array(
             np.full((2, 2), 1000, dtype=depth_dtype),
             encoding="16UC1",
-            header=Header(stamp=time_from_seconds(2.0), frame_id=frame),
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=frame),
         )
         memory.stream(f"{frame}_color", Image).append(decode(encode(color), Image), ts=2.0)
         memory.stream(f"{frame}_depth", Image).append(decode(encode(depth), Image), ts=2.0)
@@ -123,9 +126,9 @@ def test_from_store_finds_each_cameras_color_and_aligned_depth(memory, depth_dty
 def test_lidar_map_registers_and_deduplicates_scans_in_world_frame() -> None:
     tf = MultiTBuffer()
     tf.receive_transform(_transform("world", "lidar", 10.0))
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[0.0, 0.0, 0.0], [0.01, 0.0, 0.0], [0.10, 0.0, 0.0]]),
-        header=Header(stamp=time_from_seconds(2.0), frame_id="lidar"),
+        header=Header(stamp=message_time.time_from_seconds(2.0), frame_id="lidar"),
     )
     cloud.header.stamp = Time(sec=2, nanosec=123456789)
     rig = Rig(
@@ -138,7 +141,7 @@ def test_lidar_map_registers_and_deduplicates_scans_in_world_frame() -> None:
     assert merged.header.frame_id == "world"
     assert merged.header.stamp == cloud.header.stamp
     np.testing.assert_allclose(
-        pointcloud_xyz(merged), [[10.0, 0.0, 0.0], [10.1, 0.0, 0.0]], atol=1e-6
+        pointcloud.xyz(merged), [[10.0, 0.0, 0.0], [10.1, 0.0, 0.0]], atol=1e-6
     )
     assert rig.lidar_map() is merged
 
@@ -147,10 +150,10 @@ def test_frame_index_accepts_generated_camera_pose_without_changing_observation_
     tf = MultiTBuffer()
     tf.receive_transform(_transform("world", "front", 2.5))
     rig = Rig(cameras={}, tf=tf)
-    image = image_from_array(
+    image = image_utils.from_array(
         np.full((4, 4, 3), 100, dtype=np.uint8),
         encoding="rgb8",
-        header=Header(frame_id="front", stamp=time_from_seconds(2)),
+        header=Header(frame_id="front", stamp=message_time.time_from_seconds(2)),
     )
     feed = memory.stream("color", Image)
     feed.append(image, ts=2)
@@ -165,7 +168,7 @@ def test_frame_index_accepts_generated_camera_pose_without_changing_observation_
 def test_visibility_uses_generated_mount_and_decoded_depth(depth_dtype):
     mount = _transform("base_link", "camera_optical", 0.5)
     observation = Observation(ts=2, _data=None, pose=(1, 2, 3))
-    camera = camera_info_from_intrinsics(
+    camera = camera_info.from_intrinsics(
         100,
         100,
         10,
@@ -182,7 +185,7 @@ def test_visibility_uses_generated_mount_and_decoded_depth(depth_dtype):
         transform.transform.translation.z,
     ) == (-1.5, -2, -3)
     assert sees((1.5, 2, 5), camera, base_to_optical=mount)(observation)
-    depth = image_from_array(
+    depth = image_utils.from_array(
         np.full((20, 20), 1000, dtype=depth_dtype),
         encoding="16UC1",
         header=mount.header,
@@ -194,13 +197,15 @@ def test_visibility_uses_generated_mount_and_decoded_depth(depth_dtype):
 @pytest.mark.parametrize("voxel", [0.0, 0.1])
 def test_group_union_keeps_exact_newest_cloud_header(voxel):
     header = Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456788))
-    image = image_from_array(np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8", header=header)
+    image = image_utils.from_array(
+        np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8", header=header
+    )
     groups = Groups()
     for ns, points in [
         (123456789, [[0, 0, 2], [0.01, 0, 2]]),
         (123456788, [[0.02, 0, 2], [0.03, 0, 2]]),
     ]:
-        cloud = pointcloud_from_xyz(
+        cloud = pointcloud.from_xyz(
             np.array(points),
             header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=ns)),
         )
@@ -217,14 +222,14 @@ def test_group_union_keeps_exact_newest_cloud_header(voxel):
         assert groups.add(detection, radius=0.1, voxel=voxel) == 0
     merged = decode(encode(groups.clouds[0]), PointCloud2)
     assert merged.header.stamp == Time(sec=1700000000, nanosec=123456789)
-    assert pointcloud_xyz(merged).mean(axis=0) == pytest.approx([0.015, 0, 2])
-    assert len(pointcloud_xyz(merged)) == (1 if voxel else 4)
+    assert pointcloud.xyz(merged).mean(axis=0) == pytest.approx([0.015, 0, 2])
+    assert len(pointcloud.xyz(merged)) == (1 if voxel else 4)
 
 
 def test_localization_boxes_are_generated_cdr_values():
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[1, 2, 3], [3, 4, 5]]),
-        header=Header(frame_id="world", stamp=time_from_seconds(2)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(2)),
     )
     hit = Localization(
         instance_id="object-1",
@@ -268,11 +273,11 @@ from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.geometry import inverse_transform
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import camera_info
+from dimos.message_utils import geometry
+from dimos.message_utils import image as image_utils
+from dimos.message_utils import pointcloud
+from dimos.message_utils import time as message_time
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.localize import LocalizeTrace
@@ -280,8 +285,8 @@ from dimos.perception.localize.rig import Rig, RigCamera
 from dimos.perception.localize.tools.tool_localize import render
 from dimos.protocol.tf.tf import MultiTBuffer
 with MemoryStore() as memory:
-    header = Header(frame_id="front", stamp=time_from_seconds(2))
-    image = image_from_array(
+    header = Header(frame_id="front", stamp=message_time.time_from_seconds(2))
+    image = image_utils.from_array(
         np.full((4, 4, 3), 100, dtype=np.uint8), encoding="rgb8", header=header
     )
     color = memory.stream("color", Image)
@@ -292,13 +297,13 @@ with MemoryStore() as memory:
         transform=Transform(translation=Vector3(x=0, y=0, z=0), rotation=Quaternion(x=0, y=0, z=0, w=1)),
     )
     tf.receive_transform(mount)
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[0, 0, 2], [0.01, 0, 2.01]]), header=Header(frame_id="world", stamp=header.stamp)
     )
     rig = Rig(
         cameras={
             "front": RigCamera(
-                info=camera_info_from_intrinsics(1, 1, 2, 2, 4, 4, header=header),
+                info=camera_info.from_intrinsics(1, 1, 2, 2, 4, 4, header=header),
                 color=color,
                 depth=None,
             )
@@ -315,7 +320,7 @@ with MemoryStore() as memory:
         confidence=0.9,
         name="cup",
         pointcloud=cloud,
-        transform=inverse_transform(mount),
+        transform=geometry.inverse_transform(mount),
     )
     trace = LocalizeTrace(
         answers=[[detection]],
@@ -350,18 +355,18 @@ def test_camera_travel_uses_generated_tf_positions(memory):
     color = memory.stream("color", Image)
     for ts in (0.0, 11.0):
         color.append(
-            image_from_array(
+            image_utils.from_array(
                 np.ones((2, 2, 3), dtype=np.uint8),
                 encoding="rgb8",
-                header=Header(stamp=time_from_seconds(ts), frame_id="camera"),
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id="camera"),
             ),
             ts=ts,
         )
     tf = MultiTBuffer(buffer_size=100)
     for ts in range(12):
         tf.receive_transform(_transform("world", "camera", ts * 0.5, ts=float(ts)))
-    info = camera_info_from_intrinsics(
-        1, 1, 1, 1, 2, 2, header=Header(stamp=time_from_seconds(0), frame_id="camera")
+    info = camera_info.from_intrinsics(
+        1, 1, 1, 1, 2, 2, header=Header(stamp=message_time.time_from_seconds(0), frame_id="camera")
     )
     cameras = {"camera": RigCamera(info=info, color=color, depth=None)}
     assert _camera_span(cameras, tf, "world") == 5.5

@@ -16,8 +16,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_view
+from dimos.message_utils import image, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
@@ -63,7 +62,7 @@ def test_filters_preserve_custom_point_records(make_filter):
     )
     result = make_filter()(
         Detection2DBBox(
-            image=image_from_array(
+            image=image.from_array(
                 np.zeros((4, 4, 3), dtype=np.uint8), encoding="rgb8", header=cloud.header
             ),
             bbox=(0, 0, 3, 3),
@@ -93,6 +92,6 @@ def test_filters_preserve_custom_point_records(make_filter):
     result = cdr_decode(cdr_encode(result), PointCloud2)
     assert result.header == cloud.header
     assert result.fields == cloud.fields
-    records = pointcloud_view(result).reshape(-1)
+    records = pointcloud.view(result).reshape(-1)
     assert 0 < len(records) < len(values)
     np.testing.assert_array_equal(records, values[records["id"]])

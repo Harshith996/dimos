@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Array operations on generated occupancy grids."""
+"""Occupancy operations on generated grid messages.
+
+Import with ``from dimos.message_utils import occupancy``. ``view`` borrows
+read-only cells, and ``from_array`` copies cells and metadata into a message.
+``block_max_reduce`` returns its input when the grid is smaller than a block.
+"""
 
 from copy import deepcopy
 from enum import IntEnum
@@ -24,7 +29,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from dimos.message_utils.geometry import pose_matrix
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import MapMetaData, OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
@@ -45,8 +50,8 @@ class CostValues(IntEnum):
     OCCUPIED = 100  # Occupied/lethal space
 
 
-def occupancy_view(msg: OccupancyGrid) -> NDArray[np.int8]:
-    """Borrow a read-only row-major occupancy grid, retaining its owner."""
+def view(msg: OccupancyGrid) -> NDArray[np.int8]:
+    """Borrow read-only row-major cells; source buffer writes remain visible."""
     if len(msg.data) != msg.info.height * msg.info.width:
         raise ValueError("occupancy data length does not match dimensions")
     view = msg.data.view().reshape(msg.info.height, msg.info.width)
@@ -77,7 +82,7 @@ def block_max_reduce(cells: NDArray[np.int8], factor: int) -> NDArray[np.int8]:
     return result
 
 
-def occupancy_extent(message: OccupancyGrid) -> tuple[float, float]:
+def extent(message: OccupancyGrid) -> tuple[float, float]:
     """Return physical width and height, rejecting an invalid grid resolution."""
     info = message.info
     if not math.isfinite(info.resolution) or info.resolution <= 0:
@@ -87,8 +92,8 @@ def occupancy_extent(message: OccupancyGrid) -> tuple[float, float]:
 
 def world_to_grid(message: OccupancyGrid, point: Point) -> tuple[float, float]:
     """Convert a world point to continuous grid coordinates, including origin rotation."""
-    occupancy_extent(message)
-    matrix = pose_matrix(message.info.origin)
+    extent(message)
+    matrix = geometry.pose_matrix(message.info.origin)
     coordinates = np.array([point.x, point.y, point.z])
     if not np.isfinite(coordinates).all():
         raise ValueError("grid coordinates must be finite")
@@ -100,17 +105,17 @@ def world_to_grid(message: OccupancyGrid, point: Point) -> tuple[float, float]:
 
 def grid_to_world(message: OccupancyGrid, coordinates: tuple[float, float]) -> Point:
     """Convert continuous grid coordinates to the grid plane in world coordinates."""
-    occupancy_extent(message)
+    extent(message)
     x, y = coordinates
     if not math.isfinite(x) or not math.isfinite(y):
         raise ValueError("grid coordinates must be finite")
-    result = pose_matrix(message.info.origin) @ np.array(
+    result = geometry.pose_matrix(message.info.origin) @ np.array(
         [x * message.info.resolution, y * message.info.resolution, 0.0, 1.0]
     )
     return Point(x=float(result[0]), y=float(result[1]), z=float(result[2]))
 
 
-def occupancy_from_file(path: Path, *, header: Header, resolution: float = 0.05) -> OccupancyGrid:
+def from_file(path: Path, *, header: Header, resolution: float = 0.05) -> OccupancyGrid:
     """Load a static .npy or grayscale PNG grid with explicit frame/time metadata.
 
     Cells must be ROS occupancy values (-1 unknown, 0..100 known); PNG 255 is
@@ -127,10 +132,10 @@ def occupancy_from_file(path: Path, *, header: Header, resolution: float = 0.05)
         cells[cells == 255] = -1
     else:
         raise ValueError(f"Unsupported occupancy file format: {path.suffix}")
-    return occupancy_from_array(cells, header=header, resolution=resolution)
+    return from_array(cells, header=header, resolution=resolution)
 
 
-def occupancy_from_array(
+def from_array(
     cells: NDArray[Any], *, header: Header, resolution: float, origin: Pose | None = None
 ) -> OccupancyGrid:
     """Copy a 2D ROS occupancy array with explicit map metadata."""
@@ -158,10 +163,10 @@ def occupancy_from_array(
     )
 
 
-def occupancy_cell_value(message: OccupancyGrid, point: Point) -> int:
+def cell_value(message: OccupancyGrid, point: Point) -> int:
     """Read a world cell, retaining the planner's unknown result outside the map."""
     x, y = world_to_grid(message, point)
     column, row = int(x), int(y)
     if not (0 <= column < message.info.width and 0 <= row < message.info.height):
         return CostValues.UNKNOWN
-    return int(occupancy_view(message)[row, column])
+    return int(view(message)[row, column])

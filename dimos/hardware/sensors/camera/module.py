@@ -26,8 +26,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.message_utils.image import image_sharpness
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
@@ -76,7 +75,7 @@ class CameraModule(Module, perception.Camera):
         stream = self.hardware.image_stream()
 
         if self.config.frequency > 0:
-            stream = stream.pipe(quality_barrier(image_sharpness, self.config.frequency))
+            stream = stream.pipe(quality_barrier(image.sharpness, self.config.frequency))
 
         self.register_disposable(
             stream.subscribe(self.color_image.publish),
@@ -88,7 +87,7 @@ class CameraModule(Module, perception.Camera):
 
     def publish_metadata(self) -> None:
         camera_info = deepcopy(self.hardware.camera_info)
-        camera_info.header.stamp = time_from_nanoseconds(time.time_ns())
+        camera_info.header.stamp = message_time.time_from_nanoseconds(time.time_ns())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:

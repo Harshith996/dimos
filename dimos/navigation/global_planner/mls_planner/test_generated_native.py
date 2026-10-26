@@ -28,8 +28,7 @@ import zenoh
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -214,7 +213,8 @@ def test_actual_native_mapper_to_mls_cdr_route_and_weighted_viewer_regions(monke
         sequence = 0
         while not all_ready.is_set() and time.monotonic() < deadline:
             header = Header(
-                frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789 + sequence)
+                frame_id="odom",
+                stamp=message_time.time_from_nanoseconds(1700000000123456789 + sequence),
             )
             sequence += 1
             wires["tf"].publish(
@@ -234,7 +234,7 @@ def test_actual_native_mapper_to_mls_cdr_route_and_weighted_viewer_regions(monke
             )
             sensor_header = deepcopy(header)
             sensor_header.frame_id = "lidar"
-            wires["map/lidar"].publish(pointcloud_from_xyz(points, header=sensor_header))
+            wires["map/lidar"].publish(pointcloud.from_xyz(points, header=sensor_header))
             wires["plan/goal"].publish(PointStamped(header=header, point=Point(x=2, y=2, z=0)))
             all_ready.wait(0.15)
             for module in [mapper, planner]:

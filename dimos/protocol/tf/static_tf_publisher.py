@@ -32,8 +32,7 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -63,7 +62,7 @@ def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[TransformStamped]
                 child_frame_id=name,
                 transform=Transform(
                     translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
-                    rotation=quaternion_from_euler(*rpy),
+                    rotation=geometry.quaternion_from_euler(*rpy),
                 ),
             )
         )
@@ -108,7 +107,7 @@ class StaticTfPublisher(Module):
     async def _publish_loop(self) -> None:
         period = 1.0 / self.config.publish_hz
         while self._running:
-            now = time_from_nanoseconds(time.time_ns())
+            now = message_time.time_from_nanoseconds(time.time_ns())
             for transform in self._transforms:
                 transform.header.stamp = now
             self.tf.publish(TFMessage(transforms=self._transforms))

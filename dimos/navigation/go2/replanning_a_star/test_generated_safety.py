@@ -19,8 +19,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.occupancy import grid_to_world, occupancy_from_array, world_to_grid
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -33,9 +32,9 @@ from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 
 
 def grid_from_cells(cells, rotated=False):
-    return occupancy_from_array(
+    return occupancy.from_array(
         cells,
-        header=Header(frame_id="map", stamp=time_from_nanoseconds(-1)),
+        header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(-1)),
         resolution=0.5,
         origin=Pose(
             position=Point(x=0, y=0, z=0),
@@ -60,7 +59,7 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
     grid = grid_from_cells(cells, rotated)
     grid = decode(encode(grid), type(grid))
     before = encode(grid)
-    point = grid_to_world(grid, (5.25, 5.25))
+    point = occupancy.grid_to_world(grid, (5.25, 5.25))
     expected = find_safe_goal(
         LegacyGrid(cells, resolution=0.5),
         (5.25 * 0.5, 5.25 * 0.5),
@@ -75,7 +74,7 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
 
     assert type(result) is Point
     assert expected is not None
-    coordinate = world_to_grid(grid, result)
+    coordinate = occupancy.world_to_grid(grid, result)
     np.testing.assert_allclose(coordinate, (expected.x / 0.5, expected.y / 0.5), atol=1e-12, rtol=0)
     assert encode(grid) == before
     assert decode(encode(result), Point) == result
@@ -97,7 +96,7 @@ def test_generated_safe_goal_rejects_unknown_cells(algorithm):
 
 
 def make_path():
-    header = Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="map", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     return Path(
         header=deepcopy(header),
         poses=[
@@ -148,14 +147,14 @@ def test_generated_path_clearance_detects_new_obstacle_using_retained_path_mask(
     assert helper.is_obstacle_ahead()
     helper.update_pose_index(3)
     assert not helper.is_obstacle_ahead()
-    assert clear.header.stamp == time_from_nanoseconds(-1)
+    assert clear.header.stamp == message_time.time_from_nanoseconds(-1)
 
 
 def test_contiguous_generated_search_cannot_cross_an_enclosing_obstacle():
     cells = np.zeros((12, 12), dtype=np.int8)
     cells[4:8, 4:8] = 100
     grid = grid_from_cells(cells)
-    goal = grid_to_world(grid, (5.25, 5.25))
+    goal = occupancy.grid_to_world(grid, (5.25, 5.25))
     assert (
         find_safe_goal(
             grid, goal, algorithm="bfs_contiguous", min_clearance=0, connectivity_check_radius=0

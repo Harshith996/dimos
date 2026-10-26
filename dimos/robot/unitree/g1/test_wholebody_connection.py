@@ -21,7 +21,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.message_utils.time import header_now
+from dimos.message_utils import time as message_time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
@@ -71,7 +71,7 @@ def _wire(connection, soft_start_seconds):
 
 def _command():
     return MotorCommandArray(
-        header=header_now(),
+        header=message_time.header_now(),
         q=np.full(_NUM_MOTORS, 1.0, dtype=np.float64),
         dq=np.full(_NUM_MOTORS, 0.0, dtype=np.float64),
         kp=np.full(_NUM_MOTORS, 100.0, dtype=np.float64),

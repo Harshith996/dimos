@@ -15,7 +15,7 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
-from dimos.message_utils.image import image_from_array, image_view
+from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2D, Detection2DArray
@@ -28,7 +28,7 @@ def test_generated_bbox_image_and_wire_round_trip():
     header = Header(frame_id="camera_optical", stamp=Time(sec=1700000000, nanosec=123456789))
     pixels = np.zeros((40, 60, 3), dtype=np.uint8)
     pixels[:, :, 0] = 250
-    image = image_from_array(pixels, encoding="rgb8", header=header)
+    image = image_utils.from_array(pixels, encoding="rgb8", header=header)
     det = Detection2DBBox(
         bbox=(10, 10, 30, 30),
         track_id=7,
@@ -42,12 +42,12 @@ def test_generated_bbox_image_and_wire_round_trip():
     crop = det.cropped_image(padding=2)
     assert (crop.width, crop.height) == (24, 24)
     assert crop.header == header
-    np.testing.assert_array_equal(image_view(crop), pixels[8:32, 8:32])
+    np.testing.assert_array_equal(image_utils.view(crop), pixels[8:32, 8:32])
     annotated = det.annotated_image()
     assert annotated.encoding == "bgr8"
     assert annotated.header == header
-    np.testing.assert_array_equal(image_view(annotated)[39, 59], [0, 0, 250])
-    np.testing.assert_array_equal(image_view(image), pixels)
+    np.testing.assert_array_equal(image_utils.view(annotated)[39, 59], [0, 0, 250])
+    np.testing.assert_array_equal(image_utils.view(image), pixels)
     wire = cdr_decode(cdr_encode(det.to_ros_detection2d()), Detection2D)
     assert wire.header == header
     assert wire.results[0].hypothesis.class_id == "2"
@@ -59,7 +59,7 @@ def test_generated_bbox_image_and_wire_round_trip():
 
 def test_generated_detection_collection_round_trip():
     pixels = np.zeros((40, 60, 3), dtype=np.uint8)
-    image = image_from_array(
+    image = image_utils.from_array(
         pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(nanosec=123, sec=0))
     )
     det = Detection2DBBox(
@@ -81,19 +81,19 @@ def test_generated_detection_collection_round_trip():
     annotated = collection.annotated_image()
     assert annotated.header == image.header
     assert annotated.encoding == "bgr8"
-    assert np.any(image_view(annotated))
-    assert not np.any(image_view(image))
+    assert np.any(image_utils.view(annotated))
+    assert not np.any(image_utils.view(image))
 
 
 def test_generated_point_detection_crop_and_cdr():
     pixels = np.arange(100, dtype=np.uint8).reshape(10, 10)
-    image = image_from_array(
+    image = image_utils.from_array(
         pixels, encoding="mono8", header=Header(frame_id="camera", stamp=Time(nanosec=789, sec=0))
     )
     point = Detection2DPoint(x=1, y=1, name="point", ts=0, image=image)
     assert point.is_valid()
     crop = point.cropped_image(padding=2)
-    np.testing.assert_array_equal(image_view(crop), pixels[:3, :3])
+    np.testing.assert_array_equal(image_utils.view(crop), pixels[:3, :3])
     assert crop.header == image.header
     wire = cdr_decode(cdr_encode(point.to_ros_detection2d()), Detection2D)
     assert wire.header == image.header

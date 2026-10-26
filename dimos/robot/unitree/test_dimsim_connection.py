@@ -27,7 +27,7 @@ import numpy as np
 import pytest
 
 from dimos.core import transport as transport_module
-from dimos.message_utils.image import image_view
+from dimos.message_utils import image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2, PointField
@@ -132,9 +132,9 @@ def test_actual_typescript_browser_image_outputs_decode_with_exact_pixels_and_cl
     color = decode(bytes.fromhex(typescript_results["color"]), Image)
     depth = decode(bytes.fromhex(typescript_results["depth"]), Image)
     assert (color.encoding, color.step) == ("rgba8", 8)
-    np.testing.assert_array_equal(image_view(color), [[[1, 2, 3, 255], [4, 5, 6, 128]]])
+    np.testing.assert_array_equal(image.view(color), [[[1, 2, 3, 255], [4, 5, 6, 128]]])
     assert (depth.encoding, depth.step, depth.is_bigendian) == ("16UC1", 6, 0)
-    np.testing.assert_array_equal(image_view(depth), [[0, 0, 500], [1250, 65535, 0]])
+    np.testing.assert_array_equal(image.view(depth), [[0, 0, 500], [1250, 65535, 0]])
     for value in (color, depth):
         assert (value.header.stamp.sec, value.header.stamp.nanosec, value.header.frame_id) == (
             1_700_000_000,

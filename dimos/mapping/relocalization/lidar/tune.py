@@ -51,13 +51,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.lidar.replay import main as replay_main
-from dimos.message_utils.pointcloud import (
-    pointcloud_from_xyz,
-    pointcloud_to_open3d,
-    pointcloud_with_xyz,
-    pointcloud_xyz,
-)
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
@@ -304,13 +298,15 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
 def premap_index(name: str, voxel: float = 0.2) -> Any:
     """The premap thinned for nearest-neighbour queries, built once."""
     premap, _ = fixtures(name)
-    return pointcloud_to_open3d(premap).voxel_down_sample(voxel)
+    return pointcloud.to_open3d(premap).voxel_down_sample(voxel)
 
 
 def premap_distance(name: str, points: np.ndarray) -> np.ndarray:
     """Per-point distance from ``points`` to the nearest premap point."""
-    cloud = pointcloud_from_xyz(points, header=Header(frame_id="world", stamp=time_from_seconds(0)))
-    return np.asarray(pointcloud_to_open3d(cloud).compute_point_cloud_distance(premap_index(name)))
+    cloud = pointcloud.from_xyz(
+        points, header=Header(frame_id="world", stamp=message_time.time_from_seconds(0))
+    )
+    return np.asarray(pointcloud.to_open3d(cloud).compute_point_cloud_distance(premap_index(name)))
 
 
 def accumulate(
@@ -339,7 +335,7 @@ def accumulate(
 
     mapper = VoxelRayMapper(voxel_size=voxel, max_range=max_range, emit_every=1)
     used = 0
-    last_header = Header(frame_id="world", stamp=time_from_seconds(t0 + start))
+    last_header = Header(frame_id="world", stamp=message_time.time_from_seconds(t0 + start))
     # A cloud with no pose is skipped, not counted: n_frames is a number of
     # registered scans, which is what the window question is about.
     for obs in islice(frames, n_frames * 4):
@@ -348,7 +344,7 @@ def accumulate(
         if obs.pose_tuple is None:
             continue
         x, y, z = obs.pose_tuple[:3]
-        mapper.add_frame_world(np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), (x, y, z))
+        mapper.add_frame_world(np.asarray(pointcloud.xyz(obs.data), dtype=np.float32), (x, y, z))
         used += 1
         last_header = deepcopy(obs.data.header)
         last_header.frame_id = "world"
@@ -357,7 +353,7 @@ def accumulate(
     if used < n_frames:
         raise ValueError(f"only {used} of {n_frames} scans had a pose from {start:.0f}s")
 
-    return pointcloud_from_xyz(mapper.global_map(), header=last_header)
+    return pointcloud.from_xyz(mapper.global_map(), header=last_header)
 
 
 @lru_cache(maxsize=512)
@@ -398,7 +394,7 @@ def coverage(name: str, cloud: PointCloud2) -> float:
     whether the aligner answered it: a probe standing where the premap has
     no points cannot be placed by any parameter setting.
     """
-    distances = premap_distance(name, pointcloud_xyz(cloud))
+    distances = premap_distance(name, pointcloud.xyz(cloud))
     return float((distances < COVERAGE_TOL_M).mean())
 
 
@@ -479,7 +475,7 @@ def identity_error(T: np.ndarray) -> tuple[float, float, float]:
 
 def applied(T: np.ndarray, cloud: PointCloud2) -> np.ndarray:
     """``cloud``'s points where ``T`` puts them."""
-    points: np.ndarray = pointcloud_xyz(cloud) @ T[:3, :3].T + T[:3, 3]
+    points: np.ndarray = pointcloud.xyz(cloud) @ T[:3, :3].T + T[:3, 3]
     return points
 
 
@@ -507,7 +503,7 @@ def run_probes(
     premap, _ = fixtures(name)
     # The premap's preprocessing depends on the config but not the probe, so
     # it is paid once per trial rather than once per attempt.
-    relocalizer = LidarRelocalizer(pointcloud_to_open3d(premap), config)
+    relocalizer = LidarRelocalizer(pointcloud.to_open3d(premap), config)
     rate = scan_rate(name)
     probes: list[Probe] = []
 
@@ -524,7 +520,7 @@ def run_probes(
             frames = min(max(int(elapsed * rate), min_frames), max_frames)
             cloud = local_map(name, frames, start, voxel)
             t0, c0 = time.monotonic(), time.process_time()
-            result = relocalizer.align(pointcloud_to_open3d(cloud))
+            result = relocalizer.align(pointcloud.to_open3d(cloud))
             dt = time.monotonic() - t0
             elapsed += dt
             wall += dt
@@ -537,7 +533,7 @@ def run_probes(
                 break
 
         T = np.asarray(result.transformation)
-        truth_points = pointcloud_xyz(cloud)
+        truth_points = pointcloud.xyz(cloud)
         moved = applied(T, cloud)
         translation, rotation, tilt = identity_error(T)
         probes.append(
@@ -639,7 +635,7 @@ def view(name: str, probes: list[Probe], out: str | None) -> None:
         static=True,
     )
     for probe in probes:
-        aligned = pointcloud_with_xyz(probe.cloud, applied(probe.transform, probe.cloud))
+        aligned = pointcloud.with_xyz(probe.cloud, applied(probe.transform, probe.cloud))
         entity = f"world/probe_{probe.start:04.0f}s"
         rr.log(
             f"{entity}/truth",

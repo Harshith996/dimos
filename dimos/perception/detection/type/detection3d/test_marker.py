@@ -17,8 +17,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection3D
@@ -70,10 +69,10 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
         rvec,
         tvec,
     )
-    image = image_from_array(
+    image = image_utils.from_array(
         np.zeros((100, 120, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(123.456)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(123.456)),
     )
 
     det = Detection3DMarker(
@@ -82,7 +81,7 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
         class_id=999,
         confidence=1.0,
         name="marker_42",
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         center=center,
         size=size,

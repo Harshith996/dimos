@@ -37,9 +37,7 @@ from dimos.mapping.relocalization.lidar.relocalize import DEFAULT_PRESET, PRESET
 from dimos.mapping.relocalization.module import yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.message_utils.geometry import vector_array
-from dimos.message_utils.pointcloud import pointcloud_to_open3d, pointcloud_xyz, transform_cloud
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
@@ -77,7 +75,8 @@ def fix_error(fix: TransformStamped, recorded: TransformStamped) -> tuple[float,
     dyaw = (yaw_deg(fix) - yaw_deg(recorded) + 180.0) % 360.0 - 180.0
     return dyaw, float(
         np.linalg.norm(
-            vector_array(fix.transform.translation) - vector_array(recorded.transform.translation)
+            geometry.vector_array(fix.transform.translation)
+            - geometry.vector_array(recorded.transform.translation)
         )
     )
 
@@ -142,7 +141,7 @@ def replay(
     ray = RayTraceMap(voxel_size=voxel_size)
     frames = lidar.transform(pose_from_tf(tf, world_frame)).transform(ray)
 
-    relocalizer = LidarRelocalizer(pointcloud_to_open3d(premap), PRESETS[preset])
+    relocalizer = LidarRelocalizer(pointcloud.to_open3d(premap), PRESETS[preset])
     recorded = recorded_fix(store, world_frame, MAP_FRAME)
 
     attempts: list[ReplayAttempt] = []
@@ -160,7 +159,7 @@ def replay(
         rr.set_time(TIMELINE, timestamp=obs.ts)
         rr.log(
             "world/local_map",
-            voxel_map_points(np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), voxel_size),
+            voxel_map_points(np.asarray(pointcloud.xyz(obs.data), dtype=np.float32), voxel_size),
         )
         if (
             fix is not None
@@ -169,7 +168,7 @@ def replay(
         ):
             continue
         next_attempt = obs.ts + reloc_interval
-        fix_attempt = relocalizer.attempt(pointcloud_to_open3d(obs.data), world_frame, MAP_FRAME)
+        fix_attempt = relocalizer.attempt(pointcloud.to_open3d(obs.data), world_frame, MAP_FRAME)
         attempts.append(ReplayAttempt(obs.ts - t0, fix_attempt.result.fitness, fix_attempt.fix))
         rr.log(FITNESS_SERIES, rr.Scalars(fix_attempt.result.fitness))
         _print_attempt(attempts[-1], recorded)
@@ -177,12 +176,14 @@ def replay(
             continue
         fix, fix_ts = fix_attempt.fix, obs.ts
         stop_at = obs.ts + after_s
-        log_loaded_map(np.asarray(pointcloud_xyz(transform_cloud(premap, fix)), dtype=np.float32))
+        log_loaded_map(
+            np.asarray(pointcloud.xyz(pointcloud.transform(premap, fix)), dtype=np.float32)
+        )
         if recorded is not None:
             rr.log(
                 "world/recorded_map",
                 rr.Points3D(
-                    pointcloud_xyz(transform_cloud(premap, recorded)),
+                    pointcloud.xyz(pointcloud.transform(premap, recorded)),
                     colors=[RECORDED_MAP_COLOR],
                     radii=PREMAP_POINT_RADIUS,
                 ),
@@ -198,10 +199,10 @@ def write_loaded_map(
     if stream.count() > 0:
         print(f"{LOADED_MAP_STREAM} already has {stream.count()} messages, leaving it")
         return False
-    placed = transform_cloud(premap, fix)
+    placed = pointcloud.transform(premap, fix)
     placed.header = deepcopy(placed.header)
     placed.header.frame_id = world_frame
-    placed.header.stamp = time_from_seconds(ts)
+    placed.header.stamp = message_time.time_from_seconds(ts)
     stream.append(placed, ts=ts)
     print(
         f"wrote {placed.width * placed.height} placed premap points to {LOADED_MAP_STREAM} at {ts:.3f}"

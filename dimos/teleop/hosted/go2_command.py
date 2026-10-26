@@ -35,7 +35,7 @@ from unitree_webrtc_connect.constants import SPORT_CMD
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import header_now, to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -366,7 +366,7 @@ class Go2CommandModule(Module):
             self._send_ack(nonce, False)
             return
         pose = PoseStamped(
-            header=header_now("world"),
+            header=message_time.header_now("world"),
             pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
         try:
@@ -397,7 +397,7 @@ class Go2CommandModule(Module):
         if self._estopped:
             return
         try:
-            stamp_ns = to_nanoseconds(twist.header.stamp)
+            stamp_ns = message_time.to_nanoseconds(twist.header.stamp)
         except (ValueError, TypeError):
             return
         if not isinstance(stamp_ns, int):

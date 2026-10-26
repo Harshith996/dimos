@@ -68,7 +68,7 @@ def main(
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
-    from dimos.message_utils.image import image_sharpness
+    from dimos.message_utils import image
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype
@@ -130,7 +130,7 @@ def main(
         # Pass 3: marker detections (filtered same way as `dimos map`).
         xf = DetectMarkers(camera_info=cam_info, marker_length_m=marker_size)
         pipeline: Stream[Any] = color_image.transform(
-            QualityWindow(image_sharpness, window=quality_window)
+            QualityWindow(image.sharpness, window=quality_window)
         )
         if marker_max_speed > 0:
             pipeline = pipeline.transform(
@@ -196,7 +196,7 @@ def main(
                 smoothing_window=smoothing_window,
             )
             pipeline_tracked: Stream[Any] = color_image.transform(
-                QualityWindow(image_sharpness, window=quality_window)
+                QualityWindow(image.sharpness, window=quality_window)
             )
             if marker_max_speed > 0:
                 pipeline_tracked = pipeline_tracked.transform(

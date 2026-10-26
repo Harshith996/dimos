@@ -44,7 +44,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point as CdrPoint,
     Pose as CdrPoseValue,
@@ -810,7 +810,7 @@ class MujocoSimModule(
         if shm is None:
             return
 
-        stamp = time_from_nanoseconds(time.time_ns())
+        stamp = message_time.time_from_nanoseconds(time.time_ns())
         # Odom - when the MJCF has a free-joint root, publish base pose
         # every step.  Without this, downstream consumers (viser viewer,
         # nav stack) only see joint articulation, not base translation

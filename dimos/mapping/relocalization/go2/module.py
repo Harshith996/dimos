@@ -23,13 +23,7 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarWindowRelocalization
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.message_utils.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_xyz,
-    pointcloud_xyz,
-    transform_cloud,
-)
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.reactive import backpressure
@@ -64,22 +58,22 @@ class Go2Relocalization(LidarWindowRelocalization):
     def _on_merge_input(self, pair: tuple[PointCloud2, TransformStamped]) -> None:
         local, tf = pair
         assert self.premap is not None
-        premap_in_world = transform_cloud(self.premap, tf)
+        premap_in_world = pointcloud.transform(self.premap, tf)
         if self.config.use_carving:
             grid = VoxelGrid(
                 carve_columns=True, frame_id=local.header.frame_id, show_startup_log=False
             )
             try:
                 grid.add_points(
-                    np.asarray(pointcloud_xyz(premap_in_world), dtype=np.float32),
-                    timestamp=to_seconds(premap_in_world.header.stamp),
+                    np.asarray(pointcloud.xyz(premap_in_world), dtype=np.float32),
+                    timestamp=message_time.to_seconds(premap_in_world.header.stamp),
                 )
                 grid.add_points(
-                    np.asarray(pointcloud_xyz(local), dtype=np.float32),
-                    timestamp=to_seconds(local.header.stamp),
+                    np.asarray(pointcloud.xyz(local), dtype=np.float32),
+                    timestamp=message_time.to_seconds(local.header.stamp),
                 )
                 self.merged_map.publish(
-                    pointcloud_from_xyz(
+                    pointcloud.from_xyz(
                         grid.get_global_pointcloud().point["positions"].numpy(),
                         header=deepcopy(local.header),
                     )
@@ -87,4 +81,4 @@ class Go2Relocalization(LidarWindowRelocalization):
             finally:
                 grid.dispose()
         else:
-            self.merged_map.publish(concatenate_clouds(local, premap_in_world))
+            self.merged_map.publish(pointcloud.concatenate(local, premap_in_world))

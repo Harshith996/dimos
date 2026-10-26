@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from dimos.message_utils.image import image_from_file
+from dimos.message_utils import image as image_utils
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
@@ -24,7 +24,7 @@ def test_person_ros_confidence(detection_assets) -> None:
 
     # Load test image
     image_path = detection_assets("cafe.jpg")
-    image = image_from_file(image_path)
+    image = image_utils.from_file(image_path)
 
     # Run pose detection
     detector = YoloPersonDetector(model_path=str(detection_assets("models_yolo")), device="cpu")

@@ -22,7 +22,7 @@ import numpy as np
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.transform import FnTransformer, Transformer
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
+from dimos.message_utils import pointcloud
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
@@ -89,7 +89,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
         header = deepcopy(last_obs.data.header)
         header.frame_id = "world"
-        cloud = pointcloud_from_xyz(positions, header=header)
+        cloud = pointcloud.from_xyz(positions, header=header)
         return last_obs.derive(data=cloud, tags=tags)
 
     def __call__(
@@ -106,7 +106,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
             mapper.add_frame(
-                np.asarray(pointcloud_xyz(obs.data), dtype=np.float32), (x, y, z), (qx, qy, qz, qw)
+                np.asarray(pointcloud.xyz(obs.data), dtype=np.float32), (x, y, z), (qx, qy, qz, qw)
             )
             last_obs = obs
             count += 1

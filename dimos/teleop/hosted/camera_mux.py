@@ -36,8 +36,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.image import image_from_array, image_to_bgr, image_to_rgb, image_view
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -144,12 +143,12 @@ class CameraMuxModule(Module):
             tiles = []
             for im in imgs:
                 h, w = im.height, im.width
-                data = image_view(im)
+                data = image.view(im)
                 if im.encoding != imgs[0].encoding and {im.encoding, imgs[0].encoding} <= {
                     "rgb8",
                     "bgr8",
                 }:
-                    data = image_to_bgr(im) if imgs[0].encoding == "bgr8" else image_to_rgb(im)
+                    data = image.to_bgr(im) if imgs[0].encoding == "bgr8" else image.to_rgb(im)
                 tiles.append(
                     cv2.resize(data, (max(1, int(w * target_h / h)), target_h))
                     if h != target_h
@@ -158,10 +157,10 @@ class CameraMuxModule(Module):
             return self._even_dims(
                 self._stamp(
                     self._downscale(
-                        image_from_array(
+                        image.from_array(
                             np.hstack(tiles),
                             encoding=imgs[0].encoding,
-                            header=header_now("camera_mux"),
+                            header=message_time.header_now("camera_mux"),
                         )
                     )
                 )
@@ -174,14 +173,14 @@ class CameraMuxModule(Module):
     def _even_dims(img: Image) -> Image:
         """Crop to even width/height — an odd composite crashes libx264's
         avcodec_open2 when a camera switch reopens the encoder."""
-        data = image_view(img)
+        data = image.view(img)
         if data.ndim < 2:
             return img
         h, w = data.shape[:2]
         if h % 2 == 0 and w % 2 == 0:
             return img
         data = data[: h - (h % 2), : w - (w % 2)]
-        return image_from_array(
+        return image.from_array(
             np.ascontiguousarray(data), encoding=img.encoding, header=deepcopy(img.header)
         )
 
@@ -194,8 +193,8 @@ class CameraMuxModule(Module):
         h, w = img.height, img.width
         if w <= max_w:
             return img
-        out = cv2.resize(image_view(img), (max_w, max(1, int(h * max_w / w))))
-        return image_from_array(out, encoding=img.encoding, header=deepcopy(img.header))
+        out = cv2.resize(image.view(img), (max_w, max(1, int(h * max_w / w))))
+        return image.from_array(out, encoding=img.encoding, header=deepcopy(img.header))
 
     def _stamp(self, img: Image) -> Image:
         """Append (not overwrite) a bottom strip encoding capture time as B/W
@@ -209,7 +208,7 @@ class CameraMuxModule(Module):
         ]
 
         s = _STAMP_CELL_PX
-        data = image_view(img)
+        data = image.view(img)
         if data.ndim < 2 or data.shape[1] < _STAMP_CELLS * s:
             if not self._stamp_warned:
                 self._stamp_warned = True
@@ -227,7 +226,7 @@ class CameraMuxModule(Module):
             if bit:
                 strip[:, i * s : (i + 1) * s] = 255
         out = np.vstack([data, strip])
-        return image_from_array(out, encoding=img.encoding, header=deepcopy(img.header))
+        return image.from_array(out, encoding=img.encoding, header=deepcopy(img.header))
 
     def _set_cam_selection(self, data: bytes) -> None:
         """camera_select kind → filter to known cams, republish immediately so

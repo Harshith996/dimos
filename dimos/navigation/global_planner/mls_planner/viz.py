@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import rerun as rr
 
-from dimos.message_utils.pointcloud import pointcloud_view, pointcloud_xyz
+from dimos.message_utils import pointcloud
 from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
@@ -84,8 +84,8 @@ def render_surface_region(
     (world frame) are dropped, to show one storey of a multi-storey map.
     """
     cloud = msg.cloud
-    pts = np.asarray(pointcloud_xyz(cloud), dtype=np.float32)
-    records = pointcloud_view(cloud)
+    pts = np.asarray(pointcloud.xyz(cloud), dtype=np.float32)
+    records = pointcloud.view(cloud)
     clearance = (
         np.asarray(records["intensity"].ravel(), dtype=np.float32)
         if "intensity" in (records.dtype.names or ())
@@ -117,7 +117,7 @@ def graph_nodes(pts: NDArray[np.float32]) -> Archetype:
 
 
 def render_nodes(msg: PointCloud2) -> Archetype:
-    return graph_nodes(np.asarray(pointcloud_xyz(msg), dtype=np.float32))
+    return graph_nodes(np.asarray(pointcloud.xyz(msg), dtype=np.float32))
 
 
 def _weighted_lines(strips: NDArray[np.float32], weights: NDArray[np.float64]) -> Archetype:
