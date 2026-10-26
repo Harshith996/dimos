@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from threading import RLock
+from typing import TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,13 +22,19 @@ from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 
+_GridGeometry: TypeAlias = tuple[
+    tuple[int, ...], float, str, tuple[float, float, float], tuple[float, float, float, float]
+]
+_PathGeometry: TypeAlias = tuple[str, tuple[tuple[float, float, float], ...]]
+
 
 class PathClearance:
     _costmap: OccupancyGrid | None = None
     _last_costmap: OccupancyGrid | None = None
     _path_lookup_distance: float = 3.0
     _max_distance_cache: float = 1.0
-    _last_used_shape: tuple[int, ...] | None = None
+    _last_grid_geometry: _GridGeometry | None = None
+    _last_path_geometry: _PathGeometry | None = None
     _last_mask: NDArray[np.bool_] | None = None
     _last_used_pose: int | None = None
     _robot_width: float
@@ -55,37 +62,53 @@ class PathClearance:
             costmap = self._costmap
             pose_index = self._pose_index
 
-        assert costmap is not None
+            assert costmap is not None
+            position = costmap.origin.position
+            orientation = costmap.origin.orientation
+            # Snapshot values: callers may update a map or path in place.
+            grid_geometry: _GridGeometry = (
+                costmap.grid.shape,
+                costmap.resolution,
+                costmap.frame_id,
+                (position.x, position.y, position.z),
+                (orientation.x, orientation.y, orientation.z, orientation.w),
+            )
+            path_geometry: _PathGeometry = (
+                self._path.frame_id,
+                tuple((p.position.x, p.position.y, p.position.z) for p in self._path.poses),
+            )
 
-        if (
-            self._last_mask is not None
-            and self._last_used_pose is not None
-            and costmap.grid.shape == self._last_used_shape
-            and self._pose_distance(self._last_used_pose, pose_index) < self._max_distance_cache
-        ):
+            if (
+                self._last_mask is not None
+                and self._last_used_pose is not None
+                and grid_geometry == self._last_grid_geometry
+                and path_geometry == self._last_path_geometry
+                and self._pose_distance(self._last_used_pose, pose_index) < self._max_distance_cache
+            ):
+                return self._last_mask
+
+            self._last_mask = make_path_mask(
+                occupancy_grid=costmap,
+                path=self._path,
+                robot_width=self._robot_width,
+                pose_index=pose_index,
+                max_length=self._path_lookup_distance,
+            )
+
+            self._last_grid_geometry = grid_geometry
+            self._last_path_geometry = path_geometry
+            self._last_used_pose = pose_index
+
             return self._last_mask
-
-        self._last_mask = make_path_mask(
-            occupancy_grid=costmap,
-            path=self._path,
-            robot_width=self._robot_width,
-            pose_index=pose_index,
-            max_length=self._path_lookup_distance,
-        )
-
-        self._last_used_shape = costmap.grid.shape
-        self._last_used_pose = pose_index
-
-        return self._last_mask
 
     def is_obstacle_ahead(self) -> bool:
         with self._lock:
             costmap = self._costmap
 
-        if costmap is None:
-            return True
+            if costmap is None:
+                return True
 
-        return bool(np.any(costmap.grid[self.mask] == CostValues.OCCUPIED))
+            return bool(np.any(costmap.grid[self.mask] == CostValues.OCCUPIED))
 
     def _pose_distance(self, index1: int, index2: int) -> float:
         p1 = self._path.poses[index1].position
