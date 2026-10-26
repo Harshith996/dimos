@@ -31,11 +31,10 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
-    DualOpenYamCollectionRecorder,
-    DualOpenYamHomeButtonModule,
     dual_openyam_wrist_camera,
     teleop_webxr_dual_openyam_collection,
 )
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollectionRecorder
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -93,7 +92,7 @@ def _dual_openyam_cameras_if_real() -> tuple[Blueprint, ...]:
         return ()
     return (
         # The D405 has no 848x480 at 15 fps mode.
-        RealSenseCamera.blueprint(width=640, height=480, fps=30, enable_pointcloud=False),
+        RealSenseCamera.blueprint(width=640, fps=30),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
     )
@@ -106,7 +105,6 @@ learning_collect_webxr_dual_openyam = autoconnect(
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM"),
-    DualOpenYamHomeButtonModule.blueprint(),
     teleop_webxr_dual_openyam_collection,
     *_dual_openyam_cameras_if_real(),
 )

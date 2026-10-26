@@ -88,7 +88,7 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
 # Blueprint configuration (both value forms are accepted)
-dimos run unitree-go2-relocalization --map-file recording_go2
+dimos run unitree-go2 --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
@@ -347,6 +347,10 @@ Upload recordings (or any file) to hosted storage and pull them back. See [Cloud
 | `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
 | `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
 | `status ID` / `quota` | Upload state and parts on server / storage quota |
+
+### `dimos host`
+
+Run this machine as a Host for [distributed runs](/docs/usage/distributed/index.md). See [`dimos host`](/docs/usage/distributed/cli.md).
 
 ## Agent & MCP Commands
 

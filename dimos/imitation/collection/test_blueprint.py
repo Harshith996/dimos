@@ -30,8 +30,8 @@ from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
-    DualOpenYamCollectionRecorder,
 )
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollectionRecorder
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
