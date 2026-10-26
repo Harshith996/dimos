@@ -109,14 +109,29 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   The task commands through `command_gains`, 1/K per axis of the measured plant
   (`alfred_posedomain.json`: yaw 2.85x the command, translation 0.77x); without them a yaw
   segment aborts, so a checkout without the artifact runs uncompensated with a warning.
-- The planner's obstacle map is the D455's self-filtered cloud voxelised at 5 cm within 1.5 m of
-  the camera, cleared aggressively (`grace_depth` 0.05, `graze_cos` 0.3): a table the robot
-  drove past used to stay in the map under the bench. The map is built in `odom` on wheel
-  odometry and re-expressed in `base_link` for the planner at each map's stamp (the box filter
-  does it; the planner drops a map in any other frame), so the bench stays put when the base
-  drives: pinned to `base_link` it rode along, and after a whole-body pick every plan was
-  COLLISION_AT_START until the camera had re-seen the bench. Open fingers sit 4.4 cm a side
-  outside the self-filter model (its fingers are fixed closed), covered by 5 cm of padding.
+- The planner's obstacle map is the D455's self-filtered cloud voxelised at 2 cm within 1.5 m of
+  the camera, and the planner builds its octree at the same 2 cm (`MANIP_VOXEL_M`, one constant
+  for both). Tuned on 60 s of the bench replayed through the mapper (2026-10-25): at 5 cm the
+  bench's layer reached 3 cm above its surface, in the way of a low grasp, a can was one or two
+  cells, and the Desktop drew the bench as dots 5 cm apart; at 2 cm the layer reaches 1.5 cm, a
+  can is three cells across, and the map holds ~3400 voxels. The mapper then costs 19% of a core
+  (13% at 5 cm, both measured on the live cloud), a collision check 2.5 ms (2.1 ms with no map),
+  installing a map in the planner 35 ms once a second. At 1.5 cm the voxels nearly doubled again
+  for 3 mm less layer, and 14% of a removed can never cleared.
+- Clearing is for a picked object, whose voxels have to go: `grace_depth` 0.05 (a removed can is
+  gone in 3 s; at 0.1 a third of it stayed for good), `graze_cos` 0.5 (rays within 30 degrees of
+  a surface spare it; at 0.7 a removed can's top, seen as shallow as the bench, never quite
+  cleared) and no shadow: rays carried past a return carved the layer under the bench top, and
+  wherever the top straddles two voxel layers 3.4% of the map changed from one map to the next
+  (0.65% without).
+- The map is built in `odom` on wheel odometry and re-expressed in `base_link` for the planner at
+  each map's stamp (the box filter does it; the planner drops a map in any other frame), so the
+  bench stays put when the base drives: pinned to `base_link` it rode along, and after a
+  whole-body pick every plan was COLLISION_AT_START until the camera had re-seen the bench. The
+  octree snaps each voxel onto `base_link`'s grid, so once the base has turned since the run
+  started some of the bench lands in neighbouring cells: 18% of its cells were empty with the
+  base 42 degrees round (30% at 5 cm), holes of 2 cm. Open fingers sit 4.4 cm a side outside the
+  self-filter model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size.
 
 ## How the base is shared
 

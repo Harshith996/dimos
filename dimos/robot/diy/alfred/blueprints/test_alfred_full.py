@@ -82,6 +82,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     BASE_FRAME,
     BASE_TRAJECTORY_TASK_NAME,
     BASE_VELOCITY_TASK_NAME,
+    MANIP_VOXEL_M,
     NAV_FOLLOWER_TASK_NAME,
     ODOM_FRAME,
     OPENARM_LEFT_CAN_ENV,
@@ -326,9 +327,14 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert manip_map.kwargs["world_frame"] == ODOM_FRAME, "a drive must not move the bench"
     assert manip_map.kwargs["tf_match_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
     assert manip_map.kwargs["max_range"] <= 1.5, "the bench, not the floor beyond it"
-    assert manip_map.kwargs["grace_depth"] <= 0.05 and manip_map.kwargs["graze_cos"] <= 0.3, (
-        "clearing must reach a bench seen at 25-54 degrees"
+    assert manip_map.kwargs["voxel_size"] == MANIP_VOXEL_M <= 0.02, (
+        "at 5 cm the bench's layer reached 3 cm above its surface, in the way of a low grasp"
     )
+    assert manip_map.kwargs["grace_depth"] <= 0.05, "a picked object's voxels must clear"
+    assert manip_map.kwargs["graze_cos"] <= 0.5, (
+        "a removed can's top is seen as shallow as the bench"
+    )
+    assert manip_map.kwargs["shadow_depth"] == 0.0, "a shadow carves the layer under the bench top"
     assert manip_map.kwargs["global_emit_every"] >= 5, "the planner rebuilds its octree per map"
     (box_filter,) = _atoms(alfred_full_perception, PointCloudBoxFilter)
     assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the planner drops any other frame"
@@ -337,6 +343,9 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     )
     (planner,) = _atoms(alfred_full_perception, ManipulationModule)
     assert planner.kwargs["world_frame"] == box_filter.kwargs["target_frame"]
+    assert planner.kwargs["voxel_map_resolution"] == manip_map.kwargs["voxel_size"], (
+        "the octree's cells are the map's voxels"
+    )
     (self_filter,) = _atoms(alfred_full_perception, RoboPlanPointCloudSelfFilter)
     assert self_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
@@ -414,6 +423,9 @@ def test_the_bench_stack_runs_without_the_lidar() -> None:
     )
     (relay,) = _atoms(alfred_manipulation, WheelOdometryRelay)
     assert (relay.kwargs["world_frame"], relay.kwargs["base_frame"]) == ("odom", BASE_FRAME)
+    (voxel_map,) = _atoms(alfred_manipulation, RayTracingVoxelMap)
+    (planner,) = _atoms(alfred_manipulation, ManipulationModule)
+    assert planner.kwargs["voxel_map_resolution"] == voxel_map.kwargs["voxel_size"]
 
 
 def test_the_driving_stack_runs_without_the_arms() -> None:

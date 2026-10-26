@@ -45,7 +45,12 @@ from dimos.perception.experimental.object_scene_registration import ObjectSceneR
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.diy.alfred.alfred_model import ALFRED_SELF_FILTER_MODEL
-from dimos.robot.diy.alfred.blueprints.alfred_full import BASE_FRAME, ODOM_FRAME, alfred_full
+from dimos.robot.diy.alfred.blueprints.alfred_full import (
+    BASE_FRAME,
+    MANIP_VOXEL_M,
+    ODOM_FRAME,
+    alfred_full,
+)
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 from dimos.robot.diy.alfred.gripper import (
     OPENARM_V10_GRASP_FRAME_TO_TCP,
@@ -59,7 +64,7 @@ RealSenseCamera.dedicated_worker = True
 
 MANIP_VOXEL_MAP = "ManipVoxelMap"
 """The second voxel map's instance name; its streams are renamed so the nav map's stay put."""
-MANIP_VOXEL_M = 0.05  # ManipulationModule's voxel_map_resolution default, so the octrees line up
+# The map's voxels are MANIP_VOXEL_M (alfred_full), the planner's octree resolution.
 # Measured from the camera on the mast (1.55 m up): to the far edge of the bench, not the
 # floor beyond it. At 2.5 m the map held 7000 voxels, a third of them floor and far walls,
 # and the planner spent 160 ms a collision check on them (2026-10-25).
@@ -68,7 +73,8 @@ DEPTH_TRUNC_M = 3.0
 
 MOUNT_TF_TOLERANCE_S = 0.3
 MANIP_GRACE_DEPTH_M = 0.05
-MANIP_GRAZE_COS = 0.3
+MANIP_GRAZE_COS = 0.5
+MANIP_SHADOW_DEPTH_M = 0.0
 SELF_FILTER_PADDING_M = 0.05
 MANIP_MAP_EMIT_EVERY = 5  # of the camera's 5 Hz: 1 Hz
 # How far an OpenArm gets on its own: shoulder (link1, on tf from the planner) to wrist with
@@ -185,12 +191,18 @@ def alfred_perception_modules(
             # 5 Hz rigid base_link -> camera; at the default 0.1 s most clouds found no mount
             # edge close enough to their stamp and were dropped.
             tf_match_tolerance_s=MOUNT_TF_TOLERANCE_S,
-            # Clearing has to reach the bench. The defaults spare every voxel within 20 cm of
-            # a return (the whole object layer on the top) and never clear a miss on a surface
-            # seen below 45 degrees, and the camera sees the entire bench at 25-54: a table
-            # the robot drove past stayed in the map for the rest of the run.
+            # Clearing, tuned on 60 s of this camera on the bench replayed through the mapper
+            # (2026-10-25). A picked object has to leave the map, and a voxel within grace_depth
+            # of a return is never cleared: at 20 cm (the default) or 10 cm a removed can kept
+            # 67% or 34% of its voxels for good, at 5 cm it is gone in 3 s. graze_cos 0.5 spares
+            # a surface from rays within 30 degrees of it (the far bench); at 0.7 a removed
+            # can's top, seen as shallow as the bench, never quite cleared. No shadow: rays
+            # carried past a return carved the layer under the bench top, which flickered
+            # wherever the top straddles two voxel layers (3.4% of the workspace map changed
+            # from one map to the next; 0.65% without).
             grace_depth=MANIP_GRACE_DEPTH_M,
             graze_cos=MANIP_GRAZE_COS,
+            shadow_depth=MANIP_SHADOW_DEPTH_M,
             # ManipulationModule rebuilds its octree under the planner's lock for every map it
             # gets (60-70 ms each on the Orin): once a second is plenty for a bench.
             global_emit_every=MANIP_MAP_EMIT_EVERY,

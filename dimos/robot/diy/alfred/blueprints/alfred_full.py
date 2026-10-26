@@ -110,6 +110,11 @@ ARM_VELOCITY_LIMIT_RAD_S = 0.5  # the speed the arms were hardware-tested at
 
 ODOM_FRAME = "odom"
 BASE_FRAME = "base_link"
+# Edge of the arm map's voxels (alfred_full_perception's D455 map) and of the octree the
+# planner builds from them: the two must be equal. At 2 cm the bench's layer reaches 1.5 cm
+# above the real surface (3 cm at 5 cm voxels), a 5 cm can spans 3 cells instead of 1 or 2,
+# and a collision check costs 2.5 ms against 2.1 ms with no map (2026-10-25, see the README).
+MANIP_VOXEL_M = 0.02
 
 ALFRED_BASE_HARDWARE_ID = "flowbase"
 BASE_TRAJECTORY_TASK_NAME = "base_trajectory"
@@ -365,6 +370,7 @@ def alfred_arm_modules() -> tuple[Any, ...]:
             model=alfred_planar_model_config(tf_extra_links=ALFRED_MOVING_LINKS),
             visualization={"backend": "none"},
             world_frame=BASE_FRAME,
+            voxel_map_resolution=MANIP_VOXEL_M,
             static_transforms=[_WORLD_IS_BASE],
             joint_state_defaults=dict.fromkeys(ALFRED_PLANAR_BASE.joint_names, 0.0),
             gripper_tasks=ALFRED_GRIPPER_TASKS,
