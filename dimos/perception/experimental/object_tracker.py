@@ -144,11 +144,11 @@ class ObjectTracking(Module):
         def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
             rgb_msg, depth_msg = (item.value for item in frames_tuple)
             with self._frame_lock:
-                self._latest_rgb_frame = image_utils.to_rgb(rgb_msg)
+                self._latest_rgb_frame = image_utils.view(rgb_msg)
 
                 depth_data = image_utils.view(depth_msg)
                 # Convert from millimeters to meters if depth is DEPTH16 format
-                if depth_msg.encoding in ("16UC1", "mono16"):
+                if depth_msg.encoding == "16UC1":
                     depth_data = depth_data.astype(np.float32) / 1000.0
                 self._latest_depth_frame = depth_data
 
@@ -428,7 +428,7 @@ class ObjectTracking(Module):
 
         # Create detections if tracking succeeded
         header = Header(
-            stamp=message_time.time_from_seconds(time.time()), frame_id=self.config.frame_id
+            stamp=message_time.time_from_seconds(time.time()), frame_id=self.frame_id
         )
         detection2darray = Detection2DArray(header=header, detections=[])
         detection3darray = Detection3DArray(header=header, detections=[])

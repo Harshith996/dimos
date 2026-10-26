@@ -29,11 +29,11 @@ from dimos.utils.reactive import backpressure
 
 
 def _timed_image(image: Image) -> TimestampedData[Image]:
-    return TimestampedData(image, message_time.to_nanoseconds(image.header.stamp))
+    return TimestampedData(image, message_time.to_seconds(image.header.stamp))
 
 
 def _timed_detections(detections: Detection2DArray) -> TimestampedData[Detection2DArray]:
-    return TimestampedData(detections, message_time.to_nanoseconds(detections.header.stamp))
+    return TimestampedData(detections, message_time.to_seconds(detections.header.stamp))
 
 
 def _has_detections(detections: Detection2DArray) -> bool:
@@ -49,12 +49,12 @@ def _image_detections(
 def _align_images_and_detections(
     images: Observable[Image], detections: Observable[Detection2DArray]
 ) -> Observable[ImageDetections2D]:
-    # Match source Headers exactly; retain the existing two-second window.
+    # Retain the existing float timestamp matching and two-second window.
     return align_timestamped(
         images.pipe(ops.map(_timed_image)),
         detections.pipe(ops.filter(_has_detections), ops.map(_timed_detections)),
         match_tolerance=0,
-        buffer_size=2_000_000_000,
+        buffer_size=2.0,
     ).pipe(ops.map(_image_detections))
 
 
