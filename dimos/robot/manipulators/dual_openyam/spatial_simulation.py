@@ -47,10 +47,11 @@ from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_JOINTS,
 )
 from dimos.robot.manipulators.dual_openyam.spatial_model import (
-    BASE_POSITIONS,
     artifact_directory,
     write_ik_model,
 )
+from dimos.robot.manipulators.dual_openyam.spatial_station import SpatialStation
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.dual_openyam.teleop_ik import DualOpenYamPinkPoseTargetSolver
 from dimos.robot.manipulators.openyam.simulation import (
     GRIPPER_STROKE,
@@ -62,23 +63,8 @@ from dimos.robot.manipulators.openyam.simulation import (
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.messages import StateFrame, StreamDescriptor
 from dimos.sim2.module import SimulationModule, SimulationModuleConfig, SimulationSpec
-from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import WorldConfig
-
-SCENE = Path(__file__).parent / "scenes" / "spatial.xml"
-WORKSPACE_CAMERA = Camera(
-    "workspace",
-    "workspace",
-    width=480,
-    height=360,
-    rate_hz=10,
-    depth=True,
-    pointcloud=True,
-    shadows=False,
-)
-WRIST_CAMERA = Camera(
-    "wrist", "camera_d405", width=320, height=240, rate_hz=15, depth=False, shadows=False
-)
 
 
 def _station_robot_physics(model: mujoco.MjModel, prefix: str) -> None:
@@ -100,7 +86,7 @@ def _station_robot_physics(model: mujoco.MjModel, prefix: str) -> None:
             model.geom_rgba[geom, 3] = 0
 
 
-def spatial_world(artifact: YamArtifact) -> WorldConfig:
+def spatial_world(artifact: YamArtifact, station: SpatialStation = ANVIL) -> WorldConfig:
     robot = artifact.robot_instance()
     robot = replace(
         robot,
@@ -111,24 +97,32 @@ def spatial_world(artifact: YamArtifact) -> WorldConfig:
             PASSIVE_JOINT: -GRIPPER_STROKE,
         },
         controller={**robot.controller, "gravity_compensation": "ideal_robot_links"},
-        config=replace(
-            robot.config, sensors=(WRIST_CAMERA,), configure_physics=_station_robot_physics
-        ),
     )
     return WorldConfig(
-        scene=SCENE,
+        scene=station.scene,
         robots={
-            side: replace(robot, xyz=BASE_POSITIONS[side], wait_for_first_command=True)
+            side: replace(
+                robot,
+                xyz=station.bases[side].xyz,
+                rpy=station.bases[side].rpy,
+                wait_for_first_command=True,
+                config=replace(
+                    robot.config,
+                    sensors=(station.wrists[side],),
+                    configure_physics=_station_robot_physics,
+                ),
+            )
             for side in DUAL_OPENYAM_SIDES
         },
-        sensors=(WORKSPACE_CAMERA,),
+        sensors=(station.workspace,),
         timestep=artifact.contract.physics_dt,
     )
 
 
 class SpatialSimulationConfig(SimulationModuleConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
-    world: WorldConfig = WorldConfig(scene=SCENE, robots={})
+    station: SpatialStation = ANVIL
+    world: WorldConfig = WorldConfig(scene=ANVIL.scene, robots={})
 
 
 class OpenYamSpatialSimulation(SimulationModule):
@@ -137,7 +131,9 @@ class OpenYamSpatialSimulation(SimulationModule):
     @rpc
     def build(self) -> None:
         if self._runtime is None:
-            self.config.world = spatial_world(load_yam_artifact(self.config.artifact_directory))
+            self.config.world = spatial_world(
+                load_yam_artifact(self.config.artifact_directory), self.config.station
+            )
         super().build()
 
 
@@ -253,6 +249,7 @@ class DualYamSimAdapter:
 
 class SpatialCoordinatorConfig(ControlCoordinatorConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
+    base_poses: dict[str, Mount] = ANVIL.bases
 
 
 class OpenYamSpatialCoordinator(TeleopControlCoordinator):
@@ -269,7 +266,9 @@ class OpenYamSpatialCoordinator(TeleopControlCoordinator):
             return
         artifact = load_yam_artifact(self.config.artifact_directory)
         self._model_directory = TemporaryDirectory(prefix="dimos-yam-ik-")
-        path = write_ik_model(artifact, Path(self._model_directory.name) / "robot.urdf")
+        path = write_ik_model(
+            artifact, Path(self._model_directory.name) / "robot.urdf", self.config.base_poses
+        )
         model = RobotModelConfig(
             model=RobotModel.from_file(path).with_default_joint_acceleration_limit(1.0),
             joint_names=list(DUAL_OPENYAM_ARM_JOINTS),

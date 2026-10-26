@@ -25,12 +25,18 @@ from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.manipulators.dual_openyam.spatial_simulation import WRIST_CAMERA
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.sim2.sensors.camera.device import CameraDevice
-from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
+from dimos.sim2.sensors.camera.module import CameraModuleConfig, SimRGBDCameraModule
+from dimos.sim2.sensors.camera.spec import Camera
+
+
+class SpatialCamerasConfig(CameraModuleConfig):
+    wrists: dict[str, Camera] = ANVIL.wrists
 
 
 class OpenYamSpatialCameras(SimRGBDCameraModule):
+    config: SpatialCamerasConfig
     left_wrist: Out[Image]
     right_wrist: Out[Image]
     left_wrist_info: Out[CameraInfo]
@@ -43,8 +49,8 @@ class OpenYamSpatialCameras(SimRGBDCameraModule):
     def open(self) -> None:
         super().open()
         try:
-            for side in ("left", "right"):
-                self._wrists[side] = CameraDevice(self.reader, WRIST_CAMERA, side)
+            for side, sensor in self.config.wrists.items():
+                self._wrists[side] = CameraDevice(self.reader, sensor, side)
         except BaseException:
             self.close_sensor()
             raise

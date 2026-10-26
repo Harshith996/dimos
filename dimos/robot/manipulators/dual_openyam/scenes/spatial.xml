@@ -50,19 +50,18 @@
   </asset>
   <worldbody>
     <light pos=".1 -.2 1.7" dir="0 0 -1" diffuse=".8 .8 .8" />
-    <geom name="floor" type="plane" pos="0 0 -.75" size="2 2 .02" rgba=".22 .24 .26 1" />
-    <geom name="table" type="box" pos=".29 0 -.025" size=".44 .48 .025" rgba=".86 .86 .83 1" friction=".8 .01 .001" />
-    <geom name="front_rail" type="box" pos="-.13 0 -.045" size=".018 .48 .025" material="black" />
-    <geom name="camera_pole" type="cylinder" pos="-.35 0 .45" size=".015 .45" material="black" />
-    <camera name="workspace" pos="-.35 0 .95" xyaxes="0 -1 0 .70710678 0 .70710678" fovy="58" />
-    <body name="yellow_tray" pos=".465 .24 0" childclass="prop">
+    <geom name="floor" type="plane" pos="0 0 -0.7846" size="2 2 .02" rgba=".22 .24 .26 1" />
+    <geom name="table" type="box" pos="0.29 0 -0.0596" size=".44 .48 .025" rgba=".86 .86 .83 1" friction=".8 .01 .001" />
+    <geom name="front_rail" type="box" pos="-0.13 0 -0.0796" size=".018 .48 .025" material="black" />
+    <geom name="camera_pole" type="cylinder" pos="-.045 .01263 .1803" size=".015 .2149" material="black" />
+    <body name="yellow_tray" pos="0.465 0.24 -0.0346" childclass="prop">
       <geom type="box" pos="0 0 .004" size=".13 .095 .004" material="yellow" />
       <geom type="box" pos="0 -0.095 0.025" size=".134 .004 .025" material="yellow" />
       <geom type="box" pos="0 0.095 0.025" size=".134 .004 .025" material="yellow" />
       <geom type="box" pos="-0.13 0 0.025" size=".004 .095 .025" material="yellow" />
       <geom type="box" pos="0.13 0 0.025" size=".004 .095 .025" material="yellow" />
     </body>
-    <body name="banana" pos="0.235 0.11 0.016" childclass="prop" euler="0 0 -0.2">
+    <body name="banana" pos="0.235 0.11 -0.0186" childclass="prop" euler="0 0 -0.2">
       <freejoint name="banana_free" />
       <inertial pos="0 0 0" mass="0.065" diaginertia="3.25e-05 0.0001625 0.0001625" />
       <geom type="mesh" mesh="banana_surface" contype="0" conaffinity="0" mass="0" group="1" material="banana" />
@@ -75,7 +74,7 @@
       <geom type="ellipsoid" pos="-0.085 0.04 0" size=".005 .004 .004" material="brown" />
       <geom type="ellipsoid" pos="0.085 0.04 0" size=".005 .004 .004" material="brown" />
     </body>
-    <body name="bottle" pos="0.22 0.015 0.024" childclass="prop" euler="0 1.5708 -0.28">
+    <body name="bottle" pos="0.22 0.015 -0.0106" childclass="prop" euler="0 1.5708 -0.28">
       <freejoint name="bottle_free" />
       <inertial pos="0 0 0" mass="0.1" diaginertia="0.00013 0.00013 3.5e-05" />
       <geom type="cylinder" size=".022 .052" pos="0 0 0" material="white" />
@@ -84,7 +83,7 @@
       <geom type="cylinder" size=".011 .012" pos="0 0 .066" material="white" />
       <geom type="cylinder" size=".012 .007" pos="0 0 .081" material="red" />
     </body>
-    <body name="red_mug" pos="0.31 -0.13 0.006" childclass="prop" euler="0 0 -1.5708">
+    <body name="red_mug" pos="0.31 -0.13 -0.0286" childclass="prop" euler="0 0 -1.5708">
       <freejoint name="red_mug_free" />
       <inertial pos="0 0 0" mass="0.07" diaginertia="5.25e-05 5.25e-05 3.94e-05" />
       <geom type="mesh" mesh="mug_surface" contype="0" conaffinity="0" mass="0" group="1" material="red" />
@@ -126,7 +125,7 @@
       <geom type="capsule" fromto="0.0435 0 0.0646506 0.0365058 0 0.0671481" size=".0055" material="red" />
       <geom type="capsule" fromto="0.0365058 0 0.0671481 0.029 0 0.068" size=".0055" material="red" />
     </body>
-    <body name="red_bowl" pos="0.49 -0.235 0.005" childclass="prop">
+    <body name="red_bowl" pos="0.49 -0.235 -0.0296" childclass="prop">
       <freejoint name="red_bowl_free" />
       <inertial pos="0 0 0" mass="0.14" diaginertia="0.0002 0.0002 0.00036" />
       <geom type="mesh" mesh="bowl_surface" contype="0" conaffinity="0" mass="0" group="1" material="red" />
@@ -156,7 +155,7 @@
       <geom type="mesh" rgba="0 0 0 0" group="3" mesh="bowl_wall_22" />
       <geom type="mesh" rgba="0 0 0 0" group="3" mesh="bowl_wall_23" />
     </body>
-    <body name="cordless_drill" pos="0.43 0.005 0.033" childclass="prop" euler="0 0 -0.3">
+    <body name="cordless_drill" pos="0.43 0.005 -0.0016" childclass="prop" euler="0 0 -0.3">
       <freejoint name="cordless_drill_free" />
       <inertial pos="0 0 0" mass="0.38" diaginertia="0.0007 0.001 0.00055" />
       <geom type="capsule" fromto="-.055 .045 0 .035 .045 0" size=".027" material="black" />

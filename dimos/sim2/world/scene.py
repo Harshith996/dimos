@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.sim2.sensors.camera.projection import configure_projection
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.composition import Sensor, mounted_sensors
 from dimos.sim2.sensors.imu.spec import Imu
@@ -108,6 +109,10 @@ def _attach_sensors(spec: mujoco.MjSpec, sensors: tuple[Sensor, ...], owner: str
             )
             if target is None:
                 raise ValueError(f"{owner}/{sensor.name}: unknown {kind} {attachment!r}")
+        if isinstance(sensor, Camera) and sensor.intrinsics is not None:
+            camera = spec.camera(sensor.model_name)
+            assert camera is not None
+            configure_projection(camera, sensor.intrinsics)
         if isinstance(sensor, Imu):
             for suffix, kind_id in (
                 ("gyro", mujoco.mjtSensor.mjSENS_GYRO),

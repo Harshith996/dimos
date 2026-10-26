@@ -14,8 +14,8 @@
 
 """Known YAM geometry and kinematics, independent of the simulated scene.
 
-Frame ledger: metres/radians; world X forward, Y left, Z up. The two fixed
-bases are 0.62 m apart (an example layout, not an office calibration). Each
+Frame ledger: metres/radians; world X forward, Y left, Z up. Fixed base
+translations and rotations come from the shared station configuration. Each
 link frame, joint axis and grasp frame comes from the validated robot MJCF.
 The IK-only URDF retains six hinge coordinates per arm; finger bodies are
 fixed because they do not change the grasp site. It has no dynamics or scene
@@ -37,14 +37,14 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.openyam.simulation import (
     GRIPPER_STROKE,
     MODEL_JOINTS,
     TARGET_LIMITS,
     YamArtifact,
 )
-
-BASE_POSITIONS = {"left": (0.0, 0.31, 0.0), "right": (0.0, -0.31, 0.0)}
+from dimos.sim2.sensors.spec import Mount
 
 
 def artifact_directory() -> Path:
@@ -63,7 +63,9 @@ def _origin(parent: ET.Element, xyz: Any, quat: Any) -> None:
     ET.SubElement(parent, "origin", xyz=_numbers(xyz), rpy=_numbers(rpy))
 
 
-def write_ik_model(artifact: YamArtifact, destination: Path) -> Path:
+def write_ik_model(
+    artifact: YamArtifact, destination: Path, base_poses: dict[str, Mount] = ANVIL.bases
+) -> Path:
     """Derive a frame-only URDF; fail on unsupported source joint semantics."""
     model = mujoco.MjModel.from_xml_path(str(artifact.directory / "robot.xml"))
     root = ET.Element("robot", name="dual_yam_artifact_kinematics")
@@ -95,8 +97,10 @@ def write_ik_model(artifact: YamArtifact, destination: Path) -> Path:
             ET.SubElement(joint, "child", link=name)
             _origin(
                 joint,
-                model.body_pos[body] if parent_id else BASE_POSITIONS[side],
-                model.body_quat[body],
+                model.body_pos[body] if parent_id else base_poses[side].xyz,
+                model.body_quat[body]
+                if parent_id
+                else Rotation.from_euler("xyz", base_poses[side].rpy).as_quat(scalar_first=True),
             )
             if moving:
                 index = MODEL_JOINTS.index(native_name)
@@ -124,7 +128,8 @@ def write_ik_model(artifact: YamArtifact, destination: Path) -> Path:
 class KnownYamModel:
     """Forward kinematics of the robot asset; never reads SimulationModule/world truth."""
 
-    def __init__(self, artifact: YamArtifact) -> None:
+    def __init__(self, artifact: YamArtifact, base_poses: dict[str, Mount] = ANVIL.bases) -> None:
+        self.base_poses = base_poses
         self.model = mujoco.MjModel.from_xml_path(str(artifact.directory / "robot.xml"))
         self.data = {side: mujoco.MjData(self.model) for side in DUAL_OPENYAM_SIDES}
         self.grasp_site = artifact.contract.grasp_site
@@ -164,7 +169,10 @@ class KnownYamModel:
             displacement = positions[f"{side}_arm/gripper"] * GRIPPER_STROKE
             data.joint("left_finger").qpos[0] = displacement
             data.joint("right_finger").qpos[0] = -displacement
-            data.mocap_pos[0] = BASE_POSITIONS[side]
+            data.mocap_pos[0] = self.base_poses[side].xyz
+            data.mocap_quat[0] = Rotation.from_euler("xyz", self.base_poses[side].rpy).as_quat(
+                scalar_first=True
+            )
             mujoco.mj_forward(self.model, data)
             transforms = []
             for geom in self.geoms:

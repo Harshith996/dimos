@@ -12,16 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
+
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.spatial import (
     build_openyam_spatial,
+    build_openyam_spatial_sim,
     openyam_spatial,
 )
+from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+from dimos.robot.manipulators.dual_openyam.spatial_cameras import OpenYamSpatialCameras
+from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
+    OpenYamSpatialCoordinator,
+    OpenYamSpatialSimulation,
+)
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
+from dimos.sim2.sensors.spec import Mount
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -63,3 +74,23 @@ def test_calibrated_robot_model_is_shared_by_physical_ik_limits_and_display(tmp_
     assert [
         task.params["robot_model"] for task in coordinator["tasks"] if task.type == "teleop_ik"
     ] == [model, model]
+
+
+def test_station_variant_reaches_physics_cameras_ik_display_and_recording(tmp_path):
+    station = replace(
+        ANVIL,
+        scene=tmp_path / "another_station.xml",
+        bases={"left": Mount("world", xyz=(0, 0.4, 0)), "right": Mount("world", xyz=(0, -0.4, 0))},
+        wrists={
+            side: replace(camera, width=320, height=240) for side, camera in ANVIL.wrists.items()
+        },
+    )
+    blueprint = build_openyam_spatial_sim(station)
+    kwargs = {atom.module: atom.kwargs for atom in blueprint.blueprints}
+    assert kwargs[OpenYamSpatialSimulation]["station"] == station
+    assert kwargs[OpenYamSpatialCoordinator]["base_poses"] == station.bases
+    assert kwargs[OpenYamSpatialTeleop]["base_poses"] == station.bases
+    assert kwargs[OpenYamSpatialCameras]["sensor"] == station.workspace
+    assert kwargs[OpenYamSpatialCameras]["wrists"] == station.wrists
+    assert kwargs[DualOpenYamCollection]["width"] == 320
+    assert kwargs[DualOpenYamCollection]["height"] == 240

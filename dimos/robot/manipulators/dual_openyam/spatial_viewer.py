@@ -46,7 +46,9 @@ from dimos.robot.manipulators.dual_openyam.spatial_model import (
     KnownYamModel,
     artifact_directory,
 )
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.openyam.simulation import load_yam_artifact
+from dimos.sim2.sensors.spec import Mount
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.teleop.webxr.module import STATIC_DIR, WebXRTeleopConfig
@@ -97,6 +99,7 @@ class CollectionAction(BaseModel):
 class SpatialViewerConfig(WebXRTeleopConfig):
     artifact_directory: Path = Field(default_factory=artifact_directory)
     robot_model: RobotModelConfig | None = None
+    base_poses: dict[str, Mount] = ANVIL.bases
     input_timeout_s: float = 0.3
     observation_timeout_s: float = Field(default=0.5, gt=0)
     max_pixels: int = Field(default=60000, ge=4, le=200000)
@@ -162,7 +165,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         self._robot = (
             KnownUrdfYamModel(self.config.robot_model)
             if self.config.robot_model
-            else KnownYamModel(load_yam_artifact(self.config.artifact_directory))
+            else KnownYamModel(
+                load_yam_artifact(self.config.artifact_directory), self.config.base_poses
+            )
         )
         super().build()
         subscriptions: list[tuple[In[Any], Callable[[Any], None]]] = [

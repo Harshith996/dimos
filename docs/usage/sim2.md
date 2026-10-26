@@ -109,6 +109,44 @@ The external camera publishes on `world/overhead/color_image` with frame
 device name, even with one sensor. Application blueprints explicitly select the
 device they consume; adding a device cannot rename existing streams.
 
+## Camera calibration and device variants
+
+`Camera` describes a mount, output selection and timing. `PinholeIntrinsics`
+describes rectified optics. RGB and RGB-D devices share `CameraDevice` and the
+native renderer; a different brand, focal length or serial number needs only
+configuration. Named MJCF cameras retain their existing optics unless explicit
+intrinsics override them. The override preserves the asset's mechanical mount.
+
+```python skip
+from dimos.sim2.sensors.camera.models.pinhole import PinholeIntrinsics
+
+wrist = Camera(
+    "wrist", "camera_d405", width=640, height=480, depth=False,
+    intrinsics=PinholeIntrinsics(640, 480, 393.83, 393.28, 320.83, 231.77),
+)
+```
+
+Calibration dimensions describe the source image. Rendering at another size
+rescales the same image extent, including pixel-centre offsets. A different
+hardware capture mode may crop or bin the sensor: query its calibration rather
+than assuming a resize. `CameraInfo`, registered depth and point-cloud projection
+use the compiled camera's actual focal lengths and principal point. This includes
+native MJCF `sensorsize`/`focal` calibration, not just vertical FOV.
+
+Mounts use MuJoCo camera axes: X right, Y up, forward along negative Z. Published
+optical frames use X right, Y down, forward along positive Z. Robot/station
+configuration owns physical mount calibration and its provenance.
+
+Current images are ideal instantaneous pinhole observations with aligned metric
+depth and zero lens distortion. RealSense stereo matching, holes, exposure/noise,
+rolling shutter and fisheye optics are not implemented. Genuine new measurement
+behavior belongs in camera-family models/renderers, keeping typed publication and
+the world transport shared. Do not add a brand registry or copy a publisher for
+another calibrated pinhole camera.
+
+See [MuJoCo's camera attributes](https://mujoco.readthedocs.io/en/stable/XMLreference.html#body-camera)
+for the native projection representation.
+
 ## Internal device interface
 
 The world's `describe()` RPC supplies the exact channel descriptor for each

@@ -25,11 +25,20 @@ from dimos.robot.manipulators.dual_openyam.spatial_model import KnownYamModel, w
 from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
     DualYamSimAdapter,
     _station_robot_physics,
+    spatial_world,
 )
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.openyam.conftest import artifact as artifact
-from dimos.robot.manipulators.openyam.simulation import GRIPPER_STROKE, load_yam_artifact
+from dimos.robot.manipulators.openyam.simulation import (
+    GRIPPER_STROKE,
+    MODEL_JOINTS,
+    load_yam_artifact,
+)
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.messages import FrameMetadata, StateFrame, robot_descriptor
+from dimos.sim2.sensors.camera.spec import Camera
+from dimos.sim2.sensors.spec import Mount
+from dimos.sim2.world.scene import load_scene
 
 
 @pytest.mark.parametrize("angle", [-0.5, 0, 0.5])
@@ -47,12 +56,28 @@ def test_ik_frames_match_feedback_rendering_and_fingers_follow_opening(artifact,
     pin.framesForwardKinematics(model, data, q)
     renderer = KnownYamModel(loaded)
     arms = renderer.feedback(positions)
+    scene = tmp_path / "scene.xml"
+    scene.write_text("<mujoco/>")
+    station = replace(
+        ANVIL,
+        scene=scene,
+        wrists={side: Camera("wrist", Mount("link_6")) for side in ("left", "right")},
+    )
+    native = load_scene(spatial_world(loaded, station))
+    native_data = mujoco.MjData(native)
+    for side in ("left", "right"):
+        for name in MODEL_JOINTS[:6]:
+            native_data.joint(f"{side}/{name}").qpos[0] = angle
+    mujoco.mj_forward(native, native_data)
     for side in ["left", "right"]:
         expected = data.oMf[model.getFrameId(f"{side}_grasp_frame")]
         np.testing.assert_allclose(arms[side]["grasp"], expected.translation, atol=1e-12)
         np.testing.assert_allclose(
             Rotation.from_quat(arms[side]["orientation"]).as_matrix(), expected.rotation, atol=1e-12
         )
+        site = native_data.site(f"{side}/grasp_site")
+        np.testing.assert_allclose(site.xpos, expected.translation, atol=1e-12)
+        np.testing.assert_allclose(site.xmat.reshape(3, 3), expected.rotation, atol=1e-12)
     assert renderer.data["left"].joint("left_finger").qpos[0] == pytest.approx(0.2 * GRIPPER_STROKE)
     assert renderer.data["right"].joint("right_finger").qpos[0] == pytest.approx(
         -0.8 * GRIPPER_STROKE

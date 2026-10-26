@@ -32,6 +32,7 @@ from dimos.sim2.client import SimRobotClient
 from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.device import CameraDevice
+from dimos.sim2.sensors.camera.models.pinhole import PinholeIntrinsics
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.imu.device import ImuDevice
@@ -43,6 +44,7 @@ from dimos.sim2.sensors.lidar.raycast import Raycaster
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
+from dimos.sim2.spec import WorldConfig
 from dimos.sim2.world.scene_types import SceneUpdate
 
 
@@ -68,7 +70,13 @@ def _render_snapshot(description, camera_name, pipe):
         renderer = CameraDevice(observer, sensor)
         try:
             messages = {m.port: m.value for m in renderer.poll()}
-            pipe.send((messages["color_image"].data, messages["depth_image"].data))
+            pipe.send(
+                (
+                    messages["color_image"].data,
+                    messages["depth_image"].data,
+                    messages["camera_info"],
+                )
+            )
         finally:
             renderer.close()
     finally:
@@ -107,7 +115,7 @@ def capture(tmp_path):
 @pytest.mark.self_hosted
 def test_world_snapshot_renders_nonblank_rgb_and_metric_depth(worlds, capture):
     world = worlds()
-    rgb, depth = capture(world, "left/view")
+    rgb, depth, _ = capture(world, "left/view")
     assert rgb.shape == (120, 160, 3)
     assert rgb.std() > 15
     assert depth is not None
@@ -177,7 +185,7 @@ def test_scene_devices_attach_without_a_fake_robot(world_config, worlds, capture
     assert world.data.cam_xpos[camera_id] == pytest.approx([1.5, 0, 3])
     site_id = world.model.site("sensor/monitor").id
     assert world.data.site_xpos[site_id] == pytest.approx([0, 0, 0.3])
-    rgb, depth = capture(world, "sensor/overhead")
+    rgb, depth, _ = capture(world, "sensor/overhead")
     assert rgb.std() > 15
     assert np.count_nonzero((depth > 0.1) & (depth < 5)) > 1000
     caster = Raycaster(world.model)
@@ -387,3 +395,39 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
 
     with pytest.raises(TimeoutError):
         SimRobotClient(descriptor).connect(timeout=0.1)
+
+
+@pytest.mark.self_hosted
+@pytest.mark.parametrize("mode", ["fovy", "native", "override", "mounted"])
+def test_published_calibration_projects_rendered_pixels_and_unprojects_depth(
+    tmp_path, worlds, capture, mode
+):
+    scene = tmp_path / "projection.xml"
+    scene.write_text(
+        '<mujoco><visual><headlight ambient="1 1 1" diffuse="0 0 0" specular="0 0 0"/></visual><worldbody>'
+        '<camera name="native" resolution="320 240" sensorsize=".003896 .00214" '
+        'focal=".00193 .00193" principalpixel="19 -13"/>'
+        '<camera name="fovy" fovy="60"/>'
+        '<geom type="box" pos=".15 -.08 -1.005" size=".025 .025 .005" rgba="1 0 0 1"/>'
+        "</worldbody></mujoco>"
+    )
+    calibration = PinholeIntrinsics(320, 240, 180, 210, 192, 87)
+    sensor = Camera(
+        "test",
+        Mount("world") if mode == "mounted" else "fovy" if mode == "fovy" else "native",
+        width=160,
+        height=120,
+        intrinsics=calibration if mode in ("override", "mounted") else None,
+    )
+    world = worlds(config=WorldConfig(scene=scene, robots={}, sensors=(sensor,)))
+    rgb, depth, info = capture(world, sensor.model_name)
+    y, x = np.where((rgb[:, :, 0] > 100) & (rgb[:, :, 1] < 30))
+    assert len(x) > 8
+    fx, fy, cx, cy = info.K[0], info.K[4], info.K[2], info.K[5]
+    np.testing.assert_allclose([x.mean(), y.mean()], [fx * 0.15 + cx, fy * 0.08 + cy], atol=0.6)
+    z = depth[y, x]
+    np.testing.assert_allclose(np.median(z), 1.0, atol=0.001)
+    np.testing.assert_allclose(
+        [np.median((x - cx) / fx * z), np.median((y - cy) / fy * z)], [0.15, 0.08], atol=0.007
+    )
+    assert info.D == [0.0] * 5

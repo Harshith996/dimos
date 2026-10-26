@@ -34,9 +34,10 @@ blueprint to restore the initial arrangement and reconnect the viewer.
 meshes and contact geometry. The ordinary `spatial.json` sidecar names entities
 and containment regions for sim2 inspection. It supplies no object truth to the
 spatial viewer: objects still appear there only through the RGB-D observations.
-The original camera/robot/control wiring is unchanged.
+Station placement and camera calibration come from `stations/anvil.py`.
 
-Native-physics verification on 2026-10-25 loaded this scene with both imported
+Native-physics verification on 2026-10-25, before applying the measured rig poses,
+loaded this scene with both imported
 arms, settled its dynamic props, and exercised a private scripted bottle grasp:
 121 mm lift followed by release into the tray. No attachment welds, grasp
 shortcuts or live operator commands were used. The scripted banana grasp
@@ -114,6 +115,39 @@ Use Ctrl-C in the launching terminal to stop. Restart the blueprint after a
 simulation reset: the device adapter rejects commands from a changed generation.
 
 ## Cameras and episodes
+
+The sim uses `SpatialStation` as deployment configuration. Its scene, arm base
+poses, workspace camera and two wrist cameras are passed by
+`build_openyam_spatial_sim(station)` to the existing physics, camera acquisition,
+IK and display modules. Another station supplies another configuration; sim2
+does not know Anvil's identity, brands or serial numbers.
+
+The default is Anvil's saved provisional 2026-10-15 rig calibration from
+`krishna/test/dual-openyam-bench-calibrated @ 6219280952`. Rig axes are X forward,
+Y left and Z up; distances are metres. Base positions are
+`[-0.00862, 0.22219, -0.00559]` and `[0.00862, -0.22219, 0.00559]`, including
+the right base's calibrated rotation. Physics, generated IK and known robot
+geometry share those poses. Tabletop height is -0.0346 m. The overhead colour
+optical centre is `[-0.01676, 0.01263, 0.4152]`, approximately 450 mm above the
+table and 57 degrees down. The pole and props remain approximate geometry.
+
+All three devices are D405s. Their actual 640x480/15 Hz colour profiles were
+queried on 2026-10-25, without starting capture or moving the arms:
+
+| View | Serial / USB PCI bus | fx / fy (px) | cx / cy (px) |
+| --- | --- | --- | --- |
+| Workspace | 230322272156 / 06:00.0 | 393.050 / 392.458 | 320.025 / 239.588 |
+| Left wrist | 260322272983 / 07:00.0 | 393.831 / 393.284 | 320.834 / 231.774 |
+| Right wrist | 260322276650 / 08:00.0 | 394.494 / 393.975 | 319.549 / 235.353 |
+
+Sim requests that resolution/rate, using each device's full-precision intrinsics.
+It renders ideal rectified pinhole images, not raw distorted D405 pixels or a
+stereo-depth sensor model. Wrist meshes and mounts come from the YAM CAD artifact;
+measured wrist extrinsics are unavailable. The saved overhead/base fit reports
+6.8 mm held-out RMS error but has not been remeasured here. Physical joint-zero
+corrections are not applied to the simulation artifact's unverified joint
+convention. This is a better calibrated station layout, not verified sim-to-real
+mechanics, camera noise or task transfer.
 
 The spatial panel shows labeled left-wrist, workspace and right-wrist images,
 per-arm movement/opening/hold status, and recording state. Stale camera frames

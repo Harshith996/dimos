@@ -24,12 +24,12 @@ from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollecti
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_cameras import OpenYamSpatialCameras
 from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
-    WORKSPACE_CAMERA,
-    WRIST_CAMERA,
     OpenYamSpatialCoordinator,
     OpenYamSpatialSimulation,
 )
+from dimos.robot.manipulators.dual_openyam.spatial_station import SpatialStation
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
+from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 
 
 def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint:
@@ -62,29 +62,41 @@ def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint
 
 openyam_spatial = autoconnect(build_openyam_spatial())
 
-openyam_spatial_sim = (
-    autoconnect(
-        OpenYamSpatialSimulation.blueprint(sim_id="openyam-spatial"),
-        OpenYamSpatialCoordinator.blueprint(instance_name="SpatialControlCoordinator"),
-        OpenYamSpatialTeleop.blueprint(),
-        DualOpenYamCollection.blueprint(
-            camera_source="streams",
-            camera_ids=("sim2:left/wrist", "sim2:right/wrist"),
-            width=WRIST_CAMERA.width,
-            height=WRIST_CAMERA.height,
-            fps=15,
-        ),
-        OpenYamSpatialCameras.blueprint(
-            instance_name="spatial_cameras", sensor=WORKSPACE_CAMERA, rate_hz=30
-        ),
+
+def build_openyam_spatial_sim(station: SpatialStation = ANVIL) -> Blueprint:
+    """Bind one station description to physics, sensors, control and display."""
+    wrist = station.wrists["left"]
+    return (
+        autoconnect(
+            OpenYamSpatialSimulation.blueprint(sim_id="openyam-spatial", station=station),
+            OpenYamSpatialCoordinator.blueprint(
+                instance_name="SpatialControlCoordinator", base_poses=station.bases
+            ),
+            OpenYamSpatialTeleop.blueprint(base_poses=station.bases),
+            DualOpenYamCollection.blueprint(
+                camera_source="streams",
+                camera_ids=("sim2:left/wrist", "sim2:right/wrist"),
+                width=wrist.width,
+                height=wrist.height,
+                fps=int(wrist.rate_hz),
+            ),
+            OpenYamSpatialCameras.blueprint(
+                instance_name="spatial_cameras",
+                sensor=station.workspace,
+                wrists=station.wrists,
+                rate_hz=2 * max(station.workspace.rate_hz, wrist.rate_hz),
+            ),
+        )
+        .global_config(zenoh_domain="openyam-spatial", viewer="none")
+        .remappings(
+            [
+                (OpenYamSpatialTeleop, "left_controller_output", "left_cartesian_command"),
+                (OpenYamSpatialTeleop, "right_controller_output", "right_cartesian_command"),
+                (DualOpenYamCollection, "left_image", "left_wrist"),
+                (DualOpenYamCollection, "right_image", "right_wrist"),
+            ]
+        )
     )
-    .global_config(zenoh_domain="openyam-spatial", viewer="none")
-    .remappings(
-        [
-            (OpenYamSpatialTeleop, "left_controller_output", "left_cartesian_command"),
-            (OpenYamSpatialTeleop, "right_controller_output", "right_cartesian_command"),
-            (DualOpenYamCollection, "left_image", "left_wrist"),
-            (DualOpenYamCollection, "right_image", "right_wrist"),
-        ]
-    )
-)
+
+
+openyam_spatial_sim = autoconnect(build_openyam_spatial_sim())

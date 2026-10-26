@@ -14,8 +14,6 @@
 
 """Ideal instantaneous RGB-D acquisition, usable without a DimOS module."""
 
-import math
-
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -26,6 +24,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.sensors.camera.projection import camera_intrinsics
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoCamera
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.device import SensorDevice
@@ -39,8 +38,9 @@ class CameraDevice(SensorDevice[Camera]):
         )
         self._camera = self.reader.model.camera(self.model_prefix + sensor.model_name).id
         self._frame = f"{self.frame_prefix}{sensor.name}_optical"
-        fovy = float(self.reader.model.cam_fovy[self._camera])
-        self._focal = sensor.height / (2 * math.tan(math.radians(fovy) / 2))
+        self._intrinsics = camera_intrinsics(
+            self.reader.model, self._camera, sensor.width, sensor.height
+        )
         self._status["fidelity"] = "ideal_instantaneous"
 
     def capture(self) -> None:
@@ -65,10 +65,10 @@ class CameraDevice(SensorDevice[Camera]):
             ),
         )
         info = CameraInfo.from_intrinsics(
-            self._focal,
-            self._focal,
-            (sensor.width - 1) / 2,
-            (sensor.height - 1) / 2,
+            self._intrinsics.fx,
+            self._intrinsics.fy,
+            self._intrinsics.cx,
+            self._intrinsics.cy,
             sensor.width,
             sensor.height,
             frame_id=self._frame,

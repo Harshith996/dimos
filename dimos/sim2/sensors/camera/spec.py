@@ -19,6 +19,7 @@ from __future__ import annotations
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass
 
+from dimos.sim2.sensors.camera.models.pinhole import PinholeIntrinsics
 from dimos.sim2.sensors.spec import AcquisitionRequirements, Mount, validate_timing
 
 
@@ -35,9 +36,17 @@ class Camera:
     pointcloud: bool = False
     shadows: bool = True
     latency: float = 0.0
+    # Explicit calibration overrides asset optics while retaining its mount.
+    intrinsics: PinholeIntrinsics | None = None
 
     def __post_init__(self) -> None:
         validate_timing(self.rate_hz, self.latency)
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("camera dimensions must be positive")
+        if self.intrinsics is not None and self.fovy is not None:
+            raise ValueError("choose explicit intrinsics or fovy, not both")
+        if self.fovy is not None and not 0 < self.fovy < 180:
+            raise ValueError("camera fovy must be between 0 and 180 degrees")
         if self.pointcloud and not self.depth:
             raise ValueError("camera point clouds require depth")
         if isinstance(self.camera, str) and self.fovy is not None:
