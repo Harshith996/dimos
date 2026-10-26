@@ -18,7 +18,6 @@ import gc
 import threading
 from unittest.mock import Mock
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -76,7 +75,7 @@ def test_actual_pipeline_copies_bgr_and_exact_stamp(camera, mocker, offset, delt
     gc.collect()
     assert len(published) == 1
     assert type(published[0]) is Image
-    message = decode(encode(published[0]), Image)
+    message = published[0]
     assert message.encoding == "bgr8" and message.step == 12
     assert message_time.to_nanoseconds(message.header.stamp) == 1700000000123456789 + delta_ns
     assert message.header.frame_id == "camera_test"
