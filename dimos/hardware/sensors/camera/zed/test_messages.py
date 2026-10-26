@@ -12,25 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import IntEnum
+import importlib
 import math
+import sys
+from types import ModuleType
 
 from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
 from dimos.hardware.sensors.camera.zed.compat import CameraInfo as ZedCalibration
-from dimos.hardware.sensors.camera.zed.messages import (
-    frame_message,
-    tracking_to_base,
-    transform_from_arrays,
-)
 from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Transform, Vector3
 from dimos.messages.tf2_msgs.msg import TFMessage
 
 
+@pytest.fixture
+def camera(monkeypatch, mocker):
+    # Mock the unavailable hardware SDK; exercise the real camera methods and CDR codec.
+    sdk = ModuleType("pyzed.sl")
+    sdk.DEPTH_MODE = IntEnum("DEPTH_MODE", {"NEURAL": 0})
+    sdk.REFERENCE_FRAME = IntEnum("REFERENCE_FRAME", {"WORLD": 0})
+    sdk.POSITIONAL_TRACKING_STATE = IntEnum("POSITIONAL_TRACKING_STATE", {"OK": 0})
+    package = ModuleType("pyzed")
+    package.sl = sdk
+    name = "dimos.hardware.sensors.camera.zed.camera"
+    with monkeypatch.context() as context:
+        context.setitem(sys.modules, "pyzed", package)
+        context.setitem(sys.modules, "pyzed.sl", sdk)
+        context.delitem(sys.modules, name, raising=False)
+        module = importlib.import_module(name)
+        instance = module.ZEDCamera(camera_name="zed", base_frame_id="base")
+        mocker.patch.object(instance.tf, "publish")
+        try:
+            yield instance
+        finally:
+            instance.stop()
+            sys.modules.pop(name, None)
+
+
+def sdk_pose(mocker, translation, rotation):
+    value = mocker.Mock()
+    value.get_translation.return_value.get.return_value = translation
+    value.get_orientation.return_value.get.return_value = rotation
+    return value
+
+
 @pytest.mark.parametrize("ns", [0, -1, 1700000000123456789])
-def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns):
+def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns, camera, mocker):
     stamp = message_time.time_from_nanoseconds(ns)
     extrinsics = Transform(
         translation=Vector3(x=1, y=2, z=3),
@@ -40,13 +70,14 @@ def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns):
         translation=Vector3(x=4, y=5, z=6), rotation=geometry.quaternion_from_euler(0.2, 0, 0)
     )
 
-    message = frame_message(
-        camera_name="zed",
-        base_frame="base",
-        base_transform=mount,
-        sdk_extrinsics=extrinsics,
-        stamp=stamp,
+    camera.config.base_transform = mount
+    camera._camera_link_to_color_extrinsics = sdk_pose(
+        mocker,
+        geometry.vector_array(extrinsics.translation),
+        geometry.quaternion_array(extrinsics.rotation),
     )
+    camera._publish_tf(stamp)
+    message = camera.tf.publish.call_args.args[0]
     actual = decode(encode(message), TFMessage)
 
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in actual.transforms] == [
@@ -74,29 +105,28 @@ def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns):
         np.testing.assert_allclose(optical_to_frame @ [1, 2, 3, 1], [3, -1, -2, 1], atol=1e-12)
 
 
-def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
+def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge(camera, mocker):
     stamp = message_time.time_from_nanoseconds(1700000000123456789)
-    world_camera = transform_from_arrays(
-        [5, 6, 7],
-        [0, 0, math.sqrt(0.5), math.sqrt(0.5)],
-        parent="world",
-        child="zed_link",
-        stamp=stamp,
-    )
+    camera._pose = sdk_pose(mocker, [5, 6, 7], [0, 0, math.sqrt(0.5), math.sqrt(0.5)])
+    camera._tracking_enabled = True
+    camera._zed = mocker.Mock()
+    camera._zed.get_position.return_value = 0
+    world_camera = camera._extrinsics_to_transform(camera._pose, "world", "zed_link", stamp)
     mount = Transform(
         translation=Vector3(x=1, y=2, z=3),
         rotation=geometry.quaternion_from_euler(0, 0, -math.pi / 2),
     )
 
-    tracking = tracking_to_base(world_camera, mount, "base")
-    message = frame_message(
-        camera_name="zed",
-        base_frame="base",
-        base_transform=None,
-        sdk_extrinsics=mount,
-        stamp=stamp,
-        tracking=tracking,
+    camera.config.base_transform = mount
+    tracking = camera._tracking_transform(stamp)
+    camera.config.base_transform = None
+    camera._camera_link_to_color_extrinsics = sdk_pose(
+        mocker, geometry.vector_array(mount.translation), geometry.quaternion_array(mount.rotation)
     )
+    assert camera._tracking_transform(stamp) == world_camera
+    mocker.patch.object(camera, "_tracking_transform", return_value=tracking)
+    camera._publish_tf(stamp)
+    message = camera.tf.publish.call_args.args[0]
     actual = decode(encode(message), TFMessage)
 
     assert tracking.header.frame_id == "world"
@@ -111,18 +141,16 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
     assert len(actual.transforms) == 5
     assert actual.transforms[-1] == tracking
     assert actual.transforms[0].header.frame_id == "zed_link"
-    assert tracking_to_base(world_camera, None, "base") == world_camera
 
 
 @pytest.mark.parametrize("translation,rotation", [([1, 2], [0, 0, 0, 1]), ([1, 2, 3], [0, 0, 1])])
-def test_incomplete_sdk_pose_is_rejected(translation, rotation):
-    with pytest.raises(ValueError, match="three translation and four quaternion"):
-        transform_from_arrays(
-            translation,
-            rotation,
-            parent="world",
-            child="camera",
-            stamp=message_time.time_from_nanoseconds(0),
+def test_incomplete_sdk_pose_is_rejected(translation, rotation, camera, mocker):
+    with pytest.raises(ValueError):
+        camera._extrinsics_to_transform(
+            sdk_pose(mocker, translation, rotation),
+            "world",
+            "camera",
+            message_time.time_from_nanoseconds(0),
         )
 
 
