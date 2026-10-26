@@ -1,0 +1,97 @@
+{
+  "format": "dimos.scene.v1",
+  "id": "openyam-anvil-tabletop",
+  "entities": {
+    "banana": {
+      "body": "banana",
+      "label": "Banana",
+      "kind": "produce",
+      "movable": true
+    },
+    "bottle": {
+      "body": "bottle",
+      "label": "Bottle",
+      "kind": "container",
+      "movable": true
+    },
+    "red_mug": {
+      "body": "red_mug",
+      "label": "Red mug",
+      "kind": "container",
+      "movable": true
+    },
+    "red_bowl": {
+      "body": "red_bowl",
+      "label": "Red bowl",
+      "kind": "container",
+      "movable": true
+    },
+    "cordless_drill": {
+      "body": "cordless_drill",
+      "label": "Cordless drill",
+      "kind": "tool",
+      "movable": true
+    },
+    "yellow_tray": {
+      "body": "yellow_tray",
+      "label": "Yellow sorting tray",
+      "kind": "container",
+      "movable": false
+    }
+  },
+  "regions": {
+    "tray_interior": {
+      "body": "yellow_tray",
+      "kind": "containment",
+      "pose": {
+        "position": [
+          0,
+          0,
+          0.03
+        ],
+        "orientation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "size": [
+        0.25,
+        0.18,
+        0.044
+      ]
+    },
+    "bowl_interior": {
+      "body": "red_bowl",
+      "kind": "containment",
+      "pose": {
+        "position": [
+          0,
+          0,
+          0.03
+        ],
+        "orientation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "size": [
+        0.08,
+        0.08,
+        0.04
+      ]
+    }
+  },
+  "provenance": {
+    "method": "Authored MJCF approximation from the Anvil workstation camera photo captured 2026-10-25. Geometry, dimensions, masses and friction are estimates; no photogrammetry or calibrated object dynamics.",
+    "tasks": [
+      "Place the banana in the yellow tray",
+      "Stand the bottle upright",
+      "Move the red mug by its handle",
+      "Use both arms to put the heavier drill in the tray"
+    ]
+  }
+}

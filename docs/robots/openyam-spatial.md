@@ -12,6 +12,39 @@ Native initialization and reset were checked with the exported YAM model;
 zero means closed, and positive finger displacement opens the jaws. Full opening
 is a measured 71 mm mesh gap. Physical connections retain measured state.
 
+## Workstation practice scene
+
+The default sim scene approximates the Anvil workstation camera photograph:
+a white tabletop, yellow sorting tray, banana, bottle, red mug, red bowl and
+black/orange cordless drill. The two oversized cubes are removed. These are
+authored MuJoCo objects with estimated dimensions, masses and friction, not
+photogrammetry or calibrated copies of the physical props. The banana is
+approximately 175 mm long and 27 mm across, the bottle body is 44 mm across,
+and the mug has a 64 mm body and an 11 mm handle section. Empty plastic props
+and the small banana use light masses; the drill is heavier at 380 g.
+
+Start with picking up the bottle and placing it in the yellow tray. Then try
+standing it upright, placing the banana in the tray, or moving the mug by its
+handle. Use both arms for the heavier drill. Banana, bottle, mug,
+bowl and drill are dynamic bodies. The tray is fixed. Cup, bowl and tray have
+open collision geometry, so objects can be placed inside them. Restart the
+blueprint to restore the initial arrangement and reconnect the viewer.
+
+`scenes/spatial.xml` contains the complete portable scene, including its visual
+meshes and contact geometry. The ordinary `spatial.json` sidecar names entities
+and containment regions for sim2 inspection. It supplies no object truth to the
+spatial viewer: objects still appear there only through the RGB-D observations.
+The original camera/robot/control wiring is unchanged.
+
+Native-physics verification on 2026-10-25 loaded this scene with both imported
+arms, settled its dynamic props, and exercised a private scripted bottle grasp:
+121 mm lift followed by release into the tray. No attachment welds, grasp
+shortcuts or live operator commands were used. The scripted banana grasp
+slipped; the other tasks and headset ergonomics remain operator exercises,
+not demonstrated successes. The live blueprint returned all three camera views
+and fresh RGB-D observations. Evidence and the authoring/check scripts are in
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-ambidextrous-20261025/`.
+
 ## Run
 
 Install the repository dependencies and provide the validated `yam-sim2-model`
