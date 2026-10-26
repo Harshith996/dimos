@@ -20,6 +20,7 @@ import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
+import hashlib
 import math
 import threading
 import time
@@ -27,6 +28,7 @@ import traceback
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -59,6 +61,7 @@ from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
     PinkKinematicsConfig,
 )
+from dimos.manipulation.planning.limits import snap_to_limits
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.planners.config import (
     CartesianPathConfig,
@@ -114,6 +117,15 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 # One stable id for the mapped workspace: every map message is complete, so it
 # replaces this obstacle rather than adding another.
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
+
+
+def _voxel_map_digest(points: NDArray[np.float32]) -> bytes:
+    """A digest of a map's point buffer: cheap next to building its octree."""
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(np.asarray(points.shape, dtype=np.int64).tobytes())
+    digest.update(np.ascontiguousarray(points, dtype=np.float32).tobytes())
+    return digest.digest()
+
 
 _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
     "box": ObstacleType.BOX,
@@ -265,6 +277,9 @@ class ManipulationModule(Module):
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
         self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
+        # The point buffer of the voxel map the world holds, so a republished copy
+        # of it is not rebuilt.
+        self._voxel_map_digest: bytes | None = None
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._last_plan: GeneratedPlan | None = None
@@ -317,6 +332,7 @@ class ManipulationModule(Module):
             trajectory_parametrization=self.config.trajectory_parametrization,
         )
         self._world_monitor = planning_specs.world_monitor
+        self._voxel_map_digest = None
         self._planner = planning_specs.planner
         self._kinematics = planning_specs.kinematics
         self._trajectory_parametrizer = planning_specs.trajectory_parametrizer
@@ -708,6 +724,23 @@ class ManipulationModule(Module):
         logger.info("Path generated", waypoint_count=len(result.path), group_ids=group_ids)
         return self._store_generated_plan(group_ids, result, planning_epoch, speed_scale)
 
+    def _snapped_to_limits(self, state: JointState) -> JointState:
+        """``state`` with a position on or a rounding error past a joint limit a hair inside.
+
+        Pink IK accepts a solution within 1e-8 of a limit, and the planner's joint space
+        refuses a goal any distance past one: joint1 = 3.490700004829506 against a limit
+        of 3.4907 was "IK solved" and then INVALID_GOAL. A real violation is left for the
+        planner to refuse as before.
+        """
+        assert self._world_monitor is not None
+        if not state.name:
+            return state
+        joint_space = self._world_monitor.world.get_prepared_model().joint_space
+        lower, upper = joint_space.select(state.name).position_limits()
+        return JointState(
+            name=list(state.name), position=snap_to_limits(state.position, lower, upper)
+        )
+
     def _record_error(self, message: str) -> bool:
         """Record an error without changing the manipulation state."""
         logger.warning(message)
@@ -911,8 +944,9 @@ class ManipulationModule(Module):
             self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
             return None
         logger.info("IK solved", position_error=ik.position_error)
+        goal = self._snapped_to_limits(ik.joint_state)
         return self._plan_selected_path(
-            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+            group_ids, start, goal, planning_epoch, resolved_speed_scale
         )
 
     def generate_cartesian_plan(
@@ -1366,6 +1400,14 @@ class ManipulationModule(Module):
         if not len(points):
             # An empty map is how a mapper says the space it owns is now clear.
             self._world_monitor.remove_obstacle(VOXEL_MAP_OBSTACLE_ID)
+            self._voxel_map_digest = None
+            return
+        digest = _voxel_map_digest(points)
+        if digest == self._voxel_map_digest:
+            # A mapper republishes an unchanged map at its own rate. Rebuilding the
+            # octree for each copy (deepcopy, validate, remove, add: 62-70 ms for 7k
+            # voxels on an Orin, at 5 Hz) held the world lock a third of the time,
+            # against the planner's collision checks.
             return
         if not np.isfinite(points).all():
             logger.warning("Voxel map contains non-finite points; dropped a map.")
@@ -1391,6 +1433,8 @@ class ManipulationModule(Module):
             logger.warning(
                 "Planning world refused the voxel map; planning continues on the previous one"
             )
+            return
+        self._voxel_map_digest = digest
 
     @rpc
     def update_obstacle_pose(self, name: str, pose: Pose) -> bool:
@@ -1407,6 +1451,9 @@ class ManipulationModule(Module):
         """Remove an obstacle from the planning world."""
         if self._world_monitor is None:
             return False
+        if obstacle_id == VOXEL_MAP_OBSTACLE_ID:
+            # The next map must land, even one identical to the map removed here.
+            self._voxel_map_digest = None
         return self._world_monitor.remove_obstacle(obstacle_id)
 
     @rpc

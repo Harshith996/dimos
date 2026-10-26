@@ -19,6 +19,7 @@ from collections.abc import Sequence
 import math
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.limits import snap_to_limits
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -26,10 +27,6 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
-# How far past a position limit is rounding, not a violation (rad or m).
-_POSITION_LIMIT_TOLERANCE = 1e-6
-# Where a position that close to a limit lands: inside it, by this much (rad or m).
-_POSITION_LIMIT_MARGIN = 1e-7
 # How long a plan to where the robot already is holds it there (s).
 STANDSTILL_S = 0.1
 
@@ -149,19 +146,7 @@ class BaseTrajectoryParametrizer(ABC):
             world.get_prepared_model().joint_space.select(selection.joint_names).position_limits()
         )
         for state in path:
-            state.position = [
-                cls._snapped(value, float(low), float(high))
-                for value, low, high in zip(state.position, lower, upper, strict=True)
-            ]
-
-    @staticmethod
-    def _snapped(value: float, low: float, high: float) -> float:
-        # A range narrower than the margin has no inside to land in: stay on the limit.
-        if low - _POSITION_LIMIT_TOLERANCE <= value < low + _POSITION_LIMIT_MARGIN:
-            return min(low + _POSITION_LIMIT_MARGIN, high)
-        if high - _POSITION_LIMIT_MARGIN < value <= high + _POSITION_LIMIT_TOLERANCE:
-            return max(high - _POSITION_LIMIT_MARGIN, low)
-        return value
+            state.position = snap_to_limits(state.position, lower, upper)
 
     @classmethod
     def _collapse_repeats(cls, path: Sequence[JointState]) -> list[JointState]:
