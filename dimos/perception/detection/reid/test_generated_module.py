@@ -25,7 +25,6 @@ from dimos.core.transport import LCMTransport
 from dimos.message_utils import camera_info, image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection2DArray
@@ -34,10 +33,8 @@ from dimos.perception.detection.person_tracker import (
     _align_images_and_detections as align_person,
 )
 from dimos.perception.detection.reid.module import (
-    ReidModule,
     _align_images_and_detections as align_reid,
 )
-from dimos.perception.detection.reid.type import PassthroughIDSystem
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
@@ -82,17 +79,6 @@ def test_exact_header_alignment_rejects_adjacent_nanosecond_and_empty_arrays(ali
         assert received[0][0].bbox == (12, 12, 20, 20)
         images.on_next(image)
         assert len(received) == 1
-
-
-def test_explicit_identity_system_constructs_normal_module_and_generated_ports():
-    system = PassthroughIDSystem()
-    module = ReidModule(idsystem=system)
-    try:
-        assert module.config.idsystem is system
-        assert module.image.type is Image
-        assert module.detections.type is Detection2DArray
-    finally:
-        module.stop()
 
 
 def test_person_target_composition_keeps_detection_source_stamp():

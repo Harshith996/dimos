@@ -68,6 +68,7 @@ class ReidModule(Module):
     image: In[Image]
 
     def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
         if idsystem is None:
             try:
                 from dimos.models.embedding.treid import TorchReIDModel
@@ -75,10 +76,9 @@ class ReidModule(Module):
                 idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
             except Exception as e:
                 raise RuntimeError(
-                    "TorchReIDModel not available. Please install with: pip install dimos[misc]"
+                    "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
                 ) from e
 
-        super().__init__(idsystem=idsystem, **kwargs)
         self.idsystem = idsystem
 
     def detections_stream(self) -> Observable[ImageDetections2D]:
