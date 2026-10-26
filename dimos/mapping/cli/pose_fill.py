@@ -65,7 +65,7 @@ def pose_fill(
     image pose.
     """
     from dimos.memory.type.observation import _to_tuple
-    from dimos.message_utils.geometry import compose_transform_values
+    from dimos.message_utils import geometry
     from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
 
     def _fill(pair_obs: Observation[Any]) -> Observation[Any]:
@@ -76,7 +76,7 @@ def pose_fill(
             return primary.with_pose(secondary.data)
         x, y, z, qx, qy, qz, qw = cast("tuple[float, ...]", _to_tuple(secondary.data))
         world_base = Transform(translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw))
-        return primary.with_pose(compose_transform_values(world_base, mount))
+        return primary.with_pose(geometry.compose_transform_values(world_base, mount))
 
     return stream.align(pose_stream, tolerance=tolerance).map(_fill)
 

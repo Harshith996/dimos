@@ -17,8 +17,7 @@ import numpy as np
 import pytest
 
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.message_utils.camera_info import camera_info_from_fov
-from dimos.message_utils.image import image_view
+from dimos.message_utils import camera_info, image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
@@ -32,7 +31,7 @@ def test_webcam_without_intrinsics_reports_a_nominal_pinhole() -> None:
 
 
 def test_webcam_keeps_configured_intrinsics() -> None:
-    configured = camera_info_from_fov(
+    configured = camera_info.from_fov(
         90.0, 640, 480, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     )
     assert Webcam(camera_info=configured).camera_info is configured
@@ -78,5 +77,5 @@ def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker)
     assert (message.width, message.height, message.step) == (2, 2, 6)
     assert message.header.frame_id == "robot/camera_optical"
     assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
-    np.testing.assert_array_equal(image_view(message), pixels[:, start : start + 2, ::-1])
+    np.testing.assert_array_equal(image.view(message), pixels[:, start : start + 2, ::-1])
     capture.release.assert_called_once()

@@ -18,7 +18,7 @@ from typing import Protocol
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.geometry import yaw
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.utils.trigonometry import angle_diff
 
@@ -65,7 +65,7 @@ class PController:
             # Robot is coincidentally at the lookahead point; skip this cycle.
             return _velocity()
 
-        robot_yaw = yaw(current_odom.pose.orientation)
+        robot_yaw = geometry.yaw(current_odom.pose.orientation)
         desired_yaw = np.arctan2(direction[1], direction[0])
         yaw_error = angle_diff(desired_yaw, robot_yaw)
 

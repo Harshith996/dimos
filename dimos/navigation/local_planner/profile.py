@@ -25,7 +25,8 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.time import NANOSECONDS_PER_SECOND, to_nanoseconds
+from dimos.message_utils import time as message_time
+from dimos.message_utils.time import NANOSECONDS_PER_SECOND
 from dimos.messages.nav_msgs.msg import Path as CdrPath
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.embodiment.base import Embodiment
@@ -43,7 +44,9 @@ def decode_ceilings(path: Path | CdrPath, lo: float, hi: float) -> NDArray[np.fl
     if n < 2:
         return None
     if isinstance(path, CdrPath):
-        stamps = np.asarray([to_nanoseconds(p.header.stamp) for p in path.poses], dtype=np.int64)
+        stamps = np.asarray(
+            [message_time.to_nanoseconds(p.header.stamp) for p in path.poses], dtype=np.int64
+        )
         dt = np.diff(stamps).astype(np.float64) / NANOSECONDS_PER_SECOND
         xy = np.asarray([[p.pose.position.x, p.pose.position.y] for p in path.poses])
     else:

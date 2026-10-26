@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.geometry import yaw
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.messages.nav_msgs.msg import Path
 from dimos.navigation.embodiment.base import Embodiment
@@ -70,8 +70,12 @@ class PursuitController:
             # empty path or a single-pose veto stub: hold
             return Twist(Vector3(0, 0, 0), Vector3(0, 0, 0))
         xy = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
-        yaws = np.array([yaw(p.pose.orientation) for p in path.poses])
-        px, py, pyaw = pose.pose.position.x, pose.pose.position.y, yaw(pose.pose.orientation)
+        yaws = np.array([geometry.yaw(p.pose.orientation) for p in path.poses])
+        px, py, pyaw = (
+            pose.pose.position.x,
+            pose.pose.position.y,
+            geometry.yaw(pose.pose.orientation),
+        )
 
         seg = np.linalg.norm(np.diff(xy, axis=0), axis=1) if len(xy) > 1 else np.zeros(1)
         arcs = np.concatenate([[0.0], np.cumsum(seg)])
@@ -143,7 +147,7 @@ class RustPursuitController:
             (
                 float(pose.pose.position.x),
                 float(pose.pose.position.y),
-                float(yaw(pose.pose.orientation)),
+                float(geometry.yaw(pose.pose.orientation)),
             ),
             path_xy_yaw(path),
             clr,

@@ -21,8 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -192,7 +191,7 @@ class ObjectDB:
         with self._lock:
             # Release large generated point buffers, retaining metadata on held objects.
             for obj in list(self._pending_objects.values()) + list(self._objects.values()):
-                obj.pointcloud = pointcloud_from_xyz(np.empty((0, 3)), header=obj.pointcloud.header)
+                obj.pointcloud = pointcloud.from_xyz(np.empty((0, 3)), header=obj.pointcloud.header)
             self._pending_objects.clear()
             self._objects.clear()
             self._track_id_map.clear()
@@ -235,9 +234,12 @@ class ObjectDB:
             self._track_id_map[obj.track_id] = existing.object_id
         # Multiple prompts or repeated scans may produce the same object from
         # one camera frame. Only distinct source observations advance memory.
-        if (existing.image.header.frame_id, to_nanoseconds(existing.image.header.stamp)) == (
+        if (
+            existing.image.header.frame_id,
+            message_time.to_nanoseconds(existing.image.header.stamp),
+        ) == (
             obj.image.header.frame_id,
-            to_nanoseconds(obj.image.header.stamp),
+            message_time.to_nanoseconds(obj.image.header.stamp),
         ):
             return False
 

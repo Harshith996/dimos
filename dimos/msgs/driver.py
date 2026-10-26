@@ -18,8 +18,7 @@ from copy import deepcopy
 
 import numpy as np
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Quaternion,
@@ -45,7 +44,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 def camera_info_message(info: CameraInfo) -> CdrCameraInfo:
     return CdrCameraInfo(
-        header=Header(time_from_seconds(info.ts), info.frame_id),
+        header=Header(message_time.time_from_seconds(info.ts), info.frame_id),
         height=info.height,
         width=info.width,
         distortion_model=info.distortion_model,
@@ -89,7 +88,7 @@ def cloud_message(cloud: PointCloud2) -> CdrCloud:
         packed[name] = arrays[name]
         fields.append(PointField(name, packed.dtype.fields[name][1], datatype, 1))
     return CdrCloud(
-        header=Header(time_from_seconds(cloud.ts), cloud.frame_id),
+        header=Header(message_time.time_from_seconds(cloud.ts), cloud.frame_id),
         height=1,
         width=len(points),
         fields=fields,
@@ -112,10 +111,10 @@ def image_message(image: Image) -> CdrImage:
         "DEPTH": "32FC1",
         "DEPTH16": "16UC1",
     }
-    return image_from_array(
+    return image_utils.from_array(
         image.data,
         encoding=encodings[image.format.value],
-        header=Header(time_from_seconds(image.ts), image.frame_id),
+        header=Header(message_time.time_from_seconds(image.ts), image.frame_id),
     )
 
 
@@ -124,7 +123,8 @@ def transform_message(value: Transform, stamp: Time | None = None) -> TransformS
     t, q = value.translation, value.rotation
     return TransformStamped(
         header=Header(
-            deepcopy(stamp) if stamp is not None else time_from_seconds(value.ts), value.frame_id
+            deepcopy(stamp) if stamp is not None else message_time.time_from_seconds(value.ts),
+            value.frame_id,
         ),
         child_frame_id=value.child_frame_id,
         transform=CdrTransform(Vector3(t.x, t.y, t.z), Quaternion(q.x, q.y, q.z, q.w)),
@@ -134,7 +134,7 @@ def transform_message(value: Transform, stamp: Time | None = None) -> TransformS
 def imu_message(value: Imu) -> CdrImu:
     q, g, a = value.orientation, value.angular_velocity, value.linear_acceleration
     return CdrImu(
-        header=Header(time_from_seconds(value.ts), value.frame_id),
+        header=Header(message_time.time_from_seconds(value.ts), value.frame_id),
         orientation=Quaternion(q.x, q.y, q.z, q.w),
         orientation_covariance=np.asarray(value.orientation_covariance, dtype=np.float64).copy(),
         angular_velocity=Vector3(g.x, g.y, g.z),

@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Calibration construction and array access for generated ROS CameraInfo values."""
+"""Calibration operations for generated ROS CameraInfo wire messages.
+
+Import with ``from dimos.message_utils import camera_info``. Constructors return
+CameraInfo messages; ``intrinsic_matrix`` returns an independent writable array.
+``with_stamp`` deep-copies the calibration so prior publishes remain unchanged.
+"""
 
 from copy import deepcopy
 import math
@@ -37,7 +42,7 @@ def _dimensions(width: int, height: int) -> None:
         raise ValueError("Calibration width and height must be positive integers")
 
 
-def camera_info_from_intrinsics(
+def from_intrinsics(
     fx: float, fy: float, cx: float, cy: float, width: int, height: int, *, header: Header
 ) -> CameraInfo:
     """Construct an undistorted pinhole calibration with an explicit source header."""
@@ -59,7 +64,7 @@ def camera_info_from_intrinsics(
     )
 
 
-def camera_info_from_fov(
+def from_fov(
     fov_degrees: float,
     width: int,
     height: int,
@@ -75,9 +80,7 @@ def camera_info_from_fov(
         raise ValueError("Field-of-view axis must be horizontal or vertical")
     extent = width if axis == "horizontal" else height
     focal = extent / (2 * math.tan(math.radians(fov_degrees) / 2))
-    return camera_info_from_intrinsics(
-        focal, focal, width / 2, height / 2, width, height, header=header
-    )
+    return from_intrinsics(focal, focal, width / 2, height / 2, width, height, header=header)
 
 
 def _matrix(data: dict[str, Any], name: str, rows: int, columns: int | None) -> list[float]:
@@ -100,7 +103,7 @@ def _matrix(data: dict[str, Any], name: str, rows: int, columns: int | None) -> 
     return converted
 
 
-def camera_info_from_yaml(path: str | Path, *, header: Header) -> CameraInfo:
+def from_yaml(path: str | Path, *, header: Header) -> CameraInfo:
     """Read a ROS calibration YAML file, validating declared matrix dimensions."""
     with Path(path).open() as source:
         data = yaml.safe_load(source)
@@ -128,7 +131,7 @@ def intrinsic_matrix(message: CameraInfo) -> NDArray[np.float64]:
     return np.array(message.k, dtype=np.float64, copy=True).reshape(3, 3)
 
 
-def camera_info_with_stamp(message: CameraInfo, stamp: Time) -> CameraInfo:
+def with_stamp(message: CameraInfo, stamp: Time) -> CameraInfo:
     """Copy a calibration with an exact source stamp, without mutating prior publishes."""
     result = deepcopy(message)
     result.header.stamp = deepcopy(stamp)
@@ -162,7 +165,7 @@ class CalibrationProvider:
         for key in (name, snake):
             path = self._calibration_dir / f"{key}.yaml"
             if path.is_file():
-                value = camera_info_from_yaml(
+                value = from_yaml(
                     path, header=Header(frame_id=self._frame_id, stamp=Time(sec=0, nanosec=0))
                 )
                 self._cache[name] = value

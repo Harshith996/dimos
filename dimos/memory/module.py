@@ -35,7 +35,7 @@ from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.utils.data import backup_file
@@ -426,7 +426,7 @@ class Recorder(MemoryModule):
                 for transform in msg.transforms:
                     tf_stream.append(
                         TFMessage(transforms=[transform]),
-                        ts=to_seconds(transform.header.stamp),
+                        ts=message_time.to_seconds(transform.header.stamp),
                         pose=None,
                     )
             except sqlite3.ProgrammingError:

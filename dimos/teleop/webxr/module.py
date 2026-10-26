@@ -44,7 +44,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point as CdrPoint,
     Pose as CdrPose,
@@ -491,7 +491,7 @@ class WebXRTeleopModule(Module):
         wire = cdr_decode(data, CdrPoseStamped)
         position, rotation = wire.pose.position, wire.pose.orientation
         msg = PoseStamped(
-            ts=to_seconds(wire.header.stamp),
+            ts=message_time.to_seconds(wire.header.stamp),
             frame_id=wire.header.frame_id,
             position=(position.x, position.y, position.z),
             orientation=(rotation.x, rotation.y, rotation.z, rotation.w),
@@ -507,7 +507,7 @@ class WebXRTeleopModule(Module):
         """Decode canonical CDR, retaining the internal controller-state API."""
         wire = cdr_decode(data, CdrJoy)
         msg = Joy(
-            ts=to_seconds(wire.header.stamp),
+            ts=message_time.to_seconds(wire.header.stamp),
             frame_id=wire.header.frame_id,
             axes=wire.axes.tolist(),
             buttons=wire.buttons.tolist(),
@@ -669,9 +669,9 @@ class WebXRTeleopModule(Module):
 
     def _output_header(self, hand: Hand, output_msg: PoseStamped) -> Header:
         source = self._pose_headers.get(hand)
-        if source is not None and to_seconds(source.stamp) == output_msg.ts:
+        if source is not None and message_time.to_seconds(source.stamp) == output_msg.ts:
             return Header(deepcopy(source.stamp), output_msg.frame_id)
-        return Header(time_from_seconds(output_msg.ts), output_msg.frame_id)
+        return Header(message_time.time_from_seconds(output_msg.ts), output_msg.frame_id)
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.

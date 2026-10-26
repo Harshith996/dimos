@@ -41,7 +41,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.sensor_msgs.msg import CameraInfo as CdrCameraInfo
 from dimos.msgs.driver import camera_info_message
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -183,7 +183,7 @@ class HeadCameraInfo(Module):
                 if self._stop.wait(_CALIBRATION_RETRY_S):
                     return
         while not self._stop.is_set():
-            stamp = time_from_nanoseconds(time.time_ns())
+            stamp = message_time.time_from_nanoseconds(time.time_ns())
             for out, info in ((self.left_info, left), (self.right_info, right)):
                 message = camera_info_message(info)
                 message.header.stamp = deepcopy(stamp)

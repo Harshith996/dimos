@@ -27,8 +27,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.sensor_msgs.msg import Image
@@ -63,7 +62,7 @@ logger = setup_logger()
 
 def _make_image(value: int = 128, shape: tuple[int, ...] = (64, 64, 3)) -> Image:
     data = np.full(shape, value, dtype=np.uint8)
-    return image_from_array(data, encoding="rgb8")
+    return image.from_array(data, encoding="rgb8")
 
 
 class TestFrameWindowAccumulator:
@@ -72,7 +71,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(10):
             img = _make_image(i * 25)
-            img.header.stamp = time_from_seconds(float(i))
+            img.header.stamp = message_time.time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         assert acc.buffer_size == 5
         assert acc.frame_count == 10
@@ -85,7 +84,7 @@ class TestFrameWindowAccumulator:
         # Add 3 frames
         for i in range(3):
             img = _make_image()
-            img.header.stamp = time_from_seconds(float(i))
+            img.header.stamp = message_time.time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         frames = acc.try_extract_window()
         assert frames is not None
@@ -96,7 +95,7 @@ class TestFrameWindowAccumulator:
         acc.set_start_time(0.0)
         for i in range(3):
             img = _make_image()
-            img.header.stamp = time_from_seconds(float(i))
+            img.header.stamp = message_time.time_from_seconds(float(i))
             acc.add_frame(img, float(i))
         # First extraction should succeed
         frames = acc.try_extract_window()
@@ -115,7 +114,7 @@ class TestFrameWindowAccumulator:
         acc = FrameWindowAccumulator(max_buffer_frames=50, window_s=1.0, stride_s=1.0, fps=1.0)
         acc.set_start_time(0.0)
         img = _make_image()
-        img.header.stamp = time_from_seconds(0.0)
+        img.header.stamp = message_time.time_from_seconds(0.0)
         acc.add_frame(img, 0.0)
         assert acc.buffer_size == 1
         acc.clear()
@@ -458,7 +457,7 @@ class TestWindowAnalyzer:
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.header.stamp = time_from_seconds(0.0)
+        img.header.stamp = message_time.time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
         state_dict = {"entity_roster": [], "rolling_summary": ""}
 
@@ -474,7 +473,7 @@ class TestWindowAnalyzer:
 
         analyzer = WindowAnalyzer(mock_vlm)
         img = _make_image()
-        img.header.stamp = time_from_seconds(0.0)
+        img.header.stamp = message_time.time_from_seconds(0.0)
         frame = Frame(frame_index=0, timestamp_s=0.0, image=img)
 
         result = analyzer.analyze_window([frame], {}, 0.0, 2.0)
@@ -523,8 +522,8 @@ def test_scene_staleness_compares_pixels_not_padding():
 def test_clip_frame_comparison_uses_rgb_colors_for_bgr_wire_images():
     pixels = np.zeros((4, 4, 3), dtype=np.uint8)
     pixels[:, :, 0] = 255
-    rgb = image_from_array(pixels, encoding="rgb8")
-    bgr = image_from_array(pixels[:, :, ::-1], encoding="bgr8")
+    rgb = image.from_array(pixels, encoding="rgb8")
+    bgr = image.from_array(pixels[:, :, ::-1], encoding="bgr8")
     bgr = cdr_decode(cdr_encode(bgr), Image)
     np.testing.assert_array_equal(_get_image_data(rgb), _get_image_data(bgr))
     np.testing.assert_array_equal(_get_image_data(bgr)[0, 0], [255, 0, 0])

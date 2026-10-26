@@ -33,7 +33,7 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTaskParams,
     string_tuple_converter,
 )
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import TwistStamped as CdrTwistStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -94,7 +94,7 @@ class EEFTwistTask(PoseTargetIKTask):
         if isinstance(twist, CdrTwistStamped):
             v, w = twist.twist.linear, twist.twist.angular
             twist = TwistStamped(
-                ts=to_seconds(twist.header.stamp),
+                ts=message_time.to_seconds(twist.header.stamp),
                 frame_id=twist.header.frame_id,
                 linear=(v.x, v.y, v.z),
                 angular=(w.x, w.y, w.z),

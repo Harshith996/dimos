@@ -31,8 +31,7 @@ import numpy as np
 from rich.console import Console
 from rich.text import Text
 
-from dimos.message_utils.image import image_from_array, image_to_bgr, image_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -128,9 +127,9 @@ class Detection2DBBox(Detection2D):
 
     def annotated_image(self, scale: float = 1.0) -> Image:
         """Return the full image with this detection's bbox and label drawn on it."""
-        img = image_to_bgr(self.image)
+        img = image_utils.to_bgr(self.image)
         self.draw_on(img, scale=scale)
-        return image_from_array(img, encoding="bgr8", header=self.image.header)
+        return image_utils.from_array(img, encoding="bgr8", header=self.image.header)
 
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
@@ -143,12 +142,14 @@ class Detection2DBBox(Detection2D):
             Cropped Image containing only the detection area plus padding
         """
         x1, y1, x2, y2 = map(int, self.bbox)
-        pixels = image_view(self.image)
+        pixels = image_utils.view(self.image)
         cropped = pixels[
             max(0, y1 - padding) : min(self.image.height, y2 + padding),
             max(0, x1 - padding) : min(self.image.width, x2 + padding),
         ]
-        return image_from_array(cropped, encoding=self.image.encoding, header=self.image.header)
+        return image_utils.from_array(
+            cropped, encoding=self.image.encoding, header=self.image.header
+        )
 
     def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
@@ -257,7 +258,7 @@ class Detection2DBBox(Detection2D):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=to_seconds(image.header.stamp),
+            ts=message_time.to_seconds(image.header.stamp),
             image=image,
         )
 
@@ -308,7 +309,7 @@ class Detection2DBBox(Detection2D):
         track_id = int(ros_det.id) if ros_det.id.isdigit() else 0
 
         # Extract timestamp
-        ts = to_seconds(ros_det.header.stamp)
+        ts = message_time.to_seconds(ros_det.header.stamp)
 
         name = kwargs.pop("name", f"class_{class_id}")
 

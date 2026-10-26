@@ -22,9 +22,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from dimos.message_utils.geometry import inverse_transform
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 
@@ -60,9 +58,9 @@ class Groups:
 
     def add(self, det: Detection3DPC, radius: float, voxel: float) -> int:
         """Assign one sighting to its object, folding its cloud in."""
-        points = pointcloud_xyz(det.pointcloud)
+        points = pointcloud.xyz(det.pointcloud)
         centroid = points.mean(axis=0)
-        camera = inverse_transform(det.transform).transform.translation
+        camera = geometry.inverse_transform(det.transform).transform.translation
 
         hit = next(
             (i for i, c in enumerate(self.centers) if np.linalg.norm(c - centroid) <= radius), -1
@@ -77,7 +75,13 @@ class Groups:
             self.trace.append([])
             self.ids.append(uuid4().hex[:8])
         else:
-            self._fuse(hit, to_nanoseconds(det.pointcloud.header.stamp), points, centroid, voxel)
+            self._fuse(
+                hit,
+                message_time.to_nanoseconds(det.pointcloud.header.stamp),
+                points,
+                centroid,
+                voxel,
+            )
 
         self.members[hit].extend(
             (det.ts, float(det.confidence), *centroid, camera.x, camera.y, camera.z)
@@ -93,12 +97,12 @@ class Groups:
         weighted mean over every viewpoint rather than a mean of means, and the
         running center follows the same counts.
         """
-        held = pointcloud_xyz(self.clouds[i])
+        held = pointcloud.xyz(self.clouds[i])
         na, nb = self.raw[i], float(len(points))
         self.centers[i] = (na * self.centers[i] + nb * centroid) / (na + nb)
         self.raw[i] = na + nb
         merged = np.vstack([held, points])
-        ts_ns = max(to_nanoseconds(self.clouds[i].header.stamp), ts_ns)
+        ts_ns = max(message_time.to_nanoseconds(self.clouds[i].header.stamp), ts_ns)
         frame = self.clouds[i].header.frame_id
 
         if voxel > 0:
@@ -115,8 +119,8 @@ class Groups:
             np.add.at(psum, inverse, merged * w[:, None])
             merged = psum / wsum[:, None]
             self.weights[i] = wsum
-        self.clouds[i] = pointcloud_from_xyz(
-            merged, header=Header(frame_id=frame, stamp=time_from_nanoseconds(ts_ns))
+        self.clouds[i] = pointcloud.from_xyz(
+            merged, header=Header(frame_id=frame, stamp=message_time.time_from_nanoseconds(ts_ns))
         )
 
     def rows(self, i: int) -> np.ndarray:

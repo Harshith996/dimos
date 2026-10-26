@@ -29,9 +29,7 @@ import numpy as np
 from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -91,11 +89,12 @@ def test_pose_fill_mount_composes_static_child_transform() -> None:
 
 
 def test_stamped_pose_mount_rotates_the_offset_and_keeps_payload():
-    header = Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     pose = PoseStamped(
         header=header,
         pose=Pose(
-            position=Point(x=1, y=2, z=3), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+            position=Point(x=1, y=2, z=3),
+            orientation=geometry.quaternion_from_euler(0, 0, math.pi / 2),
         ),
     )
     mount = Transform(translation=Vector3(x=1, y=0, z=0), rotation=Quaternion(x=0, y=0, z=0, w=1))
@@ -114,8 +113,8 @@ def test_stamped_pose_mount_rotates_the_offset_and_keeps_payload():
 def test_sqlite_pose_fill_copies_original_cdr_bytes_and_exact_header(tmp_path):
     source_path = tmp_path / "source.db"
     destination = tmp_path / "posed.db"
-    header = Header(frame_id="lidar", stamp=time_from_nanoseconds(1700000000123456789))
-    cloud = pointcloud_from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=header)
+    header = Header(frame_id="lidar", stamp=message_time.time_from_nanoseconds(1700000000123456789))
+    cloud = pointcloud.from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=header)
     pose_header = deepcopy(header)
     pose_header.frame_id = "odom"
     pose = PoseStamped(

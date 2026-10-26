@@ -21,13 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.message_utils.geometry import (
-    compose_transforms,
-    inverse_transform,
-    transform_matrix,
-)
-from dimos.message_utils.image import image_view
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, image, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
@@ -58,14 +52,14 @@ def _world_to_optical(
         return None
     x, y, z, qx, qy, qz, qw = pose
     world_to_base = TransformStamped(
-        header=Header(frame_id=world_frame, stamp=time_from_seconds(obs.ts)),
+        header=Header(frame_id=world_frame, stamp=message_time.time_from_seconds(obs.ts)),
         child_frame_id="base_link",
         transform=Transform(
             translation=Vector3(x=x, y=y, z=z),
             rotation=Quaternion(x=qx, y=qy, z=qz, w=qw),
         ),
     )
-    return inverse_transform(compose_transforms(world_to_base, base_to_optical))
+    return geometry.inverse_transform(geometry.compose_transforms(world_to_base, base_to_optical))
 
 
 class ProjectDepthTo3D(Transformer["ImageDetections2D", ImageDetections3DPC]):
@@ -188,7 +182,7 @@ def sees(
         )
         if transform is None:
             return False
-        matrix = transform_matrix(transform.transform)
+        matrix = geometry.transform_matrix(transform.transform)
         pts = (matrix @ np.column_stack([samples, np.ones(len(samples))]).T).T[:, :3]
         in_front = pts[:, 2] > 0
         if not in_front.any():
@@ -206,7 +200,7 @@ def sees(
         if depth is not None and visible.any():
             depth_frame = depth(obs)
             if depth_frame is not None:
-                pixels = image_view(depth_frame)
+                pixels = image.view(depth_frame)
                 depth_m = np.asarray(pixels, dtype=np.float32)
                 if pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2:
                     depth_m = depth_m * 0.001

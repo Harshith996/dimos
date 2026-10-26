@@ -16,10 +16,7 @@ import cv2
 import numpy as np
 import pytest
 
-from dimos.message_utils.geometry import transform_from_matrix
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
@@ -38,7 +35,7 @@ K = [100.0, 0.0, 320.0, 0.0, 100.0, 240.0, 0.0, 0.0, 1.0]
 
 def _camera(distortion=()):
     return CameraInfo(
-        header=Header(stamp=time_from_seconds(1.0), frame_id="camera_optical"),
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="camera_optical"),
         height=480,
         width=640,
         distortion_model="plumb_bob",
@@ -57,21 +54,23 @@ CAMERA_INFO = _camera()
 
 def _identity():
     return TransformStamped(
-        header=Header(stamp=time_from_seconds(1.0), frame_id="camera_optical"),
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="camera_optical"),
         child_frame_id="world",
-        transform=transform_from_matrix(np.eye(4)),
+        transform=geometry.transform_from_matrix(np.eye(4)),
     )
 
 
 def _cloud(points, ts=1.0):
-    return pointcloud_from_xyz(points, header=Header(stamp=time_from_seconds(ts), frame_id="world"))
+    return pointcloud.from_xyz(
+        points, header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world")
+    )
 
 
 def _image() -> Image:
-    return image_from_array(
+    return image_utils.from_array(
         np.zeros((480, 640, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(1.0)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(1.0)),
     )
 
 
@@ -135,7 +134,7 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
-    points = pointcloud_xyz(detection3dpc.pointcloud)
+    points = pointcloud.xyz(detection3dpc.pointcloud)
     assert len(points) > 60
     assert detection3dpc.pointcloud.header.frame_id == "world", (
         f"Expected frame_id 'world', got '{detection3dpc.pointcloud.header.frame_id}'"
@@ -192,7 +191,7 @@ def test_add() -> None:
 
     merged = strong + later
 
-    assert len(pointcloud_xyz(merged.pointcloud)) == 10
+    assert len(pointcloud.xyz(merged.pointcloud)) == 10
     assert (merged.name, merged.confidence) == ("cup", 0.9)
     assert (merged.ts, merged.bbox) == (2.0, later.bbox)
 
@@ -231,7 +230,7 @@ def test_from_2d_splat() -> None:
         class_id=0,
         confidence=0.9,
         name="stripe",
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         mask=mask,
     )
@@ -245,7 +244,7 @@ def test_from_2d_splat() -> None:
         [],
     )
 
-    columns = np.unique(np.round(pointcloud_xyz(lifted.detections[0].pointcloud)[:, 0], 3))
+    columns = np.unique(np.round(pointcloud.xyz(lifted.detections[0].pointcloud)[:, 0], 3))
     np.testing.assert_allclose(columns, [0.0, PITCH])
 
 
@@ -269,5 +268,5 @@ def test_range_cluster() -> None:
 
     kept = keep(np.vstack((near, far)))
     assert kept is not None
-    np.testing.assert_allclose(np.sort(pointcloud_xyz(kept)[:, 2]), near[:, 2], rtol=1e-6)
+    np.testing.assert_allclose(np.sort(pointcloud.xyz(kept)[:, 2]), near[:, 2], rtol=1e-6)
     assert keep(np.empty((0, 3))) is None

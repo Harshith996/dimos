@@ -25,8 +25,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.image import image_from_array, image_to_rgb
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -95,7 +94,7 @@ class ObjectTracker2D(Module):
         def on_frame(frame_msg: Image) -> None:
             arrival_time = time.perf_counter()
             with self._frame_lock:
-                self._latest_rgb_frame = image_to_rgb(frame_msg)
+                self._latest_rgb_frame = image_utils.to_rgb(frame_msg)
                 self._frame_arrival_time = arrival_time
 
         unsub = self.color_image.subscribe(on_frame)
@@ -180,7 +179,9 @@ class ObjectTracker2D(Module):
 
         # Publish empty detection
         empty_2d = Detection2DArray(
-            header=Header(stamp=time_from_seconds(time.time()), frame_id=self.config.frame_id),
+            header=Header(
+                stamp=message_time.time_from_seconds(time.time()), frame_id=self.config.frame_id
+            ),
             detections=[],
         )
         self._latest_detection2d = empty_2d
@@ -265,7 +266,9 @@ class ObjectTracker2D(Module):
         height = float(y2 - y1)
 
         # Create 2D detection header
-        header = Header(stamp=time_from_seconds(time.time()), frame_id=self.config.frame_id)
+        header = Header(
+            stamp=message_time.time_from_seconds(time.time()), frame_id=self.config.frame_id
+        )
 
         # Create Detection2D with all fields in constructors
         detection_2d = Detection2D(
@@ -299,7 +302,7 @@ class ObjectTracker2D(Module):
         # Create visualization
         viz_image = self._draw_visualization(frame, current_bbox_x1y1x2y2)
         viz_copy = viz_image.copy()  # Force copy needed to prevent frame reuse
-        viz_msg = image_from_array(viz_copy, encoding="rgb8", header=header)
+        viz_msg = image_utils.from_array(viz_copy, encoding="rgb8", header=header)
         self.tracked_overlay.publish(viz_msg)
 
     def _draw_visualization(self, image: NDArray[np.uint8], bbox: list[int]) -> NDArray[np.uint8]:

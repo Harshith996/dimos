@@ -15,8 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.message_utils.occupancy import occupancy_from_array
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
@@ -37,10 +36,12 @@ def test_find_wide_path_with_start_inside_inflation(planner) -> None:
     resolution = 0.05
     grid = np.zeros((60, 60), dtype=np.int8)
     grid[20:40, 30] = 100  # wall at x=1.5m spanning y=1.0..2.0m
-    costmap = occupancy_from_array(
+    costmap = occupancy.from_array(
         grid,
         resolution=resolution,
-        header=Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789)),
+        header=Header(
+            frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789)
+        ),
     )
 
     planner.handle_global_costmap(costmap)

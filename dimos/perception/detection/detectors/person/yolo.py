@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.message_utils.image import image_to_bgr
+from dimos.message_utils import image as image_utils
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -58,7 +58,7 @@ class YoloPersonDetector(Detector):
             ImageDetections2D containing Detection2DPerson objects with pose keypoints
         """
         results = self.model.track(
-            source=image_to_bgr(image),
+            source=image_utils.to_bgr(image),
             verbose=False,
             conf=0.5,
             tracker=self.tracker,

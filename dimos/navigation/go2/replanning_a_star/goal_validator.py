@@ -18,7 +18,7 @@ from typing import overload
 import numpy as np
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
-from dimos.message_utils.occupancy import grid_to_world
+from dimos.message_utils import occupancy
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
@@ -29,7 +29,7 @@ def _world_point(
     costmap: OccupancyGrid | CdrOccupancyGrid, coordinates: tuple[int, int]
 ) -> Point | Vector3:
     if isinstance(costmap, CdrOccupancyGrid):
-        return grid_to_world(costmap, coordinates)
+        return occupancy.grid_to_world(costmap, coordinates)
     return costmap.grid_to_world(coordinates)
 
 

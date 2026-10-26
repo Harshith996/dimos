@@ -20,7 +20,7 @@ import torch
 from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
-from dimos.message_utils.image import image_from_array, image_view
+from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.models.embedding.clip import CLIPModel
@@ -40,7 +40,7 @@ def test_generated_embeddings_keep_zero_source_time_and_convert_rgb(mocker, mode
     )
     mocker.patch.object(model_type, "_processor", new_callable=PropertyMock, return_value=processor)
     mocker.patch.object(model_type, "_model", new_callable=PropertyMock, return_value=network)
-    image = image_from_array(
+    image = image_utils.from_array(
         np.full((4, 8, 3), [0, 0, 255], dtype=np.uint8),
         encoding="bgr8",
         header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0)),
@@ -50,4 +50,4 @@ def test_generated_embeddings_keep_zero_source_time_and_convert_rgb(mocker, mode
     assert result.timestamp == 0.0
     torch.testing.assert_close(result.vector, torch.tensor([0.6, 0.8]))
     assert processor.call_args.kwargs["images"][0].getpixel((0, 0)) == (255, 0, 0)
-    np.testing.assert_array_equal(image_view(image)[0, 0], [0, 0, 255])
+    np.testing.assert_array_equal(image_utils.view(image)[0, 0], [0, 0, 255])

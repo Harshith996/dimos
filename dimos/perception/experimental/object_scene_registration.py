@@ -27,9 +27,11 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.image import image_from_array, image_view
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, transform_cloud
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import (
+    image as image_utils,
+    pointcloud as pointcloud_utils,
+    time as message_time,
+)
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
@@ -53,7 +55,7 @@ logger = setup_logger()
 
 
 def _timed_image(image: Image) -> TimestampedData[Image]:
-    return TimestampedData(image, to_seconds(image.header.stamp))
+    return TimestampedData(image, message_time.to_seconds(image.header.stamp))
 
 
 def _aligned_images(
@@ -324,7 +326,7 @@ class ObjectSceneRegistrationModule(Module):
             return None
 
         depth_image, camera_transform = scene_snapshot
-        depth_cv = image_view(depth_image)
+        depth_cv = image_utils.view(depth_image)
         h, w = depth_cv.shape[:2]
 
         # Zero out excluded object's depth
@@ -349,9 +351,9 @@ class ObjectSceneRegistrationModule(Module):
 
         pcd = pcd.voxel_down_sample(voxel_size)
 
-        pc = pointcloud_from_xyz(np.asarray(pcd.points), header=depth_image.header)
+        pc = pointcloud_utils.from_xyz(np.asarray(pcd.points), header=depth_image.header)
         if camera_transform is not None:
-            pc = transform_cloud(pc, camera_transform)
+            pc = pointcloud_utils.transform(pc, camera_transform)
 
         return pc
 
@@ -418,19 +420,19 @@ class ObjectSceneRegistrationModule(Module):
 
         color_image = color_msg
         # Convert depth to meters (float32)
-        depth_cv = image_view(depth_msg)
+        depth_cv = image_utils.view(depth_msg)
         if depth_msg.encoding == "16UC1":
             depth_cv = depth_cv.astype(np.float32) / 1000.0
         elif depth_cv.dtype != np.float32:
             depth_cv = depth_cv.astype(np.float32)
-        depth_image = image_from_array(depth_cv, encoding="32FC1", header=depth_msg.header)
+        depth_image = image_utils.from_array(depth_cv, encoding="32FC1", header=depth_msg.header)
 
         camera_transform = None
         if self._target_frame != color_image.header.frame_id:
             camera_transform = self.tfbuffer.get(
                 self._target_frame,
                 color_image.header.frame_id,
-                to_seconds(color_image.header.stamp),
+                message_time.to_seconds(color_image.header.stamp),
                 0.1,
                 forward_tolerance=0.2,
             )

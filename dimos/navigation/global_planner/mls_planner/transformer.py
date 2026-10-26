@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.message_utils.pointcloud import pointcloud_xyz
+from dimos.message_utils import pointcloud
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.sensor_msgs.msg import PointCloud2
@@ -91,7 +91,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
             planner.update_region(
-                np.asarray(pointcloud_xyz(obs.data), dtype=np.float32),
+                np.asarray(pointcloud.xyz(obs.data), dtype=np.float32),
                 (ox, oy),
                 radius,
                 z_min,

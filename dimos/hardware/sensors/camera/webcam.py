@@ -24,9 +24,11 @@ from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
-from dimos.message_utils.camera_info import camera_info_from_fov
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import header_now
+from dimos.message_utils import (
+    camera_info as camera_info_utils,
+    image as image_utils,
+    time as message_time,
+)
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
@@ -165,8 +167,10 @@ class Webcam(CameraHardware):
             half_width = frame_rgb.shape[1] // 2
             start = 0 if self.config.stereo_slice == "left" else half_width
             frame_rgb = frame_rgb[:, start : start + half_width]
-        image = image_from_array(
-            frame_rgb, encoding="rgb8", header=header_now(self._frame("camera_optical"))
+        image = image_utils.from_array(
+            frame_rgb,
+            encoding="rgb8",
+            header=message_time.header_now(self._frame("camera_optical")),
         )
 
         self._emitted_size = (image.width, image.height)
@@ -209,7 +213,7 @@ class Webcam(CameraHardware):
         else:
             width = self.config.width // 2 if self.config.stereo_slice else self.config.width
             height = self.config.height
-        return camera_info_from_fov(
+        return camera_info_utils.from_fov(
             60.0,
             width,
             height,

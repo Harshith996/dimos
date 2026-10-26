@@ -27,9 +27,7 @@ from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.message_utils.camera_info import camera_info_from_yaml
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import camera_info as camera_info_utils, geometry, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo
@@ -64,7 +62,7 @@ def create_desk_webcam(
 def create_desk_camera_info(
     camera_info_yaml: str | Path = DEFAULT_DESK_CAMERA_INFO_YAML,
 ) -> CameraInfo:
-    camera_info = camera_info_from_yaml(
+    camera_info = camera_info_utils.from_yaml(
         camera_info_yaml, header=Header(frame_id=DESK_CAMERA_FRAME_ID, stamp=Time(sec=0, nanosec=0))
     )
     return camera_info
@@ -128,7 +126,7 @@ class DeskStaticTfModule(Module):
         super().stop()
 
     def publish_static_chain(self) -> None:
-        stamp = time_from_nanoseconds(time.time_ns())
+        stamp = message_time.time_from_nanoseconds(time.time_ns())
         self._last_publish_ts = stamp.sec + stamp.nanosec / 1e9
         roll, pitch, yaw = self.config.camera_rotation_rpy_rad
         x, y, z = self.config.camera_translation_m
@@ -148,7 +146,7 @@ class DeskStaticTfModule(Module):
                         child_frame_id=self.config.camera_optical_frame,
                         transform=Transform(
                             translation=Vector3(x=x, y=y, z=z),
-                            rotation=quaternion_from_euler(roll, pitch, yaw),
+                            rotation=geometry.quaternion_from_euler(roll, pitch, yaw),
                         ),
                     ),
                 ]

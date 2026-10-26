@@ -33,10 +33,7 @@ import numpy as np
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.geometry import inverse_transform, vector_array
-from dimos.message_utils.image import image_brightness, image_sharpness
-from dimos.message_utils.pointcloud import pointcloud_xyz
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import geometry, image, pointcloud, time as message_time
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (
@@ -130,11 +127,11 @@ def _lift(
     lifted = rig.lift(detections, transform) if transform is not None else None
     if transform is None or lifted is None:
         return []
-    camera = vector_array(inverse_transform(transform).transform.translation)
+    camera = geometry.vector_array(geometry.inverse_transform(transform).transform.translation)
 
     valid: list[Detection3DPC] = []
     for det3d in lifted:
-        points = pointcloud_xyz(det3d.pointcloud)
+        points = pointcloud.xyz(det3d.pointcloud)
         if len(points) < params.min_points:
             continue
         if float((points.max(axis=0) - points.min(axis=0)).max()) > params.max_object_extent_m:
@@ -165,8 +162,8 @@ def index_frames(rig: Rig, feed: Stream[Any, Any]) -> Stream[Any, Any]:
         )
 
     return (
-        feed.filter(lambda obs: image_brightness(obs.data) > 0.1)
-        .transform(QualityWindow(image_sharpness, window=1.0 / rig.embed_hz))
+        feed.filter(lambda obs: image.brightness(obs.data) > 0.1)
+        .transform(QualityWindow(image.sharpness, window=1.0 / rig.embed_hz))
         .map(with_camera_pose)
         .filter(lambda obs: obs.pose is not None)
     )
@@ -191,7 +188,7 @@ def embed_index(rig: Rig, embedder: EmbeddingModel, t0: float, t1: float) -> Str
         feed.transform(EmbedImages(embedder))
         .map(
             lambda obs: obs.derive(
-                data=IndexFrame(obs.ts, obs.data.header.frame_id, image_sharpness(obs.data))
+                data=IndexFrame(obs.ts, obs.data.header.frame_id, image.sharpness(obs.data))
             )
         )
         .materialize()
@@ -338,7 +335,7 @@ def detect(
                         class_id=j,
                         confidence=float(score),
                         name=queries[j],
-                        ts=to_seconds(img.header.stamp),
+                        ts=message_time.to_seconds(img.header.stamp),
                         image=img,
                     )
                     if det.is_valid():

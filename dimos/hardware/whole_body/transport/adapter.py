@@ -33,7 +33,7 @@ import numpy as np
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
-from dimos.message_utils.time import header_now
+from dimos.message_utils import time as message_time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.utils.logging_config import setup_logger
@@ -141,7 +141,7 @@ class TransportWholeBodyAdapter:
             return False
 
         msg = MotorCommandArray(
-            header=header_now(),
+            header=message_time.header_now(),
             q=np.asarray([c.q for c in commands], dtype=np.float64),
             dq=np.asarray([c.dq for c in commands], dtype=np.float64),
             kp=np.asarray([c.kp for c in commands], dtype=np.float64),

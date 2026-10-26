@@ -22,8 +22,7 @@ import torch
 import torch.nn.functional as functional
 from transformers import AutoImageProcessor, AutoModel
 
-from dimos.message_utils.image import image_to_rgb
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
@@ -53,7 +52,7 @@ class DINOModel(EmbeddingModel, HuggingFaceModel):
     @overload
     def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
-        pil_images = [PILImage.fromarray(image_to_rgb(img)) for img in images]
+        pil_images = [PILImage.fromarray(image_utils.to_rgb(img)) for img in images]
         with torch.inference_mode():
             inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
             outputs = self._model(**inputs)
@@ -70,7 +69,9 @@ class DINOModel(EmbeddingModel, HuggingFaceModel):
 
         embeddings: list[Embedding] = []
         for i, feat in enumerate(feats):
-            embeddings.append(Embedding(vector=feat, timestamp=to_seconds(images[i].header.stamp)))
+            embeddings.append(
+                Embedding(vector=feat, timestamp=message_time.to_seconds(images[i].header.stamp))
+            )
         return embeddings[0] if len(images) == 1 else embeddings
 
     @overload

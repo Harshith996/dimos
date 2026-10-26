@@ -44,14 +44,13 @@ _WORLD_FRAMES = ("world", "map", "odom")
 
 def _camera_info_static() -> CameraInfo:
     """Load the packaged calibration without importing a robot connection."""
-    from dimos.message_utils.camera_info import camera_info_from_yaml
-    from dimos.message_utils.time import time_from_seconds
+    from dimos.message_utils import camera_info as camera_info_utils, time as message_time
     from dimos.messages.std_msgs.msg import Header
 
     source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
     with resources.as_file(source) as path:
-        return camera_info_from_yaml(
-            path, header=Header(stamp=time_from_seconds(0), frame_id="camera_optical")
+        return camera_info_utils.from_yaml(
+            path, header=Header(stamp=message_time.time_from_seconds(0), frame_id="camera_optical")
         )
 
 
@@ -138,8 +137,7 @@ def _accumulate(
     Disposal of the underlying ``VoxelGrid`` is handled by ``VoxelMapTransformer``.
     """
     from dimos.mapping.voxels.module import VoxelMapTransformer
-    from dimos.message_utils.geometry import compose_transform_values
-    from dimos.message_utils.pointcloud import transform_cloud
+    from dimos.message_utils import geometry, pointcloud
     from dimos.messages.geometry_msgs.msg import TransformStamped
     from dimos.messages.std_msgs.msg import Header
 
@@ -168,9 +166,9 @@ def _accumulate(
                     child_frame_id=obs.data.header.frame_id,
                     transform=correction.transform
                     if tf is None
-                    else compose_transform_values(correction.transform, tf.transform),
+                    else geometry.compose_transform_values(correction.transform, tf.transform),
                 )
-            yield obs if tf is None else obs.derive(data=transform_cloud(obs.data, tf))
+            yield obs if tf is None else obs.derive(data=pointcloud.transform(obs.data, tf))
 
     frames = iter(prepared())
     first = next(frames, None)
@@ -192,13 +190,13 @@ def _denoise(cloud: PointCloud2 | None) -> PointCloud2 | None:
     """Statistical outlier removal via o3d; drops sparse floaters, keeps colors."""
     import open3d as o3d  # type: ignore[import-untyped]
 
-    from dimos.message_utils.pointcloud import pointcloud_to_open3d, select_points
+    from dimos.message_utils import pointcloud
 
     if cloud is None or cloud.width * cloud.height < 20:
         return cloud
-    tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(cloud))
+    tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud.to_open3d(cloud))
     _, mask = tensor.remove_statistical_outliers(nb_neighbors=20, std_ratio=2.0)
-    return select_points(cloud, mask.numpy())
+    return pointcloud.select(cloud, mask.numpy())
 
 
 def _log_reconstruction(
@@ -219,7 +217,7 @@ def _log_reconstruction(
     import rerun.blueprint as rrb
 
     from dimos.memory.vis.color import Color
-    from dimos.message_utils.time import time_from_seconds
+    from dimos.message_utils import time as message_time
     from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
     from dimos.messages.std_msgs.msg import Header
     from dimos.visualization.rerun.cdr import cloud_archetype
@@ -334,7 +332,7 @@ def _log_reconstruction(
             pgo_quats: list[tuple[float, float, float, float]] = []
             for d in marker_dets:
                 raw_tf = TransformStamped(
-                    header=Header(stamp=time_from_seconds(d.ts), frame_id="world"),
+                    header=Header(stamp=message_time.time_from_seconds(d.ts), frame_id="world"),
                     child_frame_id=f"marker_{d.data.marker_id}",
                     transform=Transform(
                         translation=Vector3(d.data.center.x, d.data.center.y, d.data.center.z),
@@ -493,9 +491,7 @@ def main(
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
-    from dimos.message_utils.camera_info import camera_info_from_yaml
-    from dimos.message_utils.image import image_sharpness
-    from dimos.message_utils.time import time_from_seconds
+    from dimos.message_utils import camera_info as camera_info_utils, image, time as message_time
     from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.messages.std_msgs.msg import Header
@@ -708,8 +704,9 @@ def main(
                 ),
             )
         cam_info = (
-            camera_info_from_yaml(
-                camera_info, header=Header(stamp=time_from_seconds(0), frame_id="camera_optical")
+            camera_info_utils.from_yaml(
+                camera_info,
+                header=Header(stamp=message_time.time_from_seconds(0), frame_id="camera_optical"),
             )
             if camera_info
             else _camera_info_static()
@@ -725,7 +722,7 @@ def main(
         # than the limits. Defaults match replay_marker.py so positions agree.
         with progress(n_images, "detecting markers") as bar:
             pipeline: Stream[Image] = color_image.tap(bar).transform(
-                QualityWindow(image_sharpness, window=marker_quality_window)
+                QualityWindow(image.sharpness, window=marker_quality_window)
             )
             if marker_max_speed > 0:
                 pipeline = pipeline.transform(

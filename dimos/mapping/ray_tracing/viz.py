@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.message_utils.pointcloud import pointcloud_xyz
+from dimos.message_utils import pointcloud
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ def render_voxel_map(
     msg: PointCloud2, voxel_size: float, height_range: tuple[float, float]
 ) -> Archetype:
     return voxel_map_points(
-        np.asarray(pointcloud_xyz(msg), dtype=np.float32), voxel_size, height_range
+        np.asarray(pointcloud.xyz(msg), dtype=np.float32), voxel_size, height_range
     )
 
 
@@ -74,7 +74,7 @@ def render_map_region(
 
     Points outside z_band (world frame) are dropped, to show one storey.
     """
-    pts = np.asarray(pointcloud_xyz(msg.cloud), dtype=np.float32)
+    pts = np.asarray(pointcloud.xyz(msg.cloud), dtype=np.float32)
     if z_band is not None:
         pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] < z_band[1])]
     cell = voxel_map_points(pts, voxel_size, height_range)

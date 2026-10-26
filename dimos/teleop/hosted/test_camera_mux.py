@@ -26,7 +26,7 @@ import json
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_from_array, image_to_rgb, image_view
+from dimos.message_utils import image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -55,7 +55,7 @@ def make_mux(mocker):
 
 
 def _img(w: int, h: int) -> Image:
-    return image_from_array(np.zeros((h, w, 3), dtype=np.uint8), encoding="bgr8")
+    return image.from_array(np.zeros((h, w, 3), dtype=np.uint8), encoding="bgr8")
 
 
 def _feed(mux: CameraMuxModule, cam: str, img: Image) -> None:
@@ -64,7 +64,7 @@ def _feed(mux: CameraMuxModule, cam: str, img: Image) -> None:
 
 
 def _is_even(img: Image) -> bool:
-    h, w = image_view(img).shape[:2]
+    h, w = image.view(img).shape[:2]
     return h % 2 == 0 and w % 2 == 0
 
 
@@ -73,8 +73,8 @@ def _is_even(img: Image) -> bool:
 
 def test_even_dims_crops_odd_width_and_height() -> None:
     out = CameraMuxModule._even_dims(_img(641, 481))
-    assert image_view(out).shape[:2] == (480, 640)
-    assert image_view(out).flags["C_CONTIGUOUS"]  # from_ndarray needs contiguous
+    assert image.view(out).shape[:2] == (480, 640)
+    assert image.view(out).flags["C_CONTIGUOUS"]  # from_ndarray needs contiguous
 
 
 def test_even_dims_passes_even_through_unchanged() -> None:
@@ -134,8 +134,8 @@ def test_composite_returns_none_on_error_does_not_raise(
     mux = make_mux(["cam1", "cam2"])
     with mux._cam_lock:
         mux._cam_selected = ["cam1", "cam2"]
-    _feed(mux, "cam1", image_from_array(np.zeros((480, 640, 3), np.uint8), encoding="bgr8"))
-    _feed(mux, "cam2", image_from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
+    _feed(mux, "cam1", image.from_array(np.zeros((480, 640, 3), np.uint8), encoding="bgr8"))
+    _feed(mux, "cam2", image.from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
     assert mux._composite() is None
 
 
@@ -199,7 +199,7 @@ def test_latency_stamp_fits_640_width(
     mux = make_mux(["cam1"], latency_stamp=True)
     _feed(mux, "cam1", _img(640, 480))
     out = mux._composite()
-    assert out is not None and image_view(out).shape[:2] == (480 + 16, 640)
+    assert out is not None and image.view(out).shape[:2] == (480 + 16, 640)
 
 
 def test_fps_cap_drops_frames_within_window(make_mux, mocker) -> None:
@@ -216,7 +216,7 @@ def test_fps_cap_window_released_on_failed_composite(
     mux = make_mux(["cam1", "cam2"], video_max_fps=30.0)
     with mux._cam_lock:
         mux._cam_selected = ["cam1", "cam2"]
-    _feed(mux, "cam2", image_from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
+    _feed(mux, "cam2", image.from_array(np.zeros((480, 640, 4), np.uint8), encoding="bgra8"))
     mux._on_cam("cam1", _img(640, 480))  # BGR + BGRA hstack fails → None
     mux.mux_image.publish.assert_not_called()
     _feed(mux, "cam2", _img(640, 480))
@@ -226,7 +226,7 @@ def test_fps_cap_window_released_on_failed_composite(
 
 def test_generated_header_survives_crop_resize_and_latency_strip(make_mux, mocker):
     mocker.patch("dimos.teleop.hosted.camera_mux.time.time", return_value=17.125)
-    source = image_from_array(
+    source = image.from_array(
         np.full((481, 853, 3), [255, 0, 0], np.uint8),
         encoding="rgb8",
         header=Header(Time(1_789_654_321, 1), "camera"),
@@ -240,7 +240,7 @@ def test_generated_header_survives_crop_resize_and_latency_strip(make_mux, mocke
     assert out.header is not source.header
     assert out.width == 640
     assert out.height % 2 == 0
-    assert image_to_rgb(out)[0, 0].tolist() == [255, 0, 0]
+    assert image.to_rgb(out)[0, 0].tolist() == [255, 0, 0]
     np.testing.assert_array_equal(source.data, original)
     out.header.frame_id = "changed"
     assert source.header.frame_id == "camera"
@@ -250,14 +250,14 @@ def test_mixed_rgb_bgr_tiles_keep_the_same_visible_color(make_mux):
     mux = make_mux(["cam1", "cam2"])
     with mux._cam_lock:
         mux._cam_selected = ["cam1", "cam2"]
-    _feed(mux, "cam1", image_from_array(np.full((4, 4, 3), [0, 0, 255], np.uint8), encoding="bgr8"))
-    _feed(mux, "cam2", image_from_array(np.full((4, 4, 3), [255, 0, 0], np.uint8), encoding="rgb8"))
+    _feed(mux, "cam1", image.from_array(np.full((4, 4, 3), [0, 0, 255], np.uint8), encoding="bgr8"))
+    _feed(mux, "cam2", image.from_array(np.full((4, 4, 3), [255, 0, 0], np.uint8), encoding="rgb8"))
     out = mux._composite()
     assert out is not None
     assert out.encoding == "bgr8"
     assert out.header.frame_id == "camera_mux"
-    assert image_to_rgb(out)[0, 0].tolist() == [255, 0, 0]
-    assert image_to_rgb(out)[0, 6].tolist() == [255, 0, 0]
+    assert image.to_rgb(out)[0, 0].tolist() == [255, 0, 0]
+    assert image.to_rgb(out)[0, 6].tolist() == [255, 0, 0]
 
 
 def test_hosted_blueprints_bind_canonical_mux_image_to_video_transport():

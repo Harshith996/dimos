@@ -22,9 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.message_utils.image import image_view
-from dimos.message_utils.occupancy import occupancy_from_array
-from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
+from dimos.message_utils import image, occupancy, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
@@ -197,18 +195,18 @@ def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at
             assert condition.wait_for(lambda: len(values) == 5, timeout=5)
         assert values["color_image"].encoding == "rgb8"
         assert values["depth_image"].encoding == "32FC1"
-        np.testing.assert_array_equal(image_view(values["color_image"]), pixels)
+        np.testing.assert_array_equal(image.view(values["color_image"]), pixels)
         assert values["color_image"].header.stamp == Time(17, 125_000_000)
         assert values["camera_info"].header.stamp == Time(17, 125_000_000)
         assert values["depth_camera_info"].header.stamp == Time(17, 125_000_000)
         assert type(module.get_color_camera_info()) is CameraInfo
         assert type(module.get_depth_camera_info()) is CameraInfo
         assert values["pointcloud"].header.stamp == Time(17, 125_000_000)
-        xyz = pointcloud_xyz(values["pointcloud"])
+        xyz = pointcloud.xyz(values["pointcloud"])
         xyz = xyz[np.lexsort((xyz[:, 1], xyz[:, 0]))]
         np.testing.assert_array_equal(xyz, [[0, 0, 1], [0, 1, 1], [1, 0, 1], [1, 1, 1]])
         np.testing.assert_array_equal(
-            pointcloud_rgb(values["pointcloud"]), np.tile([255, 0, 0], (4, 1))
+            pointcloud.rgb(values["pointcloud"]), np.tile([255, 0, 0], (4, 1))
         )
         direct = module.get_color_camera_info()
         assert direct is not None
@@ -219,7 +217,7 @@ def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at
 
 
 def test_g1_custom_visualizers_accept_canonical_grid_path_and_pose_values():
-    grid = occupancy_from_array(
+    grid = occupancy.from_array(
         np.array([[-1, 0, 100]], dtype=np.int8), header=Header(Time(17, 1), "map"), resolution=0.5
     )
     mesh = g1_costmap(grid)

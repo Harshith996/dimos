@@ -38,9 +38,7 @@ from dimos.core import transport as transport_module
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport_factory import make_transport
-from dimos.message_utils.image import image_view
-from dimos.message_utils.pointcloud import pointcloud_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image, pointcloud, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped as CdrPoseStamped,
@@ -261,7 +259,10 @@ def test_camera_info_is_restamped_on_each_publish(
         conn.publish_camera_info()
 
     published = [call.args[0] for call in conn.camera_info.publish.call_args_list]
-    assert [to_seconds(info.header.stamp) >= before for info in published] == [True, True]
+    assert [message_time.to_seconds(info.header.stamp) >= before for info in published] == [
+        True,
+        True,
+    ]
     assert [info.header.frame_id for info in published] == [
         conn.camera_info_static.header.frame_id
     ] * 2
@@ -300,7 +301,7 @@ def test_driver_cloud_boundary_preserves_all_supported_attributes():
     )
     generated = go2_conn._cloud_message(source)
     restored = decode(encode(generated), CdrCloud)
-    records = pointcloud_view(restored)
+    records = pointcloud.view(restored)
     assert restored.header == Header(Time(0, 0), "lidar")
     assert records["intensity"].ravel().tolist() == [0.25, 0.75]
     assert records["offset_time"].ravel().tolist() == [3, 9]
@@ -361,9 +362,9 @@ def test_driver_image_boundary_copies_pixels_and_prefixes_frame(
     message = conn.color_image.publish.call_args.args[0]
     assert message.header == Header(Time(0, 0), "robot0/camera_optical")
     assert message.encoding == encoding
-    np.testing.assert_array_equal(image_view(message), pixels)
+    np.testing.assert_array_equal(image.view(message), pixels)
     pixels[:] = 0
-    assert image_view(message).max() > 0
+    assert image.view(message).max() > 0
     assert source.frame_id == "camera_optical"
 
 
@@ -413,5 +414,5 @@ def test_go2_default_ports_deliver_cdr_without_robot(stub_webrtc, mocker, monkey
         assert received["color_image"].encoding == "rgb8"
         assert received["odom"].header.stamp == Time(0, 0)
         assert len(received["tf"].transforms) == 3
-        np.testing.assert_array_equal(image_view(received["color_image"]), source.data)
-        np.testing.assert_array_equal(pointcloud_view(received["lidar"])["z"], [[3.0]])
+        np.testing.assert_array_equal(image.view(received["color_image"]), source.data)
+        np.testing.assert_array_equal(pointcloud.view(received["lidar"])["z"], [[3.0]])

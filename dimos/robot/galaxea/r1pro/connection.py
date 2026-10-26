@@ -54,7 +54,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.geometry_msgs.msg import (
@@ -711,7 +711,7 @@ class R1ProConnection(Module):
             if bootstrapped:
                 self.motor_states.publish(
                     JointState(
-                        header=Header(time_from_nanoseconds(ts), frame_id),
+                        header=Header(message_time.time_from_nanoseconds(ts), frame_id),
                         name=R1PRO_UPPER_BODY_JOINTS,
                         position=np.asarray(positions, dtype=np.float64),
                         velocity=np.asarray(velocities, dtype=np.float64),
@@ -749,7 +749,7 @@ class R1ProConnection(Module):
                 continue
             last_pub = t0
             try:
-                stamp = time_from_nanoseconds(_stamp_nanoseconds(msg))
+                stamp = message_time.time_from_nanoseconds(_stamp_nanoseconds(msg))
                 out.publish(
                     CompressedImage(
                         header=Header(stamp, msg.header.frame_id or stream),

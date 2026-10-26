@@ -25,8 +25,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.geometry import yaw
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.messages.nav_msgs.msg import Path
 from dimos.navigation.embodiment.base import Embodiment
@@ -80,8 +79,12 @@ class HintedController:
             # empty path or single-pose veto stub: the planner says stop
             return Twist(Vector3(0, 0, 0), Vector3(0, 0, 0))
         xy = np.array([[p.pose.position.x, p.pose.position.y] for p in path.poses])
-        yaws = np.array([yaw(p.pose.orientation) for p in path.poses])
-        px, py, pyaw = pose.pose.position.x, pose.pose.position.y, yaw(pose.pose.orientation)
+        yaws = np.array([geometry.yaw(p.pose.orientation) for p in path.poses])
+        px, py, pyaw = (
+            pose.pose.position.x,
+            pose.pose.position.y,
+            geometry.yaw(pose.pose.orientation),
+        )
         n = len(xy)
 
         seg = np.linalg.norm(np.diff(xy, axis=0), axis=1) if n > 1 else np.zeros(1)
@@ -200,7 +203,8 @@ class RustHintedController:
         ts = np.ascontiguousarray(
             np.array(
                 [
-                    to_nanoseconds(p.header.stamp) - to_nanoseconds(path.poses[0].header.stamp)
+                    message_time.to_nanoseconds(p.header.stamp)
+                    - message_time.to_nanoseconds(path.poses[0].header.stamp)
                     for p in path.poses
                 ],
                 dtype=np.float64,
@@ -211,7 +215,7 @@ class RustHintedController:
             (
                 float(pose.pose.position.x),
                 float(pose.pose.position.y),
-                float(yaw(pose.pose.orientation)),
+                float(geometry.yaw(pose.pose.orientation)),
             ),
             path_xy_yaw(path),
             clr,

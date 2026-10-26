@@ -26,7 +26,7 @@ import zenoh
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -132,7 +132,9 @@ def test_actual_native_follower_cdr_drive_arrival_new_goal_and_empty_stop(monkey
 
         def feed(x, route):
             nonlocal sequence
-            header = Header(frame_id="odom", stamp=time_from_nanoseconds(epoch + sequence))
+            header = Header(
+                frame_id="odom", stamp=message_time.time_from_nanoseconds(epoch + sequence)
+            )
             sequence += 1
             wires["tf"].publish(
                 TFMessage(
@@ -152,11 +154,12 @@ def test_actual_native_follower_cdr_drive_arrival_new_goal_and_empty_stop(monkey
 
         def route(start):
             return Path(
-                header=Header(frame_id="odom", stamp=time_from_nanoseconds(epoch)),
+                header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(epoch)),
                 poses=[
                     PoseStamped(
                         header=Header(
-                            frame_id="odom", stamp=time_from_nanoseconds(epoch + i * 125000000)
+                            frame_id="odom",
+                            stamp=message_time.time_from_nanoseconds(epoch + i * 125000000),
                         ),
                         pose=Pose(
                             position=Point(x=start + i * 0.125, y=0, z=0),

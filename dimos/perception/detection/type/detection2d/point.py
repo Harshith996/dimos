@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.message_utils.image import image_from_array, image_view
+from dimos.message_utils import image as image_utils
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 from dimos.messages.vision_msgs.msg import (
     BoundingBox2D,
@@ -67,12 +67,14 @@ class Detection2DPoint(Detection2D):
             Cropped Image containing the area around the point
         """
         x, y = int(self.x), int(self.y)
-        pixels = image_view(self.image)
+        pixels = image_utils.view(self.image)
         cropped = pixels[
             max(0, y - padding) : min(self.image.height, y + padding),
             max(0, x - padding) : min(self.image.width, x + padding),
         ]
-        return image_from_array(cropped, encoding=self.image.encoding, header=self.image.header)
+        return image_utils.from_array(
+            cropped, encoding=self.image.encoding, header=self.image.header
+        )
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert point to ROS Detection2D message (as zero-size bbox at point)."""

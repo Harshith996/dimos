@@ -15,16 +15,15 @@
 import numpy as np
 
 from dimos.mapping.ray_tracing.viz import render_map_region, voxel_map_points
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import PointCloudRegion
 from dimos.messages.std_msgs.msg import Header
 
 
 def _region(points):
-    header = Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     return PointCloudRegion(
-        header=header, region_id=0, cloud=pointcloud_from_xyz(points, header=header)
+        header=header, region_id=0, cloud=pointcloud.from_xyz(points, header=header)
     )
 
 

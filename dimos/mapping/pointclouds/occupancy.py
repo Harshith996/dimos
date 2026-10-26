@@ -22,8 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
-from dimos.message_utils.occupancy import occupancy_from_array
-from dimos.message_utils.pointcloud import pointcloud_xyz
+from dimos.message_utils import occupancy, pointcloud
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
@@ -46,7 +45,7 @@ class OccupancyConfig:
 
 def _cloud_points(cloud: PointCloud2 | CdrCloud) -> NDArray[np.float64]:
     if isinstance(cloud, CdrCloud):
-        points = pointcloud_xyz(cloud)
+        points = pointcloud.xyz(cloud)
         return points[np.isfinite(points).all(axis=1)]
     points, _ = cloud.as_numpy()
     return points.astype(np.float64)
@@ -69,7 +68,7 @@ def _grid_message(
     if isinstance(cloud, CdrCloud):
         header = deepcopy(cloud.header)
         header.frame_id = config.frame_id or header.frame_id
-        return occupancy_from_array(
+        return occupancy.from_array(
             cells,
             header=header,
             resolution=config.resolution,

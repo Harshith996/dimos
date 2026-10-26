@@ -30,8 +30,7 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.message_utils.geometry import pose_from_transform, quaternion_euler
-from dimos.message_utils.image import image_to_bgr
+from dimos.message_utils import geometry, image as image_utils
 from dimos.messages.geometry_msgs.msg import Point
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.tf2_msgs.msg import TFMessage
@@ -168,7 +167,7 @@ class SpatialMemory(Module):
         self._process_interval = 1
 
     def _receive_frame(self, image_msg: Image) -> None:
-        self._latest_video_frame = image_to_bgr(image_msg)
+        self._latest_video_frame = image_utils.to_bgr(image_msg)
 
     @rpc
     def start(self) -> None:
@@ -202,7 +201,7 @@ class SpatialMemory(Module):
             return
 
         # Create Pose object with position and orientation
-        current_pose = pose_from_transform(tf).pose
+        current_pose = geometry.pose_from_transform(tf).pose
 
         # Process the frame directly
         try:
@@ -233,7 +232,7 @@ class SpatialMemory(Module):
 
             frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
             # Get euler angles from quaternion orientation for metadata
-            roll, pitch, yaw = quaternion_euler(tf.transform.rotation)
+            roll, pitch, yaw = geometry.quaternion_euler(tf.transform.rotation)
 
             # Create metadata dictionary with primitive types only
             metadata = {
@@ -472,7 +471,7 @@ class SpatialMemory(Module):
         location = RobotLocation(
             name=name,
             position=(translation.x, translation.y, translation.z),
-            rotation=quaternion_euler(tf.transform.rotation),
+            rotation=geometry.quaternion_euler(tf.transform.rotation),
             metadata={"description": description or f"Location: {name}"},
             timestamp=time.time(),
         )
