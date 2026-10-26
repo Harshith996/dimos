@@ -18,8 +18,7 @@ import numpy as np
 
 from dimos.mapping.occupancy.operations import _grid_coordinates
 from dimos.mapping.occupancy.visualizations import _map_image, visualize_occupancy_grid
-from dimos.message_utils.geometry import yaw
-from dimos.message_utils.image import image_view
+from dimos.message_utils import geometry, image as image_utils
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
@@ -61,7 +60,7 @@ def visualize_path(
     import cv2
 
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
-    bgr = image_view(image) if isinstance(image, CdrImage) else image.data
+    bgr = image_utils.view(image) if isinstance(image, CdrImage) else image.data
 
     bgr = cv2.resize(
         bgr,
@@ -83,7 +82,9 @@ def visualize_path(
         cy = int(y * scale)
 
         # Get yaw angle from pose orientation
-        angle = yaw(pose.pose.orientation) if isinstance(pose, CdrPoseStamped) else pose.yaw
+        angle = (
+            geometry.yaw(pose.pose.orientation) if isinstance(pose, CdrPoseStamped) else pose.yaw
+        )
 
         # Define rectangle corners centered at origin (length along x, width along y)
         half_length = robot_length_px / 2

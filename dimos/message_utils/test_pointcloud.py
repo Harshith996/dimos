@@ -22,22 +22,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_rgbd,
-    pointcloud_from_xyz,
-    pointcloud_from_xyz_rgb,
-    pointcloud_rgb,
-    pointcloud_stamps,
-    pointcloud_view,
-    pointcloud_with_xyz,
-    pointcloud_xyz,
-    select_points,
-    transform_cloud,
-    voxel_downsample_cloud,
-)
+from dimos.message_utils import camera_info, image, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
@@ -81,9 +66,9 @@ def padded_cloud(request):
 
 
 def test_field_counts_padding_and_endianness(padded_cloud):
-    view = pointcloud_view(padded_cloud)
+    view = pointcloud.view(padded_cloud)
     assert view["tags"].tolist() == [[[1, 11], [2, 12]], [[3, 13], [4, 14]]]
-    assert pointcloud_xyz(padded_cloud).tolist() == [[1, 2, 3], [2, 4, 6], [3, 6, 9], [4, 8, 12]]
+    assert pointcloud.xyz(padded_cloud).tolist() == [[1, 2, 3], [2, 4, 6], [3, 6, 9], [4, 8, 12]]
     assert not view.flags.writeable
     with pytest.raises(ValueError, match="WRITEABLE"):
         view.setflags(write=True)
@@ -104,7 +89,7 @@ def test_view_retains_storage_after_message_is_deleted():
         is_bigendian=False,
         is_dense=False,
     )
-    view = pointcloud_view(message)
+    view = pointcloud.view(message)
     del message
     gc.collect()
     assert view["x"].tolist() == [[1.5]]
@@ -126,20 +111,20 @@ def test_invalid_layout_rejected(padded_cloud, change):
     for name, value in change.items():
         setattr(padded_cloud, name, value)
     with pytest.raises(ValueError):
-        pointcloud_view(padded_cloud)
+        pointcloud.view(padded_cloud)
 
 
 def test_xyz_copy_is_independent(padded_cloud):
-    xyz = pointcloud_xyz(padded_cloud)
+    xyz = pointcloud.xyz(padded_cloud)
     xyz[0, 0] = 99
-    assert pointcloud_view(padded_cloud)["x"][0, 0] == 1
+    assert pointcloud.view(padded_cloud)["x"][0, 0] == 1
     assert xyz.dtype == np.float64
 
 
 def test_missing_scalar_coordinate_rejected(padded_cloud):
     padded_cloud.fields = [field for field in padded_cloud.fields if field.name != "y"]
     with pytest.raises(ValueError, match="scalar 'y'"):
-        pointcloud_xyz(padded_cloud)
+        pointcloud.xyz(padded_cloud)
 
 
 @pytest.mark.parametrize("organized", [False, True])
@@ -147,26 +132,26 @@ def test_xyz_factory_copies_noncontiguous_coordinates_and_preserves_header(organ
     values = np.arange(36, dtype=">f8").reshape(2, 6, 3)[:, ::2]
     points = values if organized else values.reshape(-1, 3)
     header = Header(frame_id="lidar", stamp=Time(sec=1700000000, nanosec=123456789))
-    cloud = pointcloud_from_xyz(points, header=header)
+    cloud = pointcloud.from_xyz(points, header=header)
     decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
-    np.testing.assert_array_equal(pointcloud_xyz(decoded), points.reshape(-1, 3))
+    np.testing.assert_array_equal(pointcloud.xyz(decoded), points.reshape(-1, 3))
     assert decoded.header == header
     assert decoded.is_dense and not decoded.is_bigendian
     assert (decoded.height, decoded.width) == ((2, 3) if organized else (1, 6))
     assert decoded.point_step == 12
     assert decoded.row_step == decoded.width * 12
     points[...] = -1
-    assert pointcloud_xyz(cloud)[0, 0] == 0
+    assert pointcloud.xyz(cloud)[0, 0] == 0
     header.frame_id = "changed"
     assert cloud.header.frame_id == "lidar"
 
 
 def test_xyz_factory_marks_missing_coordinates_and_supports_empty_cloud():
     values = np.array([[1, np.nan, 3], [np.inf, 2, 3]], dtype=np.float32)
-    cloud = pointcloud_from_xyz(values, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+    cloud = pointcloud.from_xyz(values, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
     assert not cloud.is_dense
-    np.testing.assert_array_equal(pointcloud_xyz(cloud), values)
-    empty = pointcloud_from_xyz(
+    np.testing.assert_array_equal(pointcloud.xyz(cloud), values)
+    empty = pointcloud.from_xyz(
         np.empty((0, 3)), header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
     )
     assert (empty.height, empty.width, len(empty.data)) == (1, 0, 0)
@@ -177,7 +162,7 @@ def test_xyz_factory_marks_missing_coordinates_and_supports_empty_cloud():
 )
 def test_xyz_factory_rejects_invalid_shape_type_or_range(points):
     with pytest.raises(ValueError):
-        pointcloud_from_xyz(points, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+        pointcloud.from_xyz(points, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 def test_selection_preserves_custom_fields_padding_and_header(padded_cloud):
@@ -188,7 +173,7 @@ def test_selection_preserves_custom_fields_padding_and_header(padded_cloud):
     raw[108:112] = b"wxyz"
     padded_cloud.data = bytes(raw)
     result = cdr_decode(
-        cdr_encode(select_points(padded_cloud, np.array([True, False, False, True]))),
+        cdr_encode(pointcloud.select(padded_cloud, np.array([True, False, False, True]))),
         PointCloud2,
     )
     assert bytes(result.data) == raw[:24] + raw[88:112]
@@ -197,7 +182,7 @@ def test_selection_preserves_custom_fields_padding_and_header(padded_cloud):
     assert result.is_bigendian == padded_cloud.is_bigendian
     assert result.is_dense == padded_cloud.is_dense
     assert (result.height, result.width, result.row_step) == (1, 2, 48)
-    np.testing.assert_array_equal(pointcloud_view(result)["tags"], [[[1, 11], [4, 14]]])
+    np.testing.assert_array_equal(pointcloud.view(result)["tags"], [[[1, 11], [4, 14]]])
     padded_cloud.data = bytes(len(raw))
     assert bytes(result.data)[20:24] == b"abcd"
 
@@ -207,11 +192,11 @@ def test_selection_preserves_custom_fields_padding_and_header(padded_cloud):
 )
 def test_selection_rejects_mismatched_mask(padded_cloud, mask):
     with pytest.raises(ValueError, match="flat boolean mask"):
-        select_points(padded_cloud, mask)
+        pointcloud.select(padded_cloud, mask)
 
 
 def test_selection_supports_no_retained_points(padded_cloud):
-    result = select_points(padded_cloud, np.zeros(4, dtype=bool))
+    result = pointcloud.select(padded_cloud, np.zeros(4, dtype=bool))
     assert (result.height, result.width, result.row_step, len(result.data)) == (1, 0, 0, 0)
     assert result.fields == padded_cloud.fields
 
@@ -222,17 +207,17 @@ def test_cloud_concatenation_preserves_all_records_and_newest_nanosecond(padded_
     second = cdr_decode(cdr_encode(first), PointCloud2)
     second.header.stamp.nanosec += 1
     second.is_dense = False
-    result = cdr_decode(cdr_encode(concatenate_clouds(first, second)), PointCloud2)
+    result = cdr_decode(cdr_encode(pointcloud.concatenate(first, second)), PointCloud2)
     assert (result.height, result.width, result.row_step) == (1, 8, 8 * 24)
     assert result.fields == first.fields
     assert result.is_bigendian == first.is_bigendian
     assert result.header.frame_id == "world"
     assert result.header.stamp.nanosec == 123456790
     assert not result.is_dense
-    packed = select_points(first, np.ones(4, dtype=bool))
+    packed = pointcloud.select(first, np.ones(4, dtype=bool))
     assert bytes(result.data) == bytes(packed.data) * 2
     np.testing.assert_array_equal(
-        pointcloud_view(result)["tags"].reshape(-1, 2),
+        pointcloud.view(result)["tags"].reshape(-1, 2),
         np.tile([[1, 11], [2, 12], [3, 13], [4, 14]], (2, 1)),
     )
     result.data = bytes(len(result.data))
@@ -243,15 +228,15 @@ def test_cloud_concatenation_rejects_unrelated_frames_and_layouts(padded_cloud):
     second = cdr_decode(cdr_encode(padded_cloud), PointCloud2)
     second.header.frame_id = "unrelated"
     with pytest.raises(ValueError, match="different frames"):
-        concatenate_clouds(padded_cloud, second)
+        pointcloud.concatenate(padded_cloud, second)
     second.header.frame_id = padded_cloud.header.frame_id
     second.is_bigendian = not second.is_bigendian
     with pytest.raises(ValueError, match="different record layouts"):
-        concatenate_clouds(padded_cloud, second)
+        pointcloud.concatenate(padded_cloud, second)
 
 
 def test_empty_cloud_is_a_copy_identity(padded_cloud):
-    result = concatenate_clouds(
+    result = pointcloud.concatenate(
         PointCloud2(
             header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             height=0,
@@ -283,12 +268,12 @@ def test_transform_retains_extra_fields_padding_endian_and_source_stamp(padded_c
             rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
         ),
     )
-    result = transform_cloud(padded_cloud, transform)
+    result = pointcloud.transform(padded_cloud, transform)
     np.testing.assert_allclose(
-        pointcloud_xyz(result), pointcloud_xyz(padded_cloud) + np.array([2.0, -1.0, 0.0])
+        pointcloud.xyz(result), pointcloud.xyz(padded_cloud) + np.array([2.0, -1.0, 0.0])
     )
     np.testing.assert_array_equal(
-        pointcloud_view(result)["tags"], pointcloud_view(padded_cloud)["tags"]
+        pointcloud.view(result)["tags"], pointcloud.view(padded_cloud)["tags"]
     )
     assert result.header.frame_id == "world"
     assert result.header.stamp == padded_cloud.header.stamp
@@ -322,7 +307,7 @@ def test_transform_retains_extra_fields_padding_endian_and_source_stamp(padded_c
 
 def test_transform_rejects_frame_mismatch(padded_cloud):
     with pytest.raises(ValueError, match="child frame"):
-        transform_cloud(
+        pointcloud.transform(
             padded_cloud,
             TransformStamped(
                 child_frame_id="other",
@@ -343,14 +328,14 @@ def test_rgb_factory_roundtrip(organized):
         points, colors = points.reshape(-1, 3), colors.reshape(-1, 3)
     cloud = cdr_decode(
         cdr_encode(
-            pointcloud_from_xyz_rgb(
+            pointcloud.from_xyz_rgb(
                 points, colors, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
             )
         ),
         PointCloud2,
     )
-    np.testing.assert_array_equal(pointcloud_xyz(cloud), points.reshape(-1, 3))
-    np.testing.assert_array_equal(pointcloud_rgb(cloud), colors.reshape(-1, 3))
+    np.testing.assert_array_equal(pointcloud.xyz(cloud), points.reshape(-1, 3))
+    np.testing.assert_array_equal(pointcloud.rgb(cloud), colors.reshape(-1, 3))
     assert cloud.point_step == 16
     assert cloud.row_step == cloud.width * 16
 
@@ -359,29 +344,29 @@ def test_rgb_factory_roundtrip(organized):
 def test_rgbd_projection_scaled_intrinsics_and_invalid_depth(floating):
     header = Header(frame_id="optical", stamp=Time(sec=1700000000, nanosec=123456789))
     rgb = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
-    color = image_from_array(rgb, encoding="rgb8", header=header)
+    color = image.from_array(rgb, encoding="rgb8", header=header)
     values = np.array([[1, 0, 2], [3, 4, 5]], dtype=np.float32)
     if floating:
         values[0, 1] = np.nan
         values[1, 2] = np.inf
-        depth = image_from_array(values, encoding="32FC1", header=header)
+        depth = image.from_array(values, encoding="32FC1", header=header)
     else:
-        depth = image_from_array((values * 1000).astype(">u2"), encoding="16UC1", header=header)
+        depth = image.from_array((values * 1000).astype(">u2"), encoding="16UC1", header=header)
         # Add nonzero row padding to big-endian depth.
         payload = bytes(depth.data)
         depth.data = payload[:6] + b"xx" + payload[6:] + b"yy"
         depth.step = 8
-    calibration = camera_info_from_intrinsics(4, 8, 2, 2, 6, 4, header=header)
+    calibration = camera_info.from_intrinsics(4, 8, 2, 2, 6, 4, header=header)
     cloud = cdr_decode(
         cdr_encode(
-            pointcloud_from_rgbd(color, depth, calibration, depth_scale=0.001, depth_trunc=4)
+            pointcloud.from_rgbd(color, depth, calibration, depth_scale=0.001, depth_trunc=4)
         ),
         PointCloud2,
     )
     np.testing.assert_allclose(
-        pointcloud_xyz(cloud), [[-0.5, -0.25, 1], [1, -0.5, 2], [-1.5, 0, 3]]
+        pointcloud.xyz(cloud), [[-0.5, -0.25, 1], [1, -0.5, 2], [-1.5, 0, 3]]
     )
-    np.testing.assert_array_equal(pointcloud_rgb(cloud), rgb.reshape(-1, 3)[[0, 2, 3]])
+    np.testing.assert_array_equal(pointcloud.rgb(cloud), rgb.reshape(-1, 3)[[0, 2, 3]])
     assert cloud.header == header
 
 
@@ -390,15 +375,15 @@ def test_rgbd_projection_scaled_intrinsics_and_invalid_depth(floating):
 )
 def test_rgbd_rejects_invalid_units(scale, trunc):
     header = Header(stamp=Time(sec=0, nanosec=0), frame_id="")
-    color = image_from_array(np.zeros((1, 1, 3), dtype=np.uint8), encoding="rgb8", header=header)
-    depth = image_from_array(np.ones((1, 1), dtype=np.uint16), encoding="16UC1", header=header)
-    calibration = camera_info_from_intrinsics(1, 1, 0, 0, 1, 1, header=header)
+    color = image.from_array(np.zeros((1, 1, 3), dtype=np.uint8), encoding="rgb8", header=header)
+    depth = image.from_array(np.ones((1, 1), dtype=np.uint16), encoding="16UC1", header=header)
+    calibration = camera_info.from_intrinsics(1, 1, 0, 0, 1, 1, header=header)
     with pytest.raises(ValueError, match="finite and positive"):
-        pointcloud_from_rgbd(color, depth, calibration, depth_scale=scale, depth_trunc=trunc)
+        pointcloud.from_rgbd(color, depth, calibration, depth_scale=scale, depth_trunc=trunc)
 
 
 def test_transform_rejects_coordinate_overflow():
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[3e38, 0, 0]]), header=Header(frame_id="child", stamp=Time(sec=0, nanosec=0))
     )
     transform = TransformStamped(
@@ -409,18 +394,18 @@ def test_transform_rejects_coordinate_overflow():
         ),
     )
     with pytest.raises(ValueError, match="exceed field range"):
-        transform_cloud(cloud, transform)
-    assert np.isfinite(pointcloud_xyz(cloud)).all()
+        pointcloud.transform(cloud, transform)
+    assert np.isfinite(pointcloud.xyz(cloud)).all()
 
 
 def test_voxel_downsample_retains_existing_small_cloud_fast_path():
-    message = pointcloud_from_xyz(
+    message = pointcloud.from_xyz(
         np.zeros((19, 3)), header=Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0))
     )
-    assert voxel_downsample_cloud(message, 0.5) is message
-    assert voxel_downsample_cloud(message, 0.0) is message
+    assert pointcloud.voxel_downsample(message, 0.5) is message
+    assert pointcloud.voxel_downsample(message, 0.0) is message
     with pytest.raises(ValueError, match="finite"):
-        voxel_downsample_cloud(message, float("nan"))
+        pointcloud.voxel_downsample(message, float("nan"))
 
 
 def test_voxel_downsample_native_centroids_colors_and_exact_header():
@@ -428,12 +413,12 @@ def test_voxel_downsample_native_centroids_colors_and_exact_header():
     points = np.repeat([[0.1, 0.1, 0.1], [0.3, 0.3, 0.3]], 20, axis=0)
     colors = np.repeat([[0, 0, 0], [255, 255, 255]], 20, axis=0).astype(np.uint8)
     header = Header(frame_id="optical", stamp=Time(sec=5, nanosec=123456789))
-    source = pointcloud_from_xyz_rgb(points, colors, header=header)
-    result = voxel_downsample_cloud(source, 1.0)
+    source = pointcloud.from_xyz_rgb(points, colors, header=header)
+    result = pointcloud.voxel_downsample(source, 1.0)
     assert result.header == header
     assert result.width == 1
-    np.testing.assert_allclose(pointcloud_xyz(result), [[0.2, 0.2, 0.2]], atol=1e-6)
-    np.testing.assert_array_equal(pointcloud_rgb(result), [[127, 127, 127]])
+    np.testing.assert_allclose(pointcloud.xyz(result), [[0.2, 0.2, 0.2]], atol=1e-6)
+    np.testing.assert_array_equal(pointcloud.rgb(result), [[127, 127, 127]])
     assert source.width == 40
 
 
@@ -442,21 +427,21 @@ def test_per_point_stamps_survive_cdr_and_point_selection(shape):
     points = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     stamps = np.arange(np.prod(shape[:-1]), dtype=np.float64).reshape(shape[:-1]) + 17.25
     header = Header(stamp=Time(sec=19, nanosec=123), frame_id="map")
-    cloud = pointcloud_from_xyz(points, header=header, stamps=stamps)
+    cloud = pointcloud.from_xyz(points, header=header, stamps=stamps)
     restored = cdr_decode(cdr_encode(cloud), PointCloud2)
-    np.testing.assert_array_equal(pointcloud_xyz(restored), points.reshape(-1, 3))
-    np.testing.assert_array_equal(pointcloud_stamps(restored), stamps.reshape(-1))
+    np.testing.assert_array_equal(pointcloud.xyz(restored), points.reshape(-1, 3))
+    np.testing.assert_array_equal(pointcloud.stamps(restored), stamps.reshape(-1))
     keep = np.arange(stamps.size) % 2 == 0
-    selected = select_points(restored, keep)
-    np.testing.assert_array_equal(pointcloud_stamps(selected), stamps.reshape(-1)[keep])
+    selected = pointcloud.select(restored, keep)
+    np.testing.assert_array_equal(pointcloud.stamps(selected), stamps.reshape(-1)[keep])
     assert selected.header == header
-    assert pointcloud_stamps(pointcloud_from_xyz(points, header=header)) is None
+    assert pointcloud.stamps(pointcloud.from_xyz(points, header=header)) is None
 
 
 @pytest.mark.parametrize("stamps", [np.array([1.0]), np.array([1.0, np.nan])])
 def test_per_point_stamps_reject_wrong_count_or_nonfinite_values(stamps):
     with pytest.raises(ValueError, match="Per-point stamps"):
-        pointcloud_from_xyz(
+        pointcloud.from_xyz(
             np.zeros((2, 3)),
             header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             stamps=stamps,
@@ -466,17 +451,17 @@ def test_per_point_stamps_reject_wrong_count_or_nonfinite_values(stamps):
 def test_per_point_coordinate_replacement_keeps_organized_records(padded_cloud):
     padded_cloud.header.stamp = Time(sec=1700000000, nanosec=123456789)
     before = cdr_encode(padded_cloud)
-    result = pointcloud_with_xyz(
-        padded_cloud, pointcloud_xyz(padded_cloud) + np.array([0.5, -1, 2])
+    result = pointcloud.with_xyz(
+        padded_cloud, pointcloud.xyz(padded_cloud) + np.array([0.5, -1, 2])
     )
     np.testing.assert_array_equal(
-        pointcloud_view(result)["tags"], pointcloud_view(padded_cloud)["tags"]
+        pointcloud.view(result)["tags"], pointcloud.view(padded_cloud)["tags"]
     )
     assert result.header == padded_cloud.header
     assert (result.height, result.width, result.row_step) == (2, 2, 64)
     assert result.fields == padded_cloud.fields and result.is_bigendian == padded_cloud.is_bigendian
     np.testing.assert_allclose(
-        pointcloud_xyz(result), [[1.5, 1, 5], [2.5, 3, 8], [3.5, 5, 11], [4.5, 7, 14]]
+        pointcloud.xyz(result), [[1.5, 1, 5], [2.5, 3, 8], [3.5, 5, 11], [4.5, 7, 14]]
     )
     assert bytes(result.data)[48:64] == bytes(padded_cloud.data)[48:64]
     assert bytes(result.data)[112:128] == bytes(padded_cloud.data)[112:128]
@@ -486,4 +471,18 @@ def test_per_point_coordinate_replacement_keeps_organized_records(padded_cloud):
 @pytest.mark.parametrize("coordinates", [np.zeros((3, 3)), np.zeros((2, 2, 3))])
 def test_per_point_coordinate_replacement_rejects_wrong_count(padded_cloud, coordinates):
     with pytest.raises(ValueError, match="shape"):
-        pointcloud_with_xyz(padded_cloud, coordinates)
+        pointcloud.with_xyz(padded_cloud, coordinates)
+
+
+def test_xyz_constructor_owns_float32_input_and_stamp_arrays() -> None:
+    points = np.array([[1, 2, 3]], dtype=np.float32)
+    header = Header(stamp=Time(sec=0, nanosec=0), frame_id="camera")
+    message = pointcloud.from_xyz(points, header=header)
+    points[:] = 0
+    np.testing.assert_array_equal(pointcloud.xyz(message), [[1, 2, 3]])
+    stamped = pointcloud.from_xyz(points, header=header, stamps=np.array([1.25]))
+    times = pointcloud.stamps(stamped)
+    assert times is not None
+    assert times.flags.writeable
+    times[:] = 0
+    np.testing.assert_array_equal(pointcloud.stamps(stamped), [1.25])

@@ -37,8 +37,7 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.image import image_sharpness
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image, time as message_time
 from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos.messages.geometry_msgs.msg import Point, PoseStamped
 from dimos.messages.sensor_msgs.msg import Image
@@ -274,7 +273,7 @@ class TemporalMemory(Module):
 
             if markers:
                 self.entity_markers.publish(
-                    EntityMarkers(header=header_now("world"), markers=markers)
+                    EntityMarkers(header=message_time.header_now("world"), markers=markers)
                 )
                 logger.info(f"[temporal-memory] published {len(markers)} entity markers to Rerun")
         except Exception as e:
@@ -302,7 +301,7 @@ class TemporalMemory(Module):
                 )
 
         self.register_disposable(
-            frame_subject.pipe(quality_barrier(image_sharpness, self.config.fps)).subscribe(
+            frame_subject.pipe(quality_barrier(image.sharpness, self.config.fps)).subscribe(
                 _on_frame
             )
         )

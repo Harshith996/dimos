@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.utils.decorators.decorators import simple_mcache
@@ -153,7 +153,7 @@ class Detection2DPerson(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=to_seconds(image.header.stamp),
+            ts=message_time.to_seconds(image.header.stamp),
             image=image,
             # Person specific fields
             keypoints=keypoints,

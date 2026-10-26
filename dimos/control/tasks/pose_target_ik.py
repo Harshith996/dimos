@@ -46,7 +46,7 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Pose as CdrPose, PoseStamped as CdrPoseStamped
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -68,7 +68,7 @@ def pose_target_value(pose: Pose | PoseStamped | CdrPose | CdrPoseStamped) -> Po
     """Copy a wire or local target into the existing numerical IK value."""
     if isinstance(pose, CdrPoseStamped):
         value = pose.pose
-        ts, frame_id = to_seconds(pose.header.stamp), pose.header.frame_id
+        ts, frame_id = message_time.to_seconds(pose.header.stamp), pose.header.frame_id
     else:
         value = pose
         ts = pose.ts if isinstance(pose, PoseStamped) else 0.0

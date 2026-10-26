@@ -27,7 +27,7 @@ from dimos.mapping.pointclouds.occupancy import (
     HeightCostConfig,
     OccupancyConfig,
 )
-from dimos.message_utils.occupancy import occupancy_view
+from dimos.message_utils import occupancy
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
@@ -105,7 +105,7 @@ class CostMapper(Module):
         origin_x = grid.info.origin.position.x
         origin_y = grid.info.origin.position.y
 
-        cells = occupancy_view(grid).copy()
+        cells = occupancy.view(grid).copy()
         rows, columns = np.ogrid[: cells.shape[0], : cells.shape[1]]
         cell_world_x = columns * resolution + origin_x
         cell_world_y = rows * resolution + origin_y

@@ -19,7 +19,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
@@ -33,7 +33,7 @@ def test_generated_image_detects_real_aruco_and_composes_pose():
     pixels = np.full((400, 400), 255, dtype=np.uint8)
     pixels[100:300, 100:300] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
     header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
-    image = image_from_array(pixels, encoding="mono8", header=header)
+    image = image_utils.from_array(pixels, encoding="mono8", header=header)
     image = cdr_decode(cdr_encode(image), Image)
     camera = CameraInfo(
         width=400,

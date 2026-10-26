@@ -21,8 +21,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from dimos.message_utils.geometry import compose_transforms, inverse_transform, pose_from_transform
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
@@ -110,7 +109,9 @@ class MultiTBuffer:
             return TransformStamped(
                 header=Header(
                     frame_id=parent_frame,
-                    stamp=time_from_seconds(time_point if time_point is not None else time.time()),
+                    stamp=message_time.time_from_seconds(
+                        time_point if time_point is not None else time.time()
+                    ),
                 ),
                 child_frame_id=child_frame,
                 transform=Transform(
@@ -133,7 +134,7 @@ class MultiTBuffer:
             reverse_key = (child_frame, parent_frame)
             if reverse_key in self.buffers:
                 transform = self.buffers[reverse_key].get(time_point, tolerance)
-                return inverse_transform(transform) if transform else None
+                return geometry.inverse_transform(transform) if transform else None
 
             return None
 
@@ -157,7 +158,7 @@ class MultiTBuffer:
             if complex is None:
                 return None
 
-            return reduce(compose_transforms, complex)
+            return reduce(geometry.compose_transforms, complex)
 
     def _wait_get(
         self,
@@ -217,7 +218,7 @@ class MultiTBuffer:
         )
         if not tf:
             return None
-        return pose_from_transform(tf)
+        return geometry.pose_from_transform(tf)
 
     def get_transform_search(
         self,

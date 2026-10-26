@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import numpy as np
 
 from dimos.memory.transform import Transformer
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
@@ -340,7 +340,7 @@ class MarkersPerFrame(Transformer[Detection3DMarker | None, Detection3DArray]):
                 yield self._to_array_observation(obs, [])
                 continue
 
-            source_ns = to_nanoseconds(det.image.header.stamp)
+            source_ns = message_time.to_nanoseconds(det.image.header.stamp)
             if pending_ns is not None and source_ns != pending_ns:
                 flushed = flush()
                 if flushed is not None:

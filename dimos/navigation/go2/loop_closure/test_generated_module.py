@@ -21,8 +21,7 @@ import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import LineSegments3D
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
 from dimos.messages.sensor_msgs.msg import PointCloud2
@@ -75,14 +74,14 @@ def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry(owned
         module.start()
         pose_ready = Event()
         cleanup.callback(module.odom.subscribe(lambda _: pose_ready.set()))
-        stamp = time_from_nanoseconds(1700000000123456789)
+        stamp = message_time.time_from_nanoseconds(1700000000123456789)
         header = Header(frame_id="world", stamp=stamp)
         pose = PoseStamped(
             header=header, pose=Pose(position=Point(1, 0, 0), orientation=Quaternion(0, 0, 0, 1))
         )
         transports["odom"].broadcast(None, pose)
         assert pose_ready.wait(5)
-        cloud = pointcloud_from_xyz(
+        cloud = pointcloud.from_xyz(
             np.array([[1.025, 0.025, 0.025]], dtype=np.float32), header=header
         )
         before = encode(cloud)
@@ -91,7 +90,7 @@ def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry(owned
             assert events[name].wait(5), name
         output = received["global_map"]
         assert output.header == header
-        np.testing.assert_allclose(pointcloud_xyz(output), [[1.025, 0.025, 0.025]], atol=1e-6)
+        np.testing.assert_allclose(pointcloud.xyz(output), [[1.025, 0.025, 0.025]], atol=1e-6)
         graph = received["pgo_keyframes"]
         assert graph.header == header and len(graph.poses) == 1
         assert graph.poses[0].position.x == 1 and graph.poses[0].orientation.w == 1

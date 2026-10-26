@@ -24,7 +24,7 @@ from dimos_cdrgen.registry import decode, encode
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.navigation.movement_manager import movement_manager as movement_module
@@ -79,7 +79,9 @@ def _twist(lx=0.0):
 
 def _click(x=1.0, y=2.0, z=0.0):
     return PointStamped(
-        header=Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789)),
+        header=Header(
+            frame_id="map", stamp=message_time.time_from_nanoseconds(1700000000123456789)
+        ),
         point=Point(x=x, y=y, z=z),
     )
 
@@ -164,7 +166,7 @@ def test_cancel_goal_preserves_exact_wall_time_and_existing_nan_fallback(
     manager._on_teleop(_twist(0.3))
     assert captured.stop_movement == [Bool(data=True)]
     cancel = decode(encode(captured.goal[0]), PointStamped)
-    assert cancel.header == Header(frame_id="map", stamp=time_from_nanoseconds(stamp))
+    assert cancel.header == Header(frame_id="map", stamp=message_time.time_from_nanoseconds(stamp))
     assert all(math.isnan(value) for value in (cancel.point.x, cancel.point.y, cancel.point.z))
 
 
@@ -251,7 +253,9 @@ def test_actual_cdr_movement_ports_keep_teleop_priority_and_resume_nav_at_cooldo
         assert cancelled.wait(5) and stopped.wait(5)
         assert commands == [_twist(0.3)]
         assert stops == [Bool(data=True)]
-        assert cancellations[0].header.stamp == time_from_nanoseconds(1700000000123456789)
+        assert cancellations[0].header.stamp == message_time.time_from_nanoseconds(
+            1700000000123456789
+        )
         now[0] = 0.5
         wires["nav_cmd_vel"].publish(_twist(0.9))
         assert nav_ack.wait(5)

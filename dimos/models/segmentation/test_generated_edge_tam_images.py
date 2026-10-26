@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 import torch
 
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image as image_utils
 from dimos.models.segmentation import edge_tam
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
@@ -31,7 +31,7 @@ def test_generated_tracker_frame_and_initial_jpeg(monkeypatch):
     processor = edge_tam.EdgeTAMProcessor()
     pixels = np.zeros((12, 16, 3), dtype=np.uint8)
     pixels[:, :, 0] = 255
-    image = image_from_array(pixels, encoding="rgb8")
+    image = image_utils.from_array(pixels, encoding="rgb8")
     frame = processor._prepare_frame(image)
     assert frame.shape == (3, 8, 8)
     torch.testing.assert_close(

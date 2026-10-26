@@ -26,8 +26,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import duration_from_seconds, time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
@@ -256,8 +255,8 @@ class GstreamerCameraModule(Module):
         if buffer.pts != Gst.CLOCK_TIME_NONE:
             # Convert nanoseconds to seconds and add offset
             # This is the absolute time from when the frame was captured
-            stamp_ns = int(buffer.pts) + to_nanoseconds(
-                duration_from_seconds(self.config.timestamp_offset)
+            stamp_ns = int(buffer.pts) + message_time.to_nanoseconds(
+                message_time.duration_from_seconds(self.config.timestamp_offset)
             )
             timestamp = stamp_ns / 1e9
 
@@ -292,10 +291,12 @@ class GstreamerCameraModule(Module):
             )
 
             # Create an Image message with the absolute timestamp
-            image_msg = image_from_array(
+            image_msg = image.from_array(
                 image_array,
                 encoding="bgr8",
-                header=Header(frame_id=self.frame_id, stamp=time_from_nanoseconds(stamp_ns)),
+                header=Header(
+                    frame_id=self.frame_id, stamp=message_time.time_from_nanoseconds(stamp_ns)
+                ),
             )
 
             # Publish the image

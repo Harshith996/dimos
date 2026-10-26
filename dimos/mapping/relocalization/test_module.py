@@ -33,9 +33,7 @@ from dimos.mapping.relocalization.lidar import relocalize as lidar
 from dimos.mapping.relocalization.lidar.module import LidarWindowRelocalization, window
 from dimos.mapping.relocalization.lidar.relocalize import MID360
 from dimos.mapping.relocalization.module import RelocalizationModule, fix_stream
-from dimos.message_utils.geometry import inverse_transform, transform_from_matrix, transform_matrix
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -51,9 +49,9 @@ class MemoryRPC(LCMRPC):
 
 def _transform(matrix, *, frame_id, child_frame_id):
     return TransformStamped(
-        header=Header(stamp=time_from_nanoseconds(0), frame_id=frame_id),
+        header=Header(stamp=message_time.time_from_nanoseconds(0), frame_id=frame_id),
         child_frame_id=child_frame_id,
-        transform=transform_from_matrix(matrix),
+        transform=geometry.transform_from_matrix(matrix),
     )
 
 
@@ -124,9 +122,11 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path, mock
     path = tmp_path / "somewhere.pc2.cdr"
     path.write_bytes(
         encode(
-            pointcloud_from_xyz(
+            pointcloud.from_xyz(
                 np.zeros((5, 3), dtype=np.float32),
-                header=Header(stamp=time_from_nanoseconds(123456789), frame_id="original"),
+                header=Header(
+                    stamp=message_time.time_from_nanoseconds(123456789), frame_id="original"
+                ),
             )
         )
     )
@@ -135,7 +135,7 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path, mock
     m._load_premap(str(path))
     assert m.premap is not None and m.premap.width * m.premap.height == 5
     assert m.premap.header.frame_id == "map"
-    assert m.premap.header.stamp == time_from_nanoseconds(123456789)
+    assert m.premap.header.stamp == message_time.time_from_nanoseconds(123456789)
     published.assert_not_called()
     m.submit(_transform(np.eye(4), frame_id="world", child_frame_id="map"))
     published.assert_called_once_with(m.premap)
@@ -163,7 +163,9 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     # other direction, and relocalize() is what turns one into the other.
     tf = relocalizer(0.3).relocalize(None, "world", "map")
     assert (tf.header.frame_id, tf.child_frame_id) == ("world", "map")
-    np.testing.assert_allclose(transform_matrix(tf.transform), np.linalg.inv(placement), atol=1e-9)
+    np.testing.assert_allclose(
+        geometry.transform_matrix(tf.transform), np.linalg.inv(placement), atol=1e-9
+    )
 
 
 def test_no_config_without_naming_a_rig():
@@ -186,14 +188,14 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
     try:
         for i in range(5):
             scans.on_next(
-                pointcloud_from_xyz(
+                pointcloud.from_xyz(
                     np.full((4, 3), i, dtype=np.float32),
-                    header=Header(stamp=time_from_nanoseconds(i), frame_id="world"),
+                    header=Header(stamp=message_time.time_from_nanoseconds(i), frame_id="world"),
                 )
             )
             scheduler.advance_by(0.01)
         assert [c.width * c.height for c in matched] == [8, 12, 12, 12]
-        assert set(pointcloud_xyz(matched[-1])[:, 0]) == {2.0, 3.0, 4.0}
+        assert set(pointcloud.xyz(matched[-1])[:, 0]) == {2.0, 3.0, 4.0}
     finally:
         disposable.dispose()
 
@@ -202,9 +204,9 @@ def test_from_matrix_inverse_matches_linalg_inv():
     T = np.eye(4)
     T[:3, :3] = Rotation.from_euler("xyz", [0.1, -0.2, 1.3]).as_matrix()
     T[:3, 3] = [1.5, -2.0, 0.3]
-    tf = inverse_transform(_transform(T, frame_id="map", child_frame_id="world"))
+    tf = geometry.inverse_transform(_transform(T, frame_id="map", child_frame_id="world"))
     assert (tf.header.frame_id, tf.child_frame_id) == ("world", "map")
-    np.testing.assert_allclose(transform_matrix(tf.transform), np.linalg.inv(T), atol=1e-9)
+    np.testing.assert_allclose(geometry.transform_matrix(tf.transform), np.linalg.inv(T), atol=1e-9)
 
 
 def test_dual_strategy_merges_ports():
@@ -223,9 +225,9 @@ def test_real_cdr_premap_and_fix_ports_keep_metadata_and_own_published_stamp(
     module, tmp_path, mocker
 ):
     path = tmp_path / "canonical.pc2.cdr"
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[1, 2, 3]], dtype=np.float32),
-        header=Header(frame_id="exported", stamp=time_from_nanoseconds(123456789)),
+        header=Header(frame_id="exported", stamp=message_time.time_from_nanoseconds(123456789)),
     )
     payload = encode(cloud)
     path.write_bytes(payload)
@@ -257,11 +259,11 @@ def test_real_cdr_premap_and_fix_ports_keep_metadata_and_own_published_stamp(
         instance.submit(fix)
         assert ready["tf"].wait(5) and ready["loaded_map"].wait(5)
         [sent] = received["tf"].transforms
-        assert sent.header.stamp == time_from_nanoseconds(stamp)
+        assert sent.header.stamp == message_time.time_from_nanoseconds(stamp)
         assert sent.header.frame_id == "world" and sent.child_frame_id == "map"
         loaded = received["loaded_map"]
         assert loaded.header.frame_id == "map" and loaded.header.stamp == cloud.header.stamp
-        np.testing.assert_array_equal(pointcloud_xyz(loaded), [[1, 2, 3]])
+        np.testing.assert_array_equal(pointcloud.xyz(loaded), [[1, 2, 3]])
         assert encode(fix) == before and path.read_bytes() == payload
 
 
@@ -270,13 +272,13 @@ def test_go2_merge_preserves_map_placement_and_carving_policy(module, mocker, ca
     # Exercise the real CPU carving backend independently of host GPU availability.
     mocker.patch("open3d.core.cuda.is_available", return_value=False)
     instance = module(Go2Relocalization, use_carving=carving)
-    premap = pointcloud_from_xyz(
+    premap = pointcloud.from_xyz(
         np.array([[0.025, 0.025, 0.025], [0.025, 0.025, 0.075]], dtype=np.float32),
-        header=Header(frame_id="map", stamp=time_from_nanoseconds(100)),
+        header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(100)),
     )
-    local = pointcloud_from_xyz(
+    local = pointcloud.from_xyz(
         np.array([[1.025, 0.025, 0.125], [2.025, 0.025, 0.025]], dtype=np.float32),
-        header=Header(frame_id="world", stamp=time_from_nanoseconds(101)),
+        header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(101)),
     )
     instance.premap = premap
     publish = mocker.patch.object(instance.merged_map, "publish")
@@ -289,7 +291,7 @@ def test_go2_merge_preserves_map_placement_and_carving_policy(module, mocker, ca
     [result] = publish.call_args.args
     assert result.width * result.height == count
     assert result.header == local.header
-    points = pointcloud_xyz(result)
+    points = pointcloud.xyz(result)
     assert set(np.round(points[:, 0], 3)) == {1.025, 2.025}
     if carving:
         np.testing.assert_allclose(points[points[:, 0] < 1.5, 2], [0.125], atol=1e-6)

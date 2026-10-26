@@ -20,7 +20,7 @@ import pytest
 
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.message_utils.geometry import transform_matrix
+from dimos.message_utils import geometry
 from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -60,7 +60,7 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
     ]
     assert all(edge.header.stamp == info.header.stamp for edge in transforms)
     assert cdr_encode(module.config.transform) == original
-    np.testing.assert_allclose(transform_matrix(transforms[0].transform), np.eye(4))
+    np.testing.assert_allclose(geometry.transform_matrix(transforms[0].transform), np.eye(4))
 
 
 def test_disabled_mount_publishes_calibration_without_tf(module, mocker):

@@ -21,8 +21,7 @@ import warnings
 import numpy as np
 from openai import OpenAI
 
-from dimos.message_utils.image import image_from_array, image_to_jpeg
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel, VlModelConfig
 
@@ -62,11 +61,11 @@ class QwenVlModel(VlModel):
                 DeprecationWarning,
                 stacklevel=2,
             )
-            image = image_from_array(image, encoding="bgr8", header=header_now())
+            image = image_utils.from_array(image, encoding="bgr8", header=message_time.header_now())
         # Apply auto_resize if configured
         image, _ = self._prepare_image(image)
 
-        img_base64 = base64.b64encode(image_to_jpeg(image, quality=80)).decode("ascii")
+        img_base64 = base64.b64encode(image_utils.to_jpeg(image, quality=80)).decode("ascii")
 
         response = self._client.chat.completions.create(
             model=self.config.model_name,
@@ -101,7 +100,7 @@ class QwenVlModel(VlModel):
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/jpeg;base64,{base64.b64encode(image_to_jpeg(self._prepare_image(img)[0], quality=80)).decode('ascii')}"
+                    "url": f"data:image/jpeg;base64,{base64.b64encode(image_utils.to_jpeg(self._prepare_image(img)[0], quality=80)).decode('ascii')}"
                 },
             }
             for img in images

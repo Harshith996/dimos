@@ -23,8 +23,7 @@ import torch
 import torch.nn.functional as functional
 from torchreid import utils as torchreid_utils
 
-from dimos.message_utils.image import image_to_bgr
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
@@ -62,7 +61,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         # Convert to numpy arrays - torchreid expects numpy arrays or file paths
-        np_images = [image_to_bgr(img) for img in images]
+        np_images = [image_utils.to_bgr(img) for img in images]
 
         # Extract features
         with torch.inference_mode():
@@ -80,7 +79,7 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []
         for i, feat in enumerate(features_tensor):
-            timestamp = to_seconds(images[i].header.stamp)
+            timestamp = message_time.to_seconds(images[i].header.stamp)
             embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings

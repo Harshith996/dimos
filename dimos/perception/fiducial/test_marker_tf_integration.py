@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -52,7 +52,7 @@ def _marker_detection_array(ts: float) -> Detection3DArray:
         ),
         id="",
     )
-    det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
+    det.header = Header(stamp=message_time.time_from_seconds(ts), frame_id="world")
     det.id = "11"
     det.results = [
         ObjectHypothesisWithPose(
@@ -77,7 +77,7 @@ def _marker_detection_array(ts: float) -> Detection3DArray:
         size=Vector3(x=0.18, y=0.18, z=0.0),
     )
     return Detection3DArray(
-        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
         detections=[det],
     )
 

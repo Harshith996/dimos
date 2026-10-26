@@ -23,7 +23,7 @@ from pydantic import Field
 
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.msgs.nav_msgs.Path import Path as LegacyPath
@@ -61,7 +61,7 @@ class OdometryHist(Module):
 
     async def handle_odometry(self, msg: Odometry) -> None:
         position = msg.pose.pose.position
-        stamp_ns = to_nanoseconds(msg.header.stamp)
+        stamp_ns = message_time.to_nanoseconds(msg.header.stamp)
         point = (position.x, position.y, position.z)
         frame_id = self.config.frame_id or msg.header.frame_id
         previous = self._poses[-1] if self._poses else None

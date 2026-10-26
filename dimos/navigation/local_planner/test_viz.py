@@ -22,8 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 import rerun as rr
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -40,15 +39,17 @@ def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
         header=Header(
             frame_id="odom",
-            stamp=time_from_nanoseconds(1_700_000_000_000_000_000 + round(x * 10000)),
+            stamp=message_time.time_from_nanoseconds(1_700_000_000_000_000_000 + round(x * 10000)),
         ),
-        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, yaw)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=geometry.quaternion_from_euler(0, 0, yaw)
+        ),
     )
 
 
 def _plan(n: int = 40, yaw: float = 0.0) -> Path:
     return Path(
-        header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0)),
         poses=[_pose(k * 0.1, 0.0, yaw) for k in range(n)],
     )
 
@@ -57,7 +58,7 @@ def _stamp(plan: Path, speeds: NDArray[np.float64]) -> Path:
     """Per-segment speeds as stamp deltas over the 0.1 m spacing, the planner's dialect."""
     ts = np.concatenate([[0.0], np.cumsum(0.1 / speeds)])
     for pose, t in zip(plan.poses, ts, strict=True):
-        pose.header.stamp = time_from_seconds(float(t))
+        pose.header.stamp = message_time.time_from_seconds(float(t))
     return plan
 
 
@@ -71,14 +72,14 @@ def _rgba(boxes) -> NDArray[np.float64]:
 
 def test_cdr_plan_draws_without_mutating_exact_source_values() -> None:
     plan = _plan(n=2, yaw=math.pi / 2)
-    plan.header.stamp = time_from_nanoseconds(1_700_000_000_123_456_789)
+    plan.header.stamp = message_time.time_from_nanoseconds(1_700_000_000_123_456_789)
     payload = encode(plan)
     received = decode(payload, Path)
     drawn = render_plan(received, GO2)
     assert drawn is not None
     assert drawn[0] == ("world/path", rr.Transform3D(parent_frame="tf#/odom"))
     assert len(drawn[1][1].centers.pa_array) == 2
-    assert to_nanoseconds(received.header.stamp) == 1_700_000_000_123_456_789
+    assert message_time.to_nanoseconds(received.header.stamp) == 1_700_000_000_123_456_789
     assert encode(received) == payload
 
 
@@ -129,7 +130,7 @@ def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
     """An empty viewport reads as a dead module; a refusal must look refused."""
     veto = render_body(
         Path(
-            header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)),
+            header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0)),
             poses=[_pose(1.0, 2.0, 0.5)],
         ),
         GO2,
@@ -139,7 +140,11 @@ def test_the_veto_stub_is_drawn_rather_than_blanked() -> None:
     # an EMPTY path is different: hold the last good picture
     assert (
         render_body(
-            Path(header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)), poses=[]), GO2
+            Path(
+                header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0)),
+                poses=[],
+            ),
+            GO2,
         )
         is None
     )
@@ -163,7 +168,8 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
     # a refusal stub is drawn too, so it is not mistaken for a dead module
     veto = render_plan(
         Path(
-            header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)), poses=[_pose(1.0, 2.0)]
+            header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0)),
+            poses=[_pose(1.0, 2.0)],
         ),
         GO2,
     )
@@ -171,7 +177,11 @@ def test_the_plan_pins_its_frame_and_draws_its_body_off_the_one_path_topic() -> 
     # an empty path is "no route": hold the last picture rather than blank it
     assert (
         render_plan(
-            Path(header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)), poses=[]), GO2
+            Path(
+                header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0)),
+                poses=[],
+            ),
+            GO2,
         )
         is None
     )

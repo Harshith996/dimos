@@ -29,7 +29,7 @@ from fastapi import WebSocket
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.image import image_to_jpeg
+from dimos.message_utils import image
 from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Float32
@@ -67,7 +67,7 @@ def _push_jpeg(module: WebXRTeleopModule, msg: Image, quality: int) -> None:
         return
 
     try:
-        jpeg = image_to_jpeg(msg, quality=quality)
+        jpeg = image.to_jpeg(msg, quality=quality)
     except Exception:
         logger.exception("Failed to encode camera frame")
         return

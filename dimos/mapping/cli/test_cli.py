@@ -34,8 +34,7 @@ import numpy as np
 import pytest
 from typer.testing import CliRunner
 
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.std_msgs.msg import Header
 
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
@@ -233,9 +232,9 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
 
 def test_view_pc2(tmp_path: Path) -> None:
     pc2 = tmp_path / "map.pc2.cdr"
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.random.default_rng(0).random((256, 3)),
-        header=Header(stamp=time_from_seconds(0), frame_id="world"),
+        header=Header(stamp=message_time.time_from_seconds(0), frame_id="world"),
     )
     pc2.write_bytes(encode(cloud))
 

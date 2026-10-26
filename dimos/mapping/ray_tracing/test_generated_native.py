@@ -28,8 +28,7 @@ import zenoh
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import PointCloudRegion, RegionBounds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
@@ -133,7 +132,7 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
         lock = Lock()
 
         def receive(name, value):
-            stamp = to_nanoseconds(value.header.stamp)
+            stamp = message_time.to_nanoseconds(value.header.stamp)
             group = seed_names if name in seed_names else live_names
             key = (stamp, value.region_id) if name in seed_names else stamp
             with lock:
@@ -150,14 +149,18 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
 
         def tf_and_header():
             nonlocal sequence
-            header = Header(frame_id="odom", stamp=time_from_nanoseconds(epoch + sequence))
+            header = Header(
+                frame_id="odom", stamp=message_time.time_from_nanoseconds(epoch + sequence)
+            )
             source_stamps.add(epoch + sequence)
             sequence += 1
             wires["tf_static"].publish(
                 TFMessage(
                     transforms=[
                         TransformStamped(
-                            header=Header(frame_id="odom", stamp=time_from_nanoseconds(0)),
+                            header=Header(
+                                frame_id="odom", stamp=message_time.time_from_nanoseconds(0)
+                            ),
                             child_frame_id="lidar",
                             transform=Transform(
                                 translation=Vector3(x=0, y=0, z=0),
@@ -189,7 +192,7 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
             header = tf_and_header()
             header.frame_id = "lidar"
             wires["lidar"].publish(
-                pointcloud_from_xyz(
+                pointcloud.from_xyz(
                     np.array([[4.15, -0.85, 0.25], [4.15, -0.85, 0.35]], dtype=np.float32),
                     header=header,
                 )
@@ -204,15 +207,15 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
         assert bounds.center.x == bounds.center.y == 0 and bounds.radius > 4
         assert region.region_id == (1 << 16) | 0xFFFF
         assert region.header == region.cloud.header
-        assert len(pointcloud_xyz(region.cloud)) == 2
-        np.testing.assert_allclose(pointcloud_xyz(cloud)[:, 0], 4.15, atol=0.05)
+        assert len(pointcloud.xyz(region.cloud)) == 2
+        np.testing.assert_allclose(pointcloud.xyz(cloud)[:, 0], 4.15, atol=0.05)
 
         deadline = time.monotonic() + 15
         while not seed_ready.is_set() and time.monotonic() < deadline:
             header = tf_and_header()
             header.frame_id = "map"
             wires["loaded_map"].publish(
-                pointcloud_from_xyz(np.array([[7.15, 2.15, 0.25]], dtype=np.float32), header=header)
+                pointcloud.from_xyz(np.array([[7.15, 2.15, 0.25]], dtype=np.float32), header=header)
             )
             seed_ready.wait(0.15)
         assert seed_ready.is_set(), "No paired canonical seed region and bounds"
@@ -222,5 +225,5 @@ def test_actual_native_mapper_cdr_registered_clouds_keyed_regions_and_seed_pair(
         assert key[0] in source_stamps and seeded.region_id == seed_bounds.region_id
         assert seeded.header == seed_bounds.header == seeded.cloud.header
         assert seeded.cloud.header.frame_id == "odom"
-        np.testing.assert_allclose(pointcloud_xyz(seeded.cloud)[:, 0], 8.15, atol=0.05)
+        np.testing.assert_allclose(pointcloud.xyz(seeded.cloud)[:, 0], 8.15, atol=0.05)
         assert module._process is not None and module._process.poll() is None

@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.tf_pose import TfPose
@@ -57,7 +57,7 @@ class _Clock:
 
 def _body_at(x: float, ts: float) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id="odom", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_seconds(ts)),
         child_frame_id="base_link",
         transform=Transform(translation=Vector3(x=x, y=0.0, z=0.3), rotation=IDENTITY),
     )
@@ -71,7 +71,7 @@ def test_tf_pose_is_the_world_to_base_edge():
     assert (
         pose.pose.position.x,
         pose.pose.position.z,
-        to_seconds(pose.header.stamp),
+        message_time.to_seconds(pose.header.stamp),
         pose.header.frame_id,
     ) == (1.0, 0.3, 5.0, "odom")
 
@@ -113,7 +113,7 @@ def test_tf_pose_observes_single_nanosecond_progress_without_float_conversion(st
     tf, clock = MultiTBuffer(), _Clock()
     source = TfPose(tf, "base_link", max_age_s=2.5, clock=clock)
     transform = _body_at(1.0, 0.0)
-    transform.header.stamp = time_from_nanoseconds(stamp)
+    transform.header.stamp = message_time.time_from_nanoseconds(stamp)
     tf.receive_transform(transform)
     first = source.get("odom")
     assert first.header == transform.header
@@ -121,7 +121,7 @@ def test_tf_pose_observes_single_nanosecond_progress_without_float_conversion(st
     assert source.get("odom").pose.position.x == 1
     clock.t += 2.6
     assert source.get("odom") is None
-    transform.header.stamp = time_from_nanoseconds(stamp + 1)
+    transform.header.stamp = message_time.time_from_nanoseconds(stamp + 1)
     tf.receive_transform(transform)
     fresh = source.get("odom")
     assert fresh.header == transform.header and fresh.pose.position.x == 1

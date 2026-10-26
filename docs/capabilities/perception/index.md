@@ -11,12 +11,12 @@ This complete CPU example uses the project's sample image and model assets
 (downloaded on first use). It performs detection without a robot or API key:
 
 ```python
-from dimos.message_utils.image import image_from_file
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image as image_utils
+from dimos.message_utils import time as message_time
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.utils.data import get_data
 
-image = image_from_file(get_data("cafe.jpg"), header=header_now("camera_optical"))
+image = image_utils.from_file(get_data("cafe.jpg"), header=message_time.header_now("camera_optical"))
 detector = Yolo2DDetector(device="cpu")
 try:
     detections = detector.process_image(image)
@@ -57,11 +57,11 @@ With the existing ML dependencies, the same generated image can be embedded:
 
 ```python
 from dimos.models.embedding.clip import CLIPModel
-from dimos.message_utils.image import image_from_file
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image as image_utils
+from dimos.message_utils import time as message_time
 from dimos.utils.data import get_data
 
-image = image_from_file(get_data("cafe.jpg"), header=header_now("camera_optical"))
+image = image_utils.from_file(get_data("cafe.jpg"), header=message_time.header_now("camera_optical"))
 model = CLIPModel(device="cpu")
 try:
     embedding = model.embed(image)
@@ -88,16 +88,16 @@ import numpy as np
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import camera_info
+from dimos.message_utils import image as image_utils
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 
 pixels = np.full((400, 400), 255, dtype=np.uint8)
 dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 pixels[100:300, 100:300] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
 header = Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=123456789))
-image = image_from_array(pixels, encoding="mono8", header=header)
-camera = camera_info_from_intrinsics(400, 400, 200, 200, 400, 400, header=header)
+image = image_utils.from_array(pixels, encoding="mono8", header=header)
+camera = camera_info.from_intrinsics(400, 400, 200, 200, 400, 400, header=header)
 mount = TransformStamped(
     header=Header(frame_id="world", stamp=header.stamp),
     child_frame_id="camera_optical",

@@ -47,20 +47,7 @@ import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
-from dimos.message_utils.geometry import (
-    inverse_transform,
-    pose_from_transform,
-    pose_matrix,
-    transform_matrix,
-    vector_array,
-)
-from dimos.message_utils.image import image_from_array, image_to_bgr, image_to_rgb
-from dimos.message_utils.pointcloud import (
-    pointcloud_from_xyz,
-    pointcloud_xyz,
-    voxel_downsample_cloud,
-)
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -208,7 +195,7 @@ def render(
     )
 
     def pose_archetype(pose: PoseStamped) -> Any:
-        matrix = pose_matrix(pose.pose)
+        matrix = geometry.pose_matrix(pose.pose)
         return rr.Transform3D(translation=matrix[:3, 3], mat3x3=matrix[:3, :3])
 
     def at(ts: float) -> None:
@@ -221,7 +208,7 @@ def render(
     # map cells claimed by a detected object, plus one cell of halo
     answer_points = np.vstack(
         [
-            pointcloud_xyz(det.pointcloud)
+            pointcloud.xyz(det.pointcloud)
             for _, trace in traces
             for members in trace.answers
             for det in members
@@ -236,13 +223,13 @@ def render(
 
     def image_colors(det: Any) -> np.ndarray:
         """Sample the sighting's own image at each cloud point's reprojection."""
-        points = pointcloud_xyz(det.pointcloud)
-        matrix = transform_matrix(det.transform.transform)
+        points = pointcloud.xyz(det.pointcloud)
+        matrix = geometry.transform_matrix(det.transform.transform)
         cam = points @ matrix[:3, :3].T + matrix[:3, 3]
         pixels = Detection3DPC.project_pixels(cam, rig.cameras[det.image.header.frame_id].info)
         cols = np.round(pixels[:, 0]).astype(int)
         rows = np.round(pixels[:, 1]).astype(int)
-        rgb = image_to_rgb(det.image)
+        rgb = image_utils.to_rgb(det.image)
         height, width = rgb.shape[:2]
         return np.asarray(
             rgb[np.clip(rows, 0, height - 1), np.clip(cols, 0, width - 1)], dtype=np.uint8
@@ -258,30 +245,32 @@ def render(
             continue
         if rig.mobile:
             parts = [
-                pointcloud_xyz(voxel_downsample_cloud(cloud, WALK_MAP_CELL))
+                pointcloud.xyz(pointcloud.voxel_downsample(cloud, WALK_MAP_CELL))
                 for obs in rig.cameras[frame].color.after(t0).before(t1).transform(throttle(1.0))
                 if (cloud := rig.backdrop(obs.ts, frame, WALK_DEPTH_TRUNC)) is not None
             ]
             if not parts:
                 continue
-            merged = pointcloud_from_xyz(
+            merged = pointcloud.from_xyz(
                 np.vstack(parts),
-                header=Header(stamp=time_from_seconds(backdrop_ts), frame_id=rig.world_frame),
+                header=Header(
+                    stamp=message_time.time_from_seconds(backdrop_ts), frame_id=rig.world_frame
+                ),
             )
-            carved = carve(pointcloud_xyz(voxel_downsample_cloud(merged, WALK_MAP_CELL)))
+            carved = carve(pointcloud.xyz(pointcloud.voxel_downsample(merged, WALK_MAP_CELL)))
             spacing = WALK_MAP_CELL
         else:
             backdrop = rig.backdrop(backdrop_ts, frame)
             if backdrop is None:
                 continue
-            carved = carve(pointcloud_xyz(voxel_downsample_cloud(backdrop, MAP_CELL)))
+            carved = carve(pointcloud.xyz(pointcloud.voxel_downsample(backdrop, MAP_CELL)))
             spacing = POINT_SIZE
         if len(carved):
             views[name] = (carved, spacing)
     lidar_size = LIDAR_POINT_SIZE
     lidar_map = rig.lidar_map() if through_lidar else None
     if lidar_map is not None:
-        points = pointcloud_xyz(lidar_map)
+        points = pointcloud.xyz(lidar_map)
         lidar_size = lattice_quantum(points) or LIDAR_POINT_SIZE
         carved = carve(points)
         if len(carved):
@@ -382,13 +371,13 @@ def render(
                 rr.log(
                     f"{root}/answer/{i}/{names[camera]}",
                     rr.Points3D(
-                        positions=np.vstack([pointcloud_xyz(det.pointcloud) for det in sightings]),
+                        positions=np.vstack([pointcloud.xyz(det.pointcloud) for det in sightings]),
                         colors=np.vstack([image_colors(det) for det in sightings]),
                         radii=size[camera] / 2,
                     ),
                     static=True,
                 )
-            positions = np.vstack([pointcloud_xyz(det.pointcloud) for det in members])
+            positions = np.vstack([pointcloud.xyz(det.pointcloud) for det in members])
             aabb_min, aabb_max = positions.min(axis=0), positions.max(axis=0)
             score = max(det.confidence for det in members)
             rr.log(
@@ -410,7 +399,7 @@ def overlay(image: Image, detections: list[Any], colors: dict[str, tuple[int, in
     its box and its label; a detection without a mask gets the box alone."""
     import cv2
 
-    canvas = image_to_bgr(image).copy()
+    canvas = image_utils.to_bgr(image).copy()
     tint = canvas.copy()
     for det in detections:
         mask = getattr(det, "mask", None)
@@ -436,7 +425,7 @@ def overlay(image: Image, detections: list[Any], colors: dict[str, tuple[int, in
         cv2.putText(
             canvas, label, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
         )
-    return image_from_array(canvas, encoding="bgr8", header=image.header)
+    return image_utils.from_array(canvas, encoding="bgr8", header=image.header)
 
 
 def best_per_box(detections: list[Any]) -> list[Any]:
@@ -453,7 +442,11 @@ def best_per_box(detections: list[Any]) -> list[Any]:
 def base_pose(rig: Rig, ts: float) -> PoseStamped | None:
     """World pose of the robot's base frame at ts; None when tf has none."""
     transform = rig.tf.get(BASE_FRAME, rig.world_frame, ts, TF_TOLERANCE)
-    return pose_from_transform(inverse_transform(transform)) if transform is not None else None
+    return (
+        geometry.pose_from_transform(geometry.inverse_transform(transform))
+        if transform is not None
+        else None
+    )
 
 
 def by_camera(rig: Rig, sightings: list[Detection3DPC]) -> dict[str, list[Detection3DPC]]:
@@ -470,9 +463,14 @@ def camera_line(rig: Rig, sightings: list[Detection3DPC]) -> str:
     means: list[np.ndarray] = []
     parts: list[str] = []
     for frame, dets in by_camera(rig, sightings).items():
-        centroids = [pointcloud_xyz(det.pointcloud).mean(axis=0) for det in dets]
+        centroids = [pointcloud.xyz(det.pointcloud).mean(axis=0) for det in dets]
         cameras = np.array(
-            [vector_array(inverse_transform(det.transform).transform.translation) for det in dets]
+            [
+                geometry.vector_array(
+                    geometry.inverse_transform(det.transform).transform.translation
+                )
+                for det in dets
+            ]
         )
         views = len(np.unique(np.round(cameras, 2), axis=0))
         mean = np.mean(centroids, axis=0)

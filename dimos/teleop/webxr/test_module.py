@@ -39,8 +39,7 @@ from dimos.core.transport import LCMTransport
 import dimos.core.transport_factory as transport_factory
 from dimos.core.transport_factory import make_transport
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -71,7 +70,7 @@ from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, enco
 
 
 def _wire_message(message):
-    header = Header(time_from_seconds(message.ts), message.frame_id)
+    header = Header(message_time.time_from_seconds(message.ts), message.frame_id)
     if isinstance(message, Joy):
         return CdrJoy(
             header,
@@ -1134,7 +1133,7 @@ def test_video_extension_delivers_jpeg_from_generated_camera_message(mocker):
         assert module._client_connected(socket)
         pixels = np.zeros((16, 16, 3), dtype=np.uint8)
         pixels[..., 0] = 255
-        message = image_from_array(pixels, encoding="rgb8", header=Header(Time(0, 0), "camera"))
+        message = image.from_array(pixels, encoding="rgb8", header=Header(Time(0, 0), "camera"))
         asyncio.run_coroutine_threadsafe(module.handle_color_image(message), module._loop).result(
             timeout=5
         )

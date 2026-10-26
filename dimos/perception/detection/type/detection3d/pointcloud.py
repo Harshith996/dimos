@@ -23,15 +23,12 @@ import numpy as np
 from numpy.typing import NDArray
 import open3d as o3d
 
-from dimos.message_utils.geometry import inverse_transform, transform_matrix
-from dimos.message_utils.image import image_view
-from dimos.message_utils.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_xyz,
-    pointcloud_xyz,
-    select_points,
+from dimos.message_utils import (
+    geometry,
+    image,
+    pointcloud as pointcloud_utils,
+    time as message_time,
 )
-from dimos.message_utils.time import time_from_seconds, to_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -98,7 +95,7 @@ class Detection3DPC(Detection3D):
 
     @functools.cached_property
     def center(self) -> Vector3:
-        center = pointcloud_xyz(self.pointcloud).mean(axis=0)
+        center = pointcloud_utils.xyz(self.pointcloud).mean(axis=0)
         return Vector3(x=float(center[0]), y=float(center[1]), z=float(center[2]))
 
     def __add__(self, other: Detection3DPC) -> Detection3DPC:
@@ -118,7 +115,7 @@ class Detection3DPC(Detection3D):
             confidence=stronger.confidence,
             name=stronger.name,
             ts=later.ts,
-            pointcloud=concatenate_clouds(self.pointcloud, other.pointcloud),
+            pointcloud=pointcloud_utils.concatenate(self.pointcloud, other.pointcloud),
             transform=later.transform,
             frame_id=self.frame_id,
         )
@@ -139,7 +136,9 @@ class Detection3DPC(Detection3D):
         )
 
     def _open3d(self) -> o3d.geometry.PointCloud:
-        return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud_xyz(self.pointcloud)))
+        return o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(pointcloud_utils.xyz(self.pointcloud))
+        )
 
     def get_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the detection's pointcloud."""
@@ -167,7 +166,7 @@ class Detection3DPC(Detection3D):
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
         # Camera position in world frame is the translation part of the transform
-        camera_pos = inverse_transform(self.transform).transform.translation
+        camera_pos = geometry.inverse_transform(self.transform).transform.translation
         # Use Vector3 subtraction and magnitude
         distance = np.linalg.norm(
             [
@@ -213,7 +212,7 @@ class Detection3DPC(Detection3D):
         if filters is None:
             filters = [statistical()]
 
-        pixels = image_view(depth)
+        pixels = image.view(depth)
         depth_m = pixels.astype(np.float32)
         if pixels.dtype.kind == "u" and pixels.dtype.itemsize == 2:
             depth_m *= 0.001
@@ -262,10 +261,10 @@ class Detection3DPC(Detection3D):
         cx, cy = camera_info.k[2], camera_info.k[5]
         points_optical = np.column_stack(((cols - cx) * z / fx, (rows - cy) * z / fy, z))
 
-        optical_to_world = inverse_transform(world_to_optical_transform)
-        matrix = transform_matrix(optical_to_world.transform)
+        optical_to_world = geometry.inverse_transform(world_to_optical_transform)
+        matrix = geometry.transform_matrix(optical_to_world.transform)
         points_world = points_optical @ matrix[:3, :3].T + matrix[:3, 3]
-        detection_pc = pointcloud_from_xyz(
+        detection_pc = pointcloud_utils.from_xyz(
             points_world,
             header=Header(stamp=depth.header.stamp, frame_id=optical_to_world.header.frame_id),
         )
@@ -383,12 +382,12 @@ class Detection3DPC(Detection3D):
         coordinates - the detection-independent half of ``from_2d``, shared
         by every detection of one frame via ``from_projection``.
         """
-        world_points = pointcloud_xyz(world_pointcloud)
+        world_points = pointcloud_utils.xyz(world_pointcloud)
         indices = np.arange(len(world_points), dtype=np.int64)
 
         # Project points to camera frame
         points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
-        extrinsics_matrix = transform_matrix(world_to_optical_transform.transform)
+        extrinsics_matrix = geometry.transform_matrix(world_to_optical_transform.transform)
         points_camera = (extrinsics_matrix @ points_homogeneous.T).T
 
         # Filter out points behind the camera
@@ -461,9 +460,9 @@ class Detection3DPC(Detection3D):
 
             in_det_mask = mask_hit(points_2d[:, 0], points_2d[:, 1])
             if splat_m is not None:
-                camera = transform_matrix(inverse_transform(world_to_optical_transform).transform)[
-                    :3, 3
-                ]
+                camera = geometry.transform_matrix(
+                    geometry.inverse_transform(world_to_optical_transform).transform
+                )[:3, 3]
                 ranges = np.linalg.norm(world_points - camera, axis=1)
                 radius = splat_m * camera_info.k[0] / np.maximum(ranges, 1e-6)
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
@@ -487,11 +486,11 @@ class Detection3DPC(Detection3D):
 
         # Create initial pointcloud for this detection
         initial_pc = (
-            select_points(projected_cloud, in_det_mask)
+            pointcloud_utils.select(projected_cloud, in_det_mask)
             if projected_cloud is not None
-            else pointcloud_from_xyz(
+            else pointcloud_utils.from_xyz(
                 detection_points,
-                header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp)),
+                header=Header(frame_id=frame_id, stamp=message_time.time_from_seconds(timestamp)),
             )
         )
 
@@ -545,7 +544,7 @@ class Detection3DPC(Detection3D):
         )
         keep = np.zeros(world_pointcloud.width * world_pointcloud.height, dtype=bool)
         keep[indices] = True
-        projected_cloud = select_points(world_pointcloud, keep)
+        projected_cloud = pointcloud_utils.select(world_pointcloud, keep)
         quantum = lattice_quantum(world_points)
         return cls.from_projection(
             det,
@@ -554,7 +553,7 @@ class Detection3DPC(Detection3D):
             camera_info,
             world_to_optical_transform,
             world_pointcloud.header.frame_id,
-            to_seconds(world_pointcloud.header.stamp),
+            message_time.to_seconds(world_pointcloud.header.stamp),
             filters,
             splat_m=quantum / 2 if quantum is not None else None,
             projected_cloud=projected_cloud,

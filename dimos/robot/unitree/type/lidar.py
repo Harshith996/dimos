@@ -23,7 +23,7 @@ import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.types.timestamped import Timestamped
@@ -112,18 +112,18 @@ def repair_stale_ts(
     calibrated = False
     use_system_time = False
 
-    period_ns = to_nanoseconds(time_from_seconds(default_period))
+    period_ns = message_time.to_nanoseconds(message_time.time_from_seconds(default_period))
 
     def _repair(item: T) -> T:
         nonlocal prev_good, prev_raw, n_seen, calibrated, use_system_time
         raw = (
-            to_nanoseconds(item.header.stamp)
+            message_time.to_nanoseconds(item.header.stamp)
             if isinstance(item, CdrCloud)
-            else to_nanoseconds(time_from_seconds(item.ts))
+            else message_time.to_nanoseconds(message_time.time_from_seconds(item.ts))
         )
         repaired = raw
         if use_system_time:
-            repaired = to_nanoseconds(time_from_seconds(now()))
+            repaired = message_time.to_nanoseconds(message_time.time_from_seconds(now()))
         else:
             if not calibrated:
                 if prev_raw is not None and raw != prev_raw:
@@ -144,7 +144,7 @@ def repair_stale_ts(
             return item
         if isinstance(item, CdrCloud):
             result = deepcopy(item)
-            result.header.stamp = time_from_nanoseconds(repaired)
+            result.header.stamp = message_time.time_from_nanoseconds(repaired)
             return result
         item.ts = repaired / 1_000_000_000
         return item

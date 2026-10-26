@@ -30,7 +30,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
 from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.utils.logging_config import setup_logger
@@ -106,7 +106,7 @@ class MovementManager(Module):
         # It can be REALLY bad if a robot is supposed to stop moving but wont
         # we should probably think a more robust/strict requirement on planners
         cancel = PointStamped(
-            header=Header(frame_id="map", stamp=time_from_nanoseconds(time_ns())),
+            header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(time_ns())),
             point=Point(x=float("nan"), y=float("nan"), z=float("nan")),
         )
         self.way_point.publish(cancel)

@@ -24,14 +24,8 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.message_utils.geometry import point_distance, yaw
-from dimos.message_utils.occupancy import (
-    CostValues,
-    occupancy_cell_value,
-    occupancy_view,
-    world_to_grid,
-)
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, occupancy, time as message_time
+from dimos.message_utils.occupancy import CostValues
 from dimos.messages.geometry_msgs.msg import Point, PoseStamped, Twist
 from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.messages.std_msgs.msg import Bool, Header
@@ -190,7 +184,7 @@ class GlobalPlanner(Resource):
         header = (
             deepcopy(source.header)
             if source is not None
-            else Header(frame_id="world", stamp=time_from_nanoseconds(0))
+            else Header(frame_id="world", stamp=message_time.time_from_nanoseconds(0))
         )
         return Path(header=header, poses=[])
 
@@ -246,11 +240,12 @@ class GlobalPlanner(Resource):
                 continue
 
             if (
-                point_distance(current_goal.pose.position, current_odom.pose.position)
+                geometry.point_distance(current_goal.pose.position, current_odom.pose.position)
                 < self._goal_tolerance
                 and abs(
                     angle_diff(
-                        yaw(current_goal.pose.orientation), yaw(current_odom.pose.orientation)
+                        geometry.yaw(current_goal.pose.orientation),
+                        geometry.yaw(current_odom.pose.orientation),
                     )
                 )
                 < self._rotation_tolerance
@@ -322,7 +317,7 @@ class GlobalPlanner(Resource):
         assert current_goal is not None
 
         if (
-            point_distance(current_goal.pose.position, current_odom.pose.position)
+            geometry.point_distance(current_goal.pose.position, current_odom.pose.position)
             < self._replan_goal_tolerance
         ):
             self.cancel_goal(arrived=True)
@@ -384,7 +379,7 @@ class GlobalPlanner(Resource):
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
-            distance = point_distance(robot_pos, goal)
+            distance = geometry.point_distance(robot_pos, goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
             self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
@@ -409,14 +404,14 @@ class GlobalPlanner(Resource):
         the raw binary costmap (actually observed obstacle points) stay
         blocked.
         """
-        binary_values = occupancy_view(binary)
-        cost_values = occupancy_view(costmap).copy()
+        binary_values = occupancy.view(binary)
+        cost_values = occupancy.view(costmap).copy()
         if binary_values.shape != cost_values.shape or binary.info.origin != costmap.info.origin:
             # A newer map update raced in between building the two grids;
             # skip clearing rather than misalign cells.
             return
 
-        center = world_to_grid(costmap, robot_pos)
+        center = occupancy.world_to_grid(costmap, robot_pos)
         center_x, center_y = int(center[0]), int(center[1])
         cells = int(self._robot_rotation_diameter / 2 / costmap.info.resolution) + 1
 
@@ -437,7 +432,7 @@ class GlobalPlanner(Resource):
     def _find_safe_goal(self, goal: Point) -> Point | None:
         costmap = self._navigation_map.binary_costmap
 
-        if occupancy_cell_value(costmap, goal) == CostValues.UNKNOWN:
+        if occupancy.cell_value(costmap, goal) == CostValues.UNKNOWN:
             return goal
 
         safe_goal = find_safe_goal(
@@ -453,7 +448,7 @@ class GlobalPlanner(Resource):
             logger.warning("No safe goal found near requested target.")
             return None
 
-        goals_distance = point_distance(safe_goal, goal)
+        goals_distance = geometry.point_distance(safe_goal, goal)
         if goals_distance > 0.2:
             logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
 

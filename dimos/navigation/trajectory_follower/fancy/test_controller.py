@@ -19,8 +19,7 @@ import numpy as np
 from pydantic import ValidationError
 import pytest
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -31,14 +30,16 @@ from dimos.navigation.trajectory_follower.fancy.laws.seed import PursuitControll
 
 def _pose(x: float, y: float, yaw: float = 0.0) -> PoseStamped:
     return PoseStamped(
-        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
-        pose=Pose(position=Point(x=x, y=y, z=0.0), orientation=quaternion_from_euler(0, 0, yaw)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0.0), orientation=geometry.quaternion_from_euler(0, 0, yaw)
+        ),
     )
 
 
 def _straight_path(n: int = 40, step: float = 0.1) -> Path:
     return Path(
-        header=Header(frame_id="world", stamp=time_from_seconds(0.0)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)),
         poses=[_pose(i * step, 0.0) for i in range(n)],
     )
 
@@ -47,7 +48,9 @@ def _fan_path() -> Path:
     """Rotate in place at the origin: yaw steps with zero displacement."""
     yaws = [0.0, 0.3, 0.6, 0.9, 1.2, 1.5]
     poses = [_pose(0.0, 0.0, y) for y in yaws] + [_pose(0.1, 0.0, 1.5), _pose(1.0, 0.1, 1.5)]
-    return Path(header=Header(frame_id="world", stamp=time_from_seconds(0.0)), poses=poses)
+    return Path(
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)), poses=poses
+    )
 
 
 def test_on_path_drives_forward() -> None:
@@ -89,7 +92,7 @@ def test_fan_done_resumes_translation() -> None:
 def test_empty_path_stops() -> None:
     tw = PursuitController().update(
         _pose(0.0, 0.0),
-        Path(header=Header(frame_id="world", stamp=time_from_seconds(0.0)), poses=[]),
+        Path(header=Header(frame_id="world", stamp=message_time.time_from_seconds(0.0)), poses=[]),
         0.0,
     )
     assert tw.linear.x == 0.0 and tw.angular.z == 0.0

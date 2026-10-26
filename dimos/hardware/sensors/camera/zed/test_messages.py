@@ -24,19 +24,21 @@ from dimos.hardware.sensors.camera.zed.messages import (
     tracking_to_base,
     transform_from_arrays,
 )
-from dimos.message_utils.geometry import quaternion_from_euler, transform_matrix
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Transform, Vector3
 from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 @pytest.mark.parametrize("ns", [0, -1, 1700000000123456789])
 def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns):
-    stamp = time_from_nanoseconds(ns)
+    stamp = message_time.time_from_nanoseconds(ns)
     extrinsics = Transform(
-        translation=Vector3(x=1, y=2, z=3), rotation=quaternion_from_euler(0, 0, math.pi / 2)
+        translation=Vector3(x=1, y=2, z=3),
+        rotation=geometry.quaternion_from_euler(0, 0, math.pi / 2),
     )
-    mount = Transform(translation=Vector3(x=4, y=5, z=6), rotation=quaternion_from_euler(0.2, 0, 0))
+    mount = Transform(
+        translation=Vector3(x=4, y=5, z=6), rotation=geometry.quaternion_from_euler(0.2, 0, 0)
+    )
 
     message = frame_message(
         camera_name="zed",
@@ -54,24 +56,26 @@ def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns):
         ("zed_link", "zed_color_frame"),
         ("zed_color_frame", "zed_color_optical_frame"),
     ]
-    assert [to_nanoseconds(edge.header.stamp) for edge in actual.transforms] == [ns] * 5
+    assert [message_time.to_nanoseconds(edge.header.stamp) for edge in actual.transforms] == [
+        ns
+    ] * 5
     np.testing.assert_allclose(
-        transform_matrix(actual.transforms[0].transform), transform_matrix(mount)
+        geometry.transform_matrix(actual.transforms[0].transform), geometry.transform_matrix(mount)
     )
     for edge in [actual.transforms[1], actual.transforms[3]]:
         np.testing.assert_allclose(
-            transform_matrix(edge.transform),
-            np.linalg.inv(transform_matrix(extrinsics)),
+            geometry.transform_matrix(edge.transform),
+            np.linalg.inv(geometry.transform_matrix(extrinsics)),
             atol=1e-12,
         )
     for edge in [actual.transforms[2], actual.transforms[4]]:
-        optical_to_frame = transform_matrix(edge.transform)
+        optical_to_frame = geometry.transform_matrix(edge.transform)
         # Optical right/down/forward maps to camera forward/left/up.
         np.testing.assert_allclose(optical_to_frame @ [1, 2, 3, 1], [3, -1, -2, 1], atol=1e-12)
 
 
 def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
-    stamp = time_from_nanoseconds(1700000000123456789)
+    stamp = message_time.time_from_nanoseconds(1700000000123456789)
     world_camera = transform_from_arrays(
         [5, 6, 7],
         [0, 0, math.sqrt(0.5), math.sqrt(0.5)],
@@ -80,7 +84,8 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
         stamp=stamp,
     )
     mount = Transform(
-        translation=Vector3(x=1, y=2, z=3), rotation=quaternion_from_euler(0, 0, -math.pi / 2)
+        translation=Vector3(x=1, y=2, z=3),
+        rotation=geometry.quaternion_from_euler(0, 0, -math.pi / 2),
     )
 
     tracking = tracking_to_base(world_camera, mount, "base")
@@ -96,10 +101,11 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
 
     assert tracking.header.frame_id == "world"
     assert tracking.child_frame_id == "base"
-    assert to_nanoseconds(tracking.header.stamp) == 1700000000123456789
+    assert message_time.to_nanoseconds(tracking.header.stamp) == 1700000000123456789
     np.testing.assert_allclose(
-        transform_matrix(tracking.transform),
-        transform_matrix(world_camera.transform) @ np.linalg.inv(transform_matrix(mount)),
+        geometry.transform_matrix(tracking.transform),
+        geometry.transform_matrix(world_camera.transform)
+        @ np.linalg.inv(geometry.transform_matrix(mount)),
         atol=1e-12,
     )
     assert len(actual.transforms) == 5
@@ -112,7 +118,11 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge():
 def test_incomplete_sdk_pose_is_rejected(translation, rotation):
     with pytest.raises(ValueError, match="three translation and four quaternion"):
         transform_from_arrays(
-            translation, rotation, parent="world", child="camera", stamp=time_from_nanoseconds(0)
+            translation,
+            rotation,
+            parent="world",
+            child="camera",
+            stamp=message_time.time_from_nanoseconds(0),
         )
 
 
@@ -123,6 +133,6 @@ def test_shipped_zed_calibration_is_generated_and_roundtrips_cdr():
 
     assert (actual.width, actual.height) == (640, 376)
     assert actual.header.frame_id == "camera_optical"
-    assert to_nanoseconds(actual.header.stamp) == 0
+    assert message_time.to_nanoseconds(actual.header.stamp) == 0
     assert actual.k[0] == pytest.approx(379.45267)
     assert actual.d[0] == pytest.approx(-0.309435)

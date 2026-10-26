@@ -19,8 +19,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from dimos.message_utils.geometry import pose_from_transform
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -62,9 +61,9 @@ class TfPose:
             self._next_lookup = now + self.RETRY_PERIOD_S
             self._seen = None
             return None
-        stamp = to_nanoseconds(tf.header.stamp)
+        stamp = message_time.to_nanoseconds(tf.header.stamp)
         if self._seen is None or self._seen[0] != stamp:
             self._seen = (stamp, now)
         if now - self._seen[1] > self.max_age_s:
             return None
-        return pose_from_transform(tf)
+        return geometry.pose_from_transform(tf)

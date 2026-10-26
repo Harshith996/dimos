@@ -22,9 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.geometry import quaternion_from_euler, yaw
-from dimos.message_utils.occupancy import occupancy_cell_value, occupancy_from_array
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -50,8 +48,10 @@ class MemoryRPC(LCMRPC):
 
 def pose_at(x=0.0, y=0.0, angle=0.0, stamp=1700000000123456789):
     return PoseStamped(
-        header=Header(frame_id="world", stamp=time_from_nanoseconds(stamp)),
-        pose=Pose(position=Point(x=x, y=y, z=0), orientation=quaternion_from_euler(0, 0, angle)),
+        header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(stamp)),
+        pose=Pose(
+            position=Point(x=x, y=y, z=0), orientation=geometry.quaternion_from_euler(0, 0, angle)
+        ),
     )
 
 
@@ -126,12 +126,12 @@ def test_generated_replanning_attempts_reset_only_after_existing_distance_limit(
     "position,expected", [((0, 0), 0), ((1, 0), 100), ((2, 0), -1), ((3, 0), -1), ((-1, 0), -1)]
 )
 def test_generated_world_cell_lookup_preserves_unknown_outside_map(position, expected):
-    grid = occupancy_from_array(
+    grid = occupancy.from_array(
         np.array([[0, 100, -1]], dtype=np.int8),
-        header=Header(frame_id="world", stamp=time_from_nanoseconds(0)),
+        header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(0)),
         resolution=1,
     )
-    assert occupancy_cell_value(grid, Point(x=position[0], y=position[1], z=0)) == expected
+    assert occupancy.cell_value(grid, Point(x=position[0], y=position[1], z=0)) == expected
 
 
 @pytest.fixture
@@ -157,7 +157,7 @@ def test_clicked_point_conversion_retains_owned_header_and_identity_orientation(
     planner_module, stamp
 ):
     source = PointStamped(
-        header=Header(frame_id="world", stamp=time_from_nanoseconds(stamp)),
+        header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(stamp)),
         point=Point(x=1, y=2, z=0),
     )
     planner_module._handle_clicked_point(source)
@@ -229,7 +229,7 @@ def test_actual_planner_module_emits_path_velocity_and_stop_over_cdr_memory_port
         cleanup.callback(wires["nav_cmd_vel"].subscribe(receive_command))
         module.start()
         pose = pose_at(x=0.125, y=0.125)
-        costmap = occupancy_from_array(
+        costmap = occupancy.from_array(
             np.zeros((20, 20), dtype=np.int8), header=deepcopy(pose.header), resolution=0.25
         )
         map_ready = Event()
@@ -249,7 +249,7 @@ def test_actual_planner_module_emits_path_velocity_and_stop_over_cdr_memory_port
                 pose_at(
                     x=0.125,
                     y=0.125,
-                    angle=yaw(route.poses[0].pose.orientation),
+                    angle=geometry.yaw(route.poses[0].pose.orientation),
                     stamp=1700000000123456790,
                 )
             )
