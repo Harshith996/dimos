@@ -333,8 +333,6 @@ class Object(Detection3D):
                 continue
             header = depth_image.header
             if camera_transform is not None:
-                if camera_transform.child_frame_id != header.frame_id:
-                    raise ValueError("Camera transform source frame does not match depth image")
                 pcd_filtered.transform(geometry.transform_matrix(camera_transform.transform))
                 header = Header(
                     stamp=depth_image.header.stamp, frame_id=camera_transform.header.frame_id
@@ -418,8 +416,6 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     all_points = []
     all_colors = []
     for obj in objects:
-        if obj.frame_id != header.frame_id:
-            raise ValueError("Cannot aggregate object clouds in different frames")
         points = pointcloud_utils.xyz(obj.pointcloud)
         if len(points) == 0:
             continue
