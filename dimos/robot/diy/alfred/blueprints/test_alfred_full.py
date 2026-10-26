@@ -357,6 +357,9 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert planner.kwargs["voxel_map_resolution"] == manip_map.kwargs["voxel_size"], (
         "the octree's cells are the map's voxels"
     )
+    assert box_filter.kwargs["target_voxel_m"] == planner.kwargs["voxel_map_resolution"], (
+        "the map is re-rasterized onto the octree's own cells, or a turned base leaves it holes"
+    )
     (self_filter,) = _atoms(alfred_full_perception, RoboPlanPointCloudSelfFilter)
     assert self_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)

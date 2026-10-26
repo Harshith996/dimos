@@ -127,10 +127,11 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   each map's stamp (the box filter does it; the planner drops a map in any other frame), so the
   bench stays put when the base drives: pinned to `base_link` it rode along, and after a
   whole-body pick every plan was COLLISION_AT_START until the camera had re-seen the bench. The
-  octree snaps each voxel onto `base_link`'s grid, so once the base has turned since the run
-  started some of the bench lands in neighbouring cells: 18% of its cells were empty with the
-  base 42 degrees round (30% at 5 cm), holes of 2 cm. Open fingers sit 4.4 cm a side outside the
-  self-filter model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size.
+  filter re-rasterizes each voxel onto the octree's own `base_link` cells (`target_voxel_m`): moving
+  one centre per voxel left holes once the base had turned since the run started (17% of the bench
+  top empty at 42 degrees, 6% at 15), and now 0.1% is empty at any yaw, under the map's own 0.4%,
+  for ~4000 cells a map instead of ~3500. Open fingers sit 4.4 cm a side outside the self-filter
+  model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size.
 
 ## How the base is shared
 

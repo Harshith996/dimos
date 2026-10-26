@@ -230,6 +230,12 @@ def alfred_perception_modules(
             target_frame=BASE_FRAME,
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
             tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            # Each voxel is re-rasterized onto the octree's own base_link cells. Moved one centre
+            # per voxel, 17% of the bench top fell in empty octree cells with the base turned 42
+            # degrees since the run started (6% at 15, 1% at 0 or 90); re-rasterized, 0.1%, under
+            # the map's own 0.4% (60 s of the bench replayed, 2026-10-25). The planner gets ~4000
+            # cells for ~3500 voxels, and the filter spends 4 ms a map on it.
+            target_voxel_m=MANIP_VOXEL_M,
         ).remappings(
             [
                 (PointCloudBoxFilter, "cloud", "manip_global_map"),

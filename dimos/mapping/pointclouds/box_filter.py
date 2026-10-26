@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass
+import itertools
 import math
 from threading import RLock
 import time
@@ -43,6 +44,17 @@ logger = setup_logger()
 # A missing transform drops every cloud until it shows up: say so, not at the clouds' rate.
 MISSING_TRANSFORM_WARN_INTERVAL_S = 5.0
 
+# Where a voxel is sampled when it is re-rasterized, in edges from its centre: 2 x 2 x 2 points a
+# quarter edge in. Every point of the voxel has one within sqrt(3)/4 of an edge (0.43 < 0.5), so
+# at any rotation a target cell whose centre lies in the voxel holds a sample. 3 x 3 x 3 gives the
+# same guarantee at three times the cost (11 ms against 4 ms a 3600-voxel map on the Orin) and
+# covers more cells a voxel only clips (2026-10-25).
+VOXEL_LATTICE = np.array(list(itertools.product((-0.25, 0.25), repeat=3)), dtype=np.float64)
+# Cell indices pack three to an int64, 21 bits each, so one sort deduplicates the cells.
+_KEY_BITS = 21
+_KEY_OFFSET = 1 << (_KEY_BITS - 1)
+_KEY_MASK = (1 << _KEY_BITS) - 1
+
 
 class PointCloudBoxFilterConfig(ModuleConfig):
     # The frame the filtered cloud is sent in. None passes each cloud on in its own
@@ -54,6 +66,13 @@ class PointCloudBoxFilterConfig(ModuleConfig):
     # long to wait for one still in flight; a cloud with no transform is dropped.
     tf_tolerance_s: float = Field(default=0.1, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.2, ge=0.0)
+    # The edge of the grid the consumer bins the cloud on, for a cloud of voxel centres of that
+    # edge (a voxel map) moved into target_frame. Moved one point per voxel into a turned frame,
+    # some of the consumer's cells get two points and some none: holes. Set, each voxel is
+    # re-rasterized onto target_frame's grid instead (cells at multiples of this edge from its
+    # origin, as an octree bins) and the cloud carries one point per covered cell, at its centre.
+    # None moves the points as they are.
+    target_voxel_m: float | None = Field(default=None, gt=0.0)
 
 
 @dataclass(frozen=True)
@@ -91,13 +110,56 @@ def inside_boxes(
     return inside
 
 
+def rasterize_voxels(
+    centres: NDArray[np.floating[Any]], transform: NDArray[np.float64], voxel_m: float
+) -> NDArray[np.float32]:
+    """The cells of another frame's grid that a set of voxels covers, one centre per cell.
+
+    Each voxel is a cube of edge ``voxel_m`` around its centre, axis-aligned in the points'
+    frame. It is sampled on ``VOXEL_LATTICE``, the samples are moved by ``transform`` and binned
+    on the target grid, cell k spanning [k, k + 1) edges from the origin on each axis, the way
+    an octomap octree of that resolution bins a point. Every cell whose centre lies inside a
+    voxel is covered, whatever the rotation, so a turned surface keeps no holes; a cell a voxel
+    only clips may be covered too. A non-finite point, or one 2^20 edges out, covers nothing.
+
+    Args:
+        centres: N x 3 voxel centres, metres.
+        transform: The 4x4 pose of the points' frame in the target frame.
+        voxel_m: The voxels' edge, which is the target grid's, metres.
+
+    Returns:
+        M x 3 cell centres in the target frame, each cell once, in key order.
+    """
+    if not len(centres):
+        return np.empty((0, 3), dtype=np.float32)
+    rotation = transform[:3, :3]
+    moved = np.asarray(centres, dtype=np.float64) @ rotation.T + transform[:3, 3]
+    # The lattice turns with its voxel: a sample is the moved centre plus a turned offset.
+    offsets = (VOXEL_LATTICE * voxel_m) @ rotation.T
+    keys = np.floor((moved[:, None, :] + offsets).reshape(-1, 3) / voxel_m)
+    indexable = np.all(np.abs(keys) < _KEY_OFFSET, axis=1)  # False for NaN too
+    if not indexable.all():
+        keys = keys[indexable]
+    biased = keys.astype(np.int64) + _KEY_OFFSET
+    packed = np.unique(
+        (biased[:, 0] << (2 * _KEY_BITS)) | (biased[:, 1] << _KEY_BITS) | biased[:, 2]
+    )
+    cells = np.stack(
+        (packed >> (2 * _KEY_BITS), (packed >> _KEY_BITS) & _KEY_MASK, packed & _KEY_MASK),
+        axis=1,
+    )
+    return np.asarray((cells - _KEY_OFFSET + 0.5) * voxel_m, dtype=np.float32)
+
+
 class PointCloudBoxFilter(Module):
     """Pass a point cloud on with the points inside named boxes left out.
 
     A box is fixed in the cloud's frame or rides on another frame from tf.
     Changing the boxes re-sends the last cloud at once, so a consumer sees
     the change before the next cloud arrives. With a ``target_frame`` the
-    cloud is re-expressed in that frame first, and the boxes are placed in it.
+    cloud is re-expressed in that frame first, and the boxes are placed in it; with a
+    ``target_voxel_m`` too, a voxel map is re-rasterized onto that frame's grid
+    (``rasterize_voxels``) and the boxes leave out the cells whose centres they hold.
     """
 
     config: PointCloudBoxFilterConfig
@@ -169,7 +231,7 @@ class PointCloudBoxFilter(Module):
         expressed = self._expressed(cloud)
         if expressed is None:
             return None
-        frame_id, points = expressed
+        frame_id, points, rasterized = expressed
         boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, frame_id))]
         if frame_id == cloud.frame_id and (not boxes or not len(points)):
             return cloud
@@ -178,20 +240,22 @@ class PointCloudBoxFilter(Module):
             points if keep is None else points[keep], frame_id=frame_id, timestamp=cloud.ts
         )
         filtered.seq = cloud.seq
+        # A cell is none of the cloud's points: their other attributes stay behind.
         for name, values in cloud.pointcloud_tensor.point.items():
-            if name != "positions":
+            if name != "positions" and not rasterized:
                 filtered.pointcloud_tensor.point[name] = values if keep is None else values[keep]
         return filtered
 
-    def _expressed(self, cloud: PointCloud2) -> tuple[str, NDArray[np.float32]] | None:
-        """The cloud's frame and positions in the target frame; None when there is no transform."""
+    def _expressed(self, cloud: PointCloud2) -> tuple[str, NDArray[np.float32], bool] | None:
+        """The cloud's frame and positions in the target frame, and whether they are cells
+        re-rasterized from its voxels rather than its own points; None with no transform."""
         points = cloud.points_f32()
         target = self.config.target_frame
         if target is None or target == cloud.frame_id:
-            return cloud.frame_id, points
+            return cloud.frame_id, points, False
         if not len(points):
             # Nothing to move: an empty cloud is empty in every frame.
-            return target, points
+            return target, points, False
         transform = self.tfbuffer.get(
             target,
             cloud.frame_id,
@@ -204,8 +268,10 @@ class PointCloudBoxFilter(Module):
             self._dropped(cloud, target)
             return None
         matrix = transform.to_matrix()
+        if self.config.target_voxel_m is not None:
+            return target, rasterize_voxels(points, matrix, self.config.target_voxel_m), True
         moved = points @ matrix[:3, :3].T + matrix[:3, 3]
-        return target, np.asarray(moved, dtype=np.float32)
+        return target, np.asarray(moved, dtype=np.float32), False
 
     def _dropped(self, cloud: PointCloud2, target: str) -> None:
         self._dropped_since_warning += 1
