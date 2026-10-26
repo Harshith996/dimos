@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from contextlib import ExitStack
+from dataclasses import asdict
 from threading import Event
 
-from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
@@ -84,7 +84,7 @@ def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry(owned
         cloud = pointcloud.from_xyz(
             np.array([[1.025, 0.025, 0.025]], dtype=np.float32), header=header
         )
-        before = encode(cloud)
+        before = asdict(cloud)
         transports["lidar"].broadcast(None, cloud)
         for name in ("global_map", "pgo_keyframes", "pgo_loops", "mapper_frame_ms"):
             assert events[name].wait(5), name
@@ -96,7 +96,7 @@ def test_actual_pgo_module_ports_publish_generated_map_graph_and_telemetry(owned
         assert graph.poses[0].position.x == 1 and graph.poses[0].orientation.w == 1
         assert received["pgo_loops"].header == header and received["pgo_loops"].segments == []
         assert received["mapper_frame_ms"].data >= 0
-        assert encode(cloud) == before
+        np.testing.assert_equal(asdict(cloud), before)
 
 
 @pytest.fixture

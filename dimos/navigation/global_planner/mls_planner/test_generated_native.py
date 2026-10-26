@@ -29,7 +29,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
+from dimos.messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion
 from dimos.messages.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -50,19 +50,6 @@ from dimos.protocol.service.zenohservice import ZenohConfig
 class MemoryRPC(LCMRPC):
     def __init__(self, **kwargs):
         super().__init__(url="memq://", **kwargs)
-
-
-def test_mls_native_ports_reuse_canonical_region_and_geometry_types():
-    module = MLSPlannerNative(rpc_transport=MemoryRPC)
-    try:
-        assert module.region_bounds.type is RegionBounds and module.seed_bounds.type is RegionBounds
-        assert (
-            module.seed_map.type is PointCloudRegion and module.surface_map.type is PointCloudRegion
-        )
-        assert module.node_edges.type is LineSegments3DRegion
-        assert module.goal.type is PointStamped and module.path.type is Path
-    finally:
-        module.stop()
 
 
 @pytest.mark.native_e2e

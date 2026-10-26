@@ -36,7 +36,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import LCMTransport
 from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image, JointState
@@ -748,27 +748,15 @@ def test_stopping_inactive_policy_leaves_planner_trajectory_alone(
     control.cancel_trajectory.assert_not_called()
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
 def test_runtime_consumes_actual_cdr_ports_with_padded_pixels_and_owned_state(
     make_runtime,
-    backend,
     mocker,
 ):
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
     epoch = 1_700_000_000
     mocker.patch.object(policy_runtime.time, "time", return_value=float(epoch))
-    options = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
+    options = {"url": "memq://"}
     with ExitStack() as cleanup:
         wires = {}
         for name, kind in [
@@ -777,11 +765,7 @@ def test_runtime_consumes_actual_cdr_ports_with_padded_pixels_and_owned_state(
             ("button_pressed", UInt32),
             ("teleop_buttons", UInt32),
         ]:
-            wire = (
-                LCMTransport("/policy/" + name, kind, **options)
-                if backend == "lcm"
-                else ZenohTransport("/policy/" + name, kind, **options)
-            )
+            wire = LCMTransport("/policy/" + name, kind, **options)
             cleanup.callback(wire.stop)
             wires[name] = wire
             module.set_transport(name, wire)

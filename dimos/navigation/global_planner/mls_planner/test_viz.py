@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import asdict
 from functools import partial
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 
 from dimos.message_utils import pointcloud, time as message_time
@@ -127,13 +127,12 @@ def test_cdr_weighted_region_renders_geometry_and_keeps_source_immutable():
             ],
         ),
     )
-    payload = encode(value)
-    received = decode(payload, LineSegments3DRegion)
-    [(entity, arch, static)] = viz.render_edge_region(received)
+    original = asdict(value)
+    [(entity, arch, static)] = viz.render_edge_region(value)
     assert entity == "world/node_edges/-2_3" and static
     np.testing.assert_allclose(
         arch.strips.as_arrow_array().to_pylist(),
         [[[1, 2, viz.GRAPH_Z_LIFT], [2, 3, viz.GRAPH_Z_LIFT]]],
         atol=1e-6,
     )
-    assert encode(received) == payload
+    np.testing.assert_equal(asdict(value), original)

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from contextlib import ExitStack
+from dataclasses import asdict
 from threading import Event
 from types import SimpleNamespace
 from typing import get_type_hints
@@ -255,7 +256,7 @@ def test_real_cdr_premap_and_fix_ports_keep_metadata_and_own_published_stamp(
         instance.start()
         assert not received
         fix = _transform(np.eye(4), frame_id="world", child_frame_id="map")
-        before = encode(fix)
+        before = asdict(fix)
         instance.submit(fix)
         assert ready["tf"].wait(5) and ready["loaded_map"].wait(5)
         [sent] = received["tf"].transforms
@@ -264,7 +265,8 @@ def test_real_cdr_premap_and_fix_ports_keep_metadata_and_own_published_stamp(
         loaded = received["loaded_map"]
         assert loaded.header.frame_id == "map" and loaded.header.stamp == cloud.header.stamp
         np.testing.assert_array_equal(pointcloud.xyz(loaded), [[1, 2, 3]])
-        assert encode(fix) == before and path.read_bytes() == payload
+        np.testing.assert_equal(asdict(fix), before)
+        assert path.read_bytes() == payload
 
 
 @pytest.mark.parametrize("carving,count", [(True, 2), (False, 4)])
@@ -285,7 +287,7 @@ def test_go2_merge_preserves_map_placement_and_carving_policy(module, mocker, ca
     matrix = np.eye(4)
     matrix[0, 3] = 1
     fix = _transform(matrix, frame_id="world", child_frame_id="map")
-    originals = encode(premap), encode(local), encode(fix)
+    originals = asdict(premap), asdict(local), asdict(fix)
     instance._on_merge_input((local, fix))
     publish.assert_called_once()
     [result] = publish.call_args.args
@@ -295,7 +297,7 @@ def test_go2_merge_preserves_map_placement_and_carving_policy(module, mocker, ca
     assert set(np.round(points[:, 0], 3)) == {1.025, 2.025}
     if carving:
         np.testing.assert_allclose(points[points[:, 0] < 1.5, 2], [0.125], atol=1e-6)
-    assert (encode(premap), encode(local), encode(fix)) == originals
+    np.testing.assert_equal((asdict(premap), asdict(local), asdict(fix)), originals)
 
 
 def test_real_preparation_produces_features_for_every_coarse_point():

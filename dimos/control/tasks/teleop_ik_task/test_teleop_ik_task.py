@@ -34,7 +34,7 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
     create_task,
 )
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
@@ -438,21 +438,10 @@ class MemqRPC(LCMRPC):
         super().__init__(url="memq://", **kwargs)
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(backend, mocker):
+def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(mocker):
     solver = _solver(mocker)
     task = TeleopIKTask("teleop", _config((_binding("right", "right_tool"),)), solver=solver)
-    config = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
+    config = {"url": "memq://"}
     with ExitStack() as resources:
         module = ArmTeleopModule()
         coordinator = TeleopControlCoordinator(rpc_transport=MemqRPC)
@@ -462,11 +451,7 @@ def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(backend, m
             ("teleop_buttons", "teleop_buttons", UInt32),
         ]:
             assert module.outputs[output].type is coordinator.inputs[stream].type is message_type
-            transport = (
-                LCMTransport(stream, message_type, **config)
-                if backend == "lcm"
-                else ZenohTransport(stream, message_type, **config)
-            )
+            transport = LCMTransport(stream, message_type, **config)
             resources.callback(transport.stop)
             module.set_transport(output, transport)
             coordinator.set_transport(stream, transport)

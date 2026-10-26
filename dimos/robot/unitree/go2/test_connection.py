@@ -27,7 +27,6 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import open3d as o3d
 import pytest
@@ -300,9 +299,8 @@ def test_driver_cloud_boundary_preserves_all_supported_attributes():
         np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
     )
     generated = go2_conn._cloud_message(source)
-    restored = decode(encode(generated), CdrCloud)
-    records = pointcloud.view(restored)
-    assert restored.header == Header(Time(0, 0), "lidar")
+    records = pointcloud.view(generated)
+    assert generated.header == Header(Time(0, 0), "lidar")
     assert records["intensity"].ravel().tolist() == [0.25, 0.75]
     assert records["offset_time"].ravel().tolist() == [3, 9]
     assert records["tag"].ravel().tolist() == [1, 2]

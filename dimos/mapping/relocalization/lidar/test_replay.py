@@ -13,10 +13,10 @@
 # limitations under the License.
 
 
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 
-from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 from pytest_mock import MockerFixture
@@ -89,7 +89,7 @@ def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
     pts = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
     premap = _cloud(pts, frame_id="map")
     fix = _fix(90.0, x=1.0)
-    originals = encode(premap), encode(fix)
+    originals = asdict(premap), asdict(fix)
     with SqliteStore(path=str(tmp_path / "r.db")) as store:
         assert write_loaded_map(store, premap, fix, 5.0, "odom") is True
         stream = store.stream(LOADED_MAP_STREAM, PointCloud2)
@@ -98,7 +98,7 @@ def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
         assert written.data.header.frame_id == "odom"
         assert written.ts == 5.0
         assert written.data.header.stamp == message_time.time_from_seconds(5.0)
-        assert (encode(premap), encode(fix)) == originals
+        np.testing.assert_equal((asdict(premap), asdict(fix)), originals)
         np.testing.assert_allclose(pointcloud.xyz(written.data), [[1, 1, 0], [0, 0, 0]], atol=1e-6)
 
         assert write_loaded_map(store, premap, fix, 6.0, "odom") is False
@@ -187,8 +187,8 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
 
 def test_premap_renderer_preserves_fine_point_size_with_generated_values():
     cloud = _cloud(np.array([[1, 2, 3]], dtype=np.float32), frame_id="map")
-    before = encode(cloud)
+    before = asdict(cloud)
     value = _fine_points(cloud)
     assert value.positions.as_arrow_array().to_pylist() == [[1, 2, 3]]
     np.testing.assert_allclose(value.radii.as_arrow_array().to_pylist(), [0.00075], atol=1e-9)
-    assert encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)
