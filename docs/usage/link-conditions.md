@@ -60,6 +60,15 @@ browser reconnects and requires a fresh grab. `get_link_conditions()` returns
 status without resetting. Resetting link conditions does not reset physics;
 a raw physics reset is not an application/session reset.
 
+The OpenYAM spatial viewer treats delayed observations separately from control
+ownership. A slow state/RGB-D response keeps the existing pinch and visible tools.
+Commands still require current robot-local joint feedback and a live input stream.
+A real input gap or joint-feedback failure holds the robot and invalidates the
+control epoch; queued commands carrying the old epoch cannot re-grab it. Once the
+viewer receives the new epoch, the operator releases and pinches again. Actual
+hand-tracking loss and disconnect also require a fresh grab. These rules belong
+to the spatial teleop application, not the link emulator or sim2 physics.
+
 ## Timing contract
 
 `base_s` is nominal additional one-way delay. `jitter_std_s` is Gaussian standard

@@ -85,6 +85,7 @@ class SpatialInput(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     type: Literal["spatial_input"]
     sequence: int = Field(ge=0)
+    control_epoch: int = Field(ge=0)
     observed_at: float
     hands: dict[Literal["left", "right"], SpatialHand]
     focus: tuple[float, float, float] | None = None
@@ -101,6 +102,7 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     robot_model: RobotModelConfig | None = None
     base_poses: dict[str, Mount] = ANVIL.bases
     input_timeout_s: float = 0.3
+    joint_feedback_timeout_s: float = Field(default=0.5, gt=0)
     observation_timeout_s: float = Field(default=0.5, gt=0)
     max_pixels: int = Field(default=60000, ge=4, le=200000)
     max_depth_m: float = Field(default=2.0, gt=0, le=60)
@@ -155,6 +157,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         self._objects_at = 0.0
         self._transforms = MultiTBuffer()
         self._sequence = -1
+        self._control_epoch = 0
+        self._hold_reason: str | None = "Release and pinch a tool to take control"
         self._released = {hand: False for hand in Hand}
         self._claims: dict[Hand, tuple[Hand, str]] = {}
         self._last_input_update: float | None = None
@@ -225,6 +229,11 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     "objects": self._objects if now - self._objects_at < 2 else [],
                     "objects_active": now - self._objects_at < 2,
                     "observation_timeout_s": self.config.observation_timeout_s,
+                    "control": {
+                        "epoch": self._control_epoch,
+                        "robot_ready": self._joint_feedback_ready(now),
+                        "hold_reason": self._hold_reason,
+                    },
                 }
 
         @app.get("/spatial/surface")
@@ -354,20 +363,23 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         try:
             message = SpatialInput.model_validate_json(payload)
         except ValidationError:
-            self._reset_controller_state()
+            self._hold_control("Invalid control input; release and pinch again")
             return False
         with self._lock:
+            # Expire before accepting input too: queued messages must not revive
+            # an old grab if the watchdog thread was delayed by the same stall.
+            self._expire_stale_state(time.monotonic())
+            if message.control_epoch != self._control_epoch:
+                return False
             now = time.time()
-            fresh = (
-                0 <= now - message.observed_at <= self.config.observation_timeout_s
-                and 0 <= now - self._feedback.get("ts", 0) <= self.config.observation_timeout_s
-                and self._surface is not None
-                and 0 <= now - self._surface.ts <= self.config.observation_timeout_s
-            )
-            if message.sequence <= self._sequence or not fresh:
-                self._reset_controller_state()
+            if message.sequence <= self._sequence:
+                self._hold_control("Repeated control input; release and pinch again")
+                return False
+            if not self._joint_feedback_ready(now):
+                self._hold_reason = "Robot joint feedback unavailable"
                 return False
             self._sequence = message.sequence
+            self._hold_reason = None
             # Claims belong to human hands; downstream controller slots belong to
             # robot arms. Reserve previous owners through this release frame.
             reserved = set(self._claims.values())
@@ -470,8 +482,12 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 self._last_pose_update[arm] = self._last_controller_update[arm] = (
                     self._last_input_update
                 )
-            if message.focus is not None:
-                assert self._surface is not None
+            if (
+                message.focus is not None
+                and self._surface is not None
+                and 0 <= now - message.observed_at <= self.config.observation_timeout_s
+                and 0 <= now - self._surface.ts <= self.config.observation_timeout_s
+            ):
                 points = self._surface.points
                 if len(points) and np.min(np.linalg.norm(points - message.focus, axis=1)) < 0.04:
                     self.perception_focus.publish(
@@ -488,20 +504,30 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
 
     def _reset_controller_state(self) -> None:
         with self._lock:
+            self._control_epoch += 1
+            self._sequence = -1
+            self._hold_reason = "Release and pinch a tool to take control"
             self._released = {hand: False for hand in Hand}
             self._claims.clear()
             self._opening_refs.clear()
             self._last_input_update = None
             super()._reset_controller_state()
 
+    def _hold_control(self, reason: str) -> None:
+        with self._lock:
+            self._reset_controller_state()
+            self._hold_reason = reason
+
+    def _joint_feedback_ready(self, now: float) -> bool:
+        return bool(self._feedback.get("arms")) and (
+            0 <= now - self._feedback.get("ts", 0) <= self.config.joint_feedback_timeout_s
+        )
+
     def _expire_stale_state(self, now: float) -> None:
         # Each packet is a complete snapshot; omitted hands release immediately.
-        if (
-            self._last_input_update is not None
-            and now - self._last_input_update > self.config.input_timeout_s
-        ) or (
-            time.time() - min(self._feedback.get("ts", 0), self._surface.ts if self._surface else 0)
-            > self.config.observation_timeout_s
-        ):
-            self._reset_controller_state()
+        if self._last_input_update is not None:
+            if now - self._last_input_update > self.config.input_timeout_s:
+                self._hold_control("Control input stopped; release and pinch again")
+            elif not self._joint_feedback_ready(time.time()):
+                self._hold_control("Robot joint feedback unavailable")
         super()._expire_stale_state(now)

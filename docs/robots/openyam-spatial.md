@@ -157,9 +157,18 @@ mechanics, camera noise or task transfer.
 The spatial panel shows labeled left-wrist, workspace and right-wrist images,
 per-arm movement/opening/hold status, and recording state. Delayed camera frames
 and the RGB-D surface retain their last observation, labeled as delayed, instead
-of disappearing between network updates. Stale observations still hold control
-and require a fresh grab when feedback recovers. The timer and saved/discarded counters
-come from the blueprint's recorder.
+of disappearing between network updates. Observation delay does not release a
+tool: its handle stays visible and a tracked pinch continues while commands and
+robot-local joint feedback arrive. RGB-D availability is independent of arm
+control; selecting a perception focus still requires a recent observed surface.
+
+Actual hand-tracking loss, disconnect, input timeout or unavailable robot-local
+joint feedback holds control and requires release before a new grab. A control
+epoch changes on a session reset or watchdog stop. Input includes that epoch, so
+queued release/grab messages from before the stop cannot restart motion. The
+robot reports the epoch, joint-feedback availability and hold reason in its state;
+the viewer distinguishes a delayed view from a control stop. The timer and
+saved/discarded counters come from the blueprint's recorder.
 
 Set the task before entering the immersive session. Engage each arm and its
 opening control once after startup, establishing the actual accepted command

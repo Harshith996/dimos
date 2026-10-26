@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Control must use fresh observations and explicit, independent hand grabs."""
+"""Delayed observations preserve grabs; control loss invalidates queued input."""
 
 from dataclasses import replace
 import json
@@ -29,7 +29,7 @@ from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.protocol.testing.link import Delay, LinkConditions
+from dimos.protocol.testing.link import Delay, DelayTimeline, DeliveryQueue, LinkConditions
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.rgbd import SurfaceFrame
@@ -88,10 +88,11 @@ def test_link_reset_discards_queued_grab_and_requires_release_on_reconnect(viewe
     mocker.patch.object(runtime, "enqueue", side_effect=enqueue)
     handler = mocker.patch.object(viewer, "_dispatch_text_message", side_effect=dispatch)
 
-    def message(sequence, pinched):
+    def message(sequence, pinched, epoch):
         return {
             "type": "spatial_input",
             "sequence": sequence,
+            "control_epoch": epoch,
             "observed_at": 123.0,
             "hands": {
                 "left": {
@@ -106,11 +107,14 @@ def test_link_reset_discards_queued_grab_and_requires_release_on_reconnect(viewe
 
     with TestClient(viewer._web_server.app) as client:
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(message(0, False))
+            state = client.get("/spatial/state").json()
+            epoch = state["control"]["epoch"]
+            assert state["control"]["robot_ready"]
+            ws.send_json(message(0, False, epoch))
             assert processed.wait(2)
             processed.clear()
             queued.clear()
-            ws.send_json(message(1, True))
+            ws.send_json(message(1, True, epoch))
             assert queued.wait(2)
             status = viewer.reset_link_conditions()
             assert ws.receive()["code"] == 1012
@@ -118,7 +122,9 @@ def test_link_reset_discards_queued_grab_and_requires_release_on_reconnect(viewe
             assert status["pending_messages"] == 0
             assert viewer._controllers[Hand.LEFT] is None
         with client.websocket_connect("/ws") as ws:
-            ws.send_json(message(0, True))
+            state = client.get("/spatial/state").json()
+            assert state["control"]["epoch"] > epoch
+            ws.send_json(message(0, True, state["control"]["epoch"]))
             assert processed.wait(2)
             assert viewer._claims == {}
             assert viewer._controllers[Hand.LEFT] is None
@@ -131,6 +137,7 @@ def send(
     left=None,
     right=None,
     observed_at=None,
+    control_epoch=None,
     focus=None,
     action="move",
     offset=(0, 0, 0),
@@ -152,6 +159,7 @@ def send(
             {
                 "type": "spatial_input",
                 "sequence": sequence,
+                "control_epoch": module._control_epoch if control_epoch is None else control_epoch,
                 "observed_at": time.time() if observed_at is None else observed_at,
                 "hands": hands,
                 "focus": focus,
@@ -175,14 +183,102 @@ def test_hands_grab_independently_and_tracking_loss_requires_release(viewer):
     assert viewer._controllers[Hand.LEFT].grip
 
 
-def test_old_view_stops_control_and_replayed_sequence_cannot_reengage(viewer):
+def test_replayed_sequence_cannot_reengage(viewer):
     assert send(viewer, 1, left=False)
     assert send(viewer, 2, left=True)
     assert not send(viewer, 2, left=True)
     assert viewer._controllers[Hand.LEFT] is None
-    assert not send(viewer, 3, left=False, observed_at=time.time() - 2)
     assert send(viewer, 4, left=True)
     assert viewer._controllers[Hand.LEFT] is None
+
+
+def test_delayed_observations_and_missing_depth_do_not_release_a_tracked_tool(viewer, mocker):
+    wall = mocker.patch(
+        "dimos.robot.manipulators.dual_openyam.spatial_viewer.time.time", return_value=100.0
+    )
+    clock = mocker.patch(
+        "dimos.robot.manipulators.dual_openyam.spatial_viewer.time.monotonic", return_value=0.0
+    )
+    viewer._feedback["ts"] = 100.0
+    viewer._surface = None
+    epoch = viewer._control_epoch
+    conditions = LinkConditions(
+        seed=7,
+        to_robot=Delay(base_s=0.1, jitter_std_s=0.02),
+        to_operator=Delay(base_s=0.8, jitter_std_s=0.03),
+    )
+    incoming = DelayTimeline(conditions, "to_robot")
+    outgoing = DelayTimeline(conditions, "to_operator")
+    queue = DeliveryQueue(max_messages=100, max_bytes=100)
+    delivered = []
+    for tick in range(225):
+        now = tick / 100
+        clock.return_value = now
+        wall.return_value = 100 + now
+        viewer._feedback["ts"] = wall.return_value
+        if tick % 2 == 0 and tick < 200:
+            observed = wall.return_value - outgoing.delay_at(now)
+            queue.push((tick // 2, observed), now=now, delay_s=incoming.delay_at(now), size=1)
+        while (delivery := queue.pop_ready(now)) is not None:
+            sequence, observed = delivery.value
+            assert send(
+                viewer,
+                sequence,
+                left=sequence > 0,
+                observed_at=observed,
+                control_epoch=epoch,
+                offset=(0.04, 0, 0),
+            )
+            delivered.append(sequence)
+        viewer._expire_stale_state(now)
+    assert delivered == list(range(100))
+    assert viewer._owner(Hand.LEFT, "move") == Hand.LEFT
+    assert viewer._get_output_pose(Hand.LEFT).position.x == pytest.approx(0.04)
+    assert viewer._control_epoch == epoch
+
+
+def test_input_stall_invalidates_queued_release_and_regrab_before_recovery(viewer, mocker):
+    clock = mocker.patch(
+        "dimos.robot.manipulators.dual_openyam.spatial_viewer.time.monotonic", return_value=10.0
+    )
+    assert send(viewer, 0, left=False)
+    assert send(viewer, 1, left=True)
+    previous_epoch = viewer._control_epoch
+    clock.return_value = 10.4
+    # Receive-side expiry also works when no watchdog tick ran during the stall.
+    assert not send(viewer, 2, left=False, control_epoch=previous_epoch)
+    assert not send(viewer, 3, left=True, control_epoch=previous_epoch)
+    assert viewer._controllers[Hand.LEFT] is None
+    epoch = viewer._control_epoch
+    viewer._expire_stale_state(11)
+    assert viewer._control_epoch == epoch == previous_epoch + 1
+    assert viewer._hold_reason == "Control input stopped; release and pinch again"
+    assert send(viewer, 4, left=True)
+    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 5, left=False)
+    assert send(viewer, 6, left=True)
+    assert viewer._controllers[Hand.LEFT].grip
+    # A late packet from the invalidated epoch cannot cancel the new grab either.
+    assert not send(viewer, 7, left=False, control_epoch=previous_epoch)
+    assert viewer._controllers[Hand.LEFT].grip
+
+
+def test_robot_local_joint_feedback_loss_holds_even_with_continuing_operator_input(viewer):
+    assert send(viewer, 0, left=False)
+    assert send(viewer, 1, left=True)
+    previous_epoch = viewer._control_epoch
+    viewer._feedback["ts"] = time.time() - 1
+    assert not send(viewer, 2, left=True, control_epoch=previous_epoch)
+    assert viewer._claims == {}
+    assert viewer._controllers[Hand.LEFT] is None
+    assert viewer._hold_reason == "Robot joint feedback unavailable"
+    viewer._feedback["ts"] = time.time()
+    assert not send(viewer, 3, left=False, control_epoch=previous_epoch)
+    assert send(viewer, 4, left=True)
+    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 5, left=False)
+    assert send(viewer, 6, left=True)
+    assert viewer._controllers[Hand.LEFT].grip
 
 
 def test_control_and_display_use_world_frame_without_quest_rotation(viewer):
@@ -241,7 +337,7 @@ def test_perception_focus_must_lie_on_an_observed_surface(viewer):
     assert (point.x, point.y, point.z, point.frame_id) == (0, 0, 0, "world")
 
 
-def test_rgbd_requires_timestamped_camera_mount_and_expires_when_depth_disappears(viewer):
+def test_rgbd_requires_timestamped_camera_mount_without_gating_robot_teleop(viewer):
     now = time.time()
     color = Image(np.zeros((2, 2, 3), dtype=np.uint8), ImageFormat.RGB, "camera", now)
     depth = Image(np.ones((2, 2), dtype=np.float32), ImageFormat.DEPTH, "camera", now)
@@ -259,8 +355,18 @@ def test_rgbd_requires_timestamped_camera_mount_and_expires_when_depth_disappear
     viewer._on_rgbd((color, depth))
     assert viewer._observation_error == "No valid workspace depth observations"
     viewer._surface = SurfaceFrame(now - 1, b"", np.zeros((1, 3)))
-    assert not send(viewer, 0, left=True)
-    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 0, left=False)
+    assert send(viewer, 1, left=True)
+    assert viewer._controllers[Hand.LEFT].grip
+
+
+def test_old_surface_cannot_publish_perception_focus_or_cancel_a_grab(viewer):
+    assert send(viewer, 0, left=False)
+    assert send(viewer, 1, left=True)
+    viewer._surface = replace(viewer._surface, ts=time.time() - 2)
+    assert send(viewer, 2, left=True, focus=[0, 0, 0])
+    viewer.perception_focus.publish.assert_not_called()
+    assert viewer._controllers[Hand.LEFT].grip
 
 
 def test_spatial_episode_controls_call_the_existing_owner_and_report_rejected_saves(viewer, mocker):

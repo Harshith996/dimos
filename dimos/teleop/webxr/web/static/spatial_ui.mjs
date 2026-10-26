@@ -142,7 +142,7 @@ export class SpatialUI {
     finally { this.pending=null; }
   }
 
-  update({now,ready,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
+  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[{action:'actual_size',label:'Actual size',x:780,y:384,w:220,h:48,
       enabled:!preview&&!workspaceActive}];
@@ -161,10 +161,10 @@ export class SpatialUI {
       {action:'discard',label:'Discard',enabled:active && recording},
       {action:'hold',label:paused?'Resume':'Hold control',enabled:active && (paused?ready:true)},
     ].map((button,i)=>({...button,x:24+i*250,y:292,w:232,h:68,enabled:button.enabled && (!this.pending || button.action==='hold')}));
-    const control=preview?'VIEW ONLY':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'CONTROL DISCONNECTED':!ready?'OBSERVATIONS STALE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
+    const control=preview?'VIEW ONLY':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'CONTROL DISCONNECTED':!ready?'ROBOT FEEDBACK UNAVAILABLE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
-    const hint=this.error || (!ready&&surfaceAvailable?'Updates delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
+    const hint=this.error || (!preview&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;

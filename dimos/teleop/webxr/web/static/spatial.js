@@ -72,7 +72,7 @@ focusMarker.visible = false; stage.add(focusMarker);
 let feedback = null, feedbackAt = 0, cloudAt = 0, cloudTS = 0, sequence = 0, socket = null;
 let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
-let paused = false, inputGeneration=0, observationsReady=false;
+let paused = false, inputGeneration=0, controlEpoch=null;
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:action=>{
   if(action==='hold') paused=!paused;
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
@@ -114,11 +114,19 @@ async function poll(path, interval, accept) {
 function connect() {
   if (!controlRequested) return;
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-  socket.onopen = () => { sequence = 0; entryError=''; resetHands(); };
+  socket.onopen = () => { sequence = 0; controlEpoch=null; entryError=''; resetHands(); };
   socket.onclose = event => { resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
 poll(endpoint('state'), 35, async response => {
-  feedback = await response.json(); feedbackAt = performance.now();
+  const next = await response.json();
+  if(!Number.isInteger(next.control?.epoch)) {
+    entryError='Station controls were updated. Restart the blueprint and reload this page.';
+    throw new Error(entryError);
+  }
+  feedback = next; feedbackAt = performance.now();
+  if(controlEpoch!==feedback.control.epoch) {
+    resetTools(); controlEpoch=feedback.control.epoch;
+  }
   for (const side of geometry.sides) {
     const arm = feedback.arms?.[side]; if (!arm) continue;
     arm.transforms.forEach((matrix, i) => arms[side].children[i].matrix.fromArray(matrix));
@@ -197,7 +205,7 @@ function applyPlacement() {
     .scale(new THREE.Vector3().setScalar(workspace.scale)).setPosition(...workspace.position);
   stage.updateMatrixWorld(true);
 }
-function fresh() {
+function observationsFresh() {
   const now=feedback?.server_time+(performance.now()-feedbackAt)/1000;
   return feedback?.arms && performance.now()-feedbackAt < 350 && performance.now()-cloudAt < 500
     && now-feedback.ts < feedback.observation_timeout_s
@@ -230,11 +238,11 @@ if (!embedded && navigator.xr && await navigator.xr.isSessionSupported('immersiv
 else enter.textContent = 'WebXR unavailable in this browser';
 
 function send(hands, focus = null) {
-  if (socket?.readyState !== WebSocket.OPEN) return;
+  if (socket?.readyState !== WebSocket.OPEN || controlEpoch===null) return;
   if (socket.bufferedAmount > 16384) { socket.close(); resetHands(); return; }
-  socket.send(JSON.stringify({type: 'spatial_input', sequence: sequence++, observed_at: feedback?.ts || 0, hands, focus}));
+  socket.send(JSON.stringify({type: 'spatial_input', sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus}));
 }
-function track(frame, reference, ready, viewer) {
+function track(frame, reference, observationsFresh, viewer) {
   const samples={};
   ui.hovered=null; uiPointer.visible=false;
   for (const source of frame.session.inputSources) {
@@ -271,7 +279,9 @@ function track(frame, reference, ready, viewer) {
     hand.ray=direction?.length()>0.01?new THREE.Raycaster(hand.indexPosition,direction.normalize(),0,3):null;
     hand.uiHit=ui.hit(hand.ray,side,hand.position);
     const targets=[];
-    if(ready && !paused) for(const arm of Object.keys(feedback?.arms??{})) {
+    // Known tools keep their hit space even while held or observations lag.
+    // Otherwise a pinch at a delayed tool can become a workspace gesture.
+    for(const arm of Object.keys(feedback?.arms??{})) {
       const c=openingControls[arm];
       const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
       for(const [action,position,radius] of [['opening',knob,0.045],['move',handles[arm].position,0.10]]) {
@@ -304,14 +314,15 @@ function track(frame, reference, ready, viewer) {
     const key=hand.tool?`${hand.tool.arm}:${hand.tool.action}`:null;
     const target=key && owners.has(key) && owners.get(key)!==side?null:hand.target;
     if(target?.startsWith('ui:')) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
-    const gesture=state.update(hand.distance,target,
+    const selectable=hand.tool && (paused || !feedback?.control?.robot_ready)?null:target;
+    const gesture=state.update(hand.distance,selectable,
       pinchPosition.toArray(),axis.toArray(),arm?.opening??0,feedback?.opening_handle_travel_m??1,hand.tool?.arm??null);
     if(state.arm!==null) owners.set(`${state.arm}:${state.action}`,side);
     const orientation = rotation.clone().multiply(new THREE.Quaternion().copy(wrist.transform.orientation));
-    if(ready) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
+    if(feedback?.arms && !paused) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
       pinched:gesture.pinched, arm:state.arm, action:['move','opening'].includes(gesture.action)?gesture.action:null};
     if(gesture.pressed && gesture.action?.startsWith('ui:')) ui.activate(gesture.action.slice(3));
-    if (ready && gesture.releasedFree && target===null) {
+    if (observationsFresh && gesture.releasedFree && target===null) {
       if (ray) {
         const hit = ray.intersectObject(cloud)[0];
         if (hit) { focus = hit.point.clone().applyMatrix4(inverseStage).toArray(); focusMarker.position.fromArray(focus); focusMarker.visible = true; }
@@ -321,27 +332,28 @@ function track(frame, reference, ready, viewer) {
   send(generation===inputGeneration?inputs:{}, focus);
 }
 renderer.setAnimationLoop((time, frame) => {
-  const ready = !!fresh();
-  if(!ready && observationsReady) resetTools();
-  observationsReady=ready;
+  const fresh = !!observationsFresh();
+  const ready = !!feedback?.control?.robot_ready && controlEpoch!==null;
   for (const side of ['left', 'right']) {
     const moving=Object.values(gestures).find(g=>g.arm===side && g.action==='move');
     const opening=Object.values(gestures).find(g=>g.arm===side && g.action==='opening');
-    arms[side].visible = !!feedback?.arms?.[side]; handles[side].visible = ready;
-    const c=openingControls[side]; c.group.visible=ready;
-    handles[side].material.opacity=workspace.active?0.12:moving?1:0.45;
+    const known=!!feedback?.arms?.[side];
+    arms[side].visible = known; handles[side].visible = known;
+    const c=openingControls[side]; c.group.visible=known;
+    handles[side].material.opacity=workspace.active||paused||!ready?0.12:moving?1:0.45;
     c.rail.material.opacity=workspace.active?0.12:0.65; c.label.material.opacity=workspace.active?0.25:1;
-    c.requested.visible=ready && !!opening;
+    c.requested.visible=known && !!opening;
     if(c.requested.visible) c.requested.position.x=(opening.opening-0.5)*feedback.opening_handle_travel_m;
   }
-  // Observation age gates actuation, not the existence of the last measured surface.
-  // Network jitter must not blink the entire workspace out of view.
+  // Delayed observations change presentation, never an active tool's ownership.
   cloud.visible = cloudTS > 0;
-  detections.visible=ready;
-  if(!ready) focusMarker.visible=false;
-  status.textContent = entryError || (ready ? `Live · ${surfaceGrid?.valid || 0} depth samples · ${Math.round((feedback.server_time-cloudTS)*1000)} ms old · ${!controlRequested ? 'desktop preview' : paused ? 'control paused' : socket?.readyState === WebSocket.OPEN ? 'control connected' : 'control disconnected'}` : (cloudTS > 0 ? 'Updates delayed · showing last surface · control held' : feedback?.observation_error || 'Waiting for fresh arm feedback and RGB-D observations · control held'));
+  detections.visible=fresh;
+  if(!fresh) focusMarker.visible=false;
+  const controlStatus=!controlRequested?'desktop preview':paused?'control paused':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
+  const viewStatus=fresh?`Live · ${surfaceGrid?.valid || 0} depth samples`:cloudTS>0?'View delayed · showing last surface':feedback?.observation_error || 'Waiting for RGB-D observations';
+  status.textContent = entryError || `${viewStatus} · ${controlStatus}`;
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
-    ready,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
+    ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
     workspaceScale:workspace.scale,workspaceActive:workspace.active});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
@@ -349,7 +361,7 @@ renderer.setAnimationLoop((time, frame) => {
     if (placeAhead && viewer) place(viewer);
     if (time-lastSend > 20) {
       lastSend = time;
-      if (frame.session.visibilityState === 'visible') track(frame, reference, ready, viewer);
+      if (frame.session.visibilityState === 'visible') track(frame, reference, fresh, viewer);
       else { resetHands(); uiPointer.visible=false; send({}); }
     }
   } else orbit.update();
