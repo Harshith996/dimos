@@ -22,8 +22,7 @@ import numpy as np
 from PIL import Image as PILImage
 import pytest
 
-from dimos.message_utils import image
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -210,7 +209,7 @@ def test_image_file_decodes_rgb_and_preserves_source_header(tmp_path, mode):
     pixels = np.array([[7, 19]], dtype=np.uint8)
     source = PILImage.fromarray(pixels).convert(mode)
     source.save(path)
-    header = Header(stamp=time_from_nanoseconds(1234567890), frame_id="camera")
+    header = Header(stamp=message_time.time_from_nanoseconds(1234567890), frame_id="camera")
     message = image.from_file(path, header=header)
     assert message.encoding == "rgb8"
     assert cdr_encode(message.header) == cdr_encode(header)

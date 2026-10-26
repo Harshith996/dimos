@@ -22,8 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils import image
-from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
+from dimos.message_utils import image, pointcloud
 from dimos.messages.dimos_msgs.msg import EntityMarkers
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
 from dimos.messages.nav_msgs.msg import Odometry, Path
@@ -110,7 +109,7 @@ def cloud_archetype(
     from matplotlib import colormaps
     import rerun as rr
 
-    points, colors = pointcloud_xyz(message), pointcloud_rgb(message)
+    points, colors = pointcloud.xyz(message), pointcloud.rgb(message)
     keep = np.isfinite(points).all(axis=1)
     if bottom_cutoff is not None:
         keep &= points[:, 2] >= bottom_cutoff
