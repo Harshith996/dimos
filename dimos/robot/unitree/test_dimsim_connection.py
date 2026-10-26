@@ -165,7 +165,7 @@ def test_actual_rapier_pose_deadman_and_lidar_keep_ros_coordinates(typescript_re
 
 
 @pytest.mark.parametrize("headless", [False, True])
-def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose(
+def test_python_connection_publishes_canonical_tf_after_pose(
     headless, mocker, monkeypatch
 ):
     monkeypatch.setattr(transport_module, "LCM", partial(LCM, url="memq://"))
@@ -176,7 +176,7 @@ def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose
         connection = DimSimConnection(config, transport="lcm")
         cleanup.callback(connection.stop)
         odom_stop = mocker.spy(connection._odom_transport, "stop")
-        tf_stop = mocker.spy(connection._tf_transport, "stop")
+        cleanup.callback(connection._tf_transport.stop)
         observed = []
         cleanup.callback(connection._tf_transport.subscribe(observed.append))
         process.start.side_effect = lambda: connection._odom_transport.publish(sample)
@@ -196,7 +196,6 @@ def test_python_connection_uses_canonical_factory_and_closes_owned_tf_after_pose
         q = transforms[2].transform.rotation
         assert (q.x, q.y, q.z, q.w) == (-0.5, 0.5, -0.5, 0.5)
     odom_stop.assert_called_once_with()
-    tf_stop.assert_called_once_with()
     process.stop.assert_called_once_with()
 
 

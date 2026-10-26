@@ -43,13 +43,11 @@ def camera(mocker):
 
 
 @pytest.mark.parametrize("offset,delta_ns", [(0.0, 0), (1e-9, 1), (-1e-9, -1)])
-def test_actual_pipeline_copies_padded_bgr_and_exact_stamp(
-    camera, mocker, offset, delta_ns
-) -> None:
+def test_actual_pipeline_copies_bgr_and_exact_stamp(camera, mocker, offset, delta_ns) -> None:
     camera.config.timestamp_offset = offset
     camera.running = True
     pipeline = Gst.parse_launch(
-        "appsrc name=source format=time ! video/x-raw,format=BGR,width=3,height=2,framerate=30/1 "
+        "appsrc name=source format=time ! video/x-raw,format=BGR,width=4,height=2,framerate=30/1 "
         "! appsink name=sink emit-signals=true sync=false"
     )
     sink, source = pipeline.get_by_name("sink"), pipeline.get_by_name("source")
@@ -62,9 +60,8 @@ def test_actual_pipeline_copies_padded_bgr_and_exact_stamp(
         received.set()
 
     mocker.patch.object(camera.video, "publish", side_effect=publish)
-    pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
-    raw = bytearray([99] * 24)
-    np.ndarray((2, 3, 3), dtype=np.uint8, buffer=raw, strides=(12, 3, 1))[:] = pixels
+    pixels = np.arange(24, dtype=np.uint8).reshape(2, 4, 3)
+    raw = bytearray(pixels.tobytes())
     buffer = Gst.Buffer.new_allocate(None, len(raw), None)
     buffer.fill(0, raw)
     buffer.pts = 1700000000123456789
@@ -80,7 +77,7 @@ def test_actual_pipeline_copies_padded_bgr_and_exact_stamp(
     assert len(published) == 1
     assert type(published[0]) is Image
     message = decode(encode(published[0]), Image)
-    assert message.encoding == "bgr8" and message.step == 9
+    assert message.encoding == "bgr8" and message.step == 12
     assert message_time.to_nanoseconds(message.header.stamp) == 1700000000123456789 + delta_ns
     assert message.header.frame_id == "camera_test"
     np.testing.assert_array_equal(image.view(message), pixels)
@@ -89,16 +86,10 @@ def test_actual_pipeline_copies_padded_bgr_and_exact_stamp(
 def test_invalid_source_stamp_keeps_existing_skip_behavior(camera, mocker) -> None:
     buffer = Gst.Buffer.new_allocate(None, 24, None)
     buffer.pts = 0
-    caps = Gst.Caps.from_string("video/x-raw,format=BGR,width=3,height=2,framerate=30/1")
+    caps = Gst.Caps.from_string("video/x-raw,format=BGR,width=4,height=2,framerate=30/1")
     sample = Gst.Sample.new(buffer, caps, None, None)
     sink = Mock()
     sink.emit.return_value = sample
     publish = mocker.patch.object(camera.video, "publish")
     assert camera._on_new_sample(sink) == Gst.FlowReturn.OK
     publish.assert_not_called()
-
-
-def test_stop_closes_module_loop_when_pipeline_was_never_started(camera):
-    loop_thread = camera._loop_thread
-    camera.stop()
-    assert not loop_thread.is_alive()

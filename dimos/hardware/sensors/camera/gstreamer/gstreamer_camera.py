@@ -39,8 +39,7 @@ import gi  # type: ignore[import-not-found,import-untyped]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-gi.require_version("GstVideo", "1.0")
-from gi.repository import GLib, Gst, GstVideo  # type: ignore[import-not-found,import-untyped]
+from gi.repository import GLib, Gst  # type: ignore[import-not-found,import-untyped]
 
 logger = setup_logger(level=logging.INFO)
 
@@ -104,7 +103,6 @@ class GstreamerCameraModule(Module):
         self._cleanup_reconnect_timer()
 
         if not self.running:
-            super().stop()
             return
 
         self.running = False
@@ -279,16 +277,8 @@ class GstreamerCameraModule(Module):
         try:
             # Convert buffer data to numpy array
             # The videoconvert element outputs BGR format
-            info = GstVideo.VideoInfo.new_from_caps(caps)
-            if info.finfo.name != "BGR":
-                raise ValueError("The camera pipeline must supply BGR pixels")
-            image_array = np.ndarray(
-                (height, width, 3),
-                dtype=np.uint8,
-                buffer=map_info.data,
-                offset=info.offset[0],
-                strides=(info.stride[0], 3, 1),
-            )
+            data = np.frombuffer(map_info.data, dtype=np.uint8)
+            image_array = data.reshape((height, width, 3))
 
             # Create an Image message with the absolute timestamp
             image_msg = image.from_array(

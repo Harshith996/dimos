@@ -199,8 +199,6 @@ class VlModel(Captioner, Resource, Configurable):
         """
         if self.config.auto_resize is not None:
             max_w, max_h = self.config.auto_resize
-            if max_w <= 0 or max_h <= 0:
-                raise ValueError("auto_resize dimensions must be positive")
             scale = min(1.0, max_w / image.width, max_h / image.height)
             if scale == 1.0:
                 return image, scale
@@ -271,9 +269,12 @@ class VlModel(Captioner, Resource, Configurable):
             image = image_utils.from_array(
                 pixels, encoding="bgr8", header=message_time.header_now()
             )
+            image = image_utils.from_array(
+                image_utils.to_rgb(image), encoding="rgb8", header=image.header
+            )
             self.query(image, "What is this?")
         except Exception:
-            logger.debug("Vision model warmup was unavailable")
+            pass
 
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[untyped-decorator]
