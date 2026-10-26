@@ -17,12 +17,12 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+from dataclasses import replace
 import json
 import threading
 from typing import TYPE_CHECKING
 from unittest.mock import create_autospec, patch
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -512,7 +512,7 @@ def test_scene_staleness_compares_pixels_not_padding():
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         is_bigendian=0,
     )
-    last = cdr_decode(cdr_encode(first), Image)
+    last = replace(first)
     last.data = np.asarray([10] * 6 + [255, 255] + [10] * 6 + [255, 255], dtype=np.uint8)
     assert is_scene_stale([Frame(0, 0, first), Frame(1, 1, last)], stale_threshold=1)
     last.data = np.asarray([30] * 6 + [255, 255] + [30] * 6 + [255, 255], dtype=np.uint8)
@@ -524,6 +524,5 @@ def test_clip_frame_comparison_uses_rgb_colors_for_bgr_wire_images():
     pixels[:, :, 0] = 255
     rgb = image.from_array(pixels, encoding="rgb8")
     bgr = image.from_array(pixels[:, :, ::-1], encoding="bgr8")
-    bgr = cdr_decode(cdr_encode(bgr), Image)
     np.testing.assert_array_equal(_get_image_data(rgb), _get_image_data(bgr))
     np.testing.assert_array_equal(_get_image_data(bgr)[0, 0], [255, 0, 0])
