@@ -51,6 +51,49 @@ not demonstrated successes. The live blueprint returned all three camera views
 and fresh RGB-D observations. Evidence and the authoring/check scripts are in
 `/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-ambidextrous-20261025/`.
 
+## Desktop Controller integration
+
+The experimental Controller branch `feat/openyam-operator` discovers the active
+blueprint through Desktop and binds its manipulation requests to the run,
+module instance and receiver-issued session. `ManipulationModule` exposes the
+existing planner through `describe_operator` and `operator_request`; this adds
+no device connection or execution loop. Desktop's remote proxy must use the
+deployed module's advertised RPC names, including when its local Python class
+comes from an older checkout.
+
+The sim now composes the ordinary manipulation planner alongside spatial teleop.
+Both use the same artifact-derived joint/frame model and station mounts. This
+export has no collision geometry: the Controller preview checks joint limits
+and kinematics, not robot or workspace collisions. Detailed measured geometry
+and RGB-D observations remain in the spatial view.
+
+Controller embeds the blueprint's advertised spatial view, including cameras,
+Home, Hold, Resume and episode controls. Its Arms panel provides targets,
+saved poses, Preview, Execute and Cancel. Home uses each planning group's
+configured `home` preset; an absent preset rejects the request. The spatial
+sim's configured rest pose respects the artifact's joint limits. Zero joints
+are not a valid Home for this model.
+
+**Local integration evidence, 2026-10-26:** engine `3336924e0f` and Controller
+`095b7e0` ran in the installed Desktop against `openyam-spatial-sim`. An isolated
+browser set a left-arm target through the shared HTTP action, previewed and
+executed it through the UI, and observed the right arm remain within 0.002 rad
+of its starting joints. It recorded and saved an episode, discarded another,
+held motion, and verified both arms reached their configured Home within
+0.002 rad before Resume. The page reported no JavaScript errors. The saved
+raw capture contains 419 accepted action updates, 417 states and 51/47 wrist
+camera frames; this is collection plumbing evidence, not a training result.
+
+The check first engaged both simulated arms/grippers using synthetic WebXR
+controller messages over the real socket. Recorder readiness still requires
+accepted commands for every action joint. Cold-start operation entirely from
+ordinary browser jogging/gripper controls remains incomplete; those Controller
+controls still use its older stream path. Actual Quest/Pico/AVP and physical
+Anvil acceptance remain separate. Evidence and scripts are outside the repos at
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/operator-controller-20261026/`.
+Spatial/blueprint tests (37), remote-proxy tests (34), and shared XR input,
+pinch and workspace tests (20) passed. Controller's own README records its checks.
+
 ## Run
 
 Install the repository dependencies and provide the validated `yam-sim2-model`
