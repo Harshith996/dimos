@@ -16,7 +16,7 @@
 import pytest
 
 from dimos.core.module import ModuleConfig
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -85,7 +85,7 @@ def _follower(**config):
 def _base_at(z: float) -> PoseStamped:
     """The tf-resolved base pose; the ground sits emb.base_height under it."""
     return PoseStamped(
-        header=Header(frame_id="odom", stamp=time_from_seconds(0.0)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_seconds(0.0)),
         pose=Pose(position=Point(x=0.0, y=0.0, z=z), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
 
@@ -94,7 +94,10 @@ def _straight_path(end_x: float = 0.5) -> Path:
     first = _base_at(0.0)
     last = _base_at(0.0)
     last.pose.position.x = end_x
-    return Path(header=Header(frame_id="odom", stamp=time_from_seconds(0.0)), poses=[first, last])
+    return Path(
+        header=Header(frame_id="odom", stamp=message_time.time_from_seconds(0.0)),
+        poses=[first, last],
+    )
 
 
 class _Heard(list):
@@ -169,7 +172,7 @@ def _on_tf(follower: TrajectoryFollower, frame: str = "odom") -> tuple[MultiTBuf
     follower._pose_src = TfPose(tf, "base_link", follower.config.max_path_age_s, clock=clock)
     tf.receive_transform(
         TransformStamped(
-            header=Header(frame_id=frame, stamp=time_from_seconds(5.0)),
+            header=Header(frame_id=frame, stamp=message_time.time_from_seconds(5.0)),
             child_frame_id="base_link",
             transform=Transform(
                 translation=Vector3(0.0, 0.0, 0.01), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
@@ -188,7 +191,7 @@ def test_the_pose_comes_off_tf_in_the_path_frame(heard):
     assert (out[-1].linear.x, out[-1].linear.y, out[-1].angular.z) == (0.0, 0.0, 0.0)
     follower._on_path(
         Path(
-            header=Header(frame_id="map", stamp=time_from_seconds(0.0)),
+            header=Header(frame_id="map", stamp=message_time.time_from_seconds(0.0)),
             poses=_straight_path(5.0).poses,
         )
     )

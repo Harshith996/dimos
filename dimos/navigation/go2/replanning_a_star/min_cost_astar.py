@@ -19,7 +19,7 @@ from typing import overload
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.occupancy import grid_to_world, occupancy_view, world_to_grid
+from dimos.message_utils import occupancy
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -99,7 +99,7 @@ def _reconstruct_path_from_coords(
                 CdrPoseStamped(
                     header=deepcopy(costmap.header),
                     pose=Pose(
-                        position=grid_to_world(costmap, point),
+                        position=occupancy.grid_to_world(costmap, point),
                         orientation=CdrQuaternion(x=0, y=0, z=0, w=1),
                     ),
                 )
@@ -122,7 +122,7 @@ def _reconstruct_path_from_coords(
 def _cell(costmap: OccupancyGrid | CdrOccupancyGrid, value: Point | VectorLike) -> tuple[int, int]:
     vector = Vector3((value.x, value.y, value.z)) if isinstance(value, Point) else Vector3(value)
     if isinstance(costmap, CdrOccupancyGrid):
-        x, y = world_to_grid(costmap, Point(x=vector.x, y=vector.y, z=vector.z))
+        x, y = occupancy.world_to_grid(costmap, Point(x=vector.x, y=vector.y, z=vector.z))
     else:
         coordinates = costmap.world_to_grid(vector)
         x, y = coordinates.x, coordinates.y
@@ -161,7 +161,7 @@ def min_cost_astar(
 ) -> Path | CdrPath | None:
     start_tuple = _cell(costmap, start)
     goal_tuple = _cell(costmap, goal)
-    cells = occupancy_view(costmap) if isinstance(costmap, CdrOccupancyGrid) else costmap.grid
+    cells = occupancy.view(costmap) if isinstance(costmap, CdrOccupancyGrid) else costmap.grid
     height, width = cells.shape
     if not (0 <= goal_tuple[0] < width and 0 <= goal_tuple[1] < height):
         return None

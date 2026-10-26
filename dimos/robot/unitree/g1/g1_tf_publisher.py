@@ -31,7 +31,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.message_utils.time import header_now
+from dimos.message_utils import time as message_time
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.msgs.driver import transform_message
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -214,6 +214,6 @@ class G1TfPublisher(Module):
             with self._waist_lock:
                 waist_yaw, waist_roll, waist_pitch = self._waist
             transforms = mount_transforms(waist_yaw, waist_roll, waist_pitch)
-            stamp = header_now().stamp
+            stamp = message_time.header_now().stamp
             self.tf.publish(TFMessage([transform_message(value, stamp) for value in transforms]))
             await asyncio.sleep(period)

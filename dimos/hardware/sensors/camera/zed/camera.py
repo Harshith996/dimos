@@ -38,10 +38,12 @@ from dimos.hardware.sensors.camera.zed.messages import (
     tracking_to_base,
     transform_from_arrays,
 )
-from dimos.message_utils.camera_info import camera_info_with_stamp
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_rgbd, voxel_downsample_cloud
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import (
+    camera_info as camera_info_utils,
+    image,
+    pointcloud as pointcloud_utils,
+    time as message_time,
+)
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
@@ -136,11 +138,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._sl_camera_info: sl.CameraInformation | None = None
 
     def _publish_camera_info(self) -> None:
-        stamp = time_from_nanoseconds(time.time_ns())
+        stamp = message_time.time_from_nanoseconds(time.time_ns())
         if self._color_camera_info:
-            self.camera_info.publish(camera_info_with_stamp(self._color_camera_info, stamp))
+            self.camera_info.publish(camera_info_utils.with_stamp(self._color_camera_info, stamp))
         if self._depth_camera_info:
-            self.depth_camera_info.publish(camera_info_with_stamp(self._depth_camera_info, stamp))
+            self.depth_camera_info.publish(
+                camera_info_utils.with_stamp(self._depth_camera_info, stamp)
+            )
 
     @rpc
     def start(self) -> None:
@@ -299,7 +303,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 time.sleep(0.001)
                 continue
 
-            stamp = time_from_nanoseconds(time.time_ns())
+            stamp = message_time.time_from_nanoseconds(time.time_ns())
 
             color_img = None
             if self._image_left is not None:
@@ -308,7 +312,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                 if color_data.ndim == 3 and color_data.shape[2] == 4:
                     color_data = color_data[:, :, :3]
                 color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
-                color_img = image_from_array(
+                color_img = image.from_array(
                     color_data,
                     encoding="rgb8",
                     header=Header(frame_id=self._color_optical_frame, stamp=stamp),
@@ -326,7 +330,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
                     if self.config.align_depth_to_color
                     else self._depth_optical_frame
                 )
-                depth_img = image_from_array(
+                depth_img = image.from_array(
                     depth_data,
                     encoding="32FC1",
                     header=Header(frame_id=depth_frame_id, stamp=stamp),
@@ -381,13 +385,13 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             return
 
         try:
-            pcd = pointcloud_from_rgbd(
+            pcd = pointcloud_utils.from_rgbd(
                 color=color_img,
                 depth=depth_img,
                 calibration=self._color_camera_info,
                 depth_scale=self._depth_scale,
             )
-            pcd = voxel_downsample_cloud(pcd, 0.005)
+            pcd = pointcloud_utils.voxel_downsample(pcd, 0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
             print(f"Pointcloud generation error: {e}")

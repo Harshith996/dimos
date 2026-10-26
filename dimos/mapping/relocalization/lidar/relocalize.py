@@ -41,8 +41,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from packaging.version import Version
 
-from dimos.message_utils.geometry import inverse_transform, transform_from_matrix
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.service.spec import BaseConfig
@@ -280,8 +279,8 @@ class LidarRelocalizer:
         if result.fitness < self.config.fitness_threshold:
             return RelocAttempt(None, result)
         placement = TransformStamped(
-            header=Header(frame_id=map_frame, stamp=time_from_nanoseconds(0)),
+            header=Header(frame_id=map_frame, stamp=message_time.time_from_nanoseconds(0)),
             child_frame_id=world_frame,
-            transform=transform_from_matrix(np.asarray(result.transformation)),
+            transform=geometry.transform_from_matrix(np.asarray(result.transformation)),
         )
-        return RelocAttempt(inverse_transform(placement), result)
+        return RelocAttempt(geometry.inverse_transform(placement), result)

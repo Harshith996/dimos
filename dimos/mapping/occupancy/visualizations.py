@@ -21,7 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
@@ -36,7 +36,7 @@ def _map_image(
     grid: OccupancyGrid | CdrOccupancyGrid, pixels: NDArray[np.uint8]
 ) -> Image | CdrImage:
     if isinstance(grid, CdrOccupancyGrid):
-        return image_from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
+        return image.from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
     return Image(data=pixels, format=ImageFormat.BGR, frame_id=grid.frame_id, ts=grid.ts)
 
 

@@ -16,8 +16,7 @@ from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -40,11 +39,13 @@ VOXEL = 0.05
 def _wall(x, ts):
     ys, zs = np.meshgrid(np.arange(0.025, 1, VOXEL), np.arange(0.025, 1, VOXEL))
     pts = np.stack([np.full(ys.size, x), ys.ravel(), zs.ravel()], axis=1)
-    return pointcloud_from_xyz(pts, header=Header(stamp=time_from_seconds(ts), frame_id="world"))
+    return pointcloud.from_xyz(
+        pts, header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world")
+    )
 
 
 def _xs(world_map):
-    return {int(x) for x in np.floor(pointcloud_xyz(world_map.global_map())[:, 0] / VOXEL)}
+    return {int(x) for x in np.floor(pointcloud.xyz(world_map.global_map())[:, 0] / VOXEL)}
 
 
 @pytest.fixture
@@ -75,14 +76,14 @@ def test_rebuilds_on_loop_closure_and_respects_cooldown(controlled_map):
     pgo.snapshot.return_value = _graph_with_drift_at(
         [
             TransformStamped(
-                header=Header(stamp=time_from_seconds(100), frame_id="world"),
+                header=Header(stamp=message_time.time_from_seconds(100), frame_id="world"),
                 child_frame_id="body",
                 transform=Transform(
                     translation=Vector3(0.5, 0, 0), rotation=Quaternion(0, 0, 0, 1)
                 ),
             ),
             TransformStamped(
-                header=Header(stamp=time_from_seconds(101), frame_id="world"),
+                header=Header(stamp=message_time.time_from_seconds(101), frame_id="world"),
                 child_frame_id="body",
                 transform=Transform(translation=Vector3(0, 0, 0), rotation=Quaternion(0, 0, 0, 1)),
             ),
@@ -108,7 +109,7 @@ def actual_map():
 
 def test_real_optimizer_map_preserves_sensor_stamp_and_world_frame(actual_map):
     cloud = _wall(1.025, 100)
-    cloud.header.stamp = time_from_nanoseconds(1700000000123456789)
+    cloud.header.stamp = message_time.time_from_nanoseconds(1700000000123456789)
     before = encode(cloud)
     pose = Pose(position=Point(1, 0, 0), orientation=Quaternion(0, 0, 0, 1))
     assert not actual_map.add(cloud, pose)

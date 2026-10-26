@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from dimos.hardware.sensors.camera.spec import OPTICAL_ROTATION
-from dimos.message_utils.geometry import compose_transforms, inverse_transform
+from dimos.message_utils import geometry
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -65,7 +65,7 @@ def tracking_to_base(
         child_frame_id=world_to_camera.child_frame_id,
         transform=base_transform,
     )
-    return compose_transforms(world_to_camera, inverse_transform(mount))
+    return geometry.compose_transforms(world_to_camera, geometry.inverse_transform(mount))
 
 
 def frame_message(
@@ -91,7 +91,7 @@ def frame_message(
         frame = camera_name + "_" + kind + "_frame"
         optical = camera_name + "_" + kind + "_optical_frame"
         # Preserve the producer's existing inverse SDK extrinsics convention.
-        edge = inverse_transform(
+        edge = geometry.inverse_transform(
             TransformStamped(
                 header=Header(frame_id=camera_link, stamp=stamp),
                 child_frame_id=frame,

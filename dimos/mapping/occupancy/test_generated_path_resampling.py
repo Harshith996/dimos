@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
@@ -31,7 +31,7 @@ from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 
 
 def make_path(points, stamp):
-    header = Header(frame_id="map", stamp=time_from_nanoseconds(stamp))
+    header = Header(frame_id="map", stamp=message_time.time_from_nanoseconds(stamp))
     return Path(
         header=deepcopy(header),
         poses=[
@@ -162,8 +162,8 @@ def test_generated_single_smooth_pose_uses_goal_orientation_and_copies_metadata(
 
 def test_simple_resampling_preserves_existing_endpoint_source_headers_without_aliasing():
     path = make_path([(0.0, 0.0), (0.25, 0.0)], -1)
-    path.poses[0].header.stamp = time_from_nanoseconds(0)
-    path.poses[-1].header.stamp = time_from_nanoseconds(17)
+    path.poses[0].header.stamp = message_time.time_from_nanoseconds(0)
+    path.poses[-1].header.stamp = message_time.time_from_nanoseconds(17)
     before = deepcopy(path)
     goal = Pose(position=Point(x=0.25, y=0, z=0), orientation=Quaternion(x=0, y=0, z=0, w=1))
 

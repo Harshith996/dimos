@@ -39,16 +39,16 @@ receive them.
 Compose connected edges in parent-to-child order. Inversion swaps the frames.
 
 ```python
-from dimos.message_utils.geometry import compose_transforms, inverse_transform
+from dimos.message_utils import geometry
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 first, second = frames_to_edge_transforms([
     ("base_link", "world", (1, 0, 0), (0, 0, 0)),
     ("camera_optical", "base_link", (0.5, 0, 0.3), (0, 0, 0)),
 ])
-world_camera = compose_transforms(first, second)
+world_camera = geometry.compose_transforms(first, second)
 assert world_camera.transform.translation.x == 1.5
-camera_world = inverse_transform(world_camera)
+camera_world = geometry.inverse_transform(world_camera)
 assert camera_world.header.frame_id == "camera_optical"
 assert camera_world.child_frame_id == "world"
 ```

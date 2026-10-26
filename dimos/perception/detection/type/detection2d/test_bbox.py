@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from dimos.message_utils.image import image_view
+from dimos.message_utils import image
 
 
 @pytest.mark.self_hosted
@@ -71,7 +71,7 @@ def test_detection2d(detection2d) -> None:
     # The actual cropped image is (260, 192, 3)
     assert cropped.width == 192
     assert cropped.height == 260
-    assert image_view(cropped).shape == (260, 192, 3)
+    assert image.view(cropped).shape == (260, 192, 3)
 
     # def test_to_ros_bbox(detection2d):
     """Test ROS bounding box conversion."""

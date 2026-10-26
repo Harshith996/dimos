@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.image import image_view
+from dimos.message_utils import image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import (
@@ -92,7 +92,7 @@ def test_tracker_publishes_generated_detection_and_clears_failed_track(
     assert detection.results[0].hypothesis.class_id == "tracked_object"
     assert len(overlays) == 1
     assert overlays[0].header == result.header
-    assert image_view(overlays[0]).shape == (64, 64, 3)
+    assert image.view(overlays[0]).shape == (64, 64, 3)
     assert overlays[0].encoding == "rgb8"
 
 

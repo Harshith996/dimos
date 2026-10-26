@@ -24,7 +24,7 @@ import threading
 from typing import Any
 
 from dimos.core.transport_factory import make_transport
-from dimos.message_utils.geometry import quaternion_euler
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.utils.logging_config import setup_logger
 
@@ -143,7 +143,7 @@ class TransportTwistAdapter:
             self._latest_odom = [
                 msg.pose.position.x,
                 msg.pose.position.y,
-                quaternion_euler(msg.pose.orientation)[2],
+                geometry.quaternion_euler(msg.pose.orientation)[2],
             ]
 
 

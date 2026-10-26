@@ -19,7 +19,7 @@ from threading import Event
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -106,11 +106,13 @@ def test_actual_generated_follower_ports_drive_arrive_and_preempt_over_cdr(follo
         cleanup.callback(wires["nav_cmd_vel"].subscribe(receive_command))
         cleanup.callback(wires["goal_reached"].subscribe(receive_goal))
         follower.start()
-        header = Header(frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789))
+        header = Header(
+            frame_id="odom", stamp=message_time.time_from_nanoseconds(1700000000123456789)
+        )
         wires["tf"].publish(base_transform(header, 0.0))
         wires["path"].publish(route(header, 2.0))
         assert moving.wait(5)
-        header.stamp = time_from_nanoseconds(1700000000123456790)
+        header.stamp = message_time.time_from_nanoseconds(1700000000123456790)
         wires["tf"].publish(base_transform(header, 2.0))
         assert arrived.wait(5)
         assert goals == [Bool(data=True)]

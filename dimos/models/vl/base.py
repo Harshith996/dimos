@@ -22,8 +22,7 @@ import warnings
 import cv2
 
 from dimos.core.resource import Resource
-from dimos.message_utils.image import image_from_array, image_view
-from dimos.message_utils.time import header_now, to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -119,7 +118,7 @@ def vlm_detection_to_detection2d(
         class_id=-1,
         confidence=1.0,
         name=name,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
     )
 
@@ -168,7 +167,7 @@ def vlm_point_to_detection2d_point(
         x=x,
         y=y,
         name=name,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         track_id=track_id,
     )
@@ -206,11 +205,13 @@ class VlModel(Captioner, Resource, Configurable):
             if scale == 1.0:
                 return image, scale
             pixels = cv2.resize(
-                image_view(image),
+                image_utils.view(image),
                 (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
                 interpolation=cv2.INTER_AREA,
             )
-            return image_from_array(pixels, encoding=image.encoding, header=image.header), scale
+            return image_utils.from_array(
+                pixels, encoding=image.encoding, header=image.header
+            ), scale
         return image, 1.0
 
     @abstractmethod
@@ -267,7 +268,9 @@ class VlModel(Captioner, Resource, Configurable):
             pixels = cv2.imread(str(get_data("cafe-smol.jpg")))
             if pixels is None:
                 raise ValueError("Could not read model warmup image")
-            image = image_from_array(pixels, encoding="bgr8", header=header_now())
+            image = image_utils.from_array(
+                pixels, encoding="bgr8", header=message_time.header_now()
+            )
             self.query(image, "What is this?")
         except Exception:
             logger.debug("Vision model warmup was unavailable")

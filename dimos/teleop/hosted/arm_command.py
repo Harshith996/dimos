@@ -31,7 +31,7 @@ from reactivex.disposable import Disposable
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import to_nanoseconds, to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped as CdrPoseStamped,
     Twist,
@@ -122,12 +122,12 @@ class ArmCommandModule(ArmTeleopModule):
         wire = cdr_decode(data, CdrPoseStamped)
         p, q = wire.pose.position, wire.pose.orientation
         msg = PoseStamped(
-            ts=to_seconds(wire.header.stamp),
+            ts=message_time.to_seconds(wire.header.stamp),
             frame_id=wire.header.frame_id,
             position=(p.x, p.y, p.z),
             orientation=(q.x, q.y, q.z, q.w),
         )
-        source_ns = to_nanoseconds(wire.header.stamp)
+        source_ns = message_time.to_nanoseconds(wire.header.stamp)
         try:
             hand = self._resolve_hand(msg.frame_id)
         except ValueError:
@@ -163,8 +163,8 @@ class ArmCommandModule(ArmTeleopModule):
         if self._estopped:
             return
         msg = cdr_decode(data, TwistStamped)
-        source_ns = to_nanoseconds(msg.header.stamp)
-        ts = to_seconds(msg.header.stamp)
+        source_ns = message_time.to_nanoseconds(msg.header.stamp)
+        ts = message_time.to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
         age = time.time() - ts

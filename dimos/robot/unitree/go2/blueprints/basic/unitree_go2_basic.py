@@ -23,7 +23,7 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.message_utils.occupancy import occupancy_view
+from dimos.message_utils import occupancy
 from dimos.msgs.geometry_msgs.Pose import Pose as NumericalPose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as NumericalGrid
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -56,7 +56,7 @@ def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
     # Reuse the existing numerical texture renderer behind an explicit value adapter.
     p, q = grid.info.origin.position, grid.info.origin.orientation
     numerical = NumericalGrid(
-        grid=occupancy_view(grid),
+        grid=occupancy.view(grid),
         resolution=grid.info.resolution,
         origin=NumericalPose(p.x, p.y, p.z, q.x, q.y, q.z, q.w),
         frame_id=grid.header.frame_id,

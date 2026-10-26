@@ -35,8 +35,7 @@ from scipy.spatial.transform import Rotation
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.occupancy import block_max_reduce, occupancy_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.utils.logging_config import setup_logger
@@ -86,7 +85,7 @@ class MapCompressModule(Module):
 
         # A bad frame must drop, not kill the RxPY costmap subscription.
         try:
-            cells = occupancy_view(grid)
+            cells = occupancy.view(grid)
             if cells.size == 0:
                 return
             res = grid.info.resolution
@@ -94,7 +93,7 @@ class MapCompressModule(Module):
             if 0 < res < self.config.map_min_resolution:
                 factor = max(1, round(self.config.map_min_resolution / res))
                 if factor > 1:
-                    img_cells = block_max_reduce(cells, factor)
+                    img_cells = occupancy.block_max_reduce(cells, factor)
                     res = res * factor
 
             ok, buf = cv2.imencode(".png", self._occupancy_to_bgra(img_cells))
@@ -112,7 +111,7 @@ class MapCompressModule(Module):
                 "h": int(h),
                 "res": float(res),
                 "origin": [float(origin.x), float(origin.y)],
-                "stamp": to_seconds(grid.header.stamp),
+                "stamp": message_time.to_seconds(grid.header.stamp),
                 "png_b64": png_b64,
             }
             data = json.dumps(payload, separators=(",", ":")).encode()
@@ -139,7 +138,7 @@ class MapCompressModule(Module):
                 "x": float(pose.pose.position.x),
                 "y": float(pose.pose.position.y),
                 "yaw": float(heading),
-                "ts": to_seconds(pose.header.stamp),
+                "ts": message_time.to_seconds(pose.header.stamp),
             }
             self.map_out.publish(json.dumps(payload).encode())
         except Exception:

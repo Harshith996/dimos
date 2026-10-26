@@ -22,8 +22,7 @@ import pytest
 from reactivex.subject import Subject
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import camera_info, image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.sensor_msgs.msg import Image
@@ -47,7 +46,7 @@ from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 @pytest.mark.parametrize("align", [align_person, align_reid], ids=["person", "reid"])
 @pytest.mark.parametrize("seconds", [0, 1700000000])
 def test_exact_header_alignment_rejects_adjacent_nanosecond_and_empty_arrays(align, seconds):
-    image = image_from_array(
+    image = image_utils.from_array(
         np.zeros((32, 32, 3), dtype=np.uint8),
         encoding="rgb8",
         header=Header(frame_id="camera", stamp=Time(sec=seconds, nanosec=123456789)),
@@ -98,7 +97,9 @@ def test_explicit_identity_system_constructs_normal_module_and_generated_ports()
 
 def test_person_target_composition_keeps_detection_source_stamp():
     header = Header(frame_id="camera_optical", stamp=Time(sec=1700000000, nanosec=123456789))
-    image = image_from_array(np.zeros((32, 32, 3), dtype=np.uint8), encoding="rgb8", header=header)
+    image = image_utils.from_array(
+        np.zeros((32, 32, 3), dtype=np.uint8), encoding="rgb8", header=header
+    )
     box = Detection2DBBox(
         image=image,
         bbox=(12, 12, 20, 20),
@@ -108,7 +109,7 @@ def test_person_target_composition_keeps_detection_source_stamp():
         name="person",
         ts=1700000000.123456789,
     )
-    camera = camera_info_from_intrinsics(10, 10, 16, 16, 32, 32, header=header)
+    camera = camera_info.from_intrinsics(10, 10, 16, 16, 32, 32, header=header)
     with ExitStack() as cleanup:
         tf_wire = LCMTransport("tracking_tf", TFMessage, url="memq://")
         cleanup.callback(tf_wire.stop)

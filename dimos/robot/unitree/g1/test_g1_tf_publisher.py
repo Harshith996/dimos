@@ -16,7 +16,7 @@
 
 import math
 
-from dimos.message_utils.geometry import inverse_transform, quaternion_euler, rotate_vector
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import Vector3 as CdrVector3
 from dimos.msgs.driver import transform_message
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -61,7 +61,7 @@ def test_rest_pose_offsets_match_urdf() -> None:
     """The lidar sits MOUNT_Z above base_link, the offset every ground projection uses."""
     leg = _buffer().get("mid360_link", "base_link")
     assert leg is not None
-    base_to_sensor = inverse_transform(leg)
+    base_to_sensor = geometry.inverse_transform(leg)
     assert abs(base_to_sensor.transform.translation.z - MOUNT_Z) < 1e-6
     assert abs(base_to_sensor.transform.translation.x - MOUNT_X) < 1e-6
 
@@ -70,7 +70,7 @@ def test_mid360_frame_is_upside_down() -> None:
     """The inverted mount points the sensor's z axis at the floor in the base frame."""
     leg = _buffer().get("base_link", "mid360_link")
     assert leg is not None
-    z_axis = rotate_vector(leg.transform.rotation, CdrVector3(0.0, 0.0, 1.0))
+    z_axis = geometry.rotate_vector(leg.transform.rotation, CdrVector3(0.0, 0.0, 1.0))
     assert z_axis.z < -0.99
 
 
@@ -84,7 +84,7 @@ def test_flipped_level_sensor_yields_level_base() -> None:
     )
     base = _buffer(live=live).get("world", "base_link")
     assert base is not None
-    euler = quaternion_euler(base.transform.rotation)
+    euler = geometry.quaternion_euler(base.transform.rotation)
     assert abs(euler[0]) < 1e-6
     assert abs(euler[1]) < 1e-6
     assert abs(euler[2]) < 1e-6
@@ -96,14 +96,14 @@ def test_waist_yaw_rotates_base_link_against_the_torso() -> None:
     yaw = math.pi / 4
     leg = _buffer(waist_yaw=yaw).get("torso_link", "base_link")
     assert leg is not None
-    assert abs(quaternion_euler(leg.transform.rotation)[2] - (-yaw)) < 1e-6
+    assert abs(geometry.quaternion_euler(leg.transform.rotation)[2] - (-yaw)) < 1e-6
 
 
 def test_waist_pitch_rotates_base_link_against_the_torso() -> None:
     pitch = 0.3
     leg = _buffer(waist_pitch=pitch).get("torso_link", "base_link")
     assert leg is not None
-    assert abs(quaternion_euler(leg.transform.rotation)[1] - (-pitch)) < 1e-6
+    assert abs(geometry.quaternion_euler(leg.transform.rotation)[1] - (-pitch)) < 1e-6
 
 
 def test_rest_pose_base_to_torso_matches_urdf_offsets() -> None:
@@ -121,7 +121,7 @@ def test_d435_hangs_off_base_link() -> None:
     assert camera is not None
     assert abs(camera.transform.translation.x - (PELVIS_TORSO_X + 0.0576235)) < 1e-6
     assert abs(camera.transform.translation.z - (PELVIS_TORSO_Z + 0.42987)) < 1e-6
-    assert abs(quaternion_euler(camera.transform.rotation)[1] - D435_PITCH) < 1e-6
+    assert abs(geometry.quaternion_euler(camera.transform.rotation)[1] - D435_PITCH) < 1e-6
 
 
 def test_pelvis_height_matches_config_note() -> None:

@@ -16,8 +16,7 @@
 
 import numpy as np
 
-from dimos.message_utils.occupancy import occupancy_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils import occupancy, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
@@ -40,7 +39,7 @@ def test_camera_and_pose_overrides_accept_generated_port_values():
 
 def test_map_and_pgo_overrides_preserve_rendered_geometry():
     header = Header(Time(0, 0), "world")
-    cloud = pointcloud_from_xyz(np.array([[1.0, 2.0, 0.2], [9.0, 8.0, -0.1]]), header=header)
+    cloud = pointcloud.from_xyz(np.array([[1.0, 2.0, 0.2], [9.0, 8.0, -0.1]]), header=header)
     points = view._convert_global_map(cloud).positions.as_arrow_array().to_pylist()
     np.testing.assert_allclose(points, [[1.0, 2.0, 0.2]])
     pose = Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0))
@@ -53,7 +52,7 @@ def test_map_and_pgo_overrides_preserve_rendered_geometry():
     assert loops["world/pgo/loops"].strips.as_arrow_array().to_pylist() == [
         [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
     ]
-    grid = occupancy_from_array(np.array([[0, 100]], dtype=np.int8), header=header, resolution=0.5)
+    grid = occupancy.from_array(np.array([[0, 100]], dtype=np.int8), header=header, resolution=0.5)
     mesh = view._convert_navigation_costmap(grid)
     np.testing.assert_allclose(
         mesh.vertex_positions.as_arrow_array().to_pylist(),

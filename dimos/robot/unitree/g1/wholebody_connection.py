@@ -43,7 +43,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
@@ -81,7 +81,9 @@ def _imu_from_unitree_wxyz(
         orientation=Quaternion(x, y, z, _w),
         angular_velocity=Vector3(*gyroscope),
         linear_acceleration=Vector3(*accelerometer),
-        header=Header(deepcopy(stamp) if stamp is not None else time_from_seconds(ts), frame_id),
+        header=Header(
+            deepcopy(stamp) if stamp is not None else message_time.time_from_seconds(ts), frame_id
+        ),
         orientation_covariance=np.zeros(9, dtype=np.float64),
         angular_velocity_covariance=np.zeros(9, dtype=np.float64),
         linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
@@ -350,7 +352,8 @@ class G1WholeBodyConnection(Module):
         self.motor_states.publish(
             JointState(
                 header=Header(
-                    deepcopy(stamp) if stamp is not None else time_from_seconds(now), frame_id
+                    deepcopy(stamp) if stamp is not None else message_time.time_from_seconds(now),
+                    frame_id,
                 ),
                 name=list(G1_JOINT_NAMES),
                 position=np.asarray(sample.positions, dtype=np.float64),
@@ -383,7 +386,7 @@ class G1WholeBodyConnection(Module):
                     now=time.time(),
                     frame_id=frame_id,
                     sample=sample,
-                    stamp=time_from_nanoseconds(time.time_ns()),
+                    stamp=message_time.time_from_nanoseconds(time.time_ns()),
                 )
 
             next_tick += period

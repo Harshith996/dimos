@@ -21,7 +21,7 @@ import pytest
 import torch
 from transformers.feature_extraction_utils import BatchFeature
 
-from dimos.message_utils.image import image_from_array, image_view
+from dimos.message_utils import image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2DArray
@@ -31,7 +31,7 @@ from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 
 @pytest.fixture
 def source_image():
-    return image_from_array(
+    return image.from_array(
         np.full((4, 8, 3), [0, 0, 255], dtype=np.uint8),
         encoding="bgr8",
         header=Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789)),
@@ -66,7 +66,7 @@ def test_model_boundary_receives_rgb_and_exports_exact_source_header(
     message = decode(encode(detections.to_ros_detection2d_array()), Detection2DArray)
     assert message.header == source_image.header
     assert message.detections[0].header == source_image.header
-    np.testing.assert_array_equal(image_view(source_image)[0, 0], [0, 0, 255])
+    np.testing.assert_array_equal(image.view(source_image)[0, 0], [0, 0, 255])
 
 
 def test_owl_feature_cache_distinguishes_adjacent_source_nanoseconds(mocker, source_image):

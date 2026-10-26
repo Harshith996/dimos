@@ -27,9 +27,7 @@ from dimos_cdrgen.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.camera_info import camera_info_from_yaml
-from dimos.message_utils.geometry import transform_from_pose
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import camera_info as camera_info_utils, geometry, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -61,7 +59,7 @@ def detection_assets():
 def front_camera_calibration() -> CameraInfo:
     source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
     with resources.as_file(source) as path:
-        return camera_info_from_yaml(
+        return camera_info_utils.from_yaml(
             path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
         )
 
@@ -115,7 +113,7 @@ def get_moment(tf):
                 data, {"lidar": PointCloud2, "video": Image, "odom": PoseStamped}[name]
             )
             assert (
-                to_nanoseconds(value.header.stamp)
+                message_time.to_nanoseconds(value.header.stamp)
                 == stream["source_sec"] * 1_000_000_000 + stream["source_nanosec"]
             )
             return data
@@ -127,7 +125,7 @@ def get_moment(tf):
         # Match the Go2 connection's configured global parent for this recording.
         odom_frame.header.frame_id = "world"
 
-        transforms = [transform_from_pose(odom_frame, child_frame_id="base_link")]
+        transforms = [geometry.transform_from_pose(odom_frame, child_frame_id="base_link")]
         # Recorded Go2 mounting geometry; no robot connection is constructed.
         transforms.extend(
             frames_to_edge_transforms(

@@ -26,9 +26,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.image import image_from_array, image_to_rgb, image_view
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import geometry, image as image_utils, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -61,7 +59,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 def _timed_image(image: Image) -> TimestampedData[Image]:
-    return TimestampedData(image, to_seconds(image.header.stamp))
+    return TimestampedData(image, message_time.to_seconds(image.header.stamp))
 
 
 logger = setup_logger()
@@ -146,9 +144,9 @@ class ObjectTracking(Module):
         def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
             rgb_msg, depth_msg = (item.value for item in frames_tuple)
             with self._frame_lock:
-                self._latest_rgb_frame = image_to_rgb(rgb_msg)
+                self._latest_rgb_frame = image_utils.to_rgb(rgb_msg)
 
-                depth_data = image_view(depth_msg)
+                depth_data = image_utils.view(depth_msg)
                 # Convert from millimeters to meters if depth is DEPTH16 format
                 if depth_msg.encoding in ("16UC1", "mono16"):
                     depth_data = depth_data.astype(np.float32) / 1000.0
@@ -429,7 +427,9 @@ class ObjectTracking(Module):
             return
 
         # Create detections if tracking succeeded
-        header = Header(stamp=time_from_seconds(time.time()), frame_id=self.config.frame_id)
+        header = Header(
+            stamp=message_time.time_from_seconds(time.time()), frame_id=self.config.frame_id
+        )
         detection2darray = Detection2DArray(header=header, detections=[])
         detection3darray = Detection3DArray(header=header, detections=[])
 
@@ -500,7 +500,9 @@ class ObjectTracking(Module):
                     position = Point(x=z_optical, y=-x_optical, z=-y_optical)
                     robot_pose = Pose(
                         position=position,
-                        orientation=quaternion_from_euler(0, 0, math.atan2(position.y, position.x)),
+                        orientation=geometry.quaternion_from_euler(
+                            0, 0, math.atan2(position.y, position.x)
+                        ),
                     )
 
                     # Estimate object size in meters
@@ -600,7 +602,7 @@ class ObjectTracking(Module):
                     viz_image = self._draw_reid_matches(viz_image)
 
                 # Convert to Image message and publish
-                viz_msg = image_from_array(
+                viz_msg = image_utils.from_array(
                     viz_image, encoding="rgb8", header=self._latest_detection2d.header
                 )
                 self.tracked_overlay.publish(viz_msg)

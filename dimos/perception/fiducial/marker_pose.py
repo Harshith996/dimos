@@ -22,7 +22,7 @@ import cv2
 import cv2.aruco
 import numpy as np
 
-from dimos.message_utils.geometry import quaternion_from_matrix
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
@@ -119,7 +119,7 @@ def rvec_tvec_to_transform(
 ) -> TransformStamped:
     """Build ``Transform`` for ``frame_id`` <- ``child_frame_id`` (camera <- marker)."""
     rot_mat, _ = cv2.Rodrigues(rvec)
-    quat = quaternion_from_matrix(np.asarray(rot_mat, dtype=np.float64))
+    quat = geometry.quaternion_from_matrix(np.asarray(rot_mat, dtype=np.float64))
     tx, ty, tz = tvec.reshape(3)
     return TransformStamped(
         header=header,

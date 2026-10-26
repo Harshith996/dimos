@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import WebRTCVideoTransport
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
 from dimos.messages.std_msgs.msg import Header
@@ -90,7 +90,7 @@ async def cdr_track():
 
 async def test_generated_16bit_and_padded_images_convert_without_changing_source(cdr_track):
     for encoding in ("mono16", "16UC1"):
-        source = image_from_array(
+        source = image_utils.from_array(
             np.full((4, 6), 0x8000, np.uint16),
             encoding=encoding,
             header=Header(Time(1_789_654_321, 1), "camera"),
@@ -109,7 +109,7 @@ async def test_generated_16bit_and_padded_images_convert_without_changing_source
 
 
 async def test_generated_odd_image_opens_real_h264_encoder(cdr_track):
-    source = image_from_array(np.full((47, 63, 3), [255, 0, 0], np.uint8), encoding="rgb8")
+    source = image_utils.from_array(np.full((47, 63, 3), [255, 0, 0], np.uint8), encoding="rgb8")
     cdr_track.set_latest(source)
     frame = await asyncio.wait_for(cdr_track.recv(), 2)
     assert (frame.width, frame.height) == (62, 46)
@@ -132,14 +132,14 @@ async def test_generated_bad_frames_leave_receiver_waiting_for_valid_image(cdr_t
     pending = asyncio.create_task(cdr_track.recv())
     try:
         for bad in (
-            image_from_array(np.zeros((4, 6), np.float32), encoding="32FC1"),
+            image_utils.from_array(np.zeros((4, 6), np.float32), encoding="32FC1"),
             CdrImage(Header(Time(0, 0), ""), 4, 6, "mono16", 0, 1, np.zeros(24, np.uint8)),
         ):
             cdr_track.set_latest(bad)
             await asyncio.wait_for(converted.wait(), 2)
             converted.clear()
             assert not pending.done()
-        cdr_track.set_latest(image_from_array(np.zeros((4, 6), np.uint8), encoding="mono8"))
+        cdr_track.set_latest(image_utils.from_array(np.zeros((4, 6), np.uint8), encoding="mono8"))
         frame = await asyncio.wait_for(pending, 2)
         assert frame.format.name == "gray"
     finally:
@@ -153,7 +153,7 @@ async def test_cdr_camera_mux_port_feeds_media_track_and_real_encoder(cdr_track,
     provider.set_video_frame.side_effect = cdr_track.set_latest
     config = mocker.Mock()
     config.provider.return_value = provider
-    source = image_from_array(
+    source = image_utils.from_array(
         np.full((47, 63, 3), [255, 0, 0], np.uint8),
         encoding="rgb8",
         header=Header(Time(17, 1), "camera"),

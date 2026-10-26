@@ -34,7 +34,7 @@ from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point as CdrPoint,
     Pose as CdrPose,
@@ -516,7 +516,9 @@ class GO2Connection(Module, Camera, Pointcloud):
                 TFMessage(
                     [
                         CdrTransformStamped(
-                            Header(time_from_seconds(transform.ts), transform.frame_id),
+                            Header(
+                                message_time.time_from_seconds(transform.ts), transform.frame_id
+                            ),
                             transform.child_frame_id,
                             CdrTransform(
                                 CdrVector3(*transform.translation),
@@ -530,7 +532,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         if self.odom.transport:
             self.odom.publish(
                 CdrPoseStamped(
-                    Header(time_from_seconds(msg.ts), msg.frame_id),
+                    Header(message_time.time_from_seconds(msg.ts), msg.frame_id),
                     CdrPose(CdrPoint(*msg.position), CdrQuaternion(*msg.orientation)),
                 )
             )
@@ -538,7 +540,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     def publish_camera_info(self) -> None:
         while True:
             info = copy.deepcopy(self.camera_info_static)
-            info.header.stamp = time_from_seconds(time.time())
+            info.header.stamp = message_time.time_from_seconds(time.time())
             self.camera_info.publish(info)
             time.sleep(1.0)
 
