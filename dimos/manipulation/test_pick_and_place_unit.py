@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import math
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -31,10 +32,11 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
-from dimos.manipulation.pick_and_place_module import TARGET_BOX, PickAndPlaceModule
+from dimos.manipulation.pick_and_place_module import TARGET_BOX, ArmReach, PickAndPlaceModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
@@ -60,8 +62,8 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation = MagicMock()
     instance._box_filter = MagicMock()
     instance._manipulation.list_planning_groups.return_value = [
-        SimpleNamespace(id="arm/tool", has_gripper=True, tip_frame="tool"),
-        SimpleNamespace(id="moving_base", has_gripper=False, tip_frame=None),
+        SimpleNamespace(id="arm/tool", has_gripper=True, tip_frame="tool", base_frame="arm/base"),
+        SimpleNamespace(id="moving_base", has_gripper=False, tip_frame=None, base_frame="base"),
     ]
     instance._manipulation.get_state.return_value = SimpleNamespace(
         groups={
@@ -698,3 +700,202 @@ def test_pick_and_place_work_without_a_box_filter(module: PickAndPlaceModule) ->
 
     assert module.pick_object("cup-1").message == "Pick complete"
     assert module.place_at(0.4, 0.0, 0.2).message == "Place complete"
+
+
+# Alfred: two OpenArms on a lift, shoulders at (0.14, ±0.155, 1.40) in base_link,
+# 0.44 m from shoulder to wrist and 0.186 m from the wrist to the gripper's TCP.
+LEFT, RIGHT = "left_manipulator", "right_manipulator"
+SHOULDERS = {
+    "left_shoulder": Vector3(0.14, 0.155, 1.40),
+    "right_shoulder": Vector3(0.14, -0.155, 1.40),
+}
+
+
+def _openarm(shoulder_frame: str) -> ArmReach:
+    return ArmReach(radius=0.44, shoulder_frame=shoulder_frame, wrist_to_tip=0.186)
+
+
+def _shoulder_on_tf(parent: str, child: str, *args: Any, **kwargs: Any) -> Transform | None:
+    if child not in SHOULDERS:
+        return None
+    return Transform(SHOULDERS[child], frame_id=parent, child_frame_id=child)
+
+
+def _arm_state(y: float) -> SimpleNamespace:
+    """An arm's state with its tool tip at (0.35, y, 1.10)."""
+    return SimpleNamespace(
+        gripper_position=0.5,
+        end_effector_pose=PoseStamped(frame_id="world", position=Vector3(0.35, y, 1.10)),
+    )
+
+
+def _grasp_at(x: float, y: float, z: float, score: float = 1.0) -> GraspCandidate:
+    """A top-down grasp: the tool's approach axis points down onto (x, y, z)."""
+    return GraspCandidate(
+        Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(-math.pi, 0.0, 0.0))), score
+    )
+
+
+def _bench_object(module: PickAndPlaceModule, x: float, y: float, z: float = 1.10) -> None:
+    """A 4 cm cube centred at (x, y, z), with one top-down grasp at its centre."""
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.asarray(
+            [[x - 0.02, y - 0.02, z - 0.02], [x + 0.02, y + 0.02, z + 0.02]], dtype=np.float32
+        ),
+        frame_id="world",
+        timestamp=1.0,
+    )
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(x, y, z)]
+    )
+
+
+@pytest.fixture
+def two_arms(module: PickAndPlaceModule) -> PickAndPlaceModule:
+    """Alfred-like: two arms with a reach each, shoulders on tf, a base that may drive."""
+    manipulation: Any = module._manipulation
+    manipulation.list_planning_groups.return_value = [
+        SimpleNamespace(id=LEFT, has_gripper=True, tip_frame="left_tip", base_frame="lift"),
+        SimpleNamespace(id=RIGHT, has_gripper=True, tip_frame="right_tip", base_frame="lift"),
+        SimpleNamespace(id="moving_base", has_gripper=False, tip_frame=None, base_frame="base"),
+    ]
+    manipulation.get_state.return_value = SimpleNamespace(
+        groups={LEFT: _arm_state(0.30), RIGHT: _arm_state(-0.30)}
+    )
+    module.config.reach = {LEFT: _openarm("left_shoulder"), RIGHT: _openarm("right_shoulder")}
+    module._tf = MagicMock()
+    module._tf.get.side_effect = _shoulder_on_tf
+    # On the bench in front of the right shoulder, well within the arm.
+    _bench_object(module, 0.35, -0.15)
+    return module
+
+
+def _planned_groups(manipulation: Any) -> list[str]:
+    return list(manipulation.plan_to_poses.call_args.args[0])
+
+
+@pytest.mark.parametrize(("y", "expected"), [(-0.15, RIGHT), (0.15, LEFT)])
+@pytest.mark.parametrize("known_by", ["shoulder", "tool tip"])
+def test_pick_uses_the_arm_nearest_the_object(
+    two_arms: PickAndPlaceModule, y: float, expected: str, known_by: str
+) -> None:
+    """With planning_group omitted, the arm nearest the object picks: by its shoulder
+    when its reach is configured, else by where its tool tip is."""
+    manipulation: Any = two_arms._manipulation
+    if known_by == "tool tip":
+        two_arms.config.reach = {}
+    _bench_object(two_arms, 0.35, y)
+
+    assert two_arms.pick_object("cup-1").message == "Pick complete"
+
+    assert _planned_groups(manipulation) == [expected]
+    assert manipulation.set_gripper_position.call_args.args[1] == expected
+
+
+def test_pick_honours_an_explicit_arm(two_arms: PickAndPlaceModule) -> None:
+    manipulation: Any = two_arms._manipulation
+
+    assert two_arms.pick_object("cup-1", planning_group=LEFT).message == "Pick complete"
+
+    assert _planned_groups(manipulation) == [LEFT]
+
+
+BEYOND_THE_RIGHT_ARM = (
+    "Object cup-1 is 0.64 m from the right_manipulator shoulder (right_shoulder) and its "
+    "closest pre-grasp pose needs the wrist 0.56 m out, beyond that arm's 0.44 m reach: "
+    "drive closer or pass auxiliary_groups=['moving_base']."
+)
+
+
+def test_pick_fails_fast_on_an_object_beyond_the_arm(two_arms: PickAndPlaceModule) -> None:
+    """Known before any IK: on the bench every top-down pre-grasp was kinematically
+    impossible, and IK burnt seconds per candidate finding that out."""
+    manipulation: Any = two_arms._manipulation
+    box_filter: Any = two_arms._box_filter
+    _bench_object(two_arms, 0.70, -0.20)
+
+    result = two_arms.pick_object("cup-1")
+
+    assert result.message == BEYOND_THE_RIGHT_ARM
+    assert result.metadata["planning_group"] == RIGHT
+    assert result.metadata["reach"] == 0.44
+    manipulation.plan_to_poses.assert_not_called()
+    manipulation.move_linear.assert_not_called()
+    manipulation.set_gripper_position.assert_not_called()
+    box_filter.set_box.assert_not_called()
+    assert not two_arms._holding_object
+
+
+def test_pick_with_the_base_along_skips_the_reach_check(two_arms: PickAndPlaceModule) -> None:
+    """A base that may drive extends the arm, so the sphere about the shoulder no longer applies."""
+    manipulation: Any = two_arms._manipulation
+    _bench_object(two_arms, 0.70, -0.20)
+
+    result = two_arms.pick_object("cup-1", auxiliary_groups=["moving_base"])
+
+    assert result.message == "Pick complete"
+    assert tuple(manipulation.plan_to_poses.call_args.kwargs["auxiliary_groups"]) == (
+        "moving_base",
+    )
+
+
+def test_pick_skips_the_candidates_beyond_the_arm(two_arms: PickAndPlaceModule) -> None:
+    """Of a ranked spread, only the poses the wrist can get to are planned."""
+    manipulation: Any = two_arms._manipulation
+    grasp_generator: Any = two_arms._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"),
+        [_grasp_at(0.70, -0.20, 1.10, score=0.9), _grasp_at(0.35, -0.15, 1.10, score=0.4)],
+    )
+
+    result = two_arms.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["rank"] == 1
+    assert manipulation.plan_to_poses.call_count == 1
+    planned = manipulation.plan_to_poses.call_args.args[0][RIGHT]
+    assert planned.position.x == pytest.approx(0.35)
+
+
+def test_pick_proceeds_when_the_shoulder_is_not_on_tf(two_arms: PickAndPlaceModule) -> None:
+    """Without the shoulder's transform there is no check; the planner decides, as before."""
+    tf: Any = two_arms._tf
+    tf.get.side_effect = None
+    tf.get.return_value = None
+    _bench_object(two_arms, 0.70, -0.20)
+
+    assert two_arms.pick_object("cup-1").message == "Pick complete"
+
+    # Chosen by the tool tips instead.
+    assert _planned_groups(two_arms._manipulation) == [RIGHT]
+
+
+def test_place_uses_the_arm_holding_the_object(two_arms: PickAndPlaceModule) -> None:
+    manipulation: Any = two_arms._manipulation
+    assert two_arms.pick_object("cup-1").message == "Pick complete"
+    assert _planned_groups(manipulation) == [RIGHT]
+
+    # Nearer the left shoulder, yet the right hand holds the cup.
+    assert two_arms.place_at(0.35, 0.10, 1.10).message == "Place complete"
+
+    assert _planned_groups(manipulation) == [RIGHT]
+    assert two_arms._holding_group is None
+
+
+def test_place_fails_fast_on_a_spot_beyond_the_arm(two_arms: PickAndPlaceModule) -> None:
+    manipulation: Any = two_arms._manipulation
+    assert two_arms.pick_object("cup-1").message == "Pick complete"
+    manipulation.plan_to_poses.reset_mock()
+
+    result = two_arms.place_at(0.80, -0.20, 1.10)
+
+    assert result.message == (
+        "Place target (0.80, -0.20, 1.10) is 0.73 m from the right_manipulator shoulder "
+        "(right_shoulder) and the pre-place pose needs the wrist 0.66 m out, beyond that "
+        "arm's 0.44 m reach: drive closer or pass auxiliary_groups=['moving_base']. "
+        "Still holding object cup-1."
+    )
+    manipulation.plan_to_poses.assert_not_called()
+    assert two_arms._holding_object

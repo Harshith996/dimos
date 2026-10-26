@@ -28,6 +28,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -45,15 +46,42 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.protocol.service.spec import BaseConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 # The one box a pick leaves out of the planner's map.
 TARGET_BOX = "pick-and-place/target"
+# The planning group of a base that may drive as part of a reach, where there is one.
+MOVING_BASE = "moving_base"
+
+
+class ArmReach(BaseConfig):
+    """How far one planning group's arm gets on its own: a sphere about its shoulder.
+
+    Args:
+        radius: Metres from the shoulder frame to the wrist with the arm straight.
+        shoulder_frame: The tf frame at the shoulder; None for the group's base frame.
+        wrist_to_tip: Metres from the wrist to the group's tip frame along the tool's
+            approach axis (+z of the tip frame); 0.0 when the tip frame is the wrist.
+    """
+
+    radius: float = Field(gt=0.0)
+    shoulder_frame: str | None = None
+    wrist_to_tip: float = Field(default=0.0, ge=0.0)
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # Per group, how far its arm reaches on its own. A pre-grasp that puts the
+    # wrist beyond this sphere fails at once instead of after seconds of IK; empty
+    # means no such check. Only the group's own joints count: with auxiliary
+    # groups (a base that may drive) the check is off.
+    reach: dict[PlanningGroupID, ArmReach] = Field(default_factory=dict)
     # Margin (metres) added around the target's bounding box. Mapped cells in
     # that box are not obstacles during the pick, and the same box rides with
     # the gripper while the object is held. Too small, and a cell on the
@@ -100,10 +128,42 @@ def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
     return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
 
 
+def _behind(pose: Pose, distance: float) -> Vector3:
+    """The point ``distance`` metres back from ``pose`` along the tool's approach axis (+z)."""
+    return pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -distance))
+
+
+@dataclass(frozen=True)
+class ReachSphere:
+    """One group's reach in the planning frame: how far its wrist gets from its shoulder."""
+
+    group: PlanningGroupID
+    frame: str
+    shoulder: Vector3
+    radius: float
+    wrist_to_tip: float
+
+    def wrist_distance(self, pose: Pose, standoff: float) -> float:
+        """How far the wrist is from the shoulder with the tip ``standoff`` metres short of ``pose``."""
+        return _behind(pose, standoff + self.wrist_to_tip).distance(self.shoulder)
+
+    def beyond(self, poses: Sequence[Pose], standoff: float) -> float | None:
+        """The nearest wrist distance when every one of ``poses`` is out of reach, else None.
+
+        Args:
+            poses: Tool-tip poses in the planning frame.
+            standoff: Metres the tip stops short of each pose along its approach axis.
+        """
+        nearest = min(self.wrist_distance(pose, standoff) for pose in poses)
+        return nearest if nearest > self.radius else None
+
+
 class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
+    # Where the arms' shoulders are, for choosing an arm and for its reach.
+    tf: In[TFMessage]
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
@@ -117,6 +177,13 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
+        self._holding_group: PlanningGroupID | None = None
+
+    @rpc
+    def start(self) -> None:
+        # The buffer fills from now on; one first built during a pick has no transforms.
+        self.tfbuffer  # noqa: B018
+        super().start()
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -161,7 +228,7 @@ class PickAndPlaceModule(Module):
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
-            planning_group: Gripper-capable pose group; omitted only when unambiguous.
+            planning_group: Gripper-capable pose group; omitted, the arm nearest the object.
             auxiliary_groups: Planning groups the planner may also move to reach the
                 pre-grasp pose. Pass ["moving_base"] when the object is beyond the
                 arm's reach and the base may drive. The descent onto the object and
@@ -194,15 +261,44 @@ class PickAndPlaceModule(Module):
             )
         if not candidates.candidates:
             return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
-        group = self._gripper_group(planning_group)
+        box = _target_box(pointcloud)
+        # Where the object is, in the planning frame: its cloud's centre when the
+        # cloud is in that frame, else the best grasp, which sits on it.
+        in_planning_frame = (
+            not pointcloud.frame_id or pointcloud.frame_id == self.config.planning_frame
+        )
+        centre = (
+            box.center
+            if box is not None and in_planning_frame
+            else candidates.candidates[0].pose.position
+        )
+        group = self._gripper_group(planning_group, centre)
         auxiliary = self._auxiliary_groups(auxiliary_groups, group)
+        # With the arm alone moving, a pre-grasp its wrist cannot get to is known
+        # now; asking IK takes seconds per candidate to find out.
+        sphere = None if auxiliary else self._reach_sphere(group)
+        if sphere is not None:
+            attempts = [c.pose for c in candidates.candidates[: self.config.max_grasp_attempts]]
+            wrist = sphere.beyond(attempts, self.config.pregrasp_offset)
+            if wrist is not None:
+                return SkillResult(
+                    self._beyond_reach(
+                        f"Object {object_id}", centre, "its closest pre-grasp pose", sphere, wrist
+                    ),
+                    metadata={
+                        "object_id": object_id,
+                        "planning_group": group,
+                        "object_distance": sphere.shoulder.distance(centre),
+                        "wrist_distance": wrist,
+                        "reach": sphere.radius,
+                    },
+                )
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
-        box = _target_box(pointcloud)
         if box is not None:
             self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
         try:
-            return self._pick_from(candidates, object_id, box, group, auxiliary)
+            return self._pick_from(candidates, object_id, box, group, auxiliary, sphere)
         finally:
             if not self._holding_object:
                 self._clear_target_box()
@@ -214,6 +310,7 @@ class PickAndPlaceModule(Module):
         box: TargetBox | None,
         group: PlanningGroupID,
         auxiliary: Sequence[PlanningGroupID] = (),
+        sphere: ReachSphere | None = None,
     ) -> SkillResult:
         """Open the gripper and try the ranked grasps in order until one holds the object.
 
@@ -224,6 +321,7 @@ class PickAndPlaceModule(Module):
             group: Gripper-capable planning group doing the pick.
             auxiliary: Groups the planner may move as well on the way to each
                 pre-grasp pose; never on the straight legs at the object.
+            sphere: The group's reach, when known; candidates beyond it are not planned.
         """
         if not_open := self._open_gripper(group, "before grasping"):
             return not_open
@@ -240,6 +338,9 @@ class PickAndPlaceModule(Module):
                 group,
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            if sphere is not None and sphere.beyond([grasp], self.config.pregrasp_offset):
+                # Known unreachable; IK would take seconds to agree.
+                continue
             blocked = self._move(pregrasp, group, auxiliary) or self._servo(pregrasp, grasp, group)
             if isinstance(blocked, PlanResult):
                 # The planner found no path to this candidate; the next one may
@@ -265,6 +366,7 @@ class PickAndPlaceModule(Module):
             self._selected_object_id = object_id
             self._selected_grasp = grasp
             self._holding_object = True
+            self._holding_group = group
             if box is not None:
                 # The box in the tool tip's frame, as it is at the grasp pose:
                 # it rides with the tip from here.
@@ -313,7 +415,7 @@ class PickAndPlaceModule(Module):
             x: Planning-frame X coordinate in meters.
             y: Planning-frame Y coordinate in meters.
             z: Planning-frame Z coordinate in meters.
-            planning_group: Gripper-capable pose group; omitted only when unambiguous.
+            planning_group: Gripper-capable pose group; omitted, the arm holding the object.
             auxiliary_groups: Planning groups the planner may also move to reach the
                 pre-place pose above the target. Pass ["moving_base"] when the spot
                 is beyond the arm's reach and the base may drive. The descent to the
@@ -324,13 +426,27 @@ class PickAndPlaceModule(Module):
             return SkillResult(
                 f"Not holding any object; nothing was placed at {target}. Use pick_object first."
             )
-        group = self._gripper_group(planning_group)
+        group = self._gripper_group(planning_group or self._holding_group, Vector3(x, y, z))
         auxiliary = self._auxiliary_groups(auxiliary_groups, group)
         place = PoseStamped(
             frame_id=self.config.planning_frame,
             position=Vector3(x, y, z),
             orientation=self._selected_grasp.orientation,
         )
+        sphere = None if auxiliary else self._reach_sphere(group)
+        if sphere is not None and (wrist := sphere.beyond([place], self.config.pregrasp_offset)):
+            return SkillResult(
+                self._beyond_reach(
+                    f"Place target {target}", place.position, "the pre-place pose", sphere, wrist
+                )
+                + f" Still holding object {self._selected_object_id}.",
+                metadata={
+                    "planning_group": group,
+                    "target_distance": sphere.shoulder.distance(place.position),
+                    "wrist_distance": wrist,
+                    "reach": sphere.radius,
+                },
+            )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
         if blocked := self._move(preplace, group, auxiliary):
             return self._stopped(f"Move to the pre-place pose above {target}", blocked)
@@ -351,6 +467,7 @@ class PickAndPlaceModule(Module):
         self._manipulation.show_grasp_proposals(GraspCandidateArray())
         self._selected_object_id = None
         self._selected_grasp = None
+        self._holding_group = None
 
     def _leave_out(self, pose: Pose, size: Vector3, frame_id: str | None = None) -> None:
         """Leave the target's box, grown by target_clearance, out of the planner's map.
@@ -380,14 +497,26 @@ class PickAndPlaceModule(Module):
             if info.id == group and info.tip_frame is not None
         )
 
-    def _gripper_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID:
+    def _base_frame(self, group: PlanningGroupID) -> str:
+        """The frame a planning group's chain starts from."""
+        return next(
+            info.base_frame
+            for info in self._manipulation.list_planning_groups()
+            if info.id == group
+        )
+
+    def _gripper_group(
+        self, planning_group: PlanningGroupID | None, target: Vector3 | None = None
+    ) -> PlanningGroupID:
         """Pick the planning group that has both a gripper and a tool frame.
 
         Args:
-            planning_group: Group ID to use, or None to use the only such group.
+            planning_group: Group ID to use, or None for the one nearest ``target``.
+            target: Planning-frame point the group is to reach; with several
+                gripper-capable groups, the one whose arm is nearest does it.
 
         Raises ValueError when the ID names no such group, or when it is omitted
-        and there is not exactly one.
+        and no single group stands out.
         """
         groups = [
             group.id
@@ -397,9 +526,12 @@ class PickAndPlaceModule(Module):
         if planning_group is None:
             if len(groups) == 1:
                 return groups[0]
+            nearest = self._nearest_group(groups, target) if target is not None else None
+            if nearest is not None:
+                return nearest
             raise ValueError(
-                "Expected exactly one gripper-capable planning group when planning_group "
-                f"is omitted; found {groups}"
+                "planning_group is omitted and there is no single gripper-capable planning "
+                f"group to use; found {groups}"
             )
         if planning_group not in groups:
             raise ValueError(
@@ -407,6 +539,84 @@ class PickAndPlaceModule(Module):
                 f"gripper-capable groups: {groups}"
             )
         return planning_group
+
+    def _nearest_group(
+        self, groups: Sequence[PlanningGroupID], target: Vector3
+    ) -> PlanningGroupID | None:
+        """The group whose arm is nearest ``target``, or None when no arm's position is known.
+
+        An arm is where its shoulder is when its reach is configured and the
+        shoulder is on tf, else where its tool tip is now.
+        """
+        snapshot = self._manipulation.get_state()
+        distances: dict[PlanningGroupID, float] = {}
+        for group in groups:
+            shoulder = self._shoulder(group)
+            if shoulder is not None:
+                distances[group] = shoulder[1].distance(target)
+                continue
+            state = snapshot.groups.get(group)
+            if state is not None and state.end_effector_pose is not None:
+                distances[group] = state.end_effector_pose.position.distance(target)
+        return min(distances, key=distances.__getitem__) if distances else None
+
+    def _shoulder(self, group: PlanningGroupID) -> tuple[str, Vector3] | None:
+        """A group's shoulder frame and where it is in the planning frame.
+
+        None when the group's reach is not configured, or tf has no transform to
+        the frame yet.
+        """
+        reach = self.config.reach.get(group)
+        if reach is None:
+            return None
+        frame = reach.shoulder_frame or self._base_frame(group)
+        transform = self.tfbuffer.get(self.config.planning_frame, frame, warn=False)
+        return None if transform is None else (frame, transform.translation)
+
+    def _reach_sphere(self, group: PlanningGroupID) -> ReachSphere | None:
+        """The group's reach about its shoulder, or None when it is not configured.
+
+        Also None, with a warning, when the shoulder frame is not on tf: the
+        check cannot be made, and the planner is left to find out.
+        """
+        reach = self.config.reach.get(group)
+        if reach is None:
+            return None
+        shoulder = self._shoulder(group)
+        if shoulder is None:
+            logger.warning(
+                "No transform from %s to the %s shoulder frame %r; its reach goes unchecked",
+                self.config.planning_frame,
+                group,
+                reach.shoulder_frame or self._base_frame(group),
+            )
+            return None
+        frame, origin = shoulder
+        return ReachSphere(group, frame, origin, reach.radius, reach.wrist_to_tip)
+
+    def _beyond_reach(
+        self, subject: str, target: Vector3, pose: str, sphere: ReachSphere, wrist: float
+    ) -> str:
+        """One sentence saying how far beyond an arm a target is, and what to do about it.
+
+        Args:
+            subject: What is out of reach, e.g. "Object cup-1".
+            target: Its position in the planning frame.
+            pose: The tool pose that was to be reached, e.g. "the pre-place pose".
+            sphere: The arm's reach.
+            wrist: How far from the shoulder the wrist would have to be.
+        """
+        ids = [info.id for info in self._manipulation.list_planning_groups()]
+        hint = (
+            f"drive closer or pass auxiliary_groups=['{MOVING_BASE}']"
+            if MOVING_BASE in ids
+            else "bring it closer"
+        )
+        return (
+            f"{subject} is {sphere.shoulder.distance(target):.2f} m from the {sphere.group} "
+            f"shoulder ({sphere.frame}) and {pose} needs the wrist {wrist:.2f} m out, beyond "
+            f"that arm's {sphere.radius:.2f} m reach: {hint}."
+        )
 
     def _auxiliary_groups(
         self, auxiliary_groups: Sequence[PlanningGroupID] | None, group: PlanningGroupID
@@ -464,7 +674,7 @@ class PickAndPlaceModule(Module):
         return PoseStamped(
             ts=pose.ts,
             frame_id=pose.frame_id,
-            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
+            position=_behind(pose, offset),
             orientation=pose.orientation,
         )
 
