@@ -253,6 +253,17 @@ class ManipulationSpec(Spec, Protocol):
 
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult: ...
 
+    def plan_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        start_joints: JointState | None = None,
+    ) -> PlanResult: ...
+
     def move_linear(
         self,
         dx: float = 0.0,

@@ -119,6 +119,18 @@ ObstacleShape: TypeAlias = Literal["box", "sphere", "cylinder", "mesh"]
 VOXEL_MAP_OBSTACLE_ID = "mapping/voxel-map"
 
 
+def _scaled_cartesian_config(
+    config: CartesianPathConfig, speed_scale: float
+) -> CartesianPathConfig:
+    """``config`` with its velocity and acceleration scales multiplied by ``speed_scale``."""
+    return config.model_copy(
+        update={
+            "velocity_scale": config.velocity_scale * speed_scale,
+            "acceleration_scale": config.acceleration_scale * speed_scale,
+        }
+    )
+
+
 def _voxel_map_digest(points: NDArray[np.float32]) -> bytes:
     """A digest of a map's point buffer: cheap next to building its octree."""
     digest = hashlib.blake2b(digest_size=16)
@@ -973,18 +985,12 @@ class ManipulationModule(Module):
         if resolved is None:
             return None
         selection, start = resolved
-        scaled_config = config.model_copy(
-            update={
-                "velocity_scale": config.velocity_scale * resolved_speed_scale,
-                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
-            }
-        )
         result = self._planner.plan_cartesian_path(
             world=self._world_monitor.world,
             selection=selection,
             start=start,
             targets=targets,
-            config=scaled_config,
+            config=_scaled_cartesian_config(config, resolved_speed_scale),
             auxiliary_groups=auxiliary_ids,
             check_collision=check_collision,
         )
@@ -995,6 +1001,113 @@ class ManipulationModule(Module):
             )
             return None
         return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+
+    def _plan_cartesian_from(
+        self,
+        start_joints: JointState,
+        targets: Mapping[PlanningGroupID, CartesianTarget],
+        config: CartesianPathConfig,
+        speed_scale: float,
+        check_collision: bool,
+    ) -> PlanResult:
+        """Plan a Cartesian path from ``start_joints`` as a check: nothing is stored.
+
+        The path leaves from the FK of ``start_joints`` (joints outside the targets'
+        groups hold where the live state has them), so the result says whether it is
+        plannable from there, not from where the arm is. The pending plan and the
+        module's state are left alone: a plan from somewhere the arm is not must never
+        be the one ``execute`` runs.
+        """
+        if (
+            self._world_monitor is None
+            or self._planner is None
+            or self._trajectory_parametrizer is None
+        ):
+            return PlanResult(PlanStatus.FAILED, "Planning not initialized")
+        if not math.isfinite(speed_scale) or not 0.0 < speed_scale <= 1.0:
+            return PlanResult(
+                PlanStatus.INVALID_TARGET, "speed_scale must be finite, > 0, and <= 1"
+            )
+        group_ids = tuple(targets)
+        try:
+            selection = self._world_monitor.planning_groups.select(group_ids)
+            start = filter_joint_state_to_selected_joints(start_joints, selection.joint_names)
+        except Exception as exc:
+            return PlanResult(
+                PlanStatus.INVALID_TARGET, f"Invalid start for groups {list(group_ids)}: {exc}"
+            )
+        result = self._planner.plan_cartesian_path(
+            world=self._world_monitor.world,
+            selection=selection,
+            start=start,
+            targets=targets,
+            config=_scaled_cartesian_config(config, speed_scale),
+            check_collision=check_collision,
+        )
+        if not result.is_success():
+            detail = f": {result.message}" if result.message else ""
+            return PlanResult(
+                PlanStatus.FAILED, f"Cartesian planning failed: {result.status.name}{detail}"
+            )
+        try:
+            plan = self._trajectory_parametrizer.materialize_plan(
+                world=self._world_monitor.world,
+                selection=selection,
+                result=result,
+                speed_scale=speed_scale,
+            )
+        except Exception as exc:
+            return PlanResult(PlanStatus.FAILED, f"Failed to materialize plan: {exc}")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    @rpc
+    def plan_linear(
+        self,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        planning_group: PlanningGroupID | None = None,
+        check_collision: bool = False,
+        speed_scale: float | None = None,
+        start_joints: JointState | None = None,
+    ) -> PlanResult:
+        """Plan a world-frame translation of one end effector without moving hardware.
+
+        From the current state, the plan becomes the pending one for ``execute``. With
+        ``start_joints`` it is a check: the path leaves from that joint state (a plan's
+        goal, say, so a caller knows before executing the plan whether the leg after it
+        is plannable), it is returned and not kept, and the pending plan stays as it was.
+        Joints the state does not name hold where the live state has them.
+        """
+        if start_joints is None:
+            self._clear_pending_plan()
+        delta = (float(dx), float(dy), float(dz))
+        if not all(math.isfinite(value) for value in delta):
+            return PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+        if delta == (0.0, 0.0, 0.0):
+            return PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
+        group = self._resolve_pose_group(planning_group)
+        if isinstance(group, CommandResult):
+            return PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
+        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        relative = Transform(
+            translation=Vector3(*delta),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
+        targets = {group.id: (Transform.identity(), relative)}
+        if start_joints is not None:
+            return self._plan_cartesian_from(
+                start_joints, targets, CartesianPathConfig(), resolved_speed, check_collision
+            )
+        plan = self.generate_cartesian_plan(
+            targets,
+            CartesianPathConfig(),
+            speed_scale=resolved_speed,
+            check_collision=check_collision,
+        )
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
     @rpc
     def move_linear(
@@ -1010,33 +1123,12 @@ class ManipulationModule(Module):
     ) -> MoveResult:
         """Move one end effector by a world-frame translation."""
         delta = (float(dx), float(dy), float(dz))
-        self._clear_pending_plan()
-        if not all(math.isfinite(value) for value in delta):
-            plan_result = PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
+        plan_result = self.plan_linear(dx, dy, dz, planning_group, check_collision, speed_scale)
+        if not plan_result.succeeded or plan_result.plan is None:
             return MoveResult(plan_result, None, delta, check_collision)
-        if delta == (0.0, 0.0, 0.0):
-            plan_result = PlanResult(PlanStatus.NO_MOTION, "Linear displacement is zero")
-            return MoveResult(plan_result, None, delta, check_collision)
-        group = self._resolve_pose_group(planning_group)
-        if isinstance(group, CommandResult):
-            plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
-            return MoveResult(plan_result, None, delta, check_collision)
-        resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
-        relative = Transform(
-            translation=Vector3(*delta),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        execution = self.execute(
+            blocking=blocking, timeout=timeout, plan_id=plan_result.plan.plan_id
         )
-        plan = self.generate_cartesian_plan(
-            {group.id: (Transform.identity(), relative)},
-            CartesianPathConfig(),
-            speed_scale=resolved_speed,
-            check_collision=check_collision,
-        )
-        if plan is None:
-            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
-            return MoveResult(plan_result, None, delta, check_collision)
-        plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
-        execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
         return MoveResult(plan_result, execution, delta, check_collision)
 
     @rpc

@@ -128,6 +128,15 @@ def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
     return TargetBox(Vector3(*((low + high) / 2.0)), Vector3(*(high - low)))
 
 
+def _delta(start: PoseStamped, end: PoseStamped) -> tuple[float, float, float]:
+    """The translation from ``start`` to ``end``, metres, in their common frame."""
+    return (
+        end.position.x - start.position.x,
+        end.position.y - start.position.y,
+        end.position.z - start.position.z,
+    )
+
+
 def _behind(pose: Pose, distance: float) -> Vector3:
     """The point ``distance`` metres back from ``pose`` along the tool's approach axis (+z)."""
     return pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -distance))
@@ -251,6 +260,22 @@ class PickAndPlaceModule(Module):
             return SkillResult(
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
+        # The scene may register objects in a frame the robot moves through (odom), so a
+        # base move does not stale them. The grasps, the reach check and the choice of arm
+        # want the object in the planning frame; the exclusion box stays in the scene's
+        # frame, on the object, where one in the planning frame would ride along with the
+        # base.
+        scene_frame = pointcloud.frame_id or None
+        scene_box = _target_box(pointcloud)
+        if scene_frame is not None and scene_frame != self.config.planning_frame:
+            transform = self.tfbuffer.get(self.config.planning_frame, scene_frame, warn=False)
+            if transform is None:
+                return SkillResult(
+                    f"No transform from the scene frame {scene_frame!r} to the planning frame "
+                    f"{self.config.planning_frame!r} on tf; cannot locate object {object_id} "
+                    "for the arm."
+                )
+            pointcloud = pointcloud.transform(transform)
         candidates = self._grasp_generator.propose_grasps(pointcloud)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -295,8 +320,8 @@ class PickAndPlaceModule(Module):
                 )
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
-        if box is not None:
-            self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
+        if scene_box is not None:
+            self._leave_out(Pose(position=scene_box.center), scene_box.size, scene_frame)
         try:
             return self._pick_from(candidates, object_id, box, group, auxiliary, sphere)
         finally:
@@ -341,11 +366,14 @@ class PickAndPlaceModule(Module):
             if sphere is not None and sphere.beyond([grasp], self.config.pregrasp_offset):
                 # Known unreachable; IK would take seconds to agree.
                 continue
-            blocked = self._move(pregrasp, group, auxiliary) or self._servo(pregrasp, grasp, group)
+            blocked = self._approach(
+                pregrasp, grasp, group, auxiliary, "the descent from the pre-grasp pose"
+            ) or self._servo(pregrasp, grasp, group)
             if isinstance(blocked, PlanResult):
-                # The planner found no path to this candidate; the next one may
-                # differ. A motion that stopped part-way would stop the same way
-                # for every candidate, so that is not retried.
+                # The planner found no path to this candidate, or no descent from
+                # its pre-grasp; the next one may differ. A motion that stopped
+                # part-way would stop the same way for every candidate, so that is
+                # not retried.
                 last_plan = _status(blocked)
                 continue
             if blocked is not None:
@@ -448,7 +476,9 @@ class PickAndPlaceModule(Module):
                 },
             )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
-        if blocked := self._move(preplace, group, auxiliary):
+        if blocked := self._approach(
+            preplace, place, group, auxiliary, "the descent to the place pose"
+        ):
             return self._stopped(f"Move to the pre-place pose above {target}", blocked)
         if blocked := self._servo(preplace, place, group):
             return self._stopped(f"Move down to the place pose {target}", blocked)
@@ -693,11 +723,7 @@ class PickAndPlaceModule(Module):
         when the arm arrived.
         """
         result = self._manipulation.move_linear(
-            end.position.x - start.position.x,
-            end.position.y - start.position.y,
-            end.position.z - start.position.z,
-            planning_group,
-            check_collision=False,
+            *_delta(start, end), planning_group, check_collision=False
         )
         if not result.plan.succeeded:
             return result.plan
@@ -705,29 +731,54 @@ class PickAndPlaceModule(Module):
             raise RuntimeError("Linear move was planned but never executed")
         return None if result.execution.succeeded else result.execution
 
-    def _move(
+    def _approach(
         self,
         pose: PoseStamped,
+        then: PoseStamped,
         planning_group: PlanningGroupID,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        leg: str = "the straight leg after it",
     ) -> PlanResult | ExecutionResult | None:
-        """Plan a collision-checked path to ``pose`` and run it.
+        """Plan a collision-checked path to ``pose`` and run it, once the straight leg on
+        to ``then`` is known to be plannable from where that path ends.
+
+        An approach that may drive the base can leave the arm somewhere the hand cannot
+        go straight on from (a joint at its limit, a singularity). Found out after the
+        approach, that strands the arm over the object; so the leg is planned first,
+        from the approach's goal joints, without moving anything.
 
         Args:
             pose: Where the group's tool tip goes, in the planning frame.
+            then: Where the tip goes next, in a straight line, with the group's own
+                joints alone.
             planning_group: The group whose tip reaches ``pose``.
             auxiliary_groups: Groups the planner may move as well, such as a mobile
                 base, each relative to where it stands at plan time.
+            leg: What the straight leg is, for the report, e.g. "the descent".
 
-        Returns the planner or execution result that stopped the leg, or None
-        when the arm arrived.
+        Returns the planner result that found no path (to ``pose``, or on to ``then``
+        from where the approach ends), the execution result that stopped the approach,
+        or None when the arm arrived.
         """
         plan = self._manipulation.plan_to_poses(
             {planning_group: pose}, auxiliary_groups=auxiliary_groups
         )
         if not plan.succeeded:
             return plan
-        execution = self._manipulation.execute(blocking=True)
+        if plan.plan is None or not plan.plan.path:
+            raise RuntimeError("The approach was planned but came back without a path")
+        check = self._manipulation.plan_linear(
+            *_delta(pose, then),
+            planning_group,
+            check_collision=False,
+            start_joints=plan.plan.path[-1],
+        )
+        if not check.succeeded:
+            return PlanResult(
+                check.status,
+                f"{leg} is not plannable from where the approach ends: {check.message}",
+            )
+        execution = self._manipulation.execute(blocking=True, plan_id=plan.plan.plan_id)
         return None if execution.succeeded else execution
 
     def _command_and_settle(

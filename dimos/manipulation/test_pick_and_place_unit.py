@@ -33,6 +33,8 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.manipulation.pick_and_place_module import TARGET_BOX, ArmReach, PickAndPlaceModule
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -40,12 +42,30 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.transform_utils import pose_to_matrix
 
-PLANNED = PlanResult(PlanStatus.SUCCEEDED)
+# Where a planned approach ends: the arm's joints and the base that drove along.
+APPROACH_GOAL = JointState(name=["arm/j0", "base/x"], position=[0.7, 0.2])
+PLANNED = PlanResult(
+    PlanStatus.SUCCEEDED,
+    plan=GeneratedPlan(
+        group_ids=("arm/tool", "moving_base"),
+        trajectory=JointTrajectory(),
+        path=[JointState(name=APPROACH_GOAL.name, position=[0.0, 0.0]), APPROACH_GOAL],
+        status=PlanningStatus.SUCCESS,
+    ),
+)
 NO_PATH = PlanResult(PlanStatus.FAILED, "unreachable")
+# The dry run of the straight leg after an approach, from where the approach ends.
+CHECKED = PlanResult(PlanStatus.SUCCEEDED, "RoboPlan Cartesian path found")
+NO_DESCENT = PlanResult(
+    PlanStatus.FAILED,
+    "Cartesian planning failed: NO_SOLUTION: position error 0.007 m exceeds the path tolerance",
+)
 COMPLETED = ExecutionResult(ExecutionStatus.COMPLETED)
 ACCEPTED = CommandResult(CommandStatus.SUCCEEDED)
 
@@ -76,6 +96,7 @@ def module() -> Iterator[PickAndPlaceModule]:
         }
     )
     instance._manipulation.plan_to_poses.return_value = PLANNED
+    instance._manipulation.plan_linear.return_value = CHECKED
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
@@ -387,6 +408,185 @@ def test_place_brings_the_base_along_for_the_pre_place_only(
     assert len(manipulation.move_linear.call_args_list) == 2
     for call in manipulation.move_linear.call_args_list:
         assert "auxiliary_groups" not in call.kwargs
+
+
+def _motion_calls(manipulation: Any) -> list[str]:
+    """The manipulation RPCs a pick made, in order."""
+    motion = {"set_gripper_position", "plan_to_poses", "plan_linear", "execute", "move_linear"}
+    return [name for name, _args, _kwargs in manipulation.method_calls if name in motion]
+
+
+def test_pick_checks_the_descent_from_the_approach_goal_before_moving(
+    module: PickAndPlaceModule,
+) -> None:
+    """The planner is asked for the descent from where the approach ends, with nothing moving;
+    only then is the approach executed, and the descent driven for real after it."""
+    manipulation: Any = module._manipulation
+
+    assert module.pick_object("cup-1", auxiliary_groups=["moving_base"]).message == "Pick complete"
+
+    assert _motion_calls(manipulation) == [
+        "set_gripper_position",  # open
+        "plan_to_poses",  # the approach, base allowed along
+        "plan_linear",  # the descent, dry, from the approach's goal joints
+        "execute",  # the approach
+        "move_linear",  # the descent
+        "set_gripper_position",  # close
+        "move_linear",  # the lift
+    ]
+    (check,) = manipulation.plan_linear.call_args_list
+    assert check.args[:3] == pytest.approx((0.0, 0.0, -0.1))
+    assert check.args[3] == "arm/tool"
+    assert check.kwargs["check_collision"] is False
+    assert check.kwargs["start_joints"] is APPROACH_GOAL
+    assert PLANNED.plan is not None
+    manipulation.execute.assert_called_once_with(blocking=True, plan_id=PLANNED.plan.plan_id)
+
+
+def test_pick_skips_a_candidate_whose_descent_cannot_be_planned(
+    module: PickAndPlaceModule,
+) -> None:
+    """Today's failure: a base-assisted pre-grasp the arm could reach but not descend from.
+    Found out before the approach runs, the candidate is skipped, the arm never moves."""
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_candidate(0.1, score=0.9), _candidate(0.3, score=0.4)]
+    )
+    manipulation.plan_linear.side_effect = [NO_DESCENT, CHECKED]
+
+    result = module.pick_object("cup-1", auxiliary_groups=["moving_base"])
+
+    assert result.message == "Pick complete"
+    assert result.metadata["rank"] == 1
+    assert manipulation.plan_to_poses.call_count == 2
+    # One approach executed: the second, once its descent checked out.
+    manipulation.execute.assert_called_once()
+    assert _motion_calls(manipulation)[:5] == [
+        "set_gripper_position",
+        "plan_to_poses",
+        "plan_linear",
+        "plan_to_poses",
+        "plan_linear",
+    ]
+
+
+def test_pick_reports_why_the_last_candidate_could_not_be_descended_on(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    manipulation.plan_linear.return_value = NO_DESCENT
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "The planner found no path to any of the 1 grasp candidate(s) tried for object cup-1; "
+        "last planner result FAILED: the descent from the pre-grasp pose is not plannable from "
+        "where the approach ends: Cartesian planning failed: NO_SOLUTION: position error "
+        "0.007 m exceeds the path tolerance."
+    )
+    manipulation.execute.assert_not_called()
+    manipulation.move_linear.assert_not_called()
+    assert not module._holding_object
+
+
+def test_place_checks_the_descent_before_moving_to_the_pre_place(
+    module: PickAndPlaceModule,
+) -> None:
+    manipulation: Any = module._manipulation
+    manipulation.plan_linear.return_value = NO_DESCENT
+    module._selected_grasp = PoseStamped(
+        frame_id="world",
+        orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
+    )
+    module._holding_object = True
+
+    result = module.place_at(0.4, 0.0, 0.2)
+
+    assert result.message == (
+        "Move to the pre-place pose above (0.40, 0.00, 0.20) did not complete; planner returned "
+        "FAILED: the descent to the place pose is not plannable from where the approach ends: "
+        "Cartesian planning failed: NO_SOLUTION: position error 0.007 m exceeds the path "
+        "tolerance"
+    )
+    manipulation.execute.assert_not_called()
+    assert module._holding_object
+
+
+def _odom_to_world(parent: str, child: str, *args: Any, **kwargs: Any) -> Transform | None:
+    """tf with the robot standing 1 m along odom's x axis."""
+    if (parent, child) == ("world", "odom"):
+        return Transform(Vector3(-1.0, 0.0, 0.0), frame_id="world", child_frame_id="odom")
+    return None
+
+
+def _cup_in_odom(module: PickAndPlaceModule) -> None:
+    """The fixture's cup, 1 m further along x: where it is in odom."""
+    scene: Any = module._scene
+    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.asarray([[1.08, -0.02, 0.18], [1.12, 0.02, 0.22]], dtype=np.float32),
+        frame_id="odom",
+        timestamp=1.0,
+    )
+
+
+def test_pick_brings_a_scene_kept_in_another_frame_into_the_planning_frame(
+    module: PickAndPlaceModule,
+) -> None:
+    """A scene kept in odom survives a base move. The grasps and the arm want the object in
+    the planning frame; the exclusion box stays on the object, in odom, where one in the
+    planning frame would ride along with the base."""
+    grasp_generator: Any = module._grasp_generator
+    box_filter: Any = module._box_filter
+    module._tf = MagicMock()
+    module._tf.get.side_effect = _odom_to_world
+    _cup_in_odom(module)
+
+    assert module.pick_object("cup-1").message == "Pick complete"
+
+    module._tf.get.assert_called_once_with("world", "odom", warn=False)
+    (cloud,), _ = grasp_generator.propose_grasps.call_args
+    assert cloud.frame_id == "world"
+    points, _ = cloud.as_numpy()
+    np.testing.assert_allclose(points, [[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], atol=1e-6)
+    manipulation: Any = module._manipulation
+    pregrasp = manipulation.plan_to_poses.call_args.args[0]["arm/tool"]
+    assert pregrasp.position.to_tuple() == pytest.approx((0.1, 0.0, 0.3))
+    fixed, carried = _boxes(box_filter)
+    assert fixed[0].position.to_tuple() == pytest.approx((1.1, 0.0, 0.2))
+    assert fixed[1].to_tuple() == pytest.approx((0.1, 0.1, 0.1))
+    assert fixed[2] == "odom"
+    # Held, the box rides with the tool, placed from the grasp in the planning frame.
+    assert carried[2] == "tool"
+    assert carried[0].position.to_tuple() == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
+
+
+def test_pick_fails_fast_when_the_scene_frame_is_not_on_tf(module: PickAndPlaceModule) -> None:
+    module._tf = MagicMock()
+    module._tf.get.return_value = None
+    _cup_in_odom(module)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "No transform from the scene frame 'odom' to the planning frame 'world' on tf; "
+        "cannot locate object cup-1 for the arm."
+    )
+    grasp_generator: Any = module._grasp_generator
+    manipulation: Any = module._manipulation
+    box_filter: Any = module._box_filter
+    grasp_generator.propose_grasps.assert_not_called()
+    manipulation.set_gripper_position.assert_not_called()
+    box_filter.set_box.assert_not_called()
+
+
+def test_pick_leaves_a_scene_in_the_planning_frame_alone(module: PickAndPlaceModule) -> None:
+    module._tf = MagicMock()
+
+    assert module.pick_object("cup-1").message == "Pick complete"
+
+    module._tf.get.assert_not_called()
+    assert _boxes(module._box_filter)[0][2] == "world"
 
 
 @pytest.mark.parametrize(
