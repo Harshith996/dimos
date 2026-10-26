@@ -19,6 +19,7 @@ import importlib
 import inspect
 import socket
 import threading
+from types import SimpleNamespace
 from typing import Protocol
 import uuid
 
@@ -314,6 +315,23 @@ def test_dimos_discovery_distinguishes_same_class_instances():
                 app.get_module("NamedRemoteModule")
         finally:
             app.stop()
+
+
+def test_remote_proxy_uses_advertised_methods_when_local_class_is_older(client, monkeypatch):
+    """An importable local class must not hide a newer deployed RPC."""
+    real_import = importlib.import_module
+
+    def old_import(name, *args, **kwargs):
+        if "stress_test_module" in name:
+            return SimpleNamespace(StressTestModule=Module)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("dimos.porcelain.remote_module_source.importlib.import_module", old_import)
+    client._source.invalidate("StressTestModule")
+    proxy = client._source.get_module("StressTestModule")
+    assert proxy.ping() == "pong"
+    with pytest.raises(AttributeError):
+        proxy.not_advertised()
 
 
 def test_remote_proxy_fallback_when_class_unimportable(client, monkeypatch):
