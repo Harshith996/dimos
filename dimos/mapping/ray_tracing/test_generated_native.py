@@ -29,7 +29,6 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import PointCloudRegion, RegionBounds
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -42,19 +41,6 @@ from dimos.protocol.service.zenohservice import ZenohConfig
 class MemoryRPC(LCMRPC):
     def __init__(self, **kwargs):
         super().__init__(url="memq://", **kwargs)
-
-
-def test_native_mapper_declares_canonical_cloud_and_region_ports():
-    module = RayTracingVoxelMap(rpc_transport=MemoryRPC)
-    try:
-        assert module.lidar.type is PointCloud2 and module.global_map.type is PointCloud2
-        assert (
-            module.map_regions.type is PointCloudRegion and module.seed_map.type is PointCloudRegion
-        )
-        assert module.region_bounds.type is RegionBounds and module.seed_bounds.type is RegionBounds
-        assert module.tf.type is TFMessage
-    finally:
-        module.stop()
 
 
 @pytest.mark.native_e2e

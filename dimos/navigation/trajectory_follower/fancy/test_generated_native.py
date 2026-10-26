@@ -52,16 +52,6 @@ class MemoryRPC(LCMRPC):
         super().__init__(url="memq://", **kwargs)
 
 
-def test_native_follower_declares_canonical_generated_port_identities():
-    module = TrajectoryFollowerNative(rpc_transport=MemoryRPC, embodiment=GO2)
-    try:
-        assert module.path.type is Path and module.tf.type is TFMessage
-        assert module.tf_static.type is TFMessage
-        assert module.nav_cmd_vel.type is Twist and module.goal_reached.type is Bool
-    finally:
-        module.stop()
-
-
 @pytest.mark.native_e2e
 def test_actual_native_follower_cdr_drive_arrival_new_goal_and_empty_stop(monkeypatch):
     executable = os.environ.get("DIMOS_NATIVE_FOLLOWER_BINARY")

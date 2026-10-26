@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -22,7 +23,6 @@ import pytest
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
-from dimos_cdrgen.registry import encode
 
 from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.transformer import RayTraceMap, pose_from_tf
@@ -82,11 +82,11 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
 def test_accumulation_keeps_exact_source_stamp_and_does_not_mutate_input(stamp_ns) -> None:
     source = _obs(_cube(), ts=stamp_ns / 1e9, pose=(0, 0, 0))
     source.data.header.stamp = message_time.time_from_nanoseconds(stamp_ns)
-    before = encode(source.data)
+    before = asdict(source.data)
     [result] = list(RayTraceMap()(iter([source])))
     assert result.data.header.frame_id == "world"
     assert message_time.to_nanoseconds(result.data.header.stamp) == stamp_ns
-    assert encode(source.data) == before
+    np.testing.assert_equal(asdict(source.data), before)
 
 
 def test_poseless_obs_are_skipped() -> None:

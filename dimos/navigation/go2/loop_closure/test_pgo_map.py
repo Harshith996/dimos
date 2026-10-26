@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_cdrgen.registry import encode
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 
@@ -110,11 +111,11 @@ def actual_map():
 def test_real_optimizer_map_preserves_sensor_stamp_and_world_frame(actual_map):
     cloud = _wall(1.025, 100)
     cloud.header.stamp = message_time.time_from_nanoseconds(1700000000123456789)
-    before = encode(cloud)
+    before = asdict(cloud)
     pose = Pose(position=Point(1, 0, 0), orientation=Quaternion(0, 0, 0, 1))
     assert not actual_map.add(cloud, pose)
     assert actual_map.n_keyframes == 1 and actual_map.n_loops == 0
     output = actual_map.global_map()
     assert output.header.stamp == cloud.header.stamp and output.header.frame_id == "world"
     assert _xs(actual_map) == {20}
-    assert encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)

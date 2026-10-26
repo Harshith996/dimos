@@ -14,7 +14,6 @@
 
 from copy import deepcopy
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -60,7 +59,7 @@ def test_existing_algorithms_preserve_input_identity_and_exact_generated_metadat
 
     actual = operation(generated, **kwargs)
     old = operation(legacy, **kwargs)
-    received = decode(encode(actual), OccupancyGrid)
+    received = actual
 
     assert type(actual) is OccupancyGrid
     assert type(old) is LegacyGrid

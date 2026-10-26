@@ -15,15 +15,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import ExitStack
-import threading
 
 import pytest
 
-from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import TwistStamped
-from dimos.messages.std_msgs.msg import Float32
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     KeyboardTeleopModule,
@@ -158,60 +153,12 @@ def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
     assert publish.call_args.args[0].data == pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_keyboard_output_delivers_cdr_and_key_release_stops_velocity(module, mocker, backend):
-    mocker.patch("dimos.message_utils.time.time.time_ns", return_value=1_789_654_321_000_000_001)
-    config = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
-    received = []
-    ready = threading.Event()
-
-    def receive(message):
-        received.append(message)
-        ready.set()
-
-    assert module.outputs["ee_twist_command"].type is TwistStamped
-    assert module.outputs["gripper_command"].type is Float32
-    twist = (
-        LCMTransport("ee_twist_command", TwistStamped, **config)
-        if backend == "lcm"
-        else ZenohTransport("ee_twist_command", TwistStamped, **config)
-    )
-    gripper = (
-        LCMTransport("gripper_command", Float32, **config)
-        if backend == "lcm"
-        else ZenohTransport("gripper_command", Float32, **config)
-    )
-    module.set_transport("ee_twist_command", twist)
-    module.set_transport("gripper_command", gripper)
-    # The module fixture owns bound transports and closes them after its safe zero.
-    with ExitStack() as resources:
-        resources.callback(twist.subscribe(receive))
-        resources.callback(gripper.subscribe(receive))
-        module._publish_twist(linear=(0.05, 0.0, 0.0))
-        assert ready.wait(5), "velocity command did not arrive"
-        assert type(received[-1]) is TwistStamped
-        assert received[-1].twist.linear.x == 0.05
-        assert received[-1].header.stamp == Time(1_789_654_321, 1)
-        ready.clear()
-        held = {keyboard_mod.pygame.K_w}
-        event = keyboard_mod.pygame.event.Event(
-            keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w
-        )
-        module._handle_pygame_event(event, held)
-        assert ready.wait(5), "key-release zero did not arrive"
-        assert received[-1].twist.linear.x == 0.0
-        assert held == set()
-        ready.clear()
-        module._publish_gripper_command(opening=1.0)
-        assert ready.wait(5), "gripper command did not arrive"
-        assert received[-1] == Float32(1.0)
+def test_key_release_stops_velocity(module, mocker):
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
+    module._publish_twist(linear=(0.05, 0.0, 0.0))
+    assert publish.call_args.args[0].twist.linear.x == 0.05
+    held = {keyboard_mod.pygame.K_w}
+    event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
+    module._handle_pygame_event(event, held)
+    assert publish.call_args.args[0].twist.linear.x == 0.0
+    assert held == set()

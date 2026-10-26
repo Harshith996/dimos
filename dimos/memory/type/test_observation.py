@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from copy import deepcopy
+from dataclasses import asdict
 
-from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 
@@ -68,7 +68,7 @@ def canonical_pose_values():
 @pytest.mark.parametrize("index", range(6))
 def test_canonical_pose_payloads_normalize_metadata_without_loading_or_mutation(index):
     value = canonical_pose_values()[index]
-    before = encode(value)
+    before = asdict(value)
     loads = []
 
     def load():
@@ -82,7 +82,7 @@ def test_canonical_pose_payloads_normalize_metadata_without_loading_or_mutation(
     assert loads == []
     assert posed.data == observation.data == "payload"
     assert loads == ["loaded"]
-    assert encode(value) == before
+    np.testing.assert_equal(asdict(value), before)
     assert observation.with_pose(None).pose_tuple is None
 
 

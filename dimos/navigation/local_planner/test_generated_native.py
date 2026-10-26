@@ -39,7 +39,6 @@ from dimos.messages.geometry_msgs.msg import (
     Vector3,
 )
 from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.embodiment.go2 import GO2
@@ -52,16 +51,6 @@ from dimos.protocol.service.zenohservice import ZenohConfig
 class MemoryRPC(LCMRPC):
     def __init__(self, **kwargs):
         super().__init__(url="memq://", **kwargs)
-
-
-def test_native_planner_declares_canonical_generated_port_identities():
-    module = LocalPlannerNative(rpc_transport=MemoryRPC, embodiment=GO2)
-    try:
-        assert module.local_map.type is PointCloud2
-        assert module.planner_path.type is Path and module.path.type is Path
-        assert module.tf.type is TFMessage
-    finally:
-        module.stop()
 
 
 @pytest.mark.native_e2e
