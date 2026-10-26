@@ -143,7 +143,7 @@ def simple_resample_path(path: _PathT, goal_pose: Pose | CdrPose, spacing: float
         return path
 
     resampled: list[_Stamped] = []
-    resampled.append(deepcopy(path.poses[0]))
+    resampled.append(path.poses[0])
 
     accumulated_distance = 0.0
 
@@ -190,7 +190,7 @@ def simple_resample_path(path: _PathT, goal_pose: Pose | CdrPose, spacing: float
             _pose(resampled[-1]).position.x != _pose(last).position.x
             or _pose(resampled[-1]).position.y != _pose(last).position.y
         ):
-            resampled.append(deepcopy(last))
+            resampled.append(last)
 
     ret = _new_path(path, resampled)
 
