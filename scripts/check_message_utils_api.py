@@ -21,7 +21,7 @@ stack after migrating callers. This check does not import optional runtimes.
 import ast
 from pathlib import Path
 
-DOMAINS = {"image", "camera_info", "geometry", "pointcloud", "time"}
+DOMAINS = {"image", "camera_info", "geometry", "pointcloud", "time", "occupancy"}
 ROOT = Path(__file__).resolve().parents[1]
 
 
