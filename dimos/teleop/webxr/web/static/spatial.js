@@ -8,6 +8,7 @@ import {WorkspaceTransform} from './spatial_workspace.mjs';
 import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
+const desktop = embedded || new URLSearchParams(location.search).has('desktop');
 if (embedded) document.body.classList.add('embedded');
 const apiBase = new URL('./spatial/', location.href);
 const endpoint = path => new URL(path, apiBase).href;
@@ -16,7 +17,7 @@ const enter = document.querySelector('#enter');
 const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.xr.enabled = !embedded;
+renderer.xr.enabled = !desktop;
 renderer.xr.setReferenceSpaceType('local-floor');
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
@@ -271,8 +272,10 @@ enter.onclick = async () => {
   }
 };
 const xrMode=document.querySelector('#xr-mode');
-const supportedModes=await Promise.all(['immersive-vr','immersive-ar'].map(async mode=>
-  [mode,!embedded && !!navigator.xr && await navigator.xr.isSessionSupported(mode).catch(()=>false)]));
+const supportedModes=await Promise.all(['immersive-vr','immersive-ar'].map(async mode=>{
+  try { return [mode,!desktop && !!navigator.xr && await navigator.xr.isSessionSupported(mode)]; }
+  catch { return [mode,false]; }
+}));
 for(const [mode,supported] of supportedModes) xrMode.querySelector(`[value="${mode}"]`).disabled=!supported;
 const firstMode=supportedModes.find(([,supported])=>supported)?.[0];
 if(firstMode) { xrMode.value=firstMode; enter.disabled=false; }
