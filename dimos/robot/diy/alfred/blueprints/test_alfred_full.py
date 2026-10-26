@@ -371,10 +371,13 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         for atom in f.blueprints
         if atom.module is ObjectSceneRegistrationModule
     )
-    # PickAndPlaceModule hands the scene's clouds to the grasp generator as they are and
-    # requires the grasps in its planning frame: the scene cannot move to odom with the map.
-    assert scene.kwargs["target_frame"] == BASE_FRAME, "objects where the arm plans"
-    assert pick_planning_frame(alfred_perception_modules(gpu=True)) == scene.kwargs["target_frame"]
+    # The scene is kept in odom like the map, so a drive leaves the objects where they are;
+    # PickAndPlaceModule re-expresses an object's cloud in its planning frame through tf.
+    assert scene.kwargs["target_frame"] == ODOM_FRAME, "objects stay put when the base drives"
+    assert scene.kwargs["tf_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
+    assert pick_planning_frame(alfred_perception_modules(gpu=True)) == BASE_FRAME, (
+        "grasps where the arm plans"
+    )
     assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
     assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
     pick = next(

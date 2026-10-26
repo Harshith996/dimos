@@ -98,10 +98,9 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   finding that out. Stand so the objects are within ~0.55 m of `base_link` (the base's front
   face nearly at the bench edge), or let GraspGenX propose a side grasp. The pick refuses an
   out-of-reach object at once and says by how much.
-- **Scan again after the base moves.** Objects are registered in `base_link`; a drive leaves
-  them where the robot was (a whole-body pick that drove 0.5 m put them 50 cm off). The pick
-  pipeline hands an object's cloud to the grasp generator as it is and wants the grasps in its
-  planning frame, so the scene cannot follow the map into `odom` until it re-expresses them.
+- **Objects are kept in `odom`,** like the map, so they stay where they are when the base
+  drives; scan again only if the objects themselves moved. The pick re-expresses an object's
+  cloud in its planning frame (`base_link`) through tf before it asks for grasps.
 - **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
   may then be a base move plus an arm move, executed together; the descent and lift stay the
   arm's. The base follows its segment through the coordinator's relative planar task on wheel

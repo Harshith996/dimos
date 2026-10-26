@@ -241,15 +241,15 @@ def alfred_perception_modules(
             feed_frames=LOCALIZE_FEED_FRAMES,
             horizon_s=LOCALIZE_HORIZON_S,
         ).remappings([(PerceptionLocalize, "lidar", "localize_lidar_unused")]),
-        # The pick pipeline: prompted detections registered as 3D objects in base_link
+        # The pick pipeline: prompted detections registered as 3D objects in odom
         # (OWLv2 + EdgeTAM on the GPU), one top-down grasp per object, and PickAndPlace
         # running pregrasp, grasp, close and retreat through the planner and the arms' gripper
         # tasks. The scene's merged cloud is renamed: the camera's own `pointcloud` feeds the map.
-        # The objects stay in base_link, unlike the map: PickAndPlaceModule hands an object's
-        # cloud to the grasp generator as it is and requires the grasps in its planning frame,
-        # so a scene in odom would fail every pick. A scan is good until the base moves.
+        # The objects are kept in odom like the map, so they stay where they are when the base
+        # drives; PickAndPlaceModule re-expresses an object's cloud in its planning frame
+        # (base_link) through tf before it asks for grasps.
         ObjectSceneRegistrationModule.blueprint(
-            target_frame=BASE_FRAME,
+            target_frame=ODOM_FRAME,
             detector_backend="owlv2",
             segmentation_backend="edgetam",
             detector_confidence=SCENE_DETECTOR_CONFIDENCE,
