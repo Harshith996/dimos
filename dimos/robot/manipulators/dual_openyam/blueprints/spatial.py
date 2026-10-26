@@ -18,6 +18,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.protocol.testing.link import LinkConditions
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
 from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
@@ -63,7 +64,9 @@ def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint
 openyam_spatial = autoconnect(build_openyam_spatial())
 
 
-def build_openyam_spatial_sim(station: SpatialStation = ANVIL) -> Blueprint:
+def build_openyam_spatial_sim(
+    station: SpatialStation = ANVIL, *, link_conditions: LinkConditions | None = None
+) -> Blueprint:
     """Bind one station description to physics, sensors, control and display."""
     wrist = station.wrists["left"]
     return (
@@ -72,7 +75,9 @@ def build_openyam_spatial_sim(station: SpatialStation = ANVIL) -> Blueprint:
             OpenYamSpatialCoordinator.blueprint(
                 instance_name="SpatialControlCoordinator", base_poses=station.bases
             ),
-            OpenYamSpatialTeleop.blueprint(base_poses=station.bases),
+            OpenYamSpatialTeleop.blueprint(
+                base_poses=station.bases, link_conditions=link_conditions
+            ),
             DualOpenYamCollection.blueprint(
                 camera_source="streams",
                 camera_ids=("sim2:left/wrist", "sim2:right/wrist"),

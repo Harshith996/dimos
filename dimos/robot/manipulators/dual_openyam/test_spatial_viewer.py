@@ -14,8 +14,10 @@
 
 """Control must use fresh observations and explicit, independent hand grabs."""
 
+from dataclasses import replace
 import json
 from pathlib import Path
+import threading
 import time
 
 from fastapi import FastAPI
@@ -27,9 +29,11 @@ from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.protocol.testing.link import Delay, LinkConditions
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.rgbd import SurfaceFrame
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 @pytest.fixture
@@ -54,6 +58,70 @@ def viewer(mocker):
     module._surface = SurfaceFrame(time.time(), b"", np.zeros((1, 3)))
     yield module
     module.stop()
+
+
+def test_link_reset_discards_queued_grab_and_requires_release_on_reconnect(viewer, mocker):
+    mocker.patch(
+        "dimos.robot.manipulators.dual_openyam.spatial_viewer.time.time", return_value=123.0
+    )
+    viewer._feedback["ts"] = 123.0
+    viewer._surface = replace(viewer._surface, ts=123.0)
+    viewer._web_server = RobotWebInterface(
+        link_conditions=LinkConditions(to_robot=Delay(base_s=0.1))
+    )
+    viewer._setup_routes()
+    runtime = viewer._web_server.link_runtime
+    queued, processed = threading.Event(), threading.Event()
+    original_enqueue = runtime.enqueue
+    original_dispatch = viewer._dispatch_text_message
+
+    def enqueue(*args, **kwargs):
+        original_enqueue(*args, **kwargs)
+        if args[1]["type"] == "websocket.receive":
+            queued.set()
+
+    def dispatch(payload):
+        result = original_dispatch(payload)
+        processed.set()
+        return result
+
+    mocker.patch.object(runtime, "enqueue", side_effect=enqueue)
+    handler = mocker.patch.object(viewer, "_dispatch_text_message", side_effect=dispatch)
+
+    def message(sequence, pinched):
+        return {
+            "type": "spatial_input",
+            "sequence": sequence,
+            "observed_at": 123.0,
+            "hands": {
+                "left": {
+                    "position": viewer._feedback["arms"]["left"]["grasp"],
+                    "orientation": [0, 0, 0, 1],
+                    "pinched": pinched,
+                    "action": "move" if pinched else None,
+                    "arm": "left" if pinched else None,
+                }
+            },
+        }
+
+    with TestClient(viewer._web_server.app) as client:
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json(message(0, False))
+            assert processed.wait(2)
+            processed.clear()
+            queued.clear()
+            ws.send_json(message(1, True))
+            assert queued.wait(2)
+            status = viewer.reset_link_conditions()
+            assert ws.receive()["code"] == 1012
+            assert handler.call_count == 1
+            assert status["pending_messages"] == 0
+            assert viewer._controllers[Hand.LEFT] is None
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json(message(0, True))
+            assert processed.wait(2)
+            assert viewer._claims == {}
+            assert viewer._controllers[Hand.LEFT] is None
 
 
 def send(

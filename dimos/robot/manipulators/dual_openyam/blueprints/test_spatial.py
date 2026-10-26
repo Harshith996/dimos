@@ -13,9 +13,11 @@
 # limitations under the License.
 
 from dataclasses import replace
+import json
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.protocol.testing.link import Delay, LinkConditions, Stall
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.spatial import (
@@ -94,3 +96,32 @@ def test_station_variant_reaches_physics_cameras_ik_display_and_recording(tmp_pa
     assert kwargs[OpenYamSpatialCameras]["wrists"] == station.wrists
     assert kwargs[DualOpenYamCollection]["width"] == 320
     assert kwargs[DualOpenYamCollection]["height"] == 240
+
+
+def test_link_conditions_are_optional_application_config_and_parse_from_cli(tmp_path):
+    baseline = BlueprintConfigParser(build_openyam_spatial_sim()).parse([], environ={})
+    assert baseline.module_kwargs("openyamspatialteleop")["link_conditions"] is None
+    conditions = LinkConditions(
+        seed=7,
+        to_robot=Delay(base_s=0.1, jitter_std_s=0.02),
+        stalls=(Stall(at_s=10, duration_s=0.4),),
+    )
+    blueprint = build_openyam_spatial_sim(link_conditions=conditions)
+    kwargs = {atom.module: atom.kwargs for atom in blueprint.blueprints}
+    assert kwargs[OpenYamSpatialTeleop]["link_conditions"] == conditions
+    assert "link_conditions" not in kwargs[OpenYamSpatialSimulation]
+    assert "link_conditions" not in kwargs[OpenYamSpatialCoordinator]
+    path = tmp_path / "link.json"
+    path.write_text(
+        json.dumps(
+            {"openyamspatialteleop": {"link_conditions": conditions.model_dump(mode="json")}}
+        )
+    )
+    parsed = BlueprintConfigParser(build_openyam_spatial_sim()).parse(
+        ["--openyamspatialteleop.link-conditions.to-operator.base-s", "0.2"],
+        config_path=path,
+        environ={},
+    )
+    assert LinkConditions.model_validate(
+        parsed.module_kwargs("openyamspatialteleop")["link_conditions"]
+    ) == conditions.model_copy(update={"to_operator": Delay(base_s=0.2)})

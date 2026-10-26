@@ -47,6 +47,7 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
+from dimos.protocol.testing.link import LinkConditions
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -90,6 +91,7 @@ class WebXRTeleopConfig(ModuleConfig):
     body_tracking_mode: BodyTrackingMode = "off"
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
     zero_button: str | None = None
+    link_conditions: LinkConditions | None = None
 
 
 _Config = TypeVar("_Config", bound=WebXRTeleopConfig)
@@ -365,11 +367,29 @@ class WebXRTeleopModule(Module):
         self._body_report_started_at = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
-        self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
+        self._web_server = RobotWebInterface(
+            host="0.0.0.0",
+            port=self.config.server_port,
+            link_conditions=self.config.link_conditions,
+        )
         self._setup_routes()
         self._start_server()
         self._start_control_loop()
         logger.info("WebXR Teleoperation Module started")
+
+    @rpc
+    def get_link_conditions(self) -> dict[str, Any]:
+        """Read injected conditions and server-boundary delivery measurements."""
+        runtime = self._web_server.link_runtime if self._web_server is not None else None
+        return runtime.status() if runtime is not None else {"conditions": None}
+
+    @rpc
+    def reset_link_conditions(self) -> dict[str, Any]:
+        """Disconnect experiment clients and restart its seeded timeline; does not reset physics."""
+        runtime = self._web_server.link_runtime if self._web_server is not None else None
+        if runtime is None or runtime.loop is None:
+            return self.get_link_conditions()
+        return asyncio.run_coroutine_threadsafe(runtime.reset(), runtime.loop).result(timeout=5)
 
     @rpc
     def stop(self) -> None:

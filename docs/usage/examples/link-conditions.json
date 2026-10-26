@@ -1,0 +1,17 @@
+{
+  "openyamspatialteleop": {
+    "link_conditions": {
+      "seed": 7,
+      "to_robot": {
+        "base_s": 0.1,
+        "jitter_std_s": 0.02,
+        "correlation_s": 0.25
+      },
+      "to_operator": {
+        "base_s": 0.1,
+        "jitter_std_s": 0.03,
+        "correlation_s": 0.25
+      }
+    }
+  }
+}

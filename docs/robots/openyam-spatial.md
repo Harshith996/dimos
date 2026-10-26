@@ -6,6 +6,11 @@ second composes the existing physical dual-YAM coordinator, wrist-camera
 collection module, RealSense and a calibrated camera mount. The viewer is
 served by the existing WebXR HTTPS server at `/spatial`.
 
+To rehearse a remote connection locally, the same sim blueprint accepts
+[directional delay, seeded jitter and scripted stalls](/docs/usage/link-conditions.md).
+These are ordinary WebXR communication settings; the sim's local IK, physics
+and camera acquisition retain their own timing. Conditions are opt-in.
+
 Both simulated grippers start fully open. The station overrides the active and
 passive finger startup positions without modifying the shared robot artifact.
 Native initialization and reset were checked with the exported YAM model;

@@ -164,7 +164,7 @@ def test_webxr_web_server_is_initialized_during_start(
 
     module.start()
 
-    web_interface.assert_called_once_with(host="0.0.0.0", port=9443)
+    web_interface.assert_called_once_with(host="0.0.0.0", port=9443, link_conditions=None)
     setup_routes.assert_called_once_with()
     start_server.assert_called_once_with()
     start_control_loop.assert_called_once_with()

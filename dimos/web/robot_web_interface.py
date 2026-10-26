@@ -23,8 +23,10 @@ from typing import Any
 from reactivex import Observable
 from reactivex.subject import Subject
 
+from dimos.protocol.testing.link import LinkConditions
 from dimos.stream.audio.base import AudioEvent
 from dimos.web.dimos_interface.api.server import FastAPIServer
+from dimos.web.link_conditions import LinkConditionsMiddleware, LinkRuntime
 
 
 class RobotWebInterface(FastAPIServer):
@@ -36,6 +38,7 @@ class RobotWebInterface(FastAPIServer):
         host: str | None = None,
         text_streams: Mapping[str, Observable[str]] | None = None,
         audio_subject: Subject[AudioEvent] | None = None,
+        link_conditions: LinkConditions | None = None,
         **streams: Observable[Any],
     ) -> None:
         super().__init__(
@@ -47,3 +50,16 @@ class RobotWebInterface(FastAPIServer):
             audio_subject=audio_subject,
             **streams,
         )
+        self.link_runtime = LinkRuntime(link_conditions) if link_conditions is not None else None
+        if self.link_runtime is not None:
+            self.app.add_middleware(LinkConditionsMiddleware, runtime=self.link_runtime)
+
+            @self.app.get("/link-conditions")
+            def link_status() -> dict[str, Any]:
+                assert self.link_runtime is not None
+                return self.link_runtime.status()
+
+    def shutdown(self) -> None:
+        if self.link_runtime is not None:
+            self.link_runtime.close()
+        super().shutdown()

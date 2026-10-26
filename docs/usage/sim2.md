@@ -230,6 +230,12 @@ measurement envelope stays inside the device/module implementation; public
 streams still carry Image, PointCloud2 and Imu messages. A configured delay is
 an explicit model parameter, not evidence that the hardware delay was measured.
 
+To rehearse a remote operator connection, configure
+[link conditions](/docs/usage/link-conditions.md) on the application's web endpoint. That
+delay/jitter model operates outside the robot-local control loop. Sensor latency
+continues to describe the device; communication conditions describe delivery to
+and from the operator. Neither requires changing the robot definition.
+
 Each sensor definition supplies its required sample rate/history duration.
 Physics sizes the snapshot history from these requirements without recognizing
 particular lidar models. The selected coherent control IMU travels with joint
