@@ -96,8 +96,8 @@ class CameraModule(Module, perception.Camera):
         camera_link = deepcopy(self.config.transform)
         camera_link.header.stamp = camera_info.header.stamp
         camera_optical = TransformStamped(
-            header=Header(frame_id=camera_link.child_frame_id, stamp=camera_info.header.stamp),
-            child_frame_id=camera_info.header.frame_id,
+            header=Header(frame_id="camera_link", stamp=camera_info.header.stamp),
+            child_frame_id="camera_optical",
             transform=Transform(
                 rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
                 translation=Vector3(x=0.0, y=0.0, z=0.0),

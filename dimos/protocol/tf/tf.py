@@ -31,9 +31,9 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.protocol.tf.buffer import TBuffer
-from dimos.types.timestamped import to_human_readable
+from dimos.types.timestamped import TimestampedData, to_human_readable
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.inmemory import InMemoryStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,6 +57,52 @@ class TFLookup(Protocol):
         time_point: float | None = None,
         time_tolerance: float | None = None,
     ) -> TransformStamped | None: ...
+
+
+class TBuffer:
+    """Adapt generated TF values to the existing float-seconds time-series store."""
+
+    def __init__(self, buffer_size: float = 10.0) -> None:
+        self.buffer_size = buffer_size
+        self._store: InMemoryStore[TimestampedData[TransformStamped]] = InMemoryStore()
+
+    def __len__(self) -> int:
+        return len(self._store)
+
+    def add(self, transform: TransformStamped) -> None:
+        stamp = message_time.to_seconds(transform.header.stamp)
+        self._store.save(TimestampedData(transform, stamp))
+        self._store.prune_old(stamp - self.buffer_size)
+
+    def first(self) -> TransformStamped | None:
+        item = self._store.first()
+        return item.value if item is not None else None
+
+    def last(self) -> TransformStamped | None:
+        item = self._store.last()
+        return item.value if item is not None else None
+
+    def get(
+        self, time_point: float | None = None, time_tolerance: float = 1.0
+    ) -> TransformStamped | None:
+        if time_point is None:
+            return self.last()
+        item = self._store.find_closest(time_point, time_tolerance)
+        return item.value if item is not None else None
+
+    def __str__(self) -> str:
+        if len(self) == 0:
+            return "TBuffer(empty)"
+        first = self.first()
+        time_range = self._store.time_range()
+        if time_range is not None and first is not None:
+            start, end = time_range
+            frames = f"{first.header.frame_id} -> {first.child_frame_id}"
+            return (
+                f"TBuffer({frames}, {len(self)} msgs, {end - start:.2f}s "
+                f"[{to_human_readable(start)} - {to_human_readable(end)}])"
+            )
+        return f"TBuffer({len(self)} msgs)"
 
 
 # stores multiple transform buffers

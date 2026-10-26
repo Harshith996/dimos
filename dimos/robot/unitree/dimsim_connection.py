@@ -91,8 +91,7 @@ class DimSimConnection:
         if self._unsubscribe_odom is not None:
             self._unsubscribe_odom()
             self._unsubscribe_odom = None
-        self._odom_transport.stop()
-        self._tf_transport.stop()
+            self._odom_transport.stop()
         self._dimsim_process.stop()
 
     @functools.cache

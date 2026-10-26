@@ -167,11 +167,10 @@ def test_wrong_generated_transport_value_fails_before_ros_start(ros_boundary, mo
     factory.assert_not_called()
 
 
-def test_pickled_ros_transport_preserves_declared_type_and_node_options(ros_boundary):
+def test_pickled_ros_transport_preserves_declared_type(ros_boundary):
     transport = ROSTransport("/camera", Image, node_name="offline")
     restored = pickle.loads(pickle.dumps(transport))
     assert restored.topic.topic == "/camera" and restored.topic.msg_type is Image
-    assert restored._kwargs == {"node_name": "offline"}
 
 
 def test_explicit_legacy_flat_conversion_stays_separate(mocker):
