@@ -334,12 +334,14 @@ renderer.setAnimationLoop((time, frame) => {
     c.requested.visible=ready && !!opening;
     if(c.requested.visible) c.requested.position.x=(opening.opening-0.5)*feedback.opening_handle_travel_m;
   }
-  cloud.visible = ready;
+  // Observation age gates actuation, not the existence of the last measured surface.
+  // Network jitter must not blink the entire workspace out of view.
+  cloud.visible = cloudTS > 0;
   detections.visible=ready;
   if(!ready) focusMarker.visible=false;
-  status.textContent = entryError || (ready ? `Live · ${surfaceGrid?.valid || 0} depth samples · ${Math.round((feedback.server_time-cloudTS)*1000)} ms old · ${!controlRequested ? 'desktop preview' : paused ? 'control paused' : socket?.readyState === WebSocket.OPEN ? 'control connected' : 'control disconnected'}` : (feedback?.observation_error || 'Waiting for fresh arm feedback and RGB-D observations · control held'));
+  status.textContent = entryError || (ready ? `Live · ${surfaceGrid?.valid || 0} depth samples · ${Math.round((feedback.server_time-cloudTS)*1000)} ms old · ${!controlRequested ? 'desktop preview' : paused ? 'control paused' : socket?.readyState === WebSocket.OPEN ? 'control connected' : 'control disconnected'}` : (cloudTS > 0 ? 'Updates delayed · showing last surface · control held' : feedback?.observation_error || 'Waiting for fresh arm feedback and RGB-D observations · control held'));
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
-    ready,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
+    ready,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
     workspaceScale:workspace.scale,workspaceActive:workspace.active});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();

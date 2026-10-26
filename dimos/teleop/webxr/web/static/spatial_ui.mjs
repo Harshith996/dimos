@@ -103,14 +103,15 @@ export class SpatialUI {
     c.fillStyle='#13232d'; c.fillRect(0,0,640,48);
     c.fillStyle=view.name==='left'?'#76e2c1':view.name==='right'?'#fab972':'#c4dcf2';
     c.font='bold 23px system-ui'; c.textAlign='left'; c.fillText(view.title,18,32);
-    c.fillStyle=live?'#76e2c1':'#f3bf77'; c.textAlign='right'; c.fillText(live?'LIVE':'UNAVAILABLE',622,32);
-    if(!live) {
+    const label=live?'Live':view.ts?'Delayed':'Unavailable';
+    c.fillStyle=live?'#76e2c1':'#f3bf77'; c.textAlign='right'; c.fillText(label.toUpperCase(),622,32);
+    if(!live && !view.ts) {
       c.fillStyle='#0c141b'; c.fillRect(0,48,640,480);
       c.textAlign='center'; c.fillStyle='#9db0b8'; c.font='24px system-ui';
       c.fillText('Waiting for camera',320,290);
       document.querySelector(`#${view.name}-camera`).hidden=true;
     }
-    document.querySelector(`#${view.name}-caption`).textContent=`${view.title} · ${live?'Live':'Unavailable'}`;
+    document.querySelector(`#${view.name}-caption`).textContent=`${view.title} · ${label}`;
     view.texture.needsUpdate=true;
   }
 
@@ -141,7 +142,7 @@ export class SpatialUI {
     finally { this.pending=null; }
   }
 
-  update({now,ready,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
+  update({now,ready,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false}) {
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[{action:'actual_size',label:'Actual size',x:780,y:384,w:220,h:48,
       enabled:!preview&&!workspaceActive}];
@@ -163,7 +164,7 @@ export class SpatialUI {
     const control=preview?'VIEW ONLY':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'CONTROL DISCONNECTED':!ready?'OBSERVATIONS STALE · HELD':paused?'CONTROL PAUSED':'CONTROL CONNECTED';
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
-    const hint=this.error || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
+    const hint=this.error || (!ready&&surfaceAvailable?'Updates delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;

@@ -150,8 +150,10 @@ convention. This is a better calibrated station layout, not verified sim-to-real
 mechanics, camera noise or task transfer.
 
 The spatial panel shows labeled left-wrist, workspace and right-wrist images,
-per-arm movement/opening/hold status, and recording state. Stale camera frames
-are replaced by an unavailable indicator. The timer and saved/discarded counters
+per-arm movement/opening/hold status, and recording state. Delayed camera frames
+and the RGB-D surface retain their last observation, labeled as delayed, instead
+of disappearing between network updates. Stale observations still hold control
+and require a fresh grab when feedback recovers. The timer and saved/discarded counters
 come from the blueprint's recorder.
 
 Set the task before entering the immersive session. Engage each arm and its
