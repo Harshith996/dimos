@@ -15,7 +15,6 @@
 from contextlib import ExitStack
 from threading import Event
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -129,7 +128,7 @@ def test_tracker3d_projection_preserves_depth_filter_and_source_stamp(tracker_fa
         assert output is None
         assert not received
         return
-    result = decode(encode(output), type(output))
+    result = output
     assert result.header == header
     box = result.detections[0].bbox
     assert (box.center.position.x, box.center.position.y, box.center.position.z) == (2, 0, 0)

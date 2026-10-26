@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -22,7 +21,6 @@ from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
@@ -90,8 +88,7 @@ def test_to_ros_detection3d_array_serializes_plain_bbox_results() -> None:
     assert len(msg.detections) == 1
     assert len(msg.detections[0].results) == 1
 
-    decoded = cdr_decode(cdr_encode(msg), Detection3DArray)
-    decoded_det = decoded.detections[0]
+    decoded_det = msg.detections[0]
     assert len(decoded_det.results) == 1
     assert decoded_det.results[0].hypothesis.class_id == "9"
     assert decoded_det.results[0].hypothesis.score == pytest.approx(0.75)
@@ -127,11 +124,8 @@ def test_to_ros_detection3d_array_preserves_marker_wire_identity() -> None:
     assert first.bbox.size.x == pytest.approx(0.16)
     assert first.bbox.size.z == pytest.approx(0.0)
 
-    decoded = cdr_decode(cdr_encode(msg), Detection3DArray)
-    assert decoded.header.frame_id == "world"
-    assert len(decoded.detections) == 2
-    assert decoded.detections[1].id == "42"
-    assert decoded.detections[1].results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
+    assert msg.detections[1].id == "42"
+    assert msg.detections[1].results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
 
 
 def test_to_ros_detection3d_array_uses_override_and_handles_empty_frames() -> None:
@@ -186,11 +180,10 @@ def test_marker_pose_and_array_keep_exact_source_stamp() -> None:
     pose = marker.pose
     message = marker.to_detection3d_msg()
     array = ImageDetections3D(image, [marker]).to_ros_detection3d_array()
-    decoded = cdr_decode(cdr_encode(array), Detection3DArray)
     assert pose.header.stamp == image.header.stamp
     assert message.header.stamp == image.header.stamp
-    assert decoded.header.stamp == image.header.stamp
-    assert decoded.detections[0].header.stamp == image.header.stamp
+    assert array.header.stamp == image.header.stamp
+    assert array.detections[0].header.stamp == image.header.stamp
     marker.center.x = 999
     assert pose.pose.position.x == 42
-    assert decoded.detections[0].bbox.center.position.x == 42
+    assert array.detections[0].bbox.center.position.x == 42

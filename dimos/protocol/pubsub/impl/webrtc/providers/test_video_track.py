@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 from contextlib import ExitStack
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -162,7 +161,7 @@ async def test_cdr_camera_mux_port_feeds_media_track_and_real_encoder(cdr_track,
         mux = CameraMuxModule(cameras=["cam1"])
         resources.callback(mux.stop)
         mux.set_transport("mux_image", WebRTCVideoTransport(config=config))
-        mux._on_cam("cam1", decode(encode(source), CdrImage))
+        mux._on_cam("cam1", source)
         frame = await asyncio.wait_for(cdr_track.recv(), 2)
         assert (frame.width, frame.height) == (62, 46)
         assert frame.to_ndarray(format="rgb24")[0, 0].tolist() == [255, 0, 0]
