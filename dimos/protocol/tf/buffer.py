@@ -75,7 +75,10 @@ class TBuffer:
         first, last = self.first(), self.last()
         if first is None or last is None:
             return "TBuffer(empty)"
-        start, end = message_time.to_seconds(first.header.stamp), message_time.to_seconds(last.header.stamp)
+        start, end = (
+            message_time.to_seconds(first.header.stamp),
+            message_time.to_seconds(last.header.stamp),
+        )
         return (
             f"TBuffer({first.header.frame_id} -> {first.child_frame_id}, "
             f"{len(self)} msgs, {end - start:.2f}s "
