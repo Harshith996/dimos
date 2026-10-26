@@ -22,7 +22,6 @@ a guarded stream filter: operator cmd_vel → E-STOP/stale/reorder/nav-yield gua
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import math
 import time
@@ -69,7 +68,7 @@ def _all_finite(t: Twist) -> bool:
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
-    return lo if v < lo else min(v, hi)
+    return lo if v < lo else hi if v > hi else v
 
 
 class Go2CommandConfig(ModuleConfig):
@@ -108,7 +107,7 @@ class Go2CommandModule(Module):
         self._obstacle_avoidance = True
         self._light = 0.0
         self._posture = "StandReady"
-        self._last_cmd_ns = 0
+        self._last_cmd_ts = 0.0
         self._last_cmd_nonzero = False
 
     @rpc
@@ -397,22 +396,21 @@ class Go2CommandModule(Module):
         if self._estopped:
             return
         try:
-            stamp_ns = message_time.to_nanoseconds(twist.header.stamp)
+            ts = message_time.to_seconds(twist.header.stamp)
         except (ValueError, TypeError):
             return
-        if not isinstance(stamp_ns, int):
-            # Direct in-process calls must not poison the guard with malformed fields.
+        if not math.isfinite(ts):
             return
-        age = (time.time_ns() - stamp_ns) / 1_000_000_000
+        age = time.time() - ts
         if age > self.config.cmd_stale_after_sec:
             return
-        if age < 0:  # future-stamped: don't advance _last_cmd_ns (would stall drive)
+        if age < 0:  # future-stamped: don't advance _last_cmd_ts (would stall drive)
             return
-        if stamp_ns <= self._last_cmd_ns:  # out-of-order
+        if ts <= self._last_cmd_ts:  # out-of-order
             return
-        self._last_cmd_ns = stamp_ns
+        self._last_cmd_ts = ts
 
-        value = deepcopy(twist.twist)
+        value = twist.twist
         if not _all_finite(value):
             logger.warning("dropping non-finite cmd_vel")
             return

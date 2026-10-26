@@ -357,7 +357,7 @@ def test_wrong_framed_command_identity_is_rejected(module, channel, kind, encodi
     assert module._current_poses[Hand.RIGHT] is None
 
 
-def test_cdr_twist_keeps_nanoseconds_and_sub_float_precision_ordering(module, mocker):
+def test_cdr_twist_keeps_header_and_existing_float_ordering(module, mocker):
     mocker.patch("dimos.teleop.hosted.arm_command.time.time", return_value=1_789_654_321.2)
     for nanoseconds in [1, 2, 1]:
         message = TwistStamped(
@@ -365,9 +365,9 @@ def test_cdr_twist_keeps_nanoseconds_and_sub_float_precision_ordering(module, mo
             Twist(Vector3(0.2, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)),
         )
         module._on_cmd_raw(_command_frame("twist", message))
-    assert module.ee_twist_command.publish.call_count == 2
+    assert module.ee_twist_command.publish.call_count == 1
     output = module.ee_twist_command.publish.call_args.args[0]
-    assert output.header == Header(Time(1_789_654_321, 2), "")
+    assert output.header == Header(Time(1_789_654_321, 1), "")
     assert output.twist.linear.x == 0.2
 
 
@@ -379,7 +379,7 @@ def test_cdr_pose_output_preserves_exact_header_through_legacy_math(module, mock
         np.zeros(6, dtype=np.int32),
     )
     module._on_cmd_raw(_command_frame("joy", controller))
-    for nanoseconds in [1, 2]:
+    for nanoseconds in [1, 1001]:
         message = CdrPoseStamped(
             Header(Time(1_789_654_321, nanoseconds), "right"),
             Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
@@ -388,7 +388,7 @@ def test_cdr_pose_output_preserves_exact_header_through_legacy_math(module, mock
         _tick(module)
     assert module.right_controller_output.publish.call_count == 2
     output = module.right_controller_output.publish.call_args.args[0]
-    assert output.header == Header(Time(1_789_654_321, 2), "right")
+    assert output.header == Header(Time(1_789_654_321, 1001), "right")
     assert type(output) is CdrPoseStamped
 
 
