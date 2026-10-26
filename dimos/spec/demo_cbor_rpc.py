@@ -15,8 +15,7 @@
 """One in-memory CBOR RPC call with native values, LCM, pickle, and CDDL.
 
 Run from the repository root:
-    gem install cddl --version 0.12.14 --no-document
-    uv run --no-sync --with cbor2==6.1.5 python -m dimos.spec.demo_cbor_rpc
+    uv run --no-sync --with cbor2==6.1.5 --with pycddl==0.6.4 python -m dimos.spec.demo_cbor_rpc
 
 This is a trusted, same-process example, not a replacement for ZenohRPC.
 """
@@ -25,11 +24,10 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 import pickle
-import subprocess
-from tempfile import TemporaryDirectory
 from typing import Any
 
 import cbor2
+from pycddl import Schema
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -84,12 +82,9 @@ def pack(message: dict[str, Any]) -> bytes:
     return cbor2.dumps(to_wire(message))
 
 
-def unpack(payload: bytes, schema: Path) -> dict[str, Any]:
+def unpack(payload: bytes, schema: Schema) -> dict[str, Any]:
     """Validate the envelope and retain tags for the caller's routing/trust checks."""
-    # The CLI checks the actual CDDL without restoring LCM or Python objects.
-    subprocess.run(
-        ["cddl", str(schema), "validate", "-"], input=payload, check=True, capture_output=True
-    )
+    schema.validate_cbor(payload)
     stream = BytesIO(payload)
     wire: dict[str, Any] = cbor2.load(
         stream, read_size=1, allow_duplicate_keys=False, allow_indefinite=False
@@ -103,7 +98,7 @@ def calculate(vector: Vector3, scale: float, label: Label) -> dict[str, Any]:
     return {"vector": Vector3(vector.x * scale, vector.y * scale, vector.z * scale), "label": label}
 
 
-def run_demo(schema: Path) -> None:
+def run_demo(schema: Schema) -> None:
     request = {
         "rpc": RPC_VERSION,
         "id": "demo:1",
@@ -139,10 +134,7 @@ def main() -> None:
     contract = "\n".join(
         (schema_dir / name).read_text() for name in ("rpc.cddl", "values.cddl", "extensions.cddl")
     )
-    with TemporaryDirectory(prefix="dimos-cbor-rpc-") as directory:
-        schema = Path(directory) / "rpc.cddl"
-        schema.write_text(contract)
-        run_demo(schema)
+    run_demo(Schema(contract))
 
 
 if __name__ == "__main__":
