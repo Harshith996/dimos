@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils.geometry import yaw
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -49,7 +49,7 @@ _VOXEL = 0.08
 
 def _body_centre(pose: PoseStamped, center_off: float) -> tuple[float, float]:
     """The body centre for a pose point, offset along the pose's own heading."""
-    heading = yaw(pose.pose.orientation)
+    heading = geometry.yaw(pose.pose.orientation)
     return (
         pose.pose.position.x + center_off * np.cos(heading),
         pose.pose.position.y + center_off * np.sin(heading),
@@ -88,7 +88,9 @@ def render_body(
             centers=[[cx, cy, p.pose.position.z + height / 2.0 + _Z_LIFT]],
             half_sizes=[[length / 2.0, width / 2.0, height / 2.0]],
             rotation_axis_angles=[
-                rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=yaw(p.pose.orientation)))
+                rr.RotationAxisAngle(
+                    [0.0, 0.0, 1.0], rr.Angle(rad=geometry.yaw(p.pose.orientation))
+                )
             ],
             colors=[[255, 60, 60, 200]],
             radii=[line_radius],
@@ -109,7 +111,9 @@ def render_body(
         p = msg.poses[int(i)]
         cx, cy = _body_centre(p, center_off)
         centers.append([cx, cy, p.pose.position.z + height / 2.0 + _Z_LIFT])
-        angles.append(rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=yaw(p.pose.orientation))))
+        angles.append(
+            rr.RotationAxisAngle([0.0, 0.0, 1.0], rr.Angle(rad=geometry.yaw(p.pose.orientation)))
+        )
         if clear is None:
             colors.append([100, 160, 255, 160])  # unstamped: the plan line's own blue
         else:

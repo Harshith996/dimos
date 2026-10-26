@@ -28,9 +28,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.occupancy import occupancy_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
@@ -59,9 +57,9 @@ def _published_json(mock: MagicMock, msg_type: str) -> dict[str, Any] | None:
 
 
 def _occupancy(grid: Any, resolution=0.1) -> OccupancyGrid:
-    return occupancy_from_array(
+    return occupancy.from_array(
         np.asarray(grid, dtype=np.int8),
-        header=Header(time_from_seconds(0), "map"),
+        header=Header(message_time.time_from_seconds(0), "map"),
         resolution=resolution,
     )
 
@@ -116,9 +114,9 @@ def test_block_max_preserves_obstacle_when_coarsening(module: MapCompressModule)
 
 
 def test_odom_publishes_planar_pose(module: MapCompressModule) -> None:
-    q = quaternion_from_euler(0.0, 0.0, math.pi / 2)  # yaw = 90°
+    q = geometry.quaternion_from_euler(0.0, 0.0, math.pi / 2)  # yaw = 90°
     pose = PoseStamped(
-        header=Header(stamp=time_from_seconds(123.0), frame_id="map"),
+        header=Header(stamp=message_time.time_from_seconds(123.0), frame_id="map"),
         pose=Pose(Point(1.5, -2.0, 0.3), q),
     )
     module._on_odom(pose)
@@ -141,7 +139,7 @@ def test_odom_degenerate_quaternion_does_not_raise(module: MapCompressModule) ->
     # A zero quaternion makes to_euler() (scipy) raise; _on_odom runs inside an
     # RxPY subscriber, so it must drop the frame, not kill the odom stream.
     pose = PoseStamped(
-        header=Header(stamp=time_from_seconds(1.0), frame_id="map"),
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="map"),
         pose=Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 0.0)),
     )
     module._on_odom(pose)  # must not raise
@@ -170,11 +168,13 @@ def test_malformed_frame_does_not_kill_next_valid_cdr_update(module, kind):
     else:
         module._on_odom(
             PoseStamped(
-                Header(time_from_seconds(0), "map"), Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 0))
+                Header(message_time.time_from_seconds(0), "map"),
+                Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 0)),
             )
         )
         good = PoseStamped(
-            Header(time_from_seconds(17.25), "map"), Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
+            Header(message_time.time_from_seconds(17.25), "map"),
+            Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1)),
         )
         module._on_odom(decode(encode(good), PoseStamped))
         assert _published_json(module.map_out, "odom") == {

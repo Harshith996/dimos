@@ -32,7 +32,7 @@ from dimos_cdrgen.registry import encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -86,7 +86,7 @@ def _command_frame(channel, message):
 
 def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
     message = CdrPoseStamped(
-        Header(time_from_seconds(time.time() if ts is None else ts), frame_id),
+        Header(message_time.time_from_seconds(time.time() if ts is None else ts), frame_id),
         Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
     return _command_frame("pose", message)
@@ -94,7 +94,7 @@ def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
 
 def _twist_bytes(x: float = 0.1, angular_x: float = 0.0, ts: float | None = None) -> bytes:
     message = TwistStamped(
-        Header(time_from_seconds(time.time() if ts is None else ts), "eef_twist_arm"),
+        Header(message_time.time_from_seconds(time.time() if ts is None else ts), "eef_twist_arm"),
         Twist(Vector3(x, 0.0, 0.0), Vector3(angular_x, 0.0, 0.0)),
     )
     return _command_frame("twist", message)

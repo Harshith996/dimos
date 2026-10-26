@@ -27,8 +27,7 @@ from reactivex import Subject
 
 from dimos.core.module import Module
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.message_utils.image import image_view
-from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
+from dimos.message_utils import image, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.msgs.driver import transform_message
@@ -116,9 +115,9 @@ def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mo
             ("map", "world"),
         ]
         assert received["tf"].transforms[0].header.stamp == Time(0, 0)
-        np.testing.assert_array_equal(pointcloud_xyz(received["lidar"]), points)
-        np.testing.assert_array_equal(pointcloud_rgb(received["lidar"]), [[255, 0, 0], [0, 255, 0]])
-        np.testing.assert_array_equal(image_view(received["color_image"]), pixels)
+        np.testing.assert_array_equal(pointcloud.xyz(received["lidar"]), points)
+        np.testing.assert_array_equal(pointcloud.rgb(received["lidar"]), [[255, 0, 0], [0, 255, 0]])
+        np.testing.assert_array_equal(image.view(received["color_image"]), pixels)
         assert received["color_image"].header.stamp == Time(0, 0)
         assert received["camera_info"].width == driver.camera_info_static.width
         command = Twist(Vector3(0.3, 0, 0), Vector3(0, 0, 0.5))

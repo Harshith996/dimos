@@ -23,8 +23,7 @@ import numpy as np
 from PIL import Image as PILImage
 import torch
 
-from dimos.message_utils.image import image_to_rgb
-from dimos.message_utils.time import to_nanoseconds, to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -113,7 +112,7 @@ class Owlv2Detector(HuggingFaceModel):
         results are per-image, in input order.
         """
         self.forwards += len(images)
-        pils = [PILImage.fromarray(image_to_rgb(image)) for image in images]
+        pils = [PILImage.fromarray(image_utils.to_rgb(image)) for image in images]
         with torch.inference_mode(), self._autocast():
             inputs = self._processor(
                 text=[queries] * len(pils), images=pils, return_tensors="pt"
@@ -140,7 +139,7 @@ class Owlv2Detector(HuggingFaceModel):
                     class_id=int(label),
                     confidence=float(score),
                     name=queries[int(label)],
-                    ts=to_seconds(image.header.stamp),
+                    ts=message_time.to_seconds(image.header.stamp),
                     image=image,
                 )
                 if det.is_valid():
@@ -174,7 +173,7 @@ class Owlv2Detector(HuggingFaceModel):
         logit shift and scale, and clipped pixel ``(x1, y1, x2, y2)`` boxes.
         A miss runs the image tower once; a hit runs nothing.
         """
-        key = (image.header.frame_id, to_nanoseconds(image.header.stamp))
+        key = (image.header.frame_id, message_time.to_nanoseconds(image.header.stamp))
         if key in self._features:
             self._features.move_to_end(key)
             return self._features[key]
@@ -182,7 +181,7 @@ class Owlv2Detector(HuggingFaceModel):
         from transformers.image_transforms import center_to_corners_format
 
         self.forwards += 1
-        pil = PILImage.fromarray(image_to_rgb(image))
+        pil = PILImage.fromarray(image_utils.to_rgb(image))
         model = self._model
         head = model.class_head
         with torch.inference_mode(), self._autocast():

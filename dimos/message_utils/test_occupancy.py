@@ -19,15 +19,7 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.occupancy import (
-    grid_to_world,
-    occupancy_extent,
-    occupancy_from_array,
-    occupancy_from_file,
-    occupancy_view,
-    world_to_grid,
-)
+from dimos.message_utils import geometry, occupancy
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import MapMetaData, OccupancyGrid
@@ -50,7 +42,7 @@ def test_occupancy_cells_keep_ros_row_order_and_do_not_alias_message():
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     decoded = cdr_decode(cdr_encode(message), OccupancyGrid)
-    values = occupancy_view(decoded)
+    values = occupancy.view(decoded)
     np.testing.assert_array_equal(values, [[-1, 0, 100], [25, 50, 75]])
     with pytest.raises(ValueError, match="read-only"):
         values[0, 0] = 0
@@ -75,7 +67,7 @@ def test_occupancy_rejects_dimensions_that_do_not_match_payload():
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     with pytest.raises(ValueError, match="data length"):
-        occupancy_view(message)
+        occupancy.view(message)
 
 
 @pytest.mark.parametrize("resolution", [0.0, -0.1, math.nan, math.inf])
@@ -95,11 +87,11 @@ def test_occupancy_rejects_invalid_resolution_for_nonempty_grid(resolution):
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
     )
     with pytest.raises(ValueError, match="resolution"):
-        occupancy_extent(message)
+        occupancy.extent(message)
 
 
 def test_empty_default_occupancy_grid_has_no_cells():
-    assert occupancy_view(
+    assert occupancy.view(
         OccupancyGrid(
             header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             info=MapMetaData(
@@ -127,10 +119,10 @@ def test_static_occupancy_loader_preserves_cells_header_and_identity(tmp_path, s
         Image.fromarray(cells.astype(np.uint8)).save(path)
     header = Header(frame_id="map", stamp=Time(sec=123, nanosec=456))
     output = cdr_decode(
-        cdr_encode(occupancy_from_file(path, header=header, resolution=0.2)),
+        cdr_encode(occupancy.from_file(path, header=header, resolution=0.2)),
         OccupancyGrid,
     )
-    np.testing.assert_array_equal(occupancy_view(output), cells)
+    np.testing.assert_array_equal(occupancy.view(output), cells)
     assert output.header == header
     assert output.info.map_load_time == header.stamp
     assert output.info.origin.orientation.w == 1
@@ -145,7 +137,7 @@ def test_static_occupancy_loader_rejects_invalid_cells(tmp_path, cells):
     path = tmp_path / "grid.npy"
     np.save(path, cells)
     with pytest.raises(ValueError):
-        occupancy_from_file(path, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+        occupancy.from_file(path, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 @pytest.mark.parametrize("ns", [0, -1, 1700000000123456789])
@@ -154,10 +146,11 @@ def test_array_constructor_copies_data_and_metadata_without_rounding_source_time
     cells = np.array([[-1, 0], [100, 50]], dtype=np.int8)
     header = Header(frame_id="map", stamp=Time(sec=seconds, nanosec=nanoseconds))
     origin = Pose(
-        position=Point(x=10, y=20, z=3), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+        position=Point(x=10, y=20, z=3),
+        orientation=geometry.quaternion_from_euler(0, 0, math.pi / 2),
     )
 
-    message = occupancy_from_array(cells, header=header, resolution=0.5, origin=origin)
+    message = occupancy.from_array(cells, header=header, resolution=0.5, origin=origin)
     header.stamp.sec = 77
     cells[0, 0] = 44
     origin.position.x = 99
@@ -167,42 +160,43 @@ def test_array_constructor_copies_data_and_metadata_without_rounding_source_time
     assert actual.header.stamp.nanosec == nanoseconds
     assert actual.info.map_load_time == actual.header.stamp
     assert actual.info.origin.position.x == 10
-    np.testing.assert_array_equal(occupancy_view(actual), [[-1, 0], [100, 50]])
+    np.testing.assert_array_equal(occupancy.view(actual), [[-1, 0], [100, 50]])
 
 
 def test_coordinate_helpers_account_for_rotated_origin_and_grid_plane():
     origin = Pose(
-        position=Point(x=10, y=20, z=3), orientation=quaternion_from_euler(0, 0, math.pi / 2)
+        position=Point(x=10, y=20, z=3),
+        orientation=geometry.quaternion_from_euler(0, 0, math.pi / 2),
     )
-    message = occupancy_from_array(
+    message = occupancy.from_array(
         np.zeros((4, 4), dtype=np.int8),
         header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         resolution=0.5,
         origin=origin,
     )
 
-    point = grid_to_world(message, (2, 3))
+    point = occupancy.grid_to_world(message, (2, 3))
 
     assert (point.x, point.y, point.z) == pytest.approx((8.5, 21, 3))
-    assert world_to_grid(message, point) == pytest.approx((2, 3))
-    assert occupancy_extent(message) == (2, 2)
+    assert occupancy.world_to_grid(message, point) == pytest.approx((2, 3))
+    assert occupancy.extent(message) == (2, 2)
 
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_coordinate_helpers_reject_nonfinite_coordinates(value):
-    message = occupancy_from_array(
+    message = occupancy.from_array(
         np.zeros((1, 1), dtype=np.int8),
         header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)),
         resolution=1,
     )
     with pytest.raises(ValueError, match="finite"):
-        grid_to_world(message, (value, 0))
+        occupancy.grid_to_world(message, (value, 0))
     with pytest.raises(ValueError, match="finite"):
-        world_to_grid(message, Point(x=value, y=0, z=0))
+        occupancy.world_to_grid(message, Point(x=value, y=0, z=0))
 
 
 def test_numpy_loader_never_unpickles_objects(tmp_path):
     path = tmp_path / "objects.npy"
     np.save(path, np.array([[{}]], dtype=object), allow_pickle=True)
     with pytest.raises(ValueError, match="allow_pickle=False"):
-        occupancy_from_file(path, header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)))
+        occupancy.from_file(path, header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)))

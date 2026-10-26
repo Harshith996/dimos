@@ -22,7 +22,7 @@ import numpy as np
 from reactivex import Subject
 
 from dimos.core.resource import Resource
-from dimos.message_utils.geometry import point_distance, yaw
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
 from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.navigation.base import NavigationState
@@ -179,14 +179,15 @@ class LocalPlanner(Resource):
         # Determine initial state: skip initial_rotation if already aligned.
         new_state: PlannerState = "initial_rotation"
         if current_odom is not None and len(path.poses) > 0:
-            first_yaw = yaw(path.poses[0].pose.orientation)
-            robot_yaw = yaw(current_odom.pose.orientation)
+            first_yaw = geometry.yaw(path.poses[0].pose.orientation)
+            robot_yaw = geometry.yaw(current_odom.pose.orientation)
             initial_yaw_error = angle_diff(first_yaw, robot_yaw)
             self._controller.reset_yaw_error(initial_yaw_error)
             angle_in_tolerance = abs(initial_yaw_error) < self._orientation_tolerance
             if angle_in_tolerance:
                 position_in_tolerance = (
-                    point_distance(path.poses[0].pose.position, current_odom.pose.position) < 0.01
+                    geometry.point_distance(path.poses[0].pose.position, current_odom.pose.position)
+                    < 0.01
                 )
                 if position_in_tolerance:
                     new_state = "final_rotation"
@@ -244,8 +245,8 @@ class LocalPlanner(Resource):
         assert current_odom is not None
 
         first_pose = path.poses[0]
-        first_yaw = yaw(first_pose.pose.orientation)
-        robot_yaw = yaw(current_odom.pose.orientation)
+        first_yaw = geometry.yaw(first_pose.pose.orientation)
+        robot_yaw = geometry.yaw(current_odom.pose.orientation)
         yaw_error = angle_diff(first_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
@@ -300,8 +301,8 @@ class LocalPlanner(Resource):
         assert path is not None
         assert current_odom is not None
 
-        goal_yaw = yaw(path.poses[-1].pose.orientation)
-        robot_yaw = yaw(current_odom.pose.orientation)
+        goal_yaw = geometry.yaw(path.poses[-1].pose.orientation)
+        robot_yaw = geometry.yaw(current_odom.pose.orientation)
         yaw_error = angle_diff(goal_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:

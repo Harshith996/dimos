@@ -16,7 +16,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.pointcloud import pointcloud_rgb
+from dimos.message_utils import pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
 from dimos.messages.std_msgs.msg import Header
@@ -43,13 +43,13 @@ def test_packed_colors_preserve_bits_and_row_padding(bigendian, name, datatype):
     )
     decoded = cdr_decode(cdr_encode(cloud), PointCloud2)
     np.testing.assert_array_equal(
-        pointcloud_rgb(decoded), [[0x12, 0x34, 0x56], [0xAB, 0xCD, 0xEF], [255, 0, 0], [0, 255, 0]]
+        pointcloud.rgb(decoded), [[0x12, 0x34, 0x56], [0xAB, 0xCD, 0xEF], [255, 0, 0], [0, 255, 0]]
     )
 
 
 def test_missing_colors():
     assert (
-        pointcloud_rgb(
+        pointcloud.rgb(
             PointCloud2(
                 header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
                 height=0,
@@ -82,4 +82,4 @@ def test_invalid_color_layout(datatype, count):
         is_dense=False,
     )
     with pytest.raises(ValueError, match="packed point cloud color"):
-        pointcloud_rgb(cloud)
+        pointcloud.rgb(cloud)

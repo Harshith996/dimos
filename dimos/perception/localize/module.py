@@ -50,8 +50,7 @@ from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
-from dimos.message_utils.pointcloud import pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -167,12 +166,14 @@ class PerceptionLocalize(Module):
                 self._camera_seen.set()
 
         def on_geometry(msg: Image | PointCloud2) -> None:
-            self._geometry_feed.append(msg, ts=to_seconds(msg.header.stamp))
+            self._geometry_feed.append(msg, ts=message_time.to_seconds(msg.header.stamp))
 
         geometry = self.depth_image if self.config.geometry == "depth" else self.lidar
         self._unsubs = [
             self.color_image.subscribe(
-                lambda img: self._color_feed.append(img, ts=to_seconds(img.header.stamp))
+                lambda img: self._color_feed.append(
+                    img, ts=message_time.to_seconds(img.header.stamp)
+                )
             ),
             geometry.subscribe(on_geometry),
             self.camera_info.subscribe(on_camera_info),
@@ -310,7 +311,7 @@ def as_detection_array(
     latest = 0.0
     for query, hits in zip(queries, results, strict=True):
         for hit in hits:
-            points = pointcloud_xyz(hit.point_cloud)
+            points = pointcloud.xyz(hit.point_cloud)
             low, high = points.min(axis=0), points.max(axis=0)
             middle, extent = (low + high) / 2, high - low
             center = Point(x=float(middle[0]), y=float(middle[1]), z=float(middle[2]))
@@ -323,7 +324,8 @@ def as_detection_array(
             boxes.append(
                 Detection3D(
                     header=Header(
-                        stamp=time_from_seconds(hit.last_seen_timestamp), frame_id=frame_id
+                        stamp=message_time.time_from_seconds(hit.last_seen_timestamp),
+                        frame_id=frame_id,
                     ),
                     id=hit.instance_id,
                     results=[
@@ -347,6 +349,6 @@ def as_detection_array(
                 )
             )
     return Detection3DArray(
-        header=Header(stamp=time_from_seconds(latest), frame_id=frame_id),
+        header=Header(stamp=message_time.time_from_seconds(latest), frame_id=frame_id),
         detections=boxes,
     )

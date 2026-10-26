@@ -30,9 +30,7 @@ from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds, to_nanoseconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -40,8 +38,8 @@ from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 def _cloud(points, frame_id="lidar", timestamp=0.0):
-    return pointcloud_from_xyz(
-        points, header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp))
+    return pointcloud.from_xyz(
+        points, header=Header(frame_id=frame_id, stamp=message_time.time_from_seconds(timestamp))
     )
 
 
@@ -73,7 +71,7 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
     results = list(RayTraceMap(emit_every=3)(iter(obs)))
 
     assert [r.tags["frame_count"] for r in results] == [3, 6, 7]
-    assert [to_nanoseconds(r.data.header.stamp) for r in results] == [
+    assert [message_time.to_nanoseconds(r.data.header.stamp) for r in results] == [
         2000000000,
         5000000000,
         6000000000,
@@ -83,11 +81,11 @@ def test_emit_every_n_yields_on_cadence_and_flushes_remainder() -> None:
 @pytest.mark.parametrize("stamp_ns", [-1, 0, 1700000000123456789])
 def test_accumulation_keeps_exact_source_stamp_and_does_not_mutate_input(stamp_ns) -> None:
     source = _obs(_cube(), ts=stamp_ns / 1e9, pose=(0, 0, 0))
-    source.data.header.stamp = time_from_nanoseconds(stamp_ns)
+    source.data.header.stamp = message_time.time_from_nanoseconds(stamp_ns)
     before = encode(source.data)
     [result] = list(RayTraceMap()(iter([source])))
     assert result.data.header.frame_id == "world"
-    assert to_nanoseconds(result.data.header.stamp) == stamp_ns
+    assert message_time.to_nanoseconds(result.data.header.stamp) == stamp_ns
     assert encode(source.data) == before
 
 
@@ -175,10 +173,10 @@ def test_pose_from_tf_attaches_the_pose_at_the_stamp(tmp_path: Path) -> None:
     ts = 10.0
     with SqliteStore(path=str(tmp_path / "tf.db")) as store:
         edge = TransformStamped(
-            header=Header(frame_id="world", stamp=time_from_seconds(ts)),
+            header=Header(frame_id="world", stamp=message_time.time_from_seconds(ts)),
             child_frame_id="lidar",
             transform=Transform(
-                translation=Vector3(x=1, y=2, z=3), rotation=quaternion_from_euler(0, 0, 0)
+                translation=Vector3(x=1, y=2, z=3), rotation=geometry.quaternion_from_euler(0, 0, 0)
             ),
         )
         store.stream("tf", TFMessage).append(TFMessage(transforms=[edge]), ts=ts, pose=None)

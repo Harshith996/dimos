@@ -15,7 +15,7 @@
 import cv2
 import numpy as np
 
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
@@ -55,17 +55,17 @@ def test_camera_optical_frame_id_resolution() -> None:
         roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
     pixels = np.zeros((480, 640, 3), dtype=np.uint8)
-    img_custom = image_from_array(
+    img_custom = image.from_array(
         pixels,
         encoding="bgr8",
         header=Header(frame_id="custom_optical", stamp=Time(sec=0, nanosec=0)),
     )
-    img_whitespace = image_from_array(
+    img_whitespace = image.from_array(
         pixels,
         encoding="bgr8",
         header=Header(frame_id="  custom_optical  ", stamp=Time(sec=0, nanosec=0)),
     )
-    img_empty = image_from_array(pixels, encoding="bgr8")
+    img_empty = image.from_array(pixels, encoding="bgr8")
 
     assert camera_optical_frame_id(img_custom, info_named) == "custom_optical"
     assert camera_optical_frame_id(img_whitespace, info_named) == "custom_optical"

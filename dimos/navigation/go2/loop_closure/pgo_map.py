@@ -35,8 +35,7 @@ import time
 import numpy as np
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -65,7 +64,7 @@ class PGOMap:
         self._grid = VoxelGrid(
             voxel_size=voxel_size, frame_id=frame_id, stamped=True, show_startup_log=False
         )
-        self._header = Header(stamp=time_from_seconds(0), frame_id=frame_id)
+        self._header = Header(stamp=message_time.time_from_seconds(0), frame_id=frame_id)
         self._cooldown = rebuild_cooldown_s
         self._placed_loops = 0
         self._last_rebuild_ts = -math.inf
@@ -83,10 +82,10 @@ class PGOMap:
 
     def add(self, cloud: PointCloud2, pose: Pose | None) -> bool:
         """Insert a world-frame lidar frame taken at odom `pose`. True if the map was rebuilt."""
-        timestamp = to_seconds(cloud.header.stamp)
+        timestamp = message_time.to_seconds(cloud.header.stamp)
         self._header.stamp = deepcopy(cloud.header.stamp)
         self._grid.add_points(
-            np.asarray(pointcloud_xyz(cloud), dtype=np.float32), timestamp=timestamp
+            np.asarray(pointcloud.xyz(cloud), dtype=np.float32), timestamp=timestamp
         )
         if (
             pose is not None
@@ -128,7 +127,7 @@ class PGOMap:
         return self._pgo.loop_segments()
 
     def global_map(self) -> PointCloud2:
-        return pointcloud_from_xyz(
+        return pointcloud.from_xyz(
             self._grid.get_global_pointcloud().point["positions"].numpy(), header=self._header
         )
 
@@ -162,7 +161,7 @@ def main(dataset: str) -> None:
         for obs in lidar:
             cloud = obs.data
             # Explicit offline replay time override for recordings with stale sensor stamps.
-            cloud.header.stamp = time_from_seconds(obs.ts)
+            cloud.header.stamp = message_time.time_from_seconds(obs.ts)
             values = obs.pose_tuple
             pose = (
                 None
@@ -186,11 +185,11 @@ def main(dataset: str) -> None:
     gold = VoxelGrid(device="CPU:0", show_startup_log=False)
     for cloud, _ in frames():
         gold.add_points(
-            np.asarray(pointcloud_xyz(graph.place(cloud)), dtype=np.float32),
-            timestamp=to_seconds(cloud.header.stamp),
+            np.asarray(pointcloud.xyz(graph.place(cloud)), dtype=np.float32),
+            timestamp=message_time.to_seconds(cloud.header.stamp),
         )
 
-    got, want = pointcloud_xyz(live.global_map()), gold.get_global_pointcloud2().points_f32()
+    got, want = pointcloud.xyz(live.global_map()), gold.get_global_pointcloud2().points_f32()
     missing = 1 - _within_one_voxel(want, got, 0.05)
     extra = 1 - _within_one_voxel(got, want, 0.05)
     steps = np.array(step_ms)

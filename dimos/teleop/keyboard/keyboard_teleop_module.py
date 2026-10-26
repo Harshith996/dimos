@@ -47,7 +47,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.message_utils.time import header_now
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos.messages.std_msgs.msg import Float32
 from dimos.utils.logging_config import setup_logger
@@ -237,7 +237,7 @@ class KeyboardTeleopModule(Module):
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
         self.ee_twist_command.publish(
-            TwistStamped(header_now(), Twist(Vector3(*linear), Vector3(*angular)))
+            TwistStamped(message_time.header_now(), Twist(Vector3(*linear), Vector3(*angular)))
         )
 
     def _publish_gripper_command(self, *, opening: float) -> None:

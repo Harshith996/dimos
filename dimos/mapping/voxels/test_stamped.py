@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.message_utils.pointcloud import pointcloud_stamps, pointcloud_with_xyz, pointcloud_xyz
+from dimos.message_utils import pointcloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 VOXEL = 0.05
@@ -42,8 +42,8 @@ def _drifted_walls():
 
 
 def _undrift(cloud):
-    shift = np.where(pointcloud_stamps(cloud)[:, None] == 1.0, [0.5, 0.0, 0.0], 0.0)
-    return pointcloud_with_xyz(cloud, pointcloud_xyz(cloud) + shift)
+    shift = np.where(pointcloud.stamps(cloud)[:, None] == 1.0, [0.5, 0.0, 0.0], 0.0)
+    return pointcloud.with_xyz(cloud, pointcloud.xyz(cloud) + shift)
 
 
 def test_stamped_holds_the_same_voxels():

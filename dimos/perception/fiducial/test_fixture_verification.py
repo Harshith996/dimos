@@ -18,10 +18,7 @@ import cv2
 import numpy as np
 import pytest
 
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.geometry import transform_matrix
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import camera_info, geometry, image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
@@ -162,11 +159,11 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
     width, height = 1920, 1080
     bgr = _synthetic_packed_apriltag_board_bgr(layout, width=width, height=height)
     ts = 10_000.0
-    header = Header(stamp=time_from_seconds(ts), frame_id="camera_optical")
-    cam_info = camera_info_from_intrinsics(
+    header = Header(stamp=message_time.time_from_seconds(ts), frame_id="camera_optical")
+    cam_info = camera_info.from_intrinsics(
         fx=1400, fy=1400, cx=width / 2, cy=height / 2, width=width, height=height, header=header
     )
-    image = image_from_array(bgr, encoding="bgr8", header=header)
+    image = image_utils.from_array(bgr, encoding="bgr8", header=header)
     world_T_optical = TransformStamped(
         header=Header(stamp=header.stamp, frame_id="world"),
         child_frame_id="camera_optical",
@@ -195,7 +192,7 @@ def test_marker_tf_replay_synthetic_packed_board_publishes_twelve_markers(
         for tag_id in range(12):
             tr = view.get(marker_parent, f"fixture/marker_{tag_id}", ts, 0.1)
             assert tr is not None, f"missing marker {tag_id}"
-            assert np.all(np.isfinite(transform_matrix(tr.transform)))
+            assert np.all(np.isfinite(geometry.transform_matrix(tr.transform)))
     finally:
         view.dispose()
         mod.stop()

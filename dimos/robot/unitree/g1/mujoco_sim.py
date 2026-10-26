@@ -24,7 +24,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -122,7 +122,7 @@ class G1SimConnection(G1ConnectionBase):
     def _publish_tf(self, msg: DriverPose) -> None:
         p, q = msg.position, msg.orientation
         from_pose = PoseStamped(
-            Header(time_from_seconds(msg.ts), msg.frame_id),
+            Header(message_time.time_from_seconds(msg.ts), msg.frame_id),
             Pose(Point(p.x, p.y, p.z), CdrQuaternion(q.x, q.y, q.z, q.w)),
         )
         self.odom.publish(from_pose)

@@ -37,8 +37,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import Header, UInt32
@@ -218,7 +217,7 @@ def _action_chunk(steps: int = 3) -> NDArray[np.float32]:
 
 def _state(timestamp, names, positions):
     return JointState(
-        Header(time_from_seconds(timestamp), "arm"),
+        Header(message_time.time_from_seconds(timestamp), "arm"),
         list(names),
         np.asarray(positions, dtype=np.float64),
         np.empty(0),
@@ -239,8 +238,8 @@ def _provide_observation(
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
     module._on_color_image(
-        image_from_array(
-            rgb, encoding="rgb8", header=Header(time_from_seconds(timestamp), "camera")
+        image_utils.from_array(
+            rgb, encoding="rgb8", header=Header(message_time.time_from_seconds(timestamp), "camera")
         )
     )
     module._on_joint_state(_state(timestamp, JOINTS, values))
@@ -595,10 +594,10 @@ def test_preflight_rejects_invalid_live_joints(
     module, control = make_runtime(policy)
     timestamp = time.time()
     module._on_color_image(
-        image_from_array(
+        image_utils.from_array(
             np.zeros((4, 5, 3), dtype=np.uint8),
             encoding="rgb8",
-            header=Header(time_from_seconds(timestamp), "camera"),
+            header=Header(message_time.time_from_seconds(timestamp), "camera"),
         )
     )
     module._on_joint_state(_state(timestamp, names, positions))
@@ -626,8 +625,10 @@ def test_preflight_requires_exact_live_rgb_contract(
     module, control = make_runtime(policy)
     timestamp = time.time()
     module._on_color_image(
-        image_from_array(
-            image, encoding=image_format, header=Header(time_from_seconds(timestamp), "camera")
+        image_utils.from_array(
+            image,
+            encoding=image_format,
+            header=Header(message_time.time_from_seconds(timestamp), "camera"),
         )
     )
     module._on_joint_state(_state(timestamp, JOINTS, [0.0] * len(JOINTS)))
@@ -814,7 +815,7 @@ def test_malformed_canonical_rgb_does_not_replace_valid_policy_observation(make_
     module, _ = make_runtime(FakePolicy(_action_chunk()))
     pixels, _, timestamp = _provide_observation(module)
     malformed = Image(
-        Header(time_from_seconds(timestamp), "camera"),
+        Header(message_time.time_from_seconds(timestamp), "camera"),
         4,
         5,
         "rgb8",

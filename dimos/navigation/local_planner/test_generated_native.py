@@ -28,8 +28,7 @@ import zenoh
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -130,7 +129,8 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
         index = 0
         while not ready.is_set() and time.monotonic() < deadline:
             header = Header(
-                frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789 + index)
+                frame_id="odom",
+                stamp=message_time.time_from_nanoseconds(1700000000123456789 + index),
             )
             wires["tf"].publish(
                 TFMessage(
@@ -146,7 +146,7 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
                     ]
                 )
             )
-            wires["local_map"].publish(pointcloud_from_xyz(points, header=deepcopy(header)))
+            wires["local_map"].publish(pointcloud.from_xyz(points, header=deepcopy(header)))
             route = Path(
                 header=deepcopy(header),
                 poses=[
@@ -169,6 +169,6 @@ def test_actual_native_planner_consumes_python_cdr_and_returns_canonical_path(mo
         assert result.header.frame_id == "odom"
         assert result.poses[-1].pose.position.x > 1.5
         assert abs(result.poses[-1].pose.position.y) < 0.2
-        stamps = [to_nanoseconds(p.header.stamp) for p in result.poses]
+        stamps = [message_time.to_nanoseconds(p.header.stamp) for p in result.poses]
         assert all(b >= a for a, b in pairwise(stamps))
         assert module._process is not None and module._process.poll() is None

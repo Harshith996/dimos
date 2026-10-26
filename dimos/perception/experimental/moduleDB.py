@@ -21,7 +21,7 @@ from reactivex.observable import Observable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.pointcloud import concatenate_clouds
+from dimos.message_utils import pointcloud as pointcloud_utils
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -83,7 +83,7 @@ class Object3D(Detection3DPC):
         new_object.class_id = self.class_id
         new_object.name = self.name
         new_object.transform = self.transform
-        new_object.pointcloud = concatenate_clouds(self.pointcloud, detection.pointcloud)
+        new_object.pointcloud = pointcloud_utils.concatenate(self.pointcloud, detection.pointcloud)
         new_object.frame_id = self.frame_id
         if self.center is None:
             raise ValueError("Cannot merge an object without a center")

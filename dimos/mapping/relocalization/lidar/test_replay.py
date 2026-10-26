@@ -36,9 +36,7 @@ from dimos.mapping.relocalization.lidar.replay import (
     write_loaded_map,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.message_utils.geometry import transform_from_matrix
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import geometry as geometry_utils, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -55,8 +53,8 @@ def recording():
 
 
 def _cloud(points, *, frame_id, timestamp=0.0):
-    return pointcloud_from_xyz(
-        points, header=Header(frame_id=frame_id, stamp=time_from_seconds(timestamp))
+    return pointcloud.from_xyz(
+        points, header=Header(frame_id=frame_id, stamp=message_time.time_from_seconds(timestamp))
     )
 
 
@@ -65,15 +63,15 @@ def _fix(yaw_deg: float, x: float = 0.0, y: float = 0.0) -> TransformStamped:
     m[:3, :3] = Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
     m[0, 3], m[1, 3] = x, y
     return TransformStamped(
-        header=Header(frame_id="odom", stamp=time_from_seconds(0)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_seconds(0)),
         child_frame_id="map",
-        transform=transform_from_matrix(m),
+        transform=geometry_utils.transform_from_matrix(m),
     )
 
 
 def _edge(parent: str, child: str, ts: float, x: float = 0.0) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id=parent, stamp=time_from_seconds(ts)),
+        header=Header(frame_id=parent, stamp=message_time.time_from_seconds(ts)),
         child_frame_id=child,
         transform=Transform(translation=Vector3(x, 0, 0), rotation=Quaternion(0, 0, 0, 1)),
     )
@@ -99,9 +97,9 @@ def test_write_loaded_map_writes_once(tmp_path: Path) -> None:
         written = stream.first()
         assert written.data.header.frame_id == "odom"
         assert written.ts == 5.0
-        assert written.data.header.stamp == time_from_seconds(5.0)
+        assert written.data.header.stamp == message_time.time_from_seconds(5.0)
         assert (encode(premap), encode(fix)) == originals
-        np.testing.assert_allclose(pointcloud_xyz(written.data), [[1, 1, 0], [0, 0, 0]], atol=1e-6)
+        np.testing.assert_allclose(pointcloud.xyz(written.data), [[1, 1, 0], [0, 0, 0]], atol=1e-6)
 
         assert write_loaded_map(store, premap, fix, 6.0, "odom") is False
         assert stream.count() == 1
@@ -118,7 +116,11 @@ def test_recorded_fix_is_the_first_world_to_map_edge(tmp_path: Path) -> None:
             _edge("odom", "map", 2.0, x=2.0),
             _edge("odom", "map", 3.0, x=3.0),
         ):
-            tf.append(TFMessage(transforms=[edge]), ts=to_seconds(edge.header.stamp), pose=None)
+            tf.append(
+                TFMessage(transforms=[edge]),
+                ts=message_time.to_seconds(edge.header.stamp),
+                pose=None,
+            )
 
         recorded = recorded_fix(store, "odom", "map")
         assert recorded is not None
@@ -169,7 +171,7 @@ def test_replay_spaces_attempts_and_stops_after_the_fix(
 
     relocalizer_class.assert_called_once()
     geometry, config = relocalizer_class.call_args.args
-    np.testing.assert_allclose(np.asarray(geometry.points), pointcloud_xyz(premap))
+    np.testing.assert_allclose(np.asarray(geometry.points), pointcloud.xyz(premap))
     assert config is PRESETS["mid360"]
     assert attempt.call_count == 2
     # The sparse frame at 0.0 s is skipped, so the first attempt waits for 0.5 s.

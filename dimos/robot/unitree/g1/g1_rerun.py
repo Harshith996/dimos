@@ -20,8 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.message_utils.occupancy import occupancy_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import occupancy, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPose
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -53,11 +52,11 @@ def g1_costmap(grid: Any, z_offset: float = 0.02) -> Any:
         p, q = grid.info.origin.position, grid.info.origin.orientation
         # Preserve the existing renderer's numerical and palette contract.
         grid = OccupancyGrid(
-            grid=occupancy_view(grid),
+            grid=occupancy.view(grid),
             resolution=grid.info.resolution,
             origin=Pose(position=[p.x, p.y, p.z], orientation=[q.x, q.y, q.z, q.w]),
             frame_id=grid.header.frame_id,
-            ts=to_seconds(grid.header.stamp),
+            ts=message_time.to_seconds(grid.header.stamp),
         )
     return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=z_offset)
 

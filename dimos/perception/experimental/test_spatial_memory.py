@@ -24,7 +24,7 @@ from reactivex import of, operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.image import image_from_array
+from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -277,7 +277,7 @@ def test_generated_image_and_tf_reach_spatial_backend_with_correct_colors_and_po
         )
         pixels = np.zeros((4, 4, 3), dtype=np.uint8)
         pixels[:, :, 0] = 255
-        image = image_from_array(
+        image = image_utils.from_array(
             pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=1))
         )
         memory._receive_frame(image)

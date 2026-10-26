@@ -33,6 +33,7 @@ jobs:
         run: uv sync --frozen --group tests
       - name: Test generated value adapters
         run: |
+          uv run --no-sync python scripts/check_message_utils_api.py
           uv run --no-sync pytest --noconftest --import-mode=importlib -o addopts='' -q \
             dimos/message_utils/test_image_views.py \
             dimos/message_utils/test_image_compression.py \
@@ -41,6 +42,7 @@ jobs:
             dimos/message_utils/test_geometry.py \
             dimos/message_utils/test_pointcloud.py \
             dimos/message_utils/test_pointcloud_colors.py \
+            dimos/message_utils/test_occupancy.py \
             dimos/protocol/tf/test_buffer.py
       - name: Test native SDK
         run: |

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 
 if TYPE_CHECKING:
@@ -91,7 +91,7 @@ class Detection2DSeg(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=to_seconds(image.header.stamp),
+            ts=message_time.to_seconds(image.header.stamp),
             image=image,
             mask=mask.astype(np.uint8),
         )
@@ -165,7 +165,7 @@ class Detection2DSeg(Detection2DBBox):
             class_id=class_id,
             confidence=confidence,
             name=name,
-            ts=to_seconds(image.header.stamp),
+            ts=message_time.to_seconds(image.header.stamp),
             image=image,
             mask=mask,
         )

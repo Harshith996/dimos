@@ -23,10 +23,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import camera_info, image, pointcloud, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
@@ -41,10 +38,10 @@ from dimos.perception.experimental.test_object_generated import _object
 
 
 def _image(timestamp: float) -> Image:
-    return image_from_array(
+    return image.from_array(
         np.ones((2, 2), dtype=np.float32),
         encoding="32FC1",
-        header=Header(frame_id="camera", stamp=time_from_seconds(timestamp)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(timestamp)),
     )
 
 
@@ -55,7 +52,7 @@ def module_factory():
         def create(**kwargs):
             module = ObjectSceneRegistrationModule(**kwargs)
             cleanup.callback(module.stop)
-            module._camera_info = camera_info_from_intrinsics(
+            module._camera_info = camera_info.from_intrinsics(
                 1, 1, 0, 0, 2, 2, header=Header(frame_id="camera", stamp=Time(sec=0, nanosec=0))
             )
             wire = LCMTransport("object_scene_tf", TFMessage, url="memq://")
@@ -76,7 +73,7 @@ def test_transform_is_captured_before_slow_detector(
 ) -> None:
     now = [0.0]
     transform = TransformStamped(
-        header=Header(frame_id="map", stamp=time_from_seconds(12.5)),
+        header=Header(frame_id="map", stamp=message_time.time_from_seconds(12.5)),
         child_frame_id="camera",
         transform=Transform(
             translation=Vector3(x=1, y=0, z=0), rotation=Quaternion(x=0, y=0, z=0, w=1)
@@ -90,10 +87,10 @@ def test_transform_is_captured_before_slow_detector(
     module._detector_backend = "owlv2"
     module._detector = MagicMock()
     module._text_prompts = ["cup"]
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(12.5)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(12.5)),
     )
     detections = ImageDetections2D(color, [])
 
@@ -115,7 +112,7 @@ def test_failed_lookup_does_not_retry_without_time_or_replace_coherent_cache(
     monkeypatch: Any, module: ObjectSceneRegistrationModule, module_factory, mocker
 ) -> None:
     old_transform = TransformStamped(
-        header=Header(frame_id="map", stamp=time_from_seconds(1)),
+        header=Header(frame_id="map", stamp=message_time.time_from_seconds(1)),
         child_frame_id="camera",
         transform=Transform(
             translation=Vector3(x=0, y=0, z=0), rotation=Quaternion(x=0, y=0, z=0, w=1)
@@ -162,17 +159,17 @@ def test_full_scene_pointcloud_uses_one_coherent_scene_snapshot(
             translation=Vector3(x=1, y=0.0, z=0.0), rotation=Quaternion(w=1, x=0.0, y=0.0, z=0.0)
         ),
     )
-    depth = image_from_array(
+    depth = image.from_array(
         np.ones((20, 20), dtype=np.float32), encoding="32FC1", header=depth.header
     )
-    module._camera_info = camera_info_from_intrinsics(100, 100, 10, 10, 20, 20, header=depth.header)
+    module._camera_info = camera_info.from_intrinsics(100, 100, 10, 10, 20, 20, header=depth.header)
     module._latest_scene_snapshot = (depth, transform)
     lookup = mocker.spy(module.tfbuffer, "get")
     result = module.get_full_scene_pointcloud(voxel_size=0.001)
     assert result is not None
     assert result.header.frame_id == "map"
     assert result.header.stamp == depth.header.stamp
-    points = pointcloud_xyz(result)
+    points = pointcloud.xyz(result)
     assert len(points) == 400
     np.testing.assert_allclose(points[:, 2], 1)
     assert points[:, 0].min() == pytest.approx(0.9)
@@ -186,10 +183,10 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any, module_factory, mock
     )
     module._detector = MagicMock()
     module._text_prompts = ["mug"]
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4.0)),
     )
     detections = ImageDetections2D(color, [])
     module._detector.query_detections.return_value = detections
@@ -229,10 +226,10 @@ def test_moondream_queries_each_configured_prompt(monkeypatch: Any, module_facto
     detector = MagicMock()
     module._detector = detector
     module._text_prompts = ["cup", "bottle"]
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4.0)),
     )
     cup = Detection2DBBox((0, 0, 1, 1), 0, -1, 0.9, "cup", 4.0, color)
     bottle = Detection2DBBox((1, 1, 2, 2), 0, -1, 0.8, "bottle", 4.0, color)
@@ -260,10 +257,10 @@ def test_moondream_queries_each_configured_prompt(monkeypatch: Any, module_facto
 
 def test_edgetam_refines_detector_output(monkeypatch: Any, module_factory, mocker) -> None:
     module = module_factory(target_frame="camera", segmentation_backend="edgetam")
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4.0)),
     )
     raw_detections = ImageDetections2D(color, [])
     segmented_detections = ImageDetections2D(color, [])
@@ -286,16 +283,16 @@ def test_request_driven_scan_processes_latest_aligned_frame(
 ) -> None:
     module = module_factory(target_frame="camera", detector_backend="owlv2", detect_on_request=True)
     module._object_db = MagicMock()
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4.0)),
     )
     depth = _image(4.0)
     module._on_aligned_frames((color, depth))
     output = MagicMock()
     result = Detection3DArray(
-        header=Header(frame_id="camera", stamp=time_from_seconds(4)), detections=[]
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4)), detections=[]
     )
 
     def process_images(got_color: Image, got_depth: Image) -> list[MagicMock]:
@@ -378,10 +375,10 @@ def test_scan_output_includes_pending_objects(monkeypatch: Any, module_factory, 
 def test_concurrent_request_scans_do_not_overlap(monkeypatch: Any, module_factory, mocker) -> None:
     module = module_factory(target_frame="camera", detector_backend="owlv2", detect_on_request=True)
     module._object_db = MagicMock()
-    color = image_from_array(
+    color = image.from_array(
         np.zeros((2, 2, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(4.0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(4.0)),
     )
     module._on_aligned_frames((color, _image(4.0)))
     first_started = Event()

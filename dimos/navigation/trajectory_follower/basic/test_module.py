@@ -15,7 +15,7 @@
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower, lookahead_distance
@@ -43,7 +43,7 @@ def module_and_tf():
 
 def _mount():
     return TransformStamped(
-        header=Header(frame_id="base_link", stamp=time_from_seconds(1.0)),
+        header=Header(frame_id="base_link", stamp=message_time.time_from_seconds(1.0)),
         child_frame_id="mid360_link",
         transform=Transform(
             translation=Vector3(0.0, 0.0, MOUNT_Z), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
@@ -53,7 +53,7 @@ def _mount():
 
 def _odom_edge():
     return TransformStamped(
-        header=Header(frame_id="odom", stamp=time_from_seconds(1.0)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_seconds(1.0)),
         child_frame_id="mid360_link",
         transform=Transform(
             translation=Vector3(1.0, 2.0, 3.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)

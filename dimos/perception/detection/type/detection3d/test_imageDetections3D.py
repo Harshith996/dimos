@@ -18,8 +18,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_from_array, image_view
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
@@ -30,10 +29,10 @@ from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 
 
 def _image(ts: float = 123.456) -> Image:
-    return image_from_array(
+    return image_utils.from_array(
         np.zeros((80, 100, 3), dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(ts)),
     )
 
 
@@ -54,7 +53,7 @@ def _marker(
         class_id=marker_id,
         confidence=confidence,
         name="",
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         center=Vector3(x=float(marker_id), y=2.0, z=3.0),
         size=Vector3(x=0.16, y=0.16, z=0.0),
@@ -78,7 +77,7 @@ def test_to_ros_detection3d_array_serializes_plain_bbox_results() -> None:
         class_id=9,
         confidence=0.75,
         name="box",
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         center=Vector3(x=1.0, y=2.0, z=3.0),
         size=Vector3(x=0.4, y=0.5, z=0.6),
@@ -113,7 +112,9 @@ def test_to_ros_detection3d_array_preserves_marker_wire_identity() -> None:
     msg = detections.to_ros_detection3d_array()
 
     assert msg.header.frame_id == "world"
-    assert to_seconds(msg.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert message_time.to_seconds(msg.header.stamp) == pytest.approx(
+        message_time.to_seconds(image.header.stamp)
+    )
     assert len(msg.detections) == 2
 
     first = msg.detections[0]
@@ -141,13 +142,17 @@ def test_to_ros_detection3d_array_uses_override_and_handles_empty_frames() -> No
     )
 
     assert msg.header.frame_id == "map"
-    assert to_seconds(msg.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert message_time.to_seconds(msg.header.stamp) == pytest.approx(
+        message_time.to_seconds(image.header.stamp)
+    )
     assert len(msg.detections) == 1
 
     empty = ImageDetections3D(image, []).to_ros_detection3d_array(frame_id="world")
 
     assert empty.header.frame_id == "world"
-    assert to_seconds(empty.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert message_time.to_seconds(empty.header.stamp) == pytest.approx(
+        message_time.to_seconds(image.header.stamp)
+    )
     assert len(empty.detections) == 0
 
 
@@ -166,9 +171,11 @@ def test_filter_and_annotated_image_work_for_3d_marker_detections() -> None:
     assert ros_msg.detections[0].id == "5"
 
     annotated = filtered.annotated_image()
-    assert to_seconds(annotated.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
-    assert np.count_nonzero(image_view(annotated)) > 0
-    assert np.count_nonzero(image_view(image)) == 0
+    assert message_time.to_seconds(annotated.header.stamp) == pytest.approx(
+        message_time.to_seconds(image.header.stamp)
+    )
+    assert np.count_nonzero(image_utils.view(annotated)) > 0
+    assert np.count_nonzero(image_utils.view(image)) == 0
 
 
 def test_marker_pose_and_array_keep_exact_source_stamp() -> None:

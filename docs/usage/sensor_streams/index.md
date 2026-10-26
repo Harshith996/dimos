@@ -57,12 +57,12 @@ and recording:
 
 ```python
 from dimos.messages.sensor_msgs.msg import Image
-from dimos.message_utils.image import image_view
+from dimos.message_utils import image as image_utils
 
 
 def mean_red(image: Image) -> float:
     assert image.encoding == "rgb8"
-    return float(image_view(image)[..., 0].mean())
+    return float(image_utils.view(image)[..., 0].mean())
 ```
 
 Configured calibration remains a generated `CameraInfo` instance. When no valid

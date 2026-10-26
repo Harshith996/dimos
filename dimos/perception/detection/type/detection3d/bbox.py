@@ -20,7 +20,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.message_utils.geometry import point_distance
+from dimos.message_utils import geometry
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -116,7 +116,7 @@ class Detection3DBBox(Detection2DBBox):
         if self.transform is None:
             return super().to_repr_dict()
         camera_pos = self.transform.transform.translation
-        distance = point_distance(
+        distance = geometry.point_distance(
             Point(x=self.center.x, y=self.center.y, z=self.center.z),
             Point(x=camera_pos.x, y=camera_pos.y, z=camera_pos.z),
         )

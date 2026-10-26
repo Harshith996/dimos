@@ -65,22 +65,7 @@ from scipy.spatial.transform import Rotation
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.geometry import (
-    compose_transform_values,
-    compose_transforms,
-    inverse_transform,
-    quaternion_from_matrix,
-    transform_matrix,
-)
-from dimos.message_utils.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_xyz,
-    pointcloud_to_open3d,
-    pointcloud_xyz,
-    transform_cloud,
-    voxel_downsample_cloud,
-)
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import geometry as geometry_utils, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -223,7 +208,9 @@ def keyframes_to_corrections(keyframes: Stream[Keyframe]) -> Stream[TransformSta
     for obs in keyframes:
         kf = obs.data
         # world_corrected <- body <- world_raw composes to world_corrected <- world_raw.
-        drift = compose_transforms(kf.optimized, inverse_transform(kf.local))
+        drift = geometry_utils.compose_transforms(
+            kf.optimized, geometry_utils.inverse_transform(kf.local)
+        )
         out.append(drift, ts=kf.ts)
     return out
 
@@ -292,7 +279,7 @@ def apply_corrections(
             if values is None:
                 yield obs
                 continue
-            corrected = compose_transform_values(
+            corrected = geometry_utils.compose_transform_values(
                 interp(obs.ts).transform,
                 Transform(translation=Vector3(*values[:3]), rotation=Quaternion(*values[3:])),
             )
@@ -329,8 +316,8 @@ class PoseGraph:
         return TransformStamped(
             header=Header(stamp=deepcopy(pose.header.stamp), frame_id=FRAME_WORLD_CORRECTED),
             child_frame_id=pose.child_frame_id,
-            transform=compose_transform_values(
-                self._correct(to_seconds(pose.header.stamp)).transform, pose.transform
+            transform=geometry_utils.compose_transform_values(
+                self._correct(message_time.to_seconds(pose.header.stamp)).transform, pose.transform
             ),
         )
 
@@ -372,9 +359,11 @@ def _r_t_from_transform(tf: TransformStamped) -> tuple[np.ndarray, np.ndarray]:
 
 def _transform_from_r_t(R: np.ndarray, t: np.ndarray, *, ts: float) -> TransformStamped:
     return TransformStamped(
-        header=Header(stamp=time_from_seconds(ts), frame_id=FRAME_WORLD_CORRECTED),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=FRAME_WORLD_CORRECTED),
         child_frame_id=FRAME_WORLD_RAW,
-        transform=Transform(translation=Vector3(*t), rotation=quaternion_from_matrix(R)),
+        transform=Transform(
+            translation=Vector3(*t), rotation=geometry_utils.quaternion_from_matrix(R)
+        ),
     )
 
 
@@ -446,9 +435,9 @@ class _PGO:
             return
         # Unregister: lift world-frame scan back into body frame using its
         # odom pose, so PGO can re-project it via the optimized pose later.
-        geometry = pointcloud_from_xyz(pointcloud_xyz(world_cloud), header=world_cloud.header)
-        body_cloud = voxel_downsample_cloud(
-            transform_cloud(
+        geometry = pointcloud.from_xyz(pointcloud.xyz(world_cloud), header=world_cloud.header)
+        body_cloud = pointcloud.voxel_downsample(
+            pointcloud.transform(
                 geometry,
                 _pose3_to_transform(
                     local_pose.inverse(),
@@ -589,11 +578,13 @@ class _PGO:
         lo = max(0, idx - half_range)
         hi = min(len(self._key_poses) - 1, idx + half_range)
         if lo > hi:
-            return pointcloud_from_xyz(
+            return pointcloud.from_xyz(
                 np.empty((0, 3)),
-                header=Header(stamp=time_from_seconds(0), frame_id=FRAME_WORLD_CORRECTED),
+                header=Header(
+                    stamp=message_time.time_from_seconds(0), frame_id=FRAME_WORLD_CORRECTED
+                ),
             )
-        cloud = transform_cloud(
+        cloud = pointcloud.transform(
             self._key_poses[lo].body_cloud,
             _pose3_to_transform(
                 self._key_poses[lo].optimized,
@@ -604,9 +595,9 @@ class _PGO:
         )
         for i in range(lo + 1, hi + 1):
             kp = self._key_poses[i]
-            cloud = concatenate_clouds(
+            cloud = pointcloud.concatenate(
                 cloud,
-                transform_cloud(
+                pointcloud.transform(
                     kp.body_cloud,
                     _pose3_to_transform(
                         kp.optimized,
@@ -616,7 +607,7 @@ class _PGO:
                     ),
                 ),
             )
-        return voxel_downsample_cloud(cloud, self._cfg.submap_resolution)
+        return pointcloud.voxel_downsample(cloud, self._cfg.submap_resolution)
 
     def _search_for_loops(
         self,
@@ -835,11 +826,11 @@ def _icp(
 
     if source.width * source.height < min_inliers or target.width * target.height < min_inliers:
         return _transform_from_r_t(
-            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+            np.eye(3), np.zeros(3), ts=message_time.to_seconds(source.header.stamp)
         ), float("inf")
 
-    src_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(source))
-    tgt_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud_to_open3d(target))
+    src_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud.to_open3d(source))
+    tgt_pcd = o3d.t.geometry.PointCloud.from_legacy(pointcloud.to_open3d(target))
 
     # Normals on the target enable point-to-plane ICP — converges tighter
     # than point-to-point on indoor scenes (walls give unambiguous normals
@@ -848,7 +839,7 @@ def _icp(
 
     device = src_pcd.device
     init_T = o3c.Tensor(
-        transform_matrix(init.transform) if init is not None else np.eye(4),
+        geometry_utils.transform_matrix(init.transform) if init is not None else np.eye(4),
         dtype=o3c.float64,
         device=device,
     )
@@ -872,16 +863,16 @@ def _icp(
             )
     except RuntimeError:
         return _transform_from_r_t(
-            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+            np.eye(3), np.zeros(3), ts=message_time.to_seconds(source.header.stamp)
         ), float("inf")
 
     if float(result.fitness) == 0.0:
         return _transform_from_r_t(
-            np.eye(3), np.zeros(3), ts=to_seconds(source.header.stamp)
+            np.eye(3), np.zeros(3), ts=message_time.to_seconds(source.header.stamp)
         ), float("inf")
 
     T_mat = result.transformation.numpy()
     rmse = float(result.inlier_rmse)
     return _transform_from_r_t(
-        T_mat[:3, :3], T_mat[:3, 3], ts=to_seconds(source.header.stamp)
+        T_mat[:3, :3], T_mat[:3, 3], ts=message_time.to_seconds(source.header.stamp)
     ), rmse * rmse

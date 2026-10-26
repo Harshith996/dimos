@@ -18,9 +18,7 @@ import pytest
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo_auto import (
@@ -37,10 +35,10 @@ from dimos.navigation.go2.loop_closure.pgo_auto import (
 
 def _pose(x: float, frame: str, ts: float) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id=frame, stamp=time_from_seconds(ts)),
+        header=Header(frame_id=frame, stamp=message_time.time_from_seconds(ts)),
         child_frame_id=FRAME_BODY,
         transform=Transform(
-            translation=Vector3(x=x, y=0.0, z=0.0), rotation=quaternion_from_euler(0, 0, 0)
+            translation=Vector3(x=x, y=0.0, z=0.0), rotation=geometry.quaternion_from_euler(0, 0, 0)
         ),
     )
 
@@ -61,7 +59,7 @@ def test_generated_corrections_preserve_frames_time_and_nearest_neighbor() -> No
             assert correction.transform.translation.x == expected
             assert correction.header.frame_id == FRAME_WORLD_CORRECTED
             assert correction.child_frame_id == FRAME_WORLD_RAW
-            assert to_seconds(correction.header.stamp) == ts
+            assert message_time.to_seconds(correction.header.stamp) == ts
         stream = store.stream("values", str)
         stream.append("payload", ts=0, pose=(1, 0, 0, 0, 0, 0, 1))
         stream.append("no pose", ts=2)
@@ -78,7 +76,7 @@ def test_empty_pgo_has_generated_identity_correction() -> None:
     graph = next(PGO()(iter(()))).data
     assert not graph.keyframes and not graph.loops
     correction = graph.correction_at(0)
-    assert to_seconds(correction.header.stamp) == 0
+    assert message_time.to_seconds(correction.header.stamp) == 0
     assert correction.transform.rotation.w == 1
     result = graph.correct(_pose(5, FRAME_WORLD_RAW, 0))
     assert result.transform.translation.x == 5
@@ -87,12 +85,12 @@ def test_empty_pgo_has_generated_identity_correction() -> None:
 
 def test_pgo_consumes_generated_cloud_without_mutating_input() -> None:
     pytest.importorskip("gtsam")
-    cloud = pointcloud_from_xyz(
+    cloud = pointcloud.from_xyz(
         np.array([[1.0, 0, 0], [1, 1, 0], [1, 0, 1]]),
-        header=Header(frame_id=FRAME_WORLD_RAW, stamp=time_from_seconds(12.25)),
+        header=Header(frame_id=FRAME_WORLD_RAW, stamp=message_time.time_from_seconds(12.25)),
     )
     before = cdr_encode(cloud)
-    quaternion = quaternion_from_euler(0, 0, 0.1)
+    quaternion = geometry.quaternion_from_euler(0, 0, 0.1)
     observation = Observation(
         ts=12.25,
         _data=cloud,

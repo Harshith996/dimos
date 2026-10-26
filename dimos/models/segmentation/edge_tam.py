@@ -27,7 +27,7 @@ from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 
-from dimos.message_utils.image import image_to_bgr, image_to_jpeg
+from dimos.message_utils import image as image_utils
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import default_torch_device
 from dimos.perception.detection.detectors.base import Detector
@@ -173,7 +173,7 @@ class EdgeTAMImageSegmenter:
             )
             self._mask_generators[points_per_side] = generator
 
-        rgb = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(image_utils.to_bgr(image), cv2.COLOR_BGR2RGB)
         amp = (
             torch.autocast("cuda", dtype=torch.bfloat16)
             if self._predictor.device.type == "cuda"
@@ -204,7 +204,7 @@ class EdgeTAMImageSegmenter:
             return ImageDetections2D(detections.image, [])
 
         image = detections.image
-        rgb = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(image_utils.to_bgr(image), cv2.COLOR_BGR2RGB)
 
         # bfloat16 autocast is CUDA-only; MPS runs in float32
         amp = (
@@ -255,7 +255,7 @@ class EdgeTAMProcessor(Detector):
         """Prepare frame for SAM2 (resize, normalize, convert to tensor)."""
         import cv2
 
-        cv_image = image_to_bgr(image)
+        cv_image = image_utils.to_bgr(image)
         rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         pil_image = PILImage.fromarray(rgb_image)
 
@@ -408,7 +408,7 @@ class EdgeTAMProcessor(Detector):
 def _temp_dir_context(image: Image) -> Generator[str, None, None]:
     path = tempfile.mkdtemp()
 
-    Path(path, "00000.jpg").write_bytes(image_to_jpeg(image))
+    Path(path, "00000.jpg").write_bytes(image_utils.to_jpeg(image))
 
     try:
         yield path

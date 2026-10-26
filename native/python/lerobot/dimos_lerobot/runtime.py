@@ -45,8 +45,7 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     RolloutStatus,
 )
-from dimos.message_utils.image import image_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import UInt32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -224,7 +223,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             logger.warning("Ignoring non-uint8 RGB policy image", image=str(image))
             return
         try:
-            pixels = image_view(image)
+            pixels = image_utils.view(image)
         except ValueError as error:
             logger.warning("Ignoring malformed policy image", error=str(error))
             return
@@ -239,7 +238,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         with self._lock:
             self._latest_image = (
                 np.array(pixels, copy=True, order="C"),
-                to_seconds(image.header.stamp),
+                message_time.to_seconds(image.header.stamp),
             )
 
     def _on_joint_state(self, state: JointState) -> None:
@@ -281,7 +280,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         max_age = self.config.max_observation_age_s
         if now - image_ts > max_age:
             raise RuntimeError(f"camera image is stale by {now - image_ts:.2f}s")
-        state_ts = to_seconds(state.header.stamp)
+        state_ts = message_time.to_seconds(state.header.stamp)
         if now - state_ts > max_age:
             raise RuntimeError(f"joint state is stale by {now - state_ts:.2f}s")
 
@@ -535,7 +534,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                     self._stop_event.is_set()
                     or (
                         self._latest_joint_state is not None
-                        and to_seconds(self._latest_joint_state.header.stamp) > previous_ts
+                        and message_time.to_seconds(self._latest_joint_state.header.stamp)
+                        > previous_ts
                     )
                 )
             )

@@ -20,8 +20,7 @@ import numpy as np
 from openai.types.chat import ChatCompletion
 import pytest
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import header_now
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
@@ -45,8 +44,10 @@ MOCK_QWEN_RESPONSE = """
 
 def test_query_detections_mocked(mocker) -> None:
     """Test query_detections with mocked API response (no API key required)."""
-    image = image_from_array(
-        np.zeros((864, 1152, 3), dtype=np.uint8), encoding="rgb8", header=header_now("camera")
+    image = image_utils.from_array(
+        np.zeros((864, 1152, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=message_time.header_now("camera"),
     )
 
     # Create model and mock the query method
@@ -120,7 +121,9 @@ def test_qwen_encodes_source_pixels_and_keeps_numpy_compatibility(mocker, as_arr
         ],
     )
     pixels = np.full((20, 40, 3), [0, 0, 255], dtype=np.uint8)
-    image = image_from_array(pixels, encoding="bgr8", header=header_now("camera"))
+    image = image_utils.from_array(
+        pixels, encoding="bgr8", header=message_time.header_now("camera")
+    )
     model = QwenVlModel(api_key="offline-test", auto_resize=(20, 20))
     with pytest.warns(DeprecationWarning) if as_array else nullcontext():
         assert model.query(pixels if as_array else image, "color?") == "red"

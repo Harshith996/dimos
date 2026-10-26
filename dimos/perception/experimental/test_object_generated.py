@@ -17,10 +17,7 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
-from dimos.message_utils.camera_info import camera_info_from_intrinsics
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import pointcloud_from_xyz_rgb, pointcloud_rgb, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import camera_info, image, pointcloud, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -41,7 +38,7 @@ from dimos.perception.experimental.objectDB import ObjectDB
 
 
 def _object(object_id, x, timestamp, source_stamp=None):
-    stamp = time_from_seconds(timestamp) if source_stamp is None else source_stamp
+    stamp = message_time.time_from_seconds(timestamp) if source_stamp is None else source_stamp
     return Object(
         object_id=object_id,
         name="cup",
@@ -115,13 +112,13 @@ def test_spatial_deduplication_and_nearest_lookup_use_generated_centers():
 def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
     obj = _object("abc", 0.2, 1.0)
     stamp = Time(sec=1700000000, nanosec=987654321)
-    obj.pointcloud = pointcloud_from_xyz_rgb(
+    obj.pointcloud = pointcloud.from_xyz_rgb(
         np.array([[1.0, 2.0, 3.0]], dtype=np.float32),
         np.array([[255, 128, 0]], dtype=np.uint8),
         header=Header(frame_id="world", stamp=stamp),
     )
     pixels = np.zeros((2, 3, 3), dtype=np.uint8)
-    obj.image = image_from_array(pixels, encoding="rgb8", header=obj.pointcloud.header)
+    obj.image = image.from_array(pixels, encoding="rgb8", header=obj.pointcloud.header)
     exported = obj.to_dict()
     np.testing.assert_array_equal(exported["pointcloud"][0], [[1.0, 2.0, 3.0]])
     np.testing.assert_allclose(exported["pointcloud"][1], [[1.0, 128 / 255.0, 0.0]])
@@ -129,8 +126,8 @@ def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
     merged = aggregate_pointclouds([obj])
     decoded = cdr_decode(cdr_encode(merged), PointCloud2)
     assert decoded.header.stamp == stamp and decoded.header.frame_id == "world"
-    np.testing.assert_array_equal(pointcloud_xyz(decoded), [[1.0, 2.0, 3.0]])
-    assert pointcloud_rgb(decoded) is not None
+    np.testing.assert_array_equal(pointcloud.xyz(decoded), [[1.0, 2.0, 3.0]])
+    assert pointcloud.rgb(decoded) is not None
     assert aggregate_pointclouds([]).width == 0
 
 
@@ -155,8 +152,8 @@ def test_actual_rgbd_object_projection_keeps_color_and_depth_source_headers():
     depth_header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
     pixels = np.zeros((32, 32, 3), dtype=np.uint8)
     pixels[:, :, 0] = 255
-    color = image_from_array(pixels, encoding="rgb8", header=color_header)
-    depth = image_from_array(
+    color = image.from_array(pixels, encoding="rgb8", header=color_header)
+    depth = image.from_array(
         np.full((32, 32), 2, dtype=np.float32), encoding="32FC1", header=depth_header
     )
     mask = np.zeros((32, 32), dtype=np.uint8)
@@ -171,7 +168,7 @@ def test_actual_rgbd_object_projection_keeps_color_and_depth_source_headers():
         image=color,
         mask=mask,
     )
-    camera = camera_info_from_intrinsics(100, 100, 16, 16, 32, 32, header=color_header)
+    camera = camera_info.from_intrinsics(100, 100, 16, 16, 32, 32, header=color_header)
     mount = TransformStamped(
         header=Header(frame_id="world", stamp=Time(sec=1, nanosec=0)),
         child_frame_id="camera",
@@ -194,8 +191,8 @@ def test_actual_rgbd_object_projection_keeps_color_and_depth_source_headers():
     assert obj.pose.header.stamp == color_header.stamp
     assert obj.pointcloud.header.stamp == depth_header.stamp
     assert obj.pose.header.frame_id == obj.pointcloud.header.frame_id == "world"
-    np.testing.assert_allclose(pointcloud_xyz(obj.pointcloud)[:, 2], 2)
-    np.testing.assert_array_equal(pointcloud_rgb(obj.pointcloud)[:, 0], 255)
+    np.testing.assert_allclose(pointcloud.xyz(obj.pointcloud)[:, 2], 2)
+    np.testing.assert_array_equal(pointcloud.rgb(obj.pointcloud)[:, 0], 255)
     assert 0.9 < obj.center.x < 1.1
     wire = cdr_decode(cdr_encode(obj.to_detection3d_msg()), Detection3D)
     assert wire.header == obj.pose.header

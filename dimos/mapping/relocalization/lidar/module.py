@@ -29,7 +29,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
     RelocalizeConfig,
 )
 from dimos.mapping.relocalization.module import Config, RelocalizationModule
-from dimos.message_utils.pointcloud import concatenate_clouds, pointcloud_to_open3d
+from dimos.message_utils import pointcloud
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -51,7 +51,7 @@ def window(
         ops.do_action(held.append),
         ops.throttle_first(interval),
         ops.filter(lambda _: len(held) >= cfg.min_frames),
-        ops.map(lambda _: reduce(concatenate_clouds, held)),
+        ops.map(lambda _: reduce(pointcloud.concatenate, held)),
     )
 
 
@@ -92,7 +92,7 @@ class CloudRelocalization(RelocalizationModule):
         # Downsampling the premap and computing its normals and FPFH is the
         # pipeline's dominant cost, so it is a startup cost, not a per-fix one.
         self._relocalizer = LidarRelocalizer(
-            pointcloud_to_open3d(self.premap), self.config.relocalize
+            pointcloud.to_open3d(self.premap), self.config.relocalize
         )
         self.register_disposable(
             backpressure(
@@ -123,7 +123,7 @@ class CloudRelocalization(RelocalizationModule):
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.relocalize(
-                pointcloud_to_open3d(msg), self.config.world_frame, self.config.map_frame
+                pointcloud.to_open3d(msg), self.config.world_frame, self.config.map_frame
             )
         except Exception:
             logger.exception("relocalize() failed")

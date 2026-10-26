@@ -18,7 +18,7 @@ from reactivex.observable import Observable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
@@ -29,11 +29,11 @@ from dimos.utils.reactive import backpressure
 
 
 def _timed_image(image: Image) -> TimestampedData[Image]:
-    return TimestampedData(image, to_nanoseconds(image.header.stamp))
+    return TimestampedData(image, message_time.to_nanoseconds(image.header.stamp))
 
 
 def _timed_detections(detections: Detection2DArray) -> TimestampedData[Detection2DArray]:
-    return TimestampedData(detections, to_nanoseconds(detections.header.stamp))
+    return TimestampedData(detections, message_time.to_nanoseconds(detections.header.stamp))
 
 
 def _has_detections(detections: Detection2DArray) -> bool:

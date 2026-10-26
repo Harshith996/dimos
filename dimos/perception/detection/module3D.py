@@ -19,7 +19,7 @@ from reactivex.observable import Observable
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -40,7 +40,7 @@ from dimos.utils.reactive import backpressure
 
 
 def _timed_cloud(cloud: PointCloud2) -> TimestampedData[PointCloud2]:
-    return TimestampedData(cloud, to_seconds(cloud.header.stamp))
+    return TimestampedData(cloud, message_time.to_seconds(cloud.header.stamp))
 
 
 class Detection3DModule(Detection2DModule):
@@ -151,7 +151,10 @@ class Detection3DModule(Detection2DModule):
 
         pc = self.pointcloud.get_next()
         transform = self.tfbuffer.get(
-            "camera_optical", pc.header.frame_id, to_seconds(detections.image.header.stamp), 5.0
+            "camera_optical",
+            pc.header.frame_id,
+            message_time.to_seconds(detections.image.header.stamp),
+            5.0,
         )
 
         detections3d = self.process_frame(detections, pc, transform)
@@ -178,7 +181,10 @@ class Detection3DModule(Detection2DModule):
             detections, timed_pc = args
             pc = timed_pc.value
             transform = self.tfbuffer.get(
-                "camera_optical", pc.header.frame_id, to_seconds(detections.image.header.stamp), 5.0
+                "camera_optical",
+                pc.header.frame_id,
+                message_time.to_seconds(detections.image.header.stamp),
+                5.0,
             )
             return self.process_frame(detections, pc, transform)
 

@@ -24,7 +24,7 @@ from dimos.core.transport import LCMTransport
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.transform import SpeedLimit
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
@@ -63,13 +63,14 @@ def _marker(image: Image, marker_id: int) -> Detection3DMarker:
         class_id=marker_id,
         confidence=1.0,
         name="",
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         image=image,
         center=Vector3(x=float(marker_id), y=2.0, z=3.0),
         size=Vector3(x=0.18, y=0.18, z=0.0),
         transform=TransformStamped(
             header=Header(
-                frame_id="world", stamp=time_from_seconds(to_seconds(image.header.stamp))
+                frame_id="world",
+                stamp=message_time.time_from_seconds(message_time.to_seconds(image.header.stamp)),
             ),
             child_frame_id="camera_optical",
             transform=Transform(
@@ -105,7 +106,7 @@ def _marker_obs(
         tags["marker_frame_index"] = marker_index
     return Observation(
         id=obs_id,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         data_type=Detection3DMarker if marker is not None else type(None),
         pose=(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
         tags=tags,
@@ -143,14 +144,18 @@ def test_markers_per_frame_groups_markers_and_preserves_empty_frames() -> None:
     assert len(outputs) == 2
     first = outputs[0].data
     assert first.header.frame_id == "world"
-    assert to_seconds(first.header.stamp) == pytest.approx(to_seconds(image.header.stamp))
+    assert message_time.to_seconds(first.header.stamp) == pytest.approx(
+        message_time.to_seconds(image.header.stamp)
+    )
     assert len(first.detections) == 2
     assert [det.id for det in first.detections] == ["7", "42"]
     assert outputs[0].pose_tuple == pytest.approx((1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0))
 
     empty = outputs[1].data
     assert empty.header.frame_id == "world"
-    assert to_seconds(empty.header.stamp) == pytest.approx(to_seconds(empty_image.header.stamp))
+    assert message_time.to_seconds(empty.header.stamp) == pytest.approx(
+        message_time.to_seconds(empty_image.header.stamp)
+    )
     assert len(empty.detections) == 0
     assert empty.detections == []
 
@@ -163,7 +168,7 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
 
     module = MarkerDetectionStreamModule(
         marker_length_m=marker_length_m,
-        camera_info=camera_info(to_seconds(marker_image.header.stamp)),
+        camera_info=camera_info(message_time.to_seconds(marker_image.header.stamp)),
         quality_window_s=0.01,
     )
     try:
@@ -171,12 +176,12 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
             stream = store.stream("color_image", Image)
             stream.append(
                 marker_image,
-                ts=to_seconds(marker_image.header.stamp),
+                ts=message_time.to_seconds(marker_image.header.stamp),
                 pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
             )
             stream.append(
                 empty_image,
-                ts=to_seconds(empty_image.header.stamp),
+                ts=message_time.to_seconds(empty_image.header.stamp),
                 pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
             )
 
@@ -192,8 +197,8 @@ def test_marker_detection_stream_pipeline_outputs_arrays_for_marker_and_empty_fr
     )
     assert outputs[0].detections[0].bbox.size.x == pytest.approx(marker_length_m)
 
-    assert to_seconds(outputs[1].header.stamp) == pytest.approx(
-        to_seconds(empty_image.header.stamp)
+    assert message_time.to_seconds(outputs[1].header.stamp) == pytest.approx(
+        message_time.to_seconds(empty_image.header.stamp)
     )
     assert len(outputs[1].detections) == 0
     assert outputs[1].detections == []
@@ -224,7 +229,7 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
             with MemoryStore() as store:
                 stream = store.stream("color_image", Image)
                 for image, pose in zip(images, poses, strict=True):
-                    stream.append(image, ts=to_seconds(image.header.stamp), pose=pose)
+                    stream.append(image, ts=message_time.to_seconds(image.header.stamp), pose=pose)
                 return [obs.data for obs in module.pipeline(stream).to_list()]
         finally:
             module.stop()
@@ -232,9 +237,11 @@ def test_marker_detection_stream_pipeline_speed_limit_is_config_gated() -> None:
     disabled = run_pipeline(speed_limit_enabled=False)
     enabled = run_pipeline(speed_limit_enabled=True)
 
-    assert [to_seconds(msg.header.stamp) for msg in disabled] == pytest.approx([10.0, 11.0, 12.0])
+    assert [message_time.to_seconds(msg.header.stamp) for msg in disabled] == pytest.approx(
+        [10.0, 11.0, 12.0]
+    )
     assert all(len(msg.detections) == 0 for msg in disabled)
-    assert [to_seconds(msg.header.stamp) for msg in enabled] == pytest.approx([12.0])
+    assert [message_time.to_seconds(msg.header.stamp) for msg in enabled] == pytest.approx([12.0])
     assert len(enabled[0].detections) == 0
 
 
@@ -243,9 +250,12 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
     timestamp, mocker, tf_module_factory
 ) -> None:
     image = blank_image(ts=timestamp)
-    info = camera_info(to_seconds(image.header.stamp))
+    info = camera_info(message_time.to_seconds(image.header.stamp))
     t_world_optical = TransformStamped(
-        header=Header(frame_id="world", stamp=time_from_seconds(to_seconds(image.header.stamp))),
+        header=Header(
+            frame_id="world",
+            stamp=message_time.time_from_seconds(message_time.to_seconds(image.header.stamp)),
+        ),
         child_frame_id="camera_optical",
         transform=Transform(
             translation=Vector3(x=4.0, y=5.0, z=6.0),
@@ -266,10 +276,12 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
     finally:
         module.stop()
 
-    lookup.assert_called_once_with("world", "camera_optical", to_seconds(image.header.stamp), 0.25)
+    lookup.assert_called_once_with(
+        "world", "camera_optical", message_time.to_seconds(image.header.stamp), 0.25
+    )
     assert len(observations) == 1
     assert observations[0].data is image
-    assert observations[0].ts == pytest.approx(to_seconds(image.header.stamp))
+    assert observations[0].ts == pytest.approx(message_time.to_seconds(image.header.stamp))
     assert observations[0].pose_tuple == pytest.approx((4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0))
 
 
@@ -285,7 +297,7 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf(mocker, tf_module
     finally:
         module.stop()
 
-    module = tf_module_factory(camera_info=camera_info(to_seconds(image.header.stamp)))
+    module = tf_module_factory(camera_info=camera_info(message_time.to_seconds(image.header.stamp)))
     lookup = mocker.spy(module.tfbuffer, "get")
     try:
         with MemoryStore() as store:

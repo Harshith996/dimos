@@ -25,14 +25,7 @@ from dimos.mapping.cli.map import _accumulate, _camera_info_static, _denoise
 from dimos.memory.cli import dataset
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.pointcloud import (
-    pointcloud_from_xyz,
-    pointcloud_from_xyz_rgb,
-    pointcloud_stamps,
-    pointcloud_xyz,
-)
-from dimos.message_utils.time import time_from_nanoseconds, time_from_seconds
+from dimos.message_utils import image, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -62,9 +55,9 @@ def recorded_dataset(tmp_path):
         images = store.stream("color_image", Image)
         odom = store.stream("odom", PoseStamped)
         for index in range(3):
-            stamp = time_from_nanoseconds(1700000000123456789 + index * 1000000000)
+            stamp = message_time.time_from_nanoseconds(1700000000123456789 + index * 1000000000)
             header = Header(stamp=stamp, frame_id="world")
-            cloud = pointcloud_from_xyz(
+            cloud = pointcloud.from_xyz(
                 np.array([[index + 1.025, 0.025, 0.025]], dtype=np.float32), header=header
             )
             pose = (float(index + 1), 0, 0, 0, 0, 0.05, 0.998749217771909)
@@ -79,7 +72,7 @@ def recorded_dataset(tmp_path):
             )
             header.frame_id = "camera_optical"
             images.append(
-                image_from_array(pixels, encoding="rgb8", header=header), ts=10.0 + index, pose=pose
+                image.from_array(pixels, encoding="rgb8", header=header), ts=10.0 + index, pose=pose
             )
     return path
 
@@ -124,9 +117,9 @@ def test_global_cli_exports_cdr_and_view_reads_it(
     cloud = decode(exported.read_bytes(), PointCloud2)
     assert cloud.width == 3 and cloud.height == 1
     assert cloud.header.frame_id == "world_corrected"
-    assert cloud.header.stamp == time_from_nanoseconds(1700000002123456789)
+    assert cloud.header.stamp == message_time.time_from_nanoseconds(1700000002123456789)
     np.testing.assert_allclose(
-        np.sort(pointcloud_xyz(cloud)[:, 0]), [1.025, 2.025, 3.025], atol=1e-6
+        np.sort(pointcloud.xyz(cloud)[:, 0]), [1.025, 2.025, 3.025], atol=1e-6
     )
     invoke("view", str(exported), "--out", str(tmp_path / "view.rrd"))
     visible = [
@@ -197,13 +190,13 @@ def test_replay_marker_cli_detects_actual_apriltag(recorded_dataset, recording_c
 
 
 def test_registration_then_drift_correction_preserves_header_and_input():
-    header = Header(frame_id="lidar", stamp=time_from_nanoseconds(1700000000123456789))
-    cloud = pointcloud_from_xyz(np.array([[0, 0, 0]], dtype=np.float32), header=header)
+    header = Header(frame_id="lidar", stamp=message_time.time_from_nanoseconds(1700000000123456789))
+    cloud = pointcloud.from_xyz(np.array([[0, 0, 0]], dtype=np.float32), header=header)
     before = encode(cloud)
 
     def transform(x, frame, child):
         return TransformStamped(
-            header=Header(frame_id=frame, stamp=time_from_seconds(10)),
+            header=Header(frame_id=frame, stamp=message_time.time_from_seconds(10)),
             child_frame_id=child,
             transform=Transform(translation=Vector3(x, 0, 0), rotation=Quaternion(0, 0, 0, 1)),
         )
@@ -227,7 +220,7 @@ def test_registration_then_drift_correction_preserves_header_and_input():
         register=lambda _: transform(1, "world", "lidar"),
     )
     assert output is not None
-    np.testing.assert_allclose(pointcloud_xyz(output), [[3.025, 0.025, 0.025]], atol=1e-6)
+    np.testing.assert_allclose(pointcloud.xyz(output), [[3.025, 0.025, 0.025]], atol=1e-6)
     assert output.header.frame_id == "world_corrected" and output.header.stamp == header.stamp
     assert encode(cloud) == before
 
@@ -235,23 +228,23 @@ def test_registration_then_drift_correction_preserves_header_and_input():
 def test_denoise_retains_point_capture_times_and_exact_header():
     rng = np.random.default_rng(7)
     points = np.concatenate([rng.normal(0, 0.03, (100, 3)), [[100, 100, 100]]])
-    header = Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789))
-    cloud = pointcloud_from_xyz(points, header=header, stamps=np.arange(101, dtype=np.float64))
+    header = Header(frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789))
+    cloud = pointcloud.from_xyz(points, header=header, stamps=np.arange(101, dtype=np.float64))
     before = encode(cloud)
     output = _denoise(cloud)
     assert output is not None and output.width < cloud.width
-    assert np.linalg.norm(pointcloud_xyz(output), axis=1).max() < 1
+    assert np.linalg.norm(pointcloud.xyz(output), axis=1).max() < 1
     assert output.header == header and output.fields == cloud.fields
-    assert np.max(pointcloud_stamps(output)) < 100
+    assert np.max(pointcloud.stamps(output)) < 100
     assert encode(cloud) == before
 
 
 @pytest.mark.parametrize("mode", ["points", "boxes", "spheres"])
 def test_cloud_rendering_filters_geometry_and_own_colors_together(mode):
-    cloud = pointcloud_from_xyz_rgb(
+    cloud = pointcloud.from_xyz_rgb(
         np.array([[1, 2, -1], [3, 4, 2]], dtype=np.float32),
         np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8),
-        header=Header(frame_id="world", stamp=time_from_seconds(0)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(0)),
     )
     before = encode(cloud)
     value = cloud_archetype(cloud, voxel_size=0.2, mode=mode, bottom_cutoff=0)
@@ -302,10 +295,10 @@ def test_global_markers_compose_external_pose_stream_and_pgo(
 
 def test_global_cli_registers_cdr_sensor_cloud_using_recorded_tf(recording_calls, tmp_path):
     path = tmp_path / "sensor.db"
-    header = Header(frame_id="lidar", stamp=time_from_nanoseconds(1700000000123456789))
-    cloud = pointcloud_from_xyz(np.array([[1.025, 0.025, 0.025]], dtype=np.float32), header=header)
+    header = Header(frame_id="lidar", stamp=message_time.time_from_nanoseconds(1700000000123456789))
+    cloud = pointcloud.from_xyz(np.array([[1.025, 0.025, 0.025]], dtype=np.float32), header=header)
     transform = TransformStamped(
-        header=Header(frame_id="map", stamp=time_from_seconds(10)),
+        header=Header(frame_id="map", stamp=message_time.time_from_seconds(10)),
         child_frame_id="lidar",
         transform=Transform(translation=Vector3(2, 0, 0), rotation=Quaternion(0, 0, 0, 1)),
     )

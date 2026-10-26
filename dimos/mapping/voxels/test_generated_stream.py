@@ -30,8 +30,7 @@ from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.mapping.voxels.module import VoxelGridMapper, VoxelMapTransformer
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -100,9 +99,9 @@ def test_generated_stream_retains_exact_headers_batch_tail_and_observation_metad
 ):
     frames = []
     for index in range(3):
-        cloud = pointcloud_from_xyz(
+        cloud = pointcloud.from_xyz(
             np.array([[0.025 + 0.05 * index, 0.025, 0.025]], dtype=np.float32),
-            header=Header(frame_id="world", stamp=time_from_nanoseconds(base + index)),
+            header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(base + index)),
         )
         frames.append(
             Observation(ts=42 + index, data_type=PointCloud2, _data=cloud, tags={"source": "lidar"})
@@ -118,7 +117,7 @@ def test_generated_stream_retains_exact_headers_batch_tail_and_observation_metad
 
     result = list(transform(iter(frames)))
 
-    assert [to_nanoseconds(item.data.header.stamp) for item in result] == [
+    assert [message_time.to_nanoseconds(item.data.header.stamp) for item in result] == [
         base + index for index in indices
     ]
     assert [item.tags["frame_count"] for item in result] == [index + 1 for index in indices]
@@ -126,19 +125,19 @@ def test_generated_stream_retains_exact_headers_batch_tail_and_observation_metad
     assert all(item.tags["source"] == "lidar" and item.pose is None for item in result)
     assert all(item.data.header.frame_id == "map" for item in result)
     received = decode(encode(result[-1].data), PointCloud2)
-    assert len(pointcloud_xyz(received)) == 3
+    assert len(pointcloud.xyz(received)) == 3
     assert frames[-1].data.header == original
 
 
 def test_generated_empty_and_missing_points_keep_zero_source_stamp():
-    header = Header(frame_id="world", stamp=time_from_nanoseconds(0))
-    cloud = pointcloud_from_xyz(np.array([[np.nan, 0, 0]], dtype=np.float32), header=header)
+    header = Header(frame_id="world", stamp=message_time.time_from_nanoseconds(0))
+    cloud = pointcloud.from_xyz(np.array([[np.nan, 0, 0]], dtype=np.float32), header=header)
     transform = VoxelMapTransformer(device="CPU:0", show_startup_log=False)
 
     result = list(transform(iter([Observation(ts=123, _data=cloud, data_type=PointCloud2)])))
 
-    assert pointcloud_xyz(result[0].data).shape == (0, 3)
-    assert to_nanoseconds(result[0].data.header.stamp) == 0
+    assert pointcloud.xyz(result[0].data).shape == (0, 3)
+    assert message_time.to_nanoseconds(result[0].data.header.stamp) == 0
     assert result[0].ts == 123
 
 
@@ -163,9 +162,11 @@ def test_voxel_mapper_real_generated_ports_accumulate_over_cdr_memory_transport(
 
         cleanup.callback(outgoing.subscribe(receive))
         module.start()
-        source = pointcloud_from_xyz(
+        source = pointcloud.from_xyz(
             np.array([[0.025, 0.025, 0.025]], dtype=np.float32),
-            header=Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789)),
+            header=Header(
+                frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789)
+            ),
         )
 
         incoming.broadcast(None, source)
@@ -173,7 +174,7 @@ def test_voxel_mapper_real_generated_ports_accumulate_over_cdr_memory_transport(
         assert ready.wait(5)
         assert len(received) == 1
         assert received[0].header == source.header
-        assert keys(pointcloud_xyz(received[0])) == {(0, 0, 0)}
+        assert keys(pointcloud.xyz(received[0])) == {(0, 0, 0)}
 
 
 def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr(owned_scheduler):
@@ -205,9 +206,11 @@ def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr(owned
         cleanup.callback(cost_wire.subscribe(receive))
         cost.start()
         voxel.start()
-        cloud = pointcloud_from_xyz(
+        cloud = pointcloud.from_xyz(
             np.array([[0.025, 0.025, 0.225], [1.025, 1.025, 0.025]], dtype=np.float32),
-            header=Header(frame_id="world", stamp=time_from_nanoseconds(1700000000123456789)),
+            header=Header(
+                frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789)
+            ),
         )
 
         source_wire.broadcast(None, cloud)

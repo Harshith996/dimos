@@ -33,8 +33,7 @@ from dimos.memory.module import StreamModule, stream_to_port
 from dimos.memory.store.null import NullStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
-from dimos.message_utils.image import image_sharpness
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection3DArray
@@ -78,7 +77,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
 
     def pipeline(self, stream: Stream[Image]) -> Stream[Detection3DArray]:
         result: Stream[Any] = stream.transform(
-            QualityWindow(image_sharpness, window=self.config.quality_window_s)
+            QualityWindow(image_utils.sharpness, window=self.config.quality_window_s)
         )
         if self.config.speed_limit_enabled:
             result = result.transform(
@@ -121,7 +120,7 @@ class MarkerDetectionStreamModule(StreamModule[Image, Detection3DArray]):
             logger.debug("MarkerDetectionStreamModule: no CameraInfo yet; skipping frame")
             return
 
-        ts = to_seconds(image.header.stamp)
+        ts = message_time.to_seconds(image.header.stamp)
         optical = camera_optical_frame_id(image, info)
         t_world_optical = self.tfbuffer.get(
             self.config.world_frame,

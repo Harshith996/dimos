@@ -31,7 +31,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils.time import time_from_seconds, to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -58,7 +58,7 @@ def module(mocker) -> Iterator[Go2CommandModule]:
 def _twist(ts: float, *, vx: float = 0.3) -> TwistStamped:
     """A drive frame at time ``ts`` (vx=0.3 moving, vx=0 idle-joystick)."""
     t = TwistStamped(
-        header=Header(stamp=time_from_seconds(ts), frame_id="operator"),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="operator"),
         twist=Twist(linear=Vector3(vx, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
     )
     return t
@@ -139,7 +139,7 @@ def test_drive_drops_in_window_future_without_poisoning_guard(module: Go2Command
 
 def test_drive_drops_out_of_order(module: Go2CommandModule) -> None:
     ts = time.time()
-    module._last_cmd_ns = to_nanoseconds(time_from_seconds(ts))
+    module._last_cmd_ns = message_time.to_nanoseconds(message_time.time_from_seconds(ts))
     module._on_cmd_vel_in(_twist(ts - 0.1))
     module.tele_cmd_vel.publish.assert_not_called()
 
@@ -148,7 +148,7 @@ def test_drive_forwards_fresh(module: Go2CommandModule) -> None:
     ts = time.time()
     module._on_cmd_vel_in(_twist(ts))
     module.tele_cmd_vel.publish.assert_called_once()
-    assert module._last_cmd_ns == to_nanoseconds(time_from_seconds(ts))
+    assert module._last_cmd_ns == message_time.to_nanoseconds(message_time.time_from_seconds(ts))
 
 
 def test_drive_suppresses_idle_zero_stream(module: Go2CommandModule) -> None:

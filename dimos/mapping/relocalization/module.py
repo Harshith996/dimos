@@ -50,8 +50,7 @@ from reactivex import Observable, Subject, operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.message_utils.geometry import quaternion_euler
-from dimos.message_utils.time import header_now
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
@@ -64,7 +63,7 @@ MAP_SUFFIX = ".pc2.cdr"
 
 
 def yaw_deg(tf: TransformStamped) -> float:
-    return math.degrees(quaternion_euler(tf.transform.rotation)[2])
+    return math.degrees(geometry.quaternion_euler(tf.transform.rotation)[2])
 
 
 def fix_stream(
@@ -125,7 +124,7 @@ class RelocalizationModule(Module):
 
     def _publish_fix(self, fix: TransformStamped) -> None:
         published = deepcopy(fix)
-        published.header = header_now(fix.header.frame_id)
+        published.header = message_time.header_now(fix.header.frame_id)
         self.tf.publish(TFMessage(transforms=[published]))
 
     def _load_premap(self, map_file: str) -> None:

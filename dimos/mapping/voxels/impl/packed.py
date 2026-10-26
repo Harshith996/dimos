@@ -20,8 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -101,11 +100,11 @@ class PackedVoxels:
         if not len(self._keys):
             return
         keys = self._pack(
-            pointcloud_xyz(
+            pointcloud.xyz(
                 place(
-                    pointcloud_from_xyz(
+                    pointcloud.from_xyz(
                         self._centers(self._raw),
-                        header=Header(stamp=time_from_seconds(0), frame_id=""),
+                        header=Header(stamp=message_time.time_from_seconds(0), frame_id=""),
                         stamps=self._ts,
                     )
                 )

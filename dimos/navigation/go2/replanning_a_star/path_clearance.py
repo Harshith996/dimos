@@ -19,7 +19,7 @@ from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_values
 from dimos.mapping.occupancy.path_mask import make_path_mask
-from dimos.message_utils.geometry import point_distance
+from dimos.message_utils import geometry
 from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
@@ -92,7 +92,7 @@ class PathClearance:
 
     def _pose_distance(self, index1: int, index2: int) -> float:
         if isinstance(self._path, CdrPath):
-            return point_distance(
+            return geometry.point_distance(
                 self._path.poses[index1].pose.position, self._path.poses[index2].pose.position
             )
         p1 = self._path.poses[index1].position

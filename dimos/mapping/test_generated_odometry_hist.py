@@ -22,7 +22,7 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -50,7 +50,7 @@ class MemoryRPC(LCMRPC):
 
 def odometry(ns, x):
     return Odometry(
-        header=Header(frame_id="odom", stamp=time_from_nanoseconds(ns)),
+        header=Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(ns)),
         child_frame_id="base_link",
         pose=PoseWithCovariance(
             pose=Pose(position=Point(x=x, y=2, z=3), orientation=Quaternion(w=1, x=0, y=0, z=0)),
@@ -100,15 +100,15 @@ def test_interval_queue_pose_stamps_replay_restart_and_bound_are_preserved(histo
 
     _send(module, odometry(base, 0))
     assert ready.wait(5)
-    assert to_nanoseconds(received[-1].header.stamp) == base
+    assert message_time.to_nanoseconds(received[-1].header.stamp) == base
     ready.clear()
     _send(module, odometry(base + 50000000, 0.1))
     assert len(received) == 1
     _send(module, odometry(base + 100000000, 0.1))
     assert ready.wait(5)
     assert len(received) == 2
-    assert to_nanoseconds(received[-1].header.stamp) == base + 100000000
-    assert [to_nanoseconds(value.header.stamp) for value in received[-1].poses] == [
+    assert message_time.to_nanoseconds(received[-1].header.stamp) == base + 100000000
+    assert [message_time.to_nanoseconds(value.header.stamp) for value in received[-1].poses] == [
         base,
         base + 50000000,
     ]
@@ -119,8 +119,8 @@ def test_interval_queue_pose_stamps_replay_restart_and_bound_are_preserved(histo
     assert ready.wait(5)
     assert len(received) == 3
     assert len(received[-1].poses) == 3
-    assert to_nanoseconds(received[-1].header.stamp) == base - 1
-    assert [to_nanoseconds(value.header.stamp) for value in received[-1].poses] == [
+    assert message_time.to_nanoseconds(received[-1].header.stamp) == base - 1
+    assert [message_time.to_nanoseconds(value.header.stamp) for value in received[-1].poses] == [
         base + 50000000,
         base + 100000001,
         base - 1,
@@ -148,7 +148,7 @@ def test_snapshot_ownership_step_threshold_and_frame_override(history_factory, o
     assert [pose.pose.position.x for pose in received[-1].poses] == [0, 0.1]
     assert received[-1].header.frame_id == expected
     assert [pose.header.frame_id for pose in received[-1].poses] == [expected, expected]
-    assert to_nanoseconds(received[-1].header.stamp) == 1700000000123456791
+    assert message_time.to_nanoseconds(received[-1].header.stamp) == 1700000000123456791
 
 
 def test_real_input_port_dispatches_generated_odometry_into_cdr_path(history_factory):
@@ -171,7 +171,7 @@ def test_real_input_port_dispatches_generated_odometry_into_cdr_path(history_fac
 
 
 def test_generated_path_rendering_retains_geometry_frame_and_exact_fields():
-    header = Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="map", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     path = Path(
         header=header,
         poses=[

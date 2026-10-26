@@ -27,7 +27,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.message_utils.geometry import yaw
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Bool
@@ -160,7 +160,7 @@ class BasicPathFollower(Module, spec.TrajectoryFollower):
         target = self._lookahead_point(waypoints, position)
         yaw_error = angle_diff(
             math.atan2(target[1] - position[1], target[0] - position[0]),
-            yaw(pose.pose.orientation),
+            geometry.yaw(pose.pose.orientation),
         )
 
         angular = max(

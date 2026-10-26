@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Geometry operations on generated ROS value types."""
+"""Geometry operations on generated ROS wire values.
+
+Import with ``from dimos.message_utils import geometry``. Result names state
+which value is constructed, such as ``geometry.quaternion_from_euler`` or
+``geometry.transform_from_pose``. Array conversions return independent writable
+storage; operations return new values without mutating their inputs.
+"""
 
 from collections.abc import Sequence
 from copy import deepcopy

@@ -66,7 +66,7 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Quaternion as CdrQuaternion,
     Transform as CdrTransform,
@@ -376,7 +376,7 @@ class ControlCoordinator(Module):
     @staticmethod
     def _joint_state_message(msg: JointState) -> CdrJointState:
         return CdrJointState(
-            Header(time_from_seconds(msg.ts), msg.frame_id),
+            Header(message_time.time_from_seconds(msg.ts), msg.frame_id),
             list(msg.name),
             np.asarray(msg.position, dtype=np.float64),
             np.asarray(msg.velocity, dtype=np.float64),
@@ -397,7 +397,7 @@ class ControlCoordinator(Module):
             CdrTFMessage(
                 [
                     CdrTransformStamped(
-                        Header(time_from_seconds(transform.ts), transform.frame_id),
+                        Header(message_time.time_from_seconds(transform.ts), transform.frame_id),
                         transform.child_frame_id,
                         CdrTransform(
                             CdrVector3(*transform.translation), CdrQuaternion(*transform.rotation)
