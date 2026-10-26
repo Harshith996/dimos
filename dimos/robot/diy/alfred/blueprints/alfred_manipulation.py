@@ -28,8 +28,10 @@ The D455 feeds the planner's obstacle map and, with a GPU, the perception stack'
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from dimos.control.components import HardwareComponent
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     BASE_FRAME,
@@ -47,20 +49,47 @@ from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 
 
-def alfred_bench_modules(*, grasp: GraspGenerator = "graspgenx") -> tuple[Any, ...]:
-    """The bench stack's modules, with one grasp generator answering the pick pipeline."""
+@dataclass(frozen=True)
+class BenchHardware:
+    """Stand-ins for the bench stack's hardware (a simulation's); a None field is the robot's."""
+
+    # Drives the FlowBase off /flowbase/cmd_vel and publishes its wheel_odometry
+    # (AlfredHighLevel, over Portal to the FlowBase's Pi).
+    flowbase: Any | None = None
+    # PillarConnection's port (the Nano's CH340).
+    pillar_device_path: str | None = None
+    # The coordinator's arms (Damiao on the CAN ports the env names) and base (the transport
+    # adapter AlfredHighLevel answers).
+    arms: HardwareComponent | None = None
+    base: HardwareComponent | None = None
+    # The mast D455 and the models behind it: alfred_perception_modules' output.
+    perception: tuple[Any, ...] | None = None
+
+
+def alfred_bench_modules(
+    *, grasp: GraspGenerator = "graspgenx", hardware: BenchHardware | None = None
+) -> tuple[Any, ...]:
+    """The bench stack's modules, with one grasp generator answering the pick pipeline.
+    ``hardware`` swaps what drives the robot for stand-ins and leaves the rest as it is."""
+    hardware = hardware or BenchHardware()
     return (
         # The mounts rooted at base_link: no lidar owns a frame above it here.
         AlfredMountTf.blueprint(),
-        AlfredHighLevel.blueprint(),
+        AlfredHighLevel.blueprint() if hardware.flowbase is None else hardware.flowbase,
         WheelOdometryRelay.blueprint(world_frame=ODOM_FRAME, base_frame=BASE_FRAME),
         # No Rerun bridge: the Desktop reads zenoh itself, and the bridge's late-viewer buffer
         # is what grew to 6.4 GB and got this stack OOM-killed (2026-10-25).
-        *alfred_arm_modules(),
-        alfred_coordinator(arms=True, follower=False),
+        *alfred_arm_modules(pillar_device_path=hardware.pillar_device_path),
+        alfred_coordinator(
+            arms=True, follower=False, arm_hardware=hardware.arms, base_hardware=hardware.base
+        ),
         # The pick pipeline's scene registration only: localize's second OWLv2 + EdgeTAM and
         # its frame memory pushed the Orin into swap beside it.
-        *alfred_perception_modules(localize=False, grasp=grasp),
+        *(
+            alfred_perception_modules(localize=False, grasp=grasp)
+            if hardware.perception is None
+            else hardware.perception
+        ),
     )
 
 

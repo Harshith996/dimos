@@ -56,7 +56,7 @@ from dimos.robot.diy.alfred.gripper import (
     OPENARM_V10_GRASP_FRAME_TO_TCP,
     OPENARM_V10_SWEEP_VOLUME,
 )
-from dimos.utils.gpu_utils import is_cuda_available
+from dimos.utils.gpu_utils import is_cuda_available, is_mps_available
 
 # librealsense leaks usbfs fds (~8/s) in its worker; keep socket-accepting modules out of
 # its fd table so EMFILE cannot take down the rest (see alfred_hardware.py).
@@ -93,6 +93,10 @@ ALFRED_ARM_REACH = {
 }
 
 D455_WIDTH, D455_HEIGHT, D455_FPS = 848, 480, 15
+D455_POINTCLOUD_FPS = 5.0
+# Every third pixel each way keeps ~45k points a cloud: the self filter and the second voxel
+# map each cost about a quarter of a core at that, half a core or more at 2.
+D455_POINTCLOUD_DECIMATION = 3
 
 # The bench rig: one D455 on the mast looking down at a table, the robot standing still. The
 # defaults are desk scale (fit on the xArm recordings); a fixed camera gives one viewpoint, so
@@ -114,6 +118,9 @@ SCENE_MAX_DISTANCE_M = 2.5
 # OWLv2's scores on a cluttered bench peak around 0.3-0.6 (measured: can 0.50, box 0.57,
 # tape 0.30); the module's default 0.6 registered nothing.
 SCENE_DETECTOR_CONFIDENCE = 0.3
+SceneSegmenter = Literal["edgetam", "none"]
+"""What turns the scene registration's boxes into masks: EdgeTAM (CUDA or Apple's MPS), or
+nothing, the boxes lifted as they are (a CPU)."""
 # What only runs with a GPU: the models, and the pick pipeline that is nothing without them.
 GPU_MODULES = (
     PerceptionLocalize,
@@ -122,6 +129,19 @@ GPU_MODULES = (
     HeuristicGraspModule,
     GraspGenXModule,
 )
+
+PerceptionDevice = Literal["cuda", "mps", "cpu"]
+"""Where this machine runs the perception models."""
+
+
+def perception_device() -> PerceptionDevice:
+    """CUDA, then Apple's MPS, then the CPU (also where torch is missing)."""
+    if is_cuda_available():  # type: ignore[no-untyped-call]
+        return "cuda"
+    if is_mps_available():
+        return "mps"
+    return "cpu"
+
 
 GraspGenerator = Literal["heuristic", "graspgenx"]
 """Who answers the pick pipeline's ``propose_grasps``: the top-down heuristic, or GraspGenX, the
@@ -135,38 +155,30 @@ GRASPGENX_STARTUP_TIMEOUT_S = 90.0
 
 
 def alfred_perception_modules(
-    *, gpu: bool | None = None, localize: bool = True, grasp: GraspGenerator = "graspgenx"
+    *,
+    models: bool | None = None,
+    localize: bool = True,
+    grasp: GraspGenerator = "graspgenx",
+    camera: Any | None = None,
+    scene_segmenter: SceneSegmenter = "edgetam",
+    scene_detector_confidence: float = SCENE_DETECTOR_CONFIDENCE,
 ) -> tuple[Any, ...]:
     """What the mast D455 adds to a stack: colour for the camera panel, a self-filtered depth
-    cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run it,
-    the perception stack's localize. On the venv's CPU-only torch SigLIP embeds a frame in ~30 s
-    and OWLv2 detects in ~90 s, which would peg the box: localize is left out until the CUDA
-    torch for JetPack is in (then it is ~0.5 s a scan). ``gpu`` overrides the probe.
+    cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run them,
+    the models: the perception stack's localize, the scene registration and the pick pipeline.
+    On the Orin's CPU SigLIP embeds a frame in ~30 s and OWLv2 detects in ~90 s, which would
+    peg the box: without CUDA they are left out (with it a scan is ~0.5 s). ``models``
+    overrides the probe (a simulation keeps them on any machine).
 
     ``localize=False`` leaves PerceptionLocalize out and keeps the scene registration: the two
     each load OWLv2 and EdgeTAM, and together with a localize window they filled the Orin's
-    16 GB and swapped. The bench stack picks through the scene registration alone."""
+    16 GB and swapped. The bench stack picks through the scene registration alone.
+
+    ``camera`` stands in for the D455 (a simulated one: the same streams, names and frames);
+    ``scene_segmenter`` and ``scene_detector_confidence`` are the scene registration's, for a
+    machine EdgeTAM cannot run on and for rendered pictures."""
     modules: list[Any] = [
-        RealSenseCamera.blueprint(
-            width=D455_WIDTH,
-            height=D455_HEIGHT,
-            fps=D455_FPS,
-            enable_color=True,
-            enable_depth=True,
-            align_depth_to_color=True,
-            enable_pointcloud=True,
-            pointcloud_fps=5.0,
-            # 3 keeps ~45k points a cloud: the self filter and the second voxel map each cost
-            # about a quarter of a core at that, half a core or more at 2.
-            pointcloud_decimation=3,
-            depth_trunc_m=DEPTH_TRUNC_M,
-            enable_infrared=False,
-            enable_imu=False,
-            frame_id="camera_front_link",
-            serial_number=ALFRED_HARDWARE.d455_serial,
-            # The mast D455 hangs upside down (as alfred_v1.urdf mounts it); pictures come out upright.
-            rotate_180=True,
-        ),
+        _mast_d455() if camera is None else camera,
         # The planner's own model: whatever it drives is dropped from the cloud, so the lift
         # and arms never become obstacles to themselves.
         RoboPlanPointCloudSelfFilter.blueprint(
@@ -269,8 +281,8 @@ def alfred_perception_modules(
         ObjectSceneRegistrationModule.blueprint(
             target_frame=ODOM_FRAME,
             detector_backend="owlv2",
-            segmentation_backend="edgetam",
-            detector_confidence=SCENE_DETECTOR_CONFIDENCE,
+            segmentation_backend=scene_segmenter,
+            detector_confidence=scene_detector_confidence,
             detect_on_request=True,
             distance_threshold=0.08,
             min_detections_for_permanent=3,
@@ -284,7 +296,7 @@ def alfred_perception_modules(
         PickAndPlaceModule.blueprint(planning_frame=BASE_FRAME, reach=ALFRED_ARM_REACH),
         _grasp_generator(grasp),
     ]
-    present = gpu if gpu is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]
+    present = models if models is not None else bool(is_cuda_available())  # type: ignore[no-untyped-call]
     if not localize:
         modules = [
             m
@@ -296,6 +308,28 @@ def alfred_perception_modules(
             m for m in modules if all(atom.module not in GPU_MODULES for atom in m.blueprints)
         ]
     return tuple(modules)
+
+
+def _mast_d455() -> Any:
+    """The D455 on the mast, as the robot runs it."""
+    return RealSenseCamera.blueprint(
+        width=D455_WIDTH,
+        height=D455_HEIGHT,
+        fps=D455_FPS,
+        enable_color=True,
+        enable_depth=True,
+        align_depth_to_color=True,
+        enable_pointcloud=True,
+        pointcloud_fps=D455_POINTCLOUD_FPS,
+        pointcloud_decimation=D455_POINTCLOUD_DECIMATION,
+        depth_trunc_m=DEPTH_TRUNC_M,
+        enable_infrared=False,
+        enable_imu=False,
+        frame_id="camera_front_link",
+        serial_number=ALFRED_HARDWARE.d455_serial,
+        # The mast D455 hangs upside down (as alfred_v1.urdf mounts it); pictures come out upright.
+        rotate_180=True,
+    )
 
 
 def _grasp_generator(grasp: GraspGenerator) -> Any:

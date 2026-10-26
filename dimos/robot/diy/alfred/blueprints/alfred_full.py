@@ -133,21 +133,29 @@ ALFRED_GRIPPER_TASKS = {
 }
 
 
-def _openarm_hardware_from_env() -> HardwareComponent:
-    """Real Damiao arms only when both CAN ports are set; the mock adapter otherwise.
+def alfred_openarm_hardware(
+    *, left_can: str | None = None, right_can: str | None = None
+) -> HardwareComponent:
+    """Real Damiao arms on both CAN ports; with neither, the mock adapter.
 
     Mock arms start in the ready pose: hanging straight down is a singular configuration
     the planner's IK cannot move a hand out of.
     """
-    hardware = openarm_hardware(
-        left_can_port=os.environ.get(OPENARM_LEFT_CAN_ENV) or None,
-        right_can_port=os.environ.get(OPENARM_RIGHT_CAN_ENV) or None,
-    )
+    hardware = openarm_hardware(left_can_port=left_can, right_can_port=right_can)
     if hardware.adapter_type == "mock_whole_body":
         hardware.adapter_kwargs = {
             "initial_positions": [ALFRED_ARM_READY.get(joint, 0.0) for joint in hardware.joints]
         }
     return hardware
+
+
+def _openarm_hardware_from_env() -> HardwareComponent:
+    """Real Damiao arms only when both CAN ports are set (the checkout's .env sets them on the
+    robot); the mock adapter otherwise."""
+    return alfred_openarm_hardware(
+        left_can=os.environ.get(OPENARM_LEFT_CAN_ENV) or None,
+        right_can=os.environ.get(OPENARM_RIGHT_CAN_ENV) or None,
+    )
 
 
 # The coordinator publishes the arbitrated twist through this adapter; AlfredHighLevel
@@ -359,12 +367,15 @@ def alfred_urdf_manager() -> Any:
     )
 
 
-def alfred_arm_modules() -> tuple[Any, ...]:
+def alfred_arm_modules(*, pillar_device_path: str | None = None) -> tuple[Any, ...]:
     """The pillar, the URDF for the Controller, and the whole-body planner in base_link: the
     planar base joints are not fed from odometry, they are held at zero and a plan moves them
-    from there. The obstacle map the perception layer adds arrives in base_link too."""
+    from there. The obstacle map the perception layer adds arrives in base_link too.
+
+    ``pillar_device_path`` overrides the Nano's port (``PILLAR_SIM_DEVICE``: emulated)."""
+    pillar_config = {} if pillar_device_path is None else {"device_path": pillar_device_path}
     return (
-        PillarConnection.blueprint(),
+        PillarConnection.blueprint(**pillar_config),
         alfred_urdf_manager(),
         planner(
             model=alfred_planar_model_config(tf_extra_links=ALFRED_MOVING_LINKS),
@@ -383,13 +394,25 @@ def alfred_arm_modules() -> tuple[Any, ...]:
     )
 
 
-def alfred_coordinator(*, arms: bool = True, follower: bool = True) -> Any:
+def alfred_coordinator(
+    *,
+    arms: bool = True,
+    follower: bool = True,
+    arm_hardware: HardwareComponent | None = None,
+    base_hardware: HardwareComponent | None = None,
+) -> Any:
     """One coordinator for the stack: the pillar, the arms (with ``arms``) and the FlowBase's
     virtual joints. Teleop arrives as a Twist onto the base's joints; navigation (with
-    ``follower``) as a Path on the follower's port. Both are ordinary joint claims from here."""
-    hardware = [pillar_hardware(), _flowbase_hardware]
+    ``follower``) as a Path on the follower's port. Both are ordinary joint claims from here.
+
+    ``arm_hardware`` and ``base_hardware`` stand in for the arms the env names and for the
+    FlowBase's transport adapter (a simulation's mocks); the base keeps its joints' names."""
+    base = _flowbase_hardware if base_hardware is None else base_hardware
+    if base.joints != _flowbase_hardware.joints:
+        raise ValueError(f"the base's joints are the tasks': {_flowbase_hardware.joints}")
+    hardware = [pillar_hardware(), base]
     if arms:
-        hardware.insert(1, _openarm_hardware_from_env())
+        hardware.insert(1, _openarm_hardware_from_env() if arm_hardware is None else arm_hardware)
     return AlfredNavCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=hardware,

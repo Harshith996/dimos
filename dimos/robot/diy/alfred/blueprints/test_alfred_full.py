@@ -30,7 +30,7 @@ from scipy.spatial.transform import Rotation
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec
+from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import transport_topic
@@ -49,6 +49,7 @@ from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.embodiment.alfred import ALFRED
@@ -75,6 +76,10 @@ from dimos.robot.diy.alfred.alfred_model import (
     alfred_planar_joint_names,
     alfred_rerun_urdf,
 )
+from dimos.robot.diy.alfred.blueprints import (
+    alfred_full_perception as perception,
+    alfred_manipulation_sim as sim,
+)
 from dimos.robot.diy.alfred.blueprints._nav import WALL_CLEARANCE_M
 from dimos.robot.diy.alfred.blueprints.alfred_full import (
     ALFRED_BASE_HARDWARE_ID,
@@ -93,17 +98,32 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     alfred_full,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
+    D455_FPS,
+    D455_HEIGHT,
+    D455_POINTCLOUD_DECIMATION,
+    D455_POINTCLOUD_FPS,
+    D455_WIDTH,
+    DEPTH_TRUNC_M,
     MANIP_VOXEL_MAP,
     MOUNT_TF_TOLERANCE_S,
+    SCENE_DETECTOR_CONFIDENCE,
+    PerceptionDevice,
     alfred_full_perception,
     alfred_perception_modules,
+    perception_device,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_manipulation import (
     alfred_manipulation,
     alfred_manipulation_heuristic,
 )
+from dimos.robot.diy.alfred.blueprints.alfred_manipulation_sim import (
+    SIM_SCENE_DETECTOR_CONFIDENCE,
+    alfred_manipulation_sim,
+    alfred_sim_modules,
+)
 from dimos.robot.diy.alfred.blueprints.alfred_navigation import alfred_navigation
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
+from dimos.robot.diy.alfred.coordinator_base_odometry import CoordinatorBaseOdometry
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.gripper import (
     OPENARM_V10_FINGERTIP_DEPTH_M,
@@ -113,11 +133,13 @@ from dimos.robot.diy.alfred.gripper import (
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
+    PILLAR_SIM_DEVICE,
     PillarConnection,
 )
 from dimos.robot.diy.alfred.wheel_odometry_relay import WheelOdometryRelay
 from dimos.robot.manipulators.openarm.config import OPENARM_HARDWARE_ID
 from dimos.robot.urdf_manager import UrdfManager
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -366,7 +388,7 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert camera.kwargs["enable_pointcloud"] and camera.kwargs["enable_color"]
     localize = next(
         atom
-        for fragment in alfred_perception_modules(gpu=True)
+        for fragment in alfred_perception_modules(models=True)
         for atom in fragment.blueprints
         if atom.module is PerceptionLocalize
     )
@@ -375,13 +397,17 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert localize.kwargs["params"].min_views == 1, "one fixed camera: one viewpoint"
     assert "float16" not in localize.kwargs["detector"], "the registry's fp16 build is for a GPU"
     assert localize.kwargs["segmenter"] == "none", "EdgeTAM needs a GPU"
-    with_gpu = {atom.module for f in alfred_perception_modules(gpu=True) for atom in f.blueprints}
+    with_gpu = {
+        atom.module for f in alfred_perception_modules(models=True) for atom in f.blueprints
+    }
     assert {ObjectSceneRegistrationModule, PickAndPlaceModule, GraspGenXModule} <= with_gpu
-    without = {atom.module for f in alfred_perception_modules(gpu=False) for atom in f.blueprints}
+    without = {
+        atom.module for f in alfred_perception_modules(models=False) for atom in f.blueprints
+    }
     assert not ({ObjectSceneRegistrationModule, PickAndPlaceModule} & without)
     scene = next(
         atom
-        for f in alfred_perception_modules(gpu=True)
+        for f in alfred_perception_modules(models=True)
         for atom in f.blueprints
         if atom.module is ObjectSceneRegistrationModule
     )
@@ -389,14 +415,14 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     # PickAndPlaceModule re-expresses an object's cloud in its planning frame through tf.
     assert scene.kwargs["target_frame"] == ODOM_FRAME, "objects stay put when the base drives"
     assert scene.kwargs["tf_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
-    assert pick_planning_frame(alfred_perception_modules(gpu=True)) == BASE_FRAME, (
+    assert pick_planning_frame(alfred_perception_modules(models=True)) == BASE_FRAME, (
         "grasps where the arm plans"
     )
     assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
     assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
     pick = next(
         atom
-        for f in alfred_perception_modules(gpu=True)
+        for f in alfred_perception_modules(models=True)
         for atom in f.blueprints
         if atom.module is PickAndPlaceModule
     )
@@ -404,9 +430,9 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         reach = pick.kwargs["reach"][f"{side}_manipulator"]
         assert reach.shoulder_frame == f"openarm_{side}_link1", "a frame the planner puts on tf"
         assert 0.40 <= reach.radius <= 0.45 and abs(reach.wrist_to_tip - 0.186) < 1e-9
-    assert not alfred_perception_modules(gpu=False) or all(
+    assert not alfred_perception_modules(models=False) or all(
         atom.module is not PerceptionLocalize
-        for fragment in alfred_perception_modules(gpu=False)
+        for fragment in alfred_perception_modules(models=False)
         for atom in fragment.blueprints
     ), "on a CPU-only torch localize would peg the box"
 
@@ -647,7 +673,7 @@ def test_the_bench_stack_picks_with_graspgenx_and_can_fall_back_to_the_heuristic
     assert graspgenx.kwargs["gripper"] == OPENARM_V10_SWEEP_VOLUME
     assert graspgenx.kwargs["grasp_frame_to_tcp"] == OPENARM_V10_GRASP_FRAME_TO_TCP
     assert GraspGenXModule not in {
-        atom.module for f in alfred_perception_modules(gpu=False) for atom in f.blueprints
+        atom.module for f in alfred_perception_modules(models=False) for atom in f.blueprints
     }, "GraspGenX is a GPU model"
 
 
@@ -656,7 +682,7 @@ def test_graspgenx_has_time_to_start_beside_the_models() -> None:
     workers start and OWLv2 and EdgeTAM load; the model itself loads later, in start()."""
     (graspgenx,) = [
         atom
-        for fragment in alfred_perception_modules(gpu=True)
+        for fragment in alfred_perception_modules(models=True)
         for atom in fragment.blueprints
         if atom.module is GraspGenXModule
     ]
@@ -707,3 +733,161 @@ def test_the_base_task_runs_uncompensated_until_alfred_has_a_plant_model(
     assert plan.params["max_linear"] == pytest.approx(
         math.hypot(*ALFRED_PLANAR_BASE.velocity_limits[:2])
     )
+
+
+# ---------------------------------------------------------------------- alfred-manipulation-sim
+
+# What drives hardware in the bench stack, and what stands in for it in the sim.
+_BENCH_HARDWARE: set[type] = {RealSenseCamera, AlfredHighLevel}
+_SIM_HARDWARE: set[type] = {MujocoSimModule, CoordinatorBaseOdometry}
+
+
+def _streams(blueprint: Blueprint, module: type) -> set[tuple[str, Any, type]]:
+    """A module's ports as wired: (port, the stream it is on, type)."""
+    (atom,) = _atoms(blueprint, module)
+    return {
+        (
+            stream.name,
+            blueprint.remapping_map.get((atom.name, stream.name), stream.name),
+            stream.type,
+        )
+        for stream in atom.streams
+    }
+
+
+def test_the_sim_bench_stack_opens_no_hardware(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock arms whatever the robot's .env says, the lift's Nano emulated, the coordinator's mock
+    base, a MuJoCo camera, and nothing that reaches the FlowBase's Pi."""
+    monkeypatch.setenv(OPENARM_LEFT_CAN_ENV, "can2")
+    monkeypatch.setenv(OPENARM_RIGHT_CAN_ENV, "can3")
+    stack = autoconnect(*alfred_sim_modules(device="cpu"))
+    modules = {atom.module for atom in stack.blueprints}
+    assert not (_BENCH_HARDWARE & modules), "no D455, no Portal client"
+    assert _SIM_HARDWARE <= modules
+    hardware = {hw.hardware_id: hw for hw in _coordinator_kwargs(stack)["hardware"]}
+    assert set(hardware) == {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, ALFRED_BASE_HARDWARE_ID}
+    arms = hardware[OPENARM_HARDWARE_ID]
+    assert arms.adapter_type == "mock_whole_body", "the CAN ports in the env are ignored"
+    start = dict(zip(arms.joints, arms.adapter_kwargs["initial_positions"], strict=True))
+    assert {name: start[name] for name in ALFRED_ARM_READY} == ALFRED_ARM_READY
+    assert hardware[PILLAR_HARDWARE_ID].adapter_type == "transport_lcm", "as on the robot"
+    (pillar,) = _atoms(stack, PillarConnection)
+    assert pillar.kwargs["device_path"] == PILLAR_SIM_DEVICE
+    base = hardware[ALFRED_BASE_HARDWARE_ID]
+    assert base.adapter_type == "mock_twist_base"
+    assert base.adapter_kwargs["integrate_odometry"] is True
+    assert base.adapter_kwargs["step_dt"] == pytest.approx(0.01), "one coordinator tick"
+    # The measured plant: the base task's command gains (its inverse) move it as planned.
+    plant = base.adapter_kwargs["plant_gains"]
+    assert [k * g for k, g in zip(plant, alfred_base_command_gains(), strict=True)] == (
+        pytest.approx([1.0, 1.0, 1.0])
+    )
+    (odometry,) = _atoms(stack, CoordinatorBaseOdometry)
+    assert odometry.kwargs["base_joints"] == base.joints
+
+
+def test_the_sim_coordinator_runs_the_bench_stacks_claims() -> None:
+    sim_tasks = _coordinator_kwargs(alfred_manipulation_sim)["tasks"]
+    assert sim_tasks == _coordinator_kwargs(alfred_manipulation)["tasks"]
+    assert {task.name for task in sim_tasks} >= set(ALFRED_GRIPPER_TASKS.values()), "Open, Close"
+
+
+def test_the_sim_has_the_bench_stacks_streams_and_remappings_off_the_hardware() -> None:
+    """Every module that drives no hardware is wired as on the robot; the stand-ins publish
+    what the hardware's drivers do, under the same names."""
+    bench = {atom.module for atom in alfred_manipulation.blueprints} - _BENCH_HARDWARE
+    assert bench == {atom.module for atom in alfred_manipulation_sim.blueprints} - _SIM_HARDWARE
+    for module in bench:
+        assert _streams(alfred_manipulation_sim, module) == _streams(alfred_manipulation, module)
+    camera = MujocoSimModule.name
+    assert {
+        key: value
+        for key, value in alfred_manipulation_sim.remapping_map.items()
+        if key[0] != camera
+    } == dict(alfred_manipulation.remapping_map)
+    assert dict(alfred_manipulation_sim.transport_map) == dict(alfred_manipulation.transport_map)
+    published = {
+        (stream, type_) for _, stream, type_ in _streams(alfred_manipulation, RealSenseCamera)
+    }
+    for stream in ("color_image", "depth_image", "pointcloud", "camera_info", "tf"):
+        sim_streams = {
+            (name, type_) for _, name, type_ in _streams(alfred_manipulation_sim, MujocoSimModule)
+        }
+        assert {(name, type_) for name, type_ in published if name == stream} <= sim_streams
+    driver = {(name, type_) for _, name, type_ in _streams(alfred_manipulation, AlfredHighLevel)}
+    reader = {
+        (name, type_)
+        for _, name, type_ in _streams(alfred_manipulation_sim, CoordinatorBaseOdometry)
+    }
+    assert ("wheel_odometry", Odometry) in driver & reader
+
+
+def test_the_sim_camera_is_the_mast_d455() -> None:
+    """The D455's names, frames, size and rates; mounted under AlfredMountTf's camera_front_link
+    and carried along by the base's odometry (the pose WheelOdometryRelay publishes)."""
+    (real,) = _atoms(alfred_manipulation, RealSenseCamera)
+    (atom,) = _atoms(alfred_manipulation_sim, MujocoSimModule)
+    config = MujocoSimModuleConfig.model_validate(atom.kwargs)
+    assert real.kwargs["frame_id"] == f"{config.camera_name}_link" == config.base_frame_id
+    assert (config.width, config.height, config.fps) == (D455_WIDTH, D455_HEIGHT, D455_FPS)
+    assert (config.pointcloud_fps, config.pointcloud_decimation, config.depth_trunc_m) == (
+        D455_POINTCLOUD_FPS,
+        D455_POINTCLOUD_DECIMATION,
+        DEPTH_TRUNC_M,
+    )
+    assert config.enable_color and config.enable_depth and config.enable_pointcloud
+    assert config.headless, "no window"
+    assert Path(str(config.address)).is_file()
+    assert config.mocap_body == "base_link"
+    remaps = alfred_manipulation_sim.remapping_map
+    assert remaps[(MujocoSimModule.name, "mocap_pose")] == "start_pose"
+    assert _channel(alfred_manipulation_sim, ("start_pose", PoseStamped))[1] == transport_topic(
+        f"/{ALFRED_BASE_HARDWARE_ID}/odom"
+    )
+
+
+@pytest.mark.parametrize(
+    ("device", "grasp", "segmenter"),
+    [
+        ("cuda", GraspGenXModule, "edgetam"),
+        ("mps", HeuristicGraspModule, "edgetam"),
+        ("cpu", HeuristicGraspModule, "none"),
+    ],
+)
+def test_the_sim_runs_the_models_this_machine_can(
+    monkeypatch: pytest.MonkeyPatch, device: PerceptionDevice, grasp: type, segmenter: str
+) -> None:
+    """GraspGenX only on CUDA, EdgeTAM on CUDA or MPS; OWLv2 and the pick pipeline everywhere,
+    so a Mac or a laptop with no GPU still scans and picks."""
+    monkeypatch.setattr(sim, "perception_device", lambda: device)
+    stack = autoconnect(*alfred_sim_modules())
+    modules = {atom.module for atom in stack.blueprints}
+    assert {ObjectSceneRegistrationModule, PickAndPlaceModule, grasp} <= modules
+    assert len(modules & {GraspGenXModule, HeuristicGraspModule}) == 1, "one generator"
+    assert PerceptionLocalize not in modules, "as on the bench"
+    (scene,) = _atoms(stack, ObjectSceneRegistrationModule)
+    assert scene.kwargs["detector_backend"] == "owlv2"
+    assert scene.kwargs["segmentation_backend"] == segmenter
+    assert scene.kwargs["detector_confidence"] == SIM_SCENE_DETECTOR_CONFIDENCE
+    (bench_scene,) = _atoms(alfred_manipulation, ObjectSceneRegistrationModule)
+    unchanged = ("detector_backend", "detector_confidence", "segmentation_backend")
+    assert {k: v for k, v in scene.kwargs.items() if k not in unchanged} == {
+        k: v for k, v in bench_scene.kwargs.items() if k not in unchanged
+    }, "only what renders and the machine need"
+
+
+def test_renders_score_below_the_benchs_detector_threshold() -> None:
+    """OWLv2 scored the rendered cucumber 0.16 and bottle 0.27 (false boxes 0.07 at most)."""
+    assert 0.07 < SIM_SCENE_DETECTOR_CONFIDENCE < 0.16 < SCENE_DETECTOR_CONFIDENCE
+
+
+@pytest.mark.parametrize(
+    ("cuda", "mps", "device"),
+    [(True, True, "cuda"), (True, False, "cuda"), (False, True, "mps"), (False, False, "cpu")],
+)
+def test_the_device_probe_prefers_cuda_then_mps(
+    monkeypatch: pytest.MonkeyPatch, cuda: bool, mps: bool, device: str
+) -> None:
+    monkeypatch.setattr(perception, "is_cuda_available", lambda: cuda)
+    monkeypatch.setattr(perception, "is_mps_available", lambda: mps)
+    assert perception_device() == device

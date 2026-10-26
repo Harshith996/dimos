@@ -15,6 +15,7 @@ its Controller is the UI.
 | `alfred-keyboard-teleop` | Driving only. |
 | `alfred-pillar` | The lift alone, for homing and bench tests. |
 | `alfred-sim` | Mock base, lift and arms planned in viser; no robot. |
+| `alfred-manipulation-sim` | The bench stack with all of its hardware simulated, for rehearsing through Desktop ([below](#rehearsing-in-simulation)). |
 
 ```bash
 uv sync --extra alfred --extra manipulation          # pyserial for the pillar, the planner's deps
@@ -44,6 +45,51 @@ late-viewer buffer is what ran the 16 GB Orin out of memory.
 The Manipulation app's **Stack** card switches them (stop, then launch); the Launcher does the
 same. After every start the lift must be homed before it moves (**Home the lift** in the app,
 **Pillar: home** in the Controller).
+
+## Rehearsing in simulation
+
+`alfred-manipulation-sim` is the bench stack with every piece of hardware simulated, for
+rehearsing a demo through Desktop's Manipulation app and Controller on a laptop. The modules and
+the wiring are `alfred-manipulation`'s (one `alfred_bench_modules`, hardware swapped):
+
+| On the robot | In the sim |
+| --- | --- |
+| OpenArms on CAN | the mock adapter, from the ready pose; `OPENARM_*_CAN` are ignored, no CAN is opened. Open and Close work. |
+| The pillar's Nano on serial | `PillarConnection(device_path="sim")`: the firmware's protocol emulated in-process (`pillar_emulator.py`): ready, home (~3 s from parking), `set_position` ramps at 40 mm/s, `stop_motion` ramps down, `get_status`. |
+| FlowBase over Portal (`AlfredHighLevel`) | the coordinator's mock twist base, moving through Alfred's measured plant (yaw 2.85x, translation 0.77x), so plans run on the same command gains; `CoordinatorBaseOdometry` reads it back as wheel odometry for the same `WheelOdometryRelay` (`odom -> base_link`, `/flowbase/odom`). |
+| The mast D455 | `MujocoSimModule` rendering `blueprints/alfred_bench_scene.xml` from the URDF's camera pose: the same streams, names and frames, 848x480 at 15 Hz, a cloud at 5 Hz. The scene's `base_link` follows the base's odometry, so the picture moves when the robot drives. |
+| OWLv2 + EdgeTAM, GraspGenX (CUDA) | what the laptop has: CUDA runs the robot's set; Apple's MPS runs OWLv2 + EdgeTAM with the heuristic grasp; a CPU runs OWLv2 alone (no masks) with the heuristic grasp. Renders score lower than real pictures, so the detector threshold is 0.1, not 0.3. |
+
+**Never run it on the robot's network while the robot's stack runs.** Zenoh finds peers on the
+LAN and this coordinator answers to the same RPC names as the real one: a sim on the office
+network could command the real arms. Off that network, or with the robot's stack stopped, it is
+safe.
+
+The scene is a bench (top 1.06 m, front edge 0.45 m out, 1.0 x 1.6 m) with a soda can, a small
+cardboard box, a cucumber and a tennis ball just beyond 0.61 m, where the camera's view of the
+bench top begins, and a bottle 0.80 m out. A top-down grasp reaches about 0.58 m from
+`base_link`, as on the robot: scan, then drive ~15 cm toward the bench (the objects stay put in
+`odom`) or tick **Let the base drive**, then pick. The bottle stays out of reach, for the pick's
+reach message. Nothing moves in the scene but the camera, so a picked object stays on the bench,
+and the arms move in the Controller's view, not in the picture.
+
+On a laptop (macOS on Apple Silicon, or Linux x86_64 with or without NVIDIA):
+
+```bash
+git checkout mb/feat/alfred-full-stack
+uv sync --inexact --extra manipulation                              # Linux
+uv sync --inexact --extra manipulation --no-install-package drake  # macOS: drake 1.45 has no 3.10 wheel there, and the sim plans on RoboPlan
+git lfs pull --include="data/.lfs/alfred_description.tar.gz,data/.lfs/models_edgetam.tar.gz"
+.venv/bin/python -m dimos.robot.diy.alfred.tools.tool_render_bench --out /tmp/bench  # one frame, checked
+```
+
+Then point Desktop at the checkout, install the Controller and the Manipulation app, and press
+**Simulation** in the Stack card (`dimos run alfred-manipulation-sim` from a shell). MuJoCo needs
+nothing set on macOS (it renders through CGL). On Linux with no display (Desktop started as a
+service) the stack sets `MUJOCO_GL=egl` itself, which works with NVIDIA's driver or Mesa's; with
+neither EGL nor a display, put `MUJOCO_GL=osmesa` in the checkout's `.env` (`libosmesa6`). The
+first launch builds the voxel map with nix and downloads OWLv2 (and, on CUDA, GraspGenX's own
+environment and weights).
 
 ## Driving and navigating from the Controller
 
