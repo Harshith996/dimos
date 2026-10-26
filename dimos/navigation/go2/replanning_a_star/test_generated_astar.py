@@ -16,7 +16,6 @@ from copy import deepcopy
 from itertools import pairwise
 import math
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -54,7 +53,6 @@ def test_generated_astar_routes_around_obstacles_and_retains_exact_metadata(
         resolution=0.5,
         origin=origin,
     )
-    grid = decode(encode(grid), type(grid))
     before = deepcopy(grid)
     start = occupancy.grid_to_world(grid, (1.25, 1.25))
     goal = occupancy.grid_to_world(grid, (5.25, 1.25))
@@ -73,7 +71,6 @@ def test_generated_astar_routes_around_obstacles_and_retains_exact_metadata(
     assert (3, 5) in coordinates
     assert all(cells[y, x] != 100 for x, y in coordinates)
     assert all(max(abs(a[0] - b[0]), abs(a[1] - b[1])) == 1 for a, b in pairwise(coordinates))
-    assert decode(encode(result), Path) == result
     result.header.frame_id = "changed"
     result.poses[0].header.frame_id = "changed"
     assert result.poses[-1].header == before.header

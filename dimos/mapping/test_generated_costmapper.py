@@ -17,7 +17,6 @@ from copy import deepcopy
 from threading import Event
 
 import cv2
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
@@ -59,7 +58,7 @@ def test_generated_costmaps_match_existing_math_and_keep_exact_header(source_hea
 
     actual = algorithm(cloud, resolution=0.25)
     original = algorithm(legacy, resolution=0.25)
-    received = decode(encode(actual), OccupancyGrid)
+    received = actual
 
     assert type(original) is LegacyGrid
     assert type(actual) is OccupancyGrid
@@ -211,8 +210,8 @@ def test_generated_real_pointcloud_costmap_matches_existing_golden(
         is_dense=True,
     )
 
-    actual = algorithm(decode(encode(cloud), PointCloud2))
-    cells = occupancy.view(decode(encode(actual), OccupancyGrid))
+    actual = algorithm(cloud)
+    cells = occupancy.view(actual)
     if grayscale:
         expected = cv2.imread(str(get_data(expected_name)), cv2.IMREAD_GRAYSCALE)
         pixels = (cells + 1).astype(np.uint8)

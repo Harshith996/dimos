@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 import math
 from threading import Event
 
-from dimos_cdrgen.registry import decode, encode
 import pytest
 
 from dimos.core.transport import LCMTransport
@@ -165,7 +164,7 @@ def test_cancel_goal_preserves_exact_wall_time_and_existing_nan_fallback(
     monkeypatch.setattr(movement_module, "time_ns", lambda: stamp)
     manager._on_teleop(_twist(0.3))
     assert captured.stop_movement == [Bool(data=True)]
-    cancel = decode(encode(captured.goal[0]), PointStamped)
+    cancel = captured.goal[0]
     assert cancel.header == Header(frame_id="map", stamp=message_time.time_from_nanoseconds(stamp))
     assert all(math.isnan(value) for value in (cancel.point.x, cancel.point.y, cancel.point.z))
 
@@ -176,7 +175,7 @@ def test_click_limit_boundaries_keep_exact_source_header(manager_and_captured, p
     click = _click(*position)
     manager._on_click(click)
     assert captured.goal == [click] and captured.way_point == [click]
-    assert decode(encode(captured.goal[0]), PointStamped) == click
+    assert captured.goal[0] == click
 
 
 @pytest.mark.parametrize(

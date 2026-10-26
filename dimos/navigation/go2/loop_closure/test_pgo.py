@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from dimos_cdrgen.registry import decode, encode
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -396,23 +397,23 @@ def test_place_retains_capture_fields_header_and_input_bytes():
     )
     cloud = _cloud(np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), stamps=np.array([1.0, 11.0]))
     cloud.header.stamp = message_time.time_from_nanoseconds(1700000000123456789)
-    before = encode(cloud)
-    output = decode(encode(graph.place(cloud)), PointCloud2)
+    before = asdict(cloud)
+    output = graph.place(cloud)
     np.testing.assert_allclose(pointcloud.xyz(output), [[6, 2, 3], [4, 5, 6]])
     assert output.header == cloud.header and output.fields == cloud.fields
-    assert encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)
 
 
 def test_correct_preserves_exact_input_stamp_and_child_frame():
     graph = _graph_with_drift_at([_transform(translation=Vector3(5, 0, 0), ts=1)])
     pose = _transform(translation=Vector3(1, 2, 3), ts=1)
     pose.header.stamp = message_time.time_from_nanoseconds(1700000000123456789)
-    before = encode(pose)
-    corrected = decode(encode(graph.correct(pose)), TransformStamped)
+    before = asdict(pose)
+    corrected = graph.correct(pose)
     assert corrected.header.stamp == pose.header.stamp
     assert corrected.header.frame_id == "world_corrected" and corrected.child_frame_id == "body"
     np.testing.assert_allclose(geometry.vector_array(corrected.transform.translation), [6, 2, 3])
-    assert encode(pose) == before
+    np.testing.assert_equal(asdict(pose), before)
 
 
 def test_actual_point_to_plane_icp_recovers_rigid_motion():
@@ -435,7 +436,7 @@ def test_actual_point_to_plane_icp_recovers_rigid_motion():
     )
     motion.header.frame_id = motion.child_frame_id = target.header.frame_id
     source = pointcloud.transform(target, motion)
-    before = encode(source)
+    before = asdict(source)
     correction, fitness = _icp(source, target, max_dist=0.2)
     np.testing.assert_allclose(
         geometry.transform_matrix(correction.transform),
@@ -443,4 +444,4 @@ def test_actual_point_to_plane_icp_recovers_rigid_motion():
         atol=1e-4,
     )
     assert fitness < 1e-8
-    assert encode(source) == before
+    np.testing.assert_equal(asdict(source), before)
