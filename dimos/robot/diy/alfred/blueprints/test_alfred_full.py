@@ -104,6 +104,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
     D455_POINTCLOUD_FPS,
     D455_WIDTH,
     DEPTH_TRUNC_M,
+    MANIP_MAP_SELF_FILTER,
     MANIP_VOXEL_MAP,
     MOUNT_TF_TOLERANCE_S,
     SCENE_DETECTOR_CONFIDENCE,
@@ -161,6 +162,29 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 def _tasks(blueprint: Blueprint) -> dict[str, TaskConfig]:
     tasks = cast("list[TaskConfig]", _coordinator_kwargs(blueprint)["tasks"])
     return {task.name: task for task in tasks}
+
+
+def _wired(blueprint: Blueprint, instance: str, port: str) -> str:
+    """The stream an instance's port is on."""
+    return cast("str", blueprint.remapping_map.get((instance, port), port))
+
+
+def _writers(blueprint: Blueprint, stream: str) -> set[str]:
+    """The instances whose outputs land on a stream."""
+    return {
+        atom.name
+        for atom in blueprint.blueprints
+        for port in atom.streams
+        if port.direction != "in" and _wired(blueprint, atom.name, port.name) == stream
+    }
+
+
+def _self_filters(blueprint: Blueprint) -> tuple[Any, Any]:
+    """The camera cloud's self filter, and the planner map's (the carve)."""
+    filters = {atom.name: atom for atom in _atoms(blueprint, RoboPlanPointCloudSelfFilter)}
+    carve = filters.pop(MANIP_MAP_SELF_FILTER)
+    (camera,) = filters.values()
+    return camera, carve
 
 
 def _channel(blueprint: Blueprint, key: tuple[str, type]) -> tuple[type, str]:
@@ -351,7 +375,10 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     for port in nav_map_outputs:
         assert remaps[(MANIP_VOXEL_MAP, port)] == f"manip_{port}", f"{port} is the nav map's"
     assert remaps[(PointCloudBoxFilter.name, "cloud")] == "manip_global_map"
-    assert remaps[(PointCloudBoxFilter.name, "filtered_cloud")] == "voxel_map"
+    carve_input = remaps[(MANIP_MAP_SELF_FILTER, "pointcloud")]
+    assert remaps[(PointCloudBoxFilter.name, "filtered_cloud")] == carve_input, (
+        "on to the planner through the carve"
+    )
     manip_map = next(
         atom
         for atom in _atoms(alfred_full_perception, RayTracingVoxelMap)
@@ -382,8 +409,8 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert box_filter.kwargs["target_voxel_m"] == planner.kwargs["voxel_map_resolution"], (
         "the map is re-rasterized onto the octree's own cells, or a turned base leaves it holes"
     )
-    (self_filter,) = _atoms(alfred_full_perception, RoboPlanPointCloudSelfFilter)
-    assert self_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
+    camera_filter, _ = _self_filters(alfred_full_perception)
+    assert camera_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
     assert camera.kwargs["enable_pointcloud"] and camera.kwargs["enable_color"]
     localize = next(
@@ -442,6 +469,40 @@ def pick_planning_frame(fragments: tuple[Any, ...]) -> str:
         atom for f in fragments for atom in f.blueprints if atom.module is PickAndPlaceModule
     ]
     return cast("str", pick.kwargs["planning_frame"])
+
+
+@pytest.mark.parametrize(
+    "stack",
+    [
+        pytest.param(alfred_full_perception, id="alfred-full-perception"),
+        pytest.param(alfred_manipulation, id="alfred-manipulation"),
+        pytest.param(alfred_manipulation_heuristic, id="alfred-manipulation-heuristic"),
+        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
+    ],
+)
+def test_the_planner_map_has_the_robot_carved_out(stack: Blueprint) -> None:
+    """A second self filter between the box filter and the planner drops every cell the robot
+    touches: the map remembers the bench edge, and a hand hovering just over it overlapped two
+    cells of the bench's layer, so every plan failed COLLISION_AT_START (2026-10-26)."""
+    camera_filter, carve = _self_filters(stack)
+    assert _writers(stack, "voxel_map") == {MANIP_MAP_SELF_FILTER}, "the planner's map is carved"
+    (box_filter,) = _atoms(stack, PointCloudBoxFilter)
+    uncarved = _wired(stack, box_filter.name, "filtered_cloud")
+    assert _wired(stack, carve.name, "pointcloud") == uncarved != "voxel_map"
+    assert _writers(stack, uncarved) == {box_filter.name}
+    assert _writers(stack, _wired(stack, MANIP_VOXEL_MAP, "lidar")) == {camera_filter.name}, (
+        "the map is built from the camera's cloud, not from itself"
+    )
+    (planner,) = _atoms(stack, ManipulationModule)
+    half_diagonal = planner.kwargs["voxel_map_resolution"] * math.sqrt(3) / 2
+    assert half_diagonal <= carve.kwargs["padding_m"] <= 0.025, (
+        "a cell the robot touches has its centre within half its diagonal; more padding opens "
+        "the obstacle around the hand for its next motion"
+    )
+    assert carve.kwargs["model"] == camera_filter.kwargs["model"], "the planner's own model"
+    for tolerance in ("state_tolerance_s", "tf_tolerance_s", "tf_forward_tolerance_s"):
+        assert carve.kwargs[tolerance] == camera_filter.kwargs[tolerance], tolerance
+    assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the model's root: no tf to wait on"
 
 
 def test_the_bench_stack_runs_without_the_lidar() -> None:
@@ -743,14 +804,15 @@ _SIM_HARDWARE: set[type] = {MujocoSimModule, CoordinatorBaseOdometry}
 
 
 def _streams(blueprint: Blueprint, module: type) -> set[tuple[str, Any, type]]:
-    """A module's ports as wired: (port, the stream it is on, type)."""
-    (atom,) = _atoms(blueprint, module)
+    """A module's ports as wired, every instance of it: (instance.port, the stream it is on,
+    type)."""
     return {
         (
-            stream.name,
+            f"{atom.name}.{stream.name}",
             blueprint.remapping_map.get((atom.name, stream.name), stream.name),
             stream.type,
         )
+        for atom in _atoms(blueprint, module)
         for stream in atom.streams
     }
 

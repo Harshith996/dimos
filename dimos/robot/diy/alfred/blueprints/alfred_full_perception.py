@@ -20,15 +20,17 @@ object localization for the bench.
 Layered on alfred-full. The D455 streams colour for the camera panel and a decimated depth cloud
 at 5 Hz; the robot's own returns are self-filtered out, what is left is voxelised into a second,
 short-range map in ``odom`` (so a drive leaves the bench where it is) and handed to the
-ManipulationModule as ``voxel_map``, re-expressed in its ``base_link``. ``PerceptionLocalize``
-(SigLIP + OWLv2 + EdgeTAM, the perception stack's localize) embeds the colour feed and answers
-``localize`` / ``localize_boxes`` with verified 3D instances lifted through the aligned depth, in
-the planner's frame, so a found object is a place the arm can be sent. The venv's torch has no
-CUDA: the models run on the CPU, a scan takes seconds.
+ManipulationModule as ``voxel_map``, re-expressed in its ``base_link``, with the robot as it
+stands carved back out of it. ``PerceptionLocalize`` (SigLIP + OWLv2 + EdgeTAM, the perception
+stack's localize) embeds the colour feed and answers ``localize`` / ``localize_boxes`` with
+verified 3D instances lifted through the aligned depth, in the planner's frame, so a found object
+is a place the arm can be sent. The venv's torch has no CUDA: the models run on the CPU, a scan
+takes seconds.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -76,6 +78,16 @@ MANIP_GRACE_DEPTH_M = 0.05
 MANIP_GRAZE_COS = 0.5
 MANIP_SHADOW_DEPTH_M = 0.0
 SELF_FILTER_PADDING_M = 0.05
+# The coordinator publishes state at ~100 Hz, but a CAN read on the real arms stalls it for up to
+# ~0.3 s now and then; a state that old still describes a resting arm.
+JOINT_STATE_TOLERANCE_S = 0.3
+MANIP_MAP_SELF_FILTER = "ManipMapSelfFilter"
+"""The second self filter's instance name: it carves the robot out of the planner's map."""
+# A map cell the robot touches has its centre within half the cell's diagonal of the robot (17.3 mm
+# at 2 cm). The 3 mm over that is 20 times a resting arm's jitter between a map's stamp and a plan's
+# start (one encoder count, 0.15 mm at the fingertips); more would open the obstacle around the
+# hand for its next motion.
+MANIP_MAP_CARVE_PADDING_M = MANIP_VOXEL_M * math.sqrt(3) / 2 + 0.003
 MANIP_MAP_EMIT_EVERY = 5  # of the camera's 5 Hz: 1 Hz
 # How far an OpenArm gets on its own: shoulder (link1, on tf from the planner) to wrist with
 # the arm straight, 0.066 + 0.154 + 0.096 + 0.121 m of URDF offsets, and the v1.0 hand's
@@ -164,11 +176,11 @@ def alfred_perception_modules(
     scene_detector_confidence: float = SCENE_DETECTOR_CONFIDENCE,
 ) -> tuple[Any, ...]:
     """What the mast D455 adds to a stack: colour for the camera panel, a self-filtered depth
-    cloud voxelised into the arm planner's obstacle map, and, where a GPU is there to run them,
-    the models: the perception stack's localize, the scene registration and the pick pipeline.
-    On the Orin's CPU SigLIP embeds a frame in ~30 s and OWLv2 detects in ~90 s, which would
-    peg the box: without CUDA they are left out (with it a scan is ~0.5 s). ``models``
-    overrides the probe (a simulation keeps them on any machine).
+    cloud voxelised into the arm planner's obstacle map (with the robot carved back out of it),
+    and, where a GPU is there to run them, the models: the perception stack's localize, the
+    scene registration and the pick pipeline. On the Orin's CPU SigLIP embeds a frame in ~30 s
+    and OWLv2 detects in ~90 s, which would peg the box: without CUDA they are left out (with it
+    a scan is ~0.5 s). ``models`` overrides the probe (a simulation keeps them on any machine).
 
     ``localize=False`` leaves PerceptionLocalize out and keeps the scene registration: the two
     each load OWLv2 and EdgeTAM, and together with a localize window they filled the Orin's
@@ -183,9 +195,7 @@ def alfred_perception_modules(
         # and arms never become obstacles to themselves.
         RoboPlanPointCloudSelfFilter.blueprint(
             model=ALFRED_SELF_FILTER_MODEL,
-            # The coordinator publishes state at ~100 Hz, but a CAN read on the real arms stalls it
-            # for up to ~0.3 s now and then; a state that old still describes a resting arm.
-            state_tolerance_s=0.3,
+            state_tolerance_s=JOINT_STATE_TOLERANCE_S,
             # base_link -> camera runs through AlfredMountTf's rigid mounts, published at 5 Hz:
             # a capture lands up to 100 ms from a sample, and a 300 ms old mount edge is exact.
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
@@ -241,8 +251,8 @@ def alfred_perception_modules(
         ),
         # Re-expresses the odom map in the planner's frame at each map's stamp (the planner
         # drops a map in any other frame) and lets a pick leave the object it is picking out
-        # of it; a pick's box is in the planning frame, which is this one. Its output is the
-        # ManipulationModule's `voxel_map` input.
+        # of it; a pick's box is in the planning frame, which is this one. Its output goes on
+        # to the map self filter below.
         PointCloudBoxFilter.blueprint(
             target_frame=BASE_FRAME,
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
@@ -256,7 +266,27 @@ def alfred_perception_modules(
         ).remappings(
             [
                 (PointCloudBoxFilter, "cloud", "manip_global_map"),
-                (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
+                (PointCloudBoxFilter, "filtered_cloud", "manip_uncarved_map"),
+            ]
+        ),
+        # Carves the robot, as it stood at the map's stamp, out of the map: a cell the robot fills
+        # is no obstacle, so the start of a plan never collides with the map. The map remembers
+        # the bench in odom, and its 2 cm layer reaches up to 1.7 cm above the real top: a hand
+        # hovering over the bench edge overlapped two cells, and every plan from there failed
+        # COLLISION_AT_START (2026-10-26). The camera filter's model and tolerances; the map is
+        # in base_link, the model's own root, at the camera cloud's stamp. Its output is the
+        # ManipulationModule's `voxel_map` input.
+        RoboPlanPointCloudSelfFilter.blueprint(
+            instance_name=MANIP_MAP_SELF_FILTER,
+            model=ALFRED_SELF_FILTER_MODEL,
+            state_tolerance_s=JOINT_STATE_TOLERANCE_S,
+            tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            padding_m=MANIP_MAP_CARVE_PADDING_M,
+        ).remappings(
+            [
+                (MANIP_MAP_SELF_FILTER, "pointcloud", "manip_uncarved_map"),
+                (MANIP_MAP_SELF_FILTER, "filtered_pointcloud", "voxel_map"),
             ]
         ),
         # Dan's localize: text queries to verified 3D instances, from the colour feed and the

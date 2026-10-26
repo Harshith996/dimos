@@ -177,7 +177,12 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   one centre per voxel left holes once the base had turned since the run started (17% of the bench
   top empty at 42 degrees, 6% at 15), and now 0.1% is empty at any yaw, under the map's own 0.4%,
   for ~4000 cells a map instead of ~3500. Open fingers sit 4.4 cm a side outside the self-filter
-  model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size.
+  model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size. A second self
+  filter on the same model (`ManipMapSelfFilter`) then carves the robot, as it stands at each map's
+  stamp, out of the planner's map with 20 mm of padding (17.3 mm, half a 2 cm cell's diagonal, so
+  every cell the robot touches goes, plus 3 mm), so a plan never starts in collision with the map:
+  a hand hovering just over the remembered bench edge, whose 2 cm layer reaches 1.7 cm above the
+  real top, overlapped two cells, and every plan failed COLLISION_AT_START (2026-10-26).
 
 ## How the base is shared
 
