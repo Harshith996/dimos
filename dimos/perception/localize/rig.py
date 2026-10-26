@@ -257,7 +257,7 @@ class Rig:
         if self._lidar_map is not None and self._lidar_map[0] == id(self.lidar):
             return self._lidar_map[1]
         parts: list[np.ndarray] = []
-        newest_ns: int | None = None
+        newest = 0.0
         for obs in self.lidar:
             cloud: PointCloud2 = obs.data
             if cloud.header.frame_id != self.world_frame:
@@ -268,11 +268,9 @@ class Rig:
                     continue
                 cloud = pointcloud.transform(cloud, transform)
             parts.append(pointcloud.xyz(cloud))
-            source_ns = message_time.to_nanoseconds(cloud.header.stamp)
-            newest_ns = source_ns if newest_ns is None else max(newest_ns, source_ns)
+            newest = max(newest, obs.ts)
         merged = None
         if parts:
-            assert newest_ns is not None
             points = np.vstack(parts)
             cells = np.floor(points / LIDAR_CELL).astype(np.int64) + (1 << 20)
             keys = (cells[:, 0] << 42) | (cells[:, 1] << 21) | cells[:, 2]
@@ -280,7 +278,7 @@ class Rig:
             merged = pointcloud.from_xyz(
                 points[first],
                 header=Header(
-                    frame_id=self.world_frame, stamp=message_time.time_from_nanoseconds(newest_ns)
+                    frame_id=self.world_frame, stamp=message_time.time_from_seconds(newest)
                 ),
             )
         self._lidar_map = (id(self.lidar), merged)
