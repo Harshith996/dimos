@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils import pointcloud, time as message_time
+from dimos.message_utils import pointcloud
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -222,6 +222,8 @@ class ObjectDB:
         return None, None
 
     def _insert_pending(self, obj: Object, now: float) -> Object:
+        if not obj.ts:
+            obj.ts = now
         obj.last_seen_ts = now
         self._pending_objects[obj.object_id] = obj
         if obj.track_id >= 0:
@@ -234,16 +236,11 @@ class ObjectDB:
             self._track_id_map[obj.track_id] = existing.object_id
         # Multiple prompts or repeated scans may produce the same object from
         # one camera frame. Only distinct source observations advance memory.
-        if (
-            existing.image.header.frame_id,
-            message_time.to_nanoseconds(existing.image.header.stamp),
-        ) == (
-            obj.image.header.frame_id,
-            message_time.to_nanoseconds(obj.image.header.stamp),
-        ):
+        if existing.ts == obj.ts:
             return False
 
         existing.update_object(obj)
+        existing.ts = obj.ts or now
         existing.last_seen_ts = now
         return True
 
