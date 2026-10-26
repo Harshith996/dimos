@@ -38,6 +38,10 @@ Three firmware properties shape the design:
   is sent straight away rather than queued behind an active move.
 * Opening the port resets the board, and ``echo``/``rate`` do not survive a
   reset. Session setup is re-applied on every ``ready`` event, not just once.
+
+``device_path="sim"`` opens the Nano's protocol emulated in-process
+(``pillar_emulator``) instead of a serial port: a simulated rail behind the same
+module, RPCs and streams, for a stack with no pillar attached.
 """
 
 from __future__ import annotations
@@ -71,6 +75,8 @@ PILLAR_HARDWARE_ID = "pillar"
 PILLAR_LIFT_JOINT = "pillar/lift"
 # The Nano's CH340 by stable id: /dev/ttyUSBn moves when another board enumerates first.
 PILLAR_DEFAULT_DEVICE_PATH = "/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0"
+# The device_path of a simulated pillar: no port is opened, the firmware is emulated.
+PILLAR_SIM_DEVICE = "sim"
 
 # The name the firmware answers to in joint frames. dimos uses ``pillar/lift``
 # everywhere above this file; the two names only meet on the wire.
@@ -203,23 +209,8 @@ class PillarConnection(Module):
             if self._connected:
                 return
 
-        # Only the running module needs the SDK; importing it at module scope
-        # would make every blueprint that composes Alfred unimportable without
-        # the alfred extra.
-        try:
-            import serial
-        except ImportError as exc:
-            raise RuntimeError(
-                "Alfred pillar support requires pyserial; install the 'alfred' extra"
-            ) from exc
-
         device_path = self.config.device_path or PILLAR_DEFAULT_DEVICE_PATH
-        port = serial.Serial(
-            port=device_path,
-            baudrate=self.config.baud_rate,
-            timeout=self.config.serial_timeout_s,
-            write_timeout=self.config.write_timeout_s,
-        )
+        port = self._open_port(device_path)
         now = time.monotonic()
         with self._state_lock:
             self._reset_state()
@@ -239,6 +230,31 @@ class PillarConnection(Module):
             "Connected to Alfred pillar",
             device_path=device_path,
             baud_rate=self.config.baud_rate,
+        )
+
+    def _open_port(self, device_path: str) -> Any:
+        """The Nano's serial port, or with ``PILLAR_SIM_DEVICE`` the Nano emulated in-process."""
+        if device_path == PILLAR_SIM_DEVICE:
+            # Inline: the emulator speaks this module's protocol constants (a circular import).
+            from dimos.robot.diy.alfred.pillar_emulator import PillarEmulator
+
+            return PillarEmulator(timeout=self.config.serial_timeout_s)
+
+        # Only the running module needs the SDK; importing it at module scope
+        # would make every blueprint that composes Alfred unimportable without
+        # the alfred extra.
+        try:
+            import serial
+        except ImportError as exc:
+            raise RuntimeError(
+                "Alfred pillar support requires pyserial; install the 'alfred' extra"
+            ) from exc
+
+        return serial.Serial(
+            port=device_path,
+            baudrate=self.config.baud_rate,
+            timeout=self.config.serial_timeout_s,
+            write_timeout=self.config.write_timeout_s,
         )
 
     def _disconnect(self) -> None:
