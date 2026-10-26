@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING
 
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import time as message_time
 
 if TYPE_CHECKING:
     from dimos.messages.sensor_msgs.msg import Image
@@ -89,7 +89,7 @@ class FrameWindowAccumulator:
         with self._lock:
             if self._video_start_wall_time is None:
                 return
-            timestamp_s = to_seconds(image.header.stamp) - self._video_start_wall_time
+            timestamp_s = message_time.to_seconds(image.header.stamp) - self._video_start_wall_time
             frame = Frame(
                 frame_index=self._frame_count,
                 timestamp_s=timestamp_s,

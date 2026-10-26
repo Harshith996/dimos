@@ -18,8 +18,7 @@ from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -60,7 +59,7 @@ def _detection_array(
         ),
         id="",
     )
-    det.header = Header(stamp=time_from_seconds(ts), frame_id="world")
+    det.header = Header(stamp=message_time.time_from_seconds(ts), frame_id="world")
     det.id = marker_id
     det.results = [
         ObjectHypothesisWithPose(
@@ -85,7 +84,7 @@ def _detection_array(
         size=Vector3(x=0.18, y=0.18, z=0.0),
     )
     return Detection3DArray(
-        header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
         detections=[det],
     )
 
@@ -93,7 +92,7 @@ def _detection_array(
 def test_marker_tf_module_publishes_world_markers_chain() -> None:
     ts = 1_000_000.0
     center = Point(x=1.3, y=-0.2, z=0.4)
-    orientation = quaternion_from_euler(0.1, 0.2, 0.3)
+    orientation = geometry.quaternion_from_euler(0.1, 0.2, 0.3)
 
     mod = MarkerTfModule()
     view = TF(mod.tf)
@@ -152,7 +151,7 @@ def test_marker_tf_empty_array_skips_publication() -> None:
     try:
         mod._process_detections(
             Detection3DArray(
-                header=Header(stamp=time_from_seconds(ts), frame_id="world"),
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
                 detections=[],
             )
         )

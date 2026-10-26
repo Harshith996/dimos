@@ -22,9 +22,7 @@ import cv2
 import cv2.aruco
 import numpy as np
 
-from dimos.message_utils.geometry import compose_transforms
-from dimos.message_utils.image import image_to_bgr
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import geometry, image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
@@ -70,7 +68,7 @@ def detect_markers_in_image(
     if camera_matrix is None or dist_coeffs is None:
         camera_matrix, dist_coeffs = camera_info_to_cv_matrices(camera_info)
 
-    gray = cv2.cvtColor(image_to_bgr(image), cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(image_utils.to_bgr(image), cv2.COLOR_BGR2GRAY)
     corners, ids, _ = detector.detectMarkers(gray)
     if ids is None or len(ids) == 0:
         return []
@@ -103,7 +101,7 @@ def detect_markers_in_image(
             header=Header(stamp=image.header.stamp, frame_id=optical_frame),
             child_frame_id=f"marker_{mid}",
         )
-        t_world_marker = compose_transforms(t_world_optical, t_optical_marker)
+        t_world_marker = geometry.compose_transforms(t_world_optical, t_optical_marker)
 
         corners_2d = corner_set.reshape(4, 2).astype(np.float32)
         bbox = marker_corners_to_bbox(corners_2d)
@@ -124,7 +122,7 @@ def detect_markers_in_image(
                 class_id=mid,
                 confidence=1.0,
                 name="",
-                ts=to_seconds(image.header.stamp),
+                ts=message_time.to_seconds(image.header.stamp),
                 image=image,
                 center=t_world_marker.transform.translation,
                 size=marker_size,

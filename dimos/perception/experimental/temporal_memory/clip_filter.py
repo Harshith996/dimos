@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.message_utils.image import image_to_rgb
+from dimos.message_utils import image as image_utils
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -37,7 +37,7 @@ except ImportError as e:
 
 def _get_image_data(image: Image) -> np.ndarray[Any, Any]:
     """Extract numpy array from Image."""
-    return image_to_rgb(image)
+    return image_utils.to_rgb(image)
 
 
 if CLIP_AVAILABLE:

@@ -23,8 +23,7 @@ from reactivex.subject import Subject
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.message_utils.image import image_sharpness
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
@@ -82,7 +81,7 @@ class Detection2DModule(Module):
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
             self.color_image.pure_observable().pipe(
-                quality_barrier(image_sharpness, self.config.max_freq),
+                quality_barrier(image_utils.sharpness, self.config.max_freq),
             )
         )
 
@@ -92,7 +91,7 @@ class Detection2DModule(Module):
 
     def track(self, detections: ImageDetections2D) -> None:
         sensor_frame = self.tfbuffer.get(
-            "sensor", "camera_optical", to_seconds(detections.image.header.stamp), 5.0
+            "sensor", "camera_optical", message_time.to_seconds(detections.image.header.stamp), 5.0
         )
 
         if not sensor_frame:

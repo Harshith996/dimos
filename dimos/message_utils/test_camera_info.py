@@ -22,13 +22,7 @@ import numpy as np
 import pytest
 import yaml
 
-from dimos.message_utils.camera_info import (
-    camera_info_from_fov,
-    camera_info_from_intrinsics,
-    camera_info_from_yaml,
-    camera_info_with_stamp,
-    intrinsic_matrix,
-)
+from dimos.message_utils import camera_info
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.messages.std_msgs.msg import Header
@@ -39,7 +33,7 @@ _CALIBRATION = Path(__file__).parents[1] / "robot/unitree/go2/front_camera_720.y
 def test_real_go2_calibration_survives_cdr_with_exact_header():
     header = Header(frame_id="camera_optical", stamp=Time(sec=1700000000, nanosec=123456789))
     source = yaml.safe_load(_CALIBRATION.read_text())
-    message = camera_info_from_yaml(_CALIBRATION, header=header)
+    message = camera_info.from_yaml(_CALIBRATION, header=header)
     decoded = cdr_decode(cdr_encode(message), CameraInfo)
     assert decoded.header == header
     assert (decoded.width, decoded.height) == (1280, 720)
@@ -51,7 +45,7 @@ def test_real_go2_calibration_survives_cdr_with_exact_header():
         ("p", "projection_matrix"),
     ]:
         np.testing.assert_array_equal(getattr(decoded, field), source[key]["data"])
-    matrix = intrinsic_matrix(decoded)
+    matrix = camera_info.intrinsic_matrix(decoded)
     assert matrix.shape == (3, 3)
     matrix[0, 0] = 0
     assert decoded.k[0] == source["camera_matrix"]["data"][0]
@@ -61,7 +55,7 @@ def test_real_go2_calibration_survives_cdr_with_exact_header():
 
 @pytest.mark.parametrize("axis,focal", [("vertical", 240), ("horizontal", 320)])
 def test_fov_converts_selected_axis_and_builds_projection(axis, focal):
-    message = camera_info_from_fov(
+    message = camera_info.from_fov(
         90, 640, 480, header=Header(frame_id="optical", stamp=Time(sec=0, nanosec=0)), axis=axis
     )
     np.testing.assert_allclose(message.k, [focal, 0, 320, 0, focal, 240, 0, 0, 1])
@@ -73,7 +67,7 @@ def test_fov_converts_selected_axis_and_builds_projection(axis, focal):
 @pytest.mark.parametrize("fov", [0, -1, 180, 181, math.nan, math.inf])
 def test_fov_rejects_nonphysical_angles(fov):
     with pytest.raises(ValueError, match="Field of view"):
-        camera_info_from_fov(
+        camera_info.from_fov(
             fov, 640, 480, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
         )
 
@@ -81,7 +75,7 @@ def test_fov_rejects_nonphysical_angles(fov):
 @pytest.mark.parametrize("width,height", [(0, 480), (640, -1), (True, 480), (1.5, 480)])
 def test_intrinsics_reject_invalid_dimensions(width, height):
     with pytest.raises(ValueError, match="positive integers"):
-        camera_info_from_intrinsics(
+        camera_info.from_intrinsics(
             300,
             300,
             320,
@@ -95,7 +89,7 @@ def test_intrinsics_reject_invalid_dimensions(width, height):
 @pytest.mark.parametrize("fx", [0, -1, math.nan, math.inf])
 def test_intrinsics_reject_invalid_focal_length(fx):
     with pytest.raises(ValueError, match="positive focal"):
-        camera_info_from_intrinsics(
+        camera_info.from_intrinsics(
             fx, 300, 320, 240, 640, 480, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
         )
 
@@ -113,11 +107,11 @@ def test_yaml_rejects_invalid_camera_matrix(tmp_path, mutation):
     path = tmp_path / "invalid.yaml"
     path.write_text(yaml.safe_dump(data))
     with pytest.raises(ValueError, match="camera_matrix"):
-        camera_info_from_yaml(path, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+        camera_info.from_yaml(path, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
 
 
 def test_stamp_copy_preserves_calibration_and_does_not_mutate_prior_publish():
-    original = camera_info_from_intrinsics(
+    original = camera_info.from_intrinsics(
         500,
         510,
         320,
@@ -129,7 +123,7 @@ def test_stamp_copy_preserves_calibration_and_does_not_mutate_prior_publish():
     original.binning_x = 2
     original.roi.x_offset = 12
     stamp = Time(sec=2, nanosec=123456789)
-    copied = camera_info_with_stamp(original, stamp)
+    copied = camera_info.with_stamp(original, stamp)
     assert copied.header.stamp == stamp
     assert copied.header.frame_id == original.header.frame_id
     assert list(copied.k) == list(original.k)
@@ -146,4 +140,4 @@ def test_calibration_yaml_rejects_non_mapping_input(tmp_path):
     source = tmp_path / "calibration.yaml"
     source.write_text("- width\n- height\n")
     with pytest.raises(TypeError, match="Calibration YAML must contain a mapping"):
-        camera_info_from_yaml(source, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))
+        camera_info.from_yaml(source, header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""))

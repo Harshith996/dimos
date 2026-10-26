@@ -22,8 +22,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.message_utils.image import image_view
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
@@ -82,9 +81,9 @@ def test_actual_pipeline_copies_padded_bgr_and_exact_stamp(
     assert type(published[0]) is Image
     message = decode(encode(published[0]), Image)
     assert message.encoding == "bgr8" and message.step == 9
-    assert to_nanoseconds(message.header.stamp) == 1700000000123456789 + delta_ns
+    assert message_time.to_nanoseconds(message.header.stamp) == 1700000000123456789 + delta_ns
     assert message.header.frame_id == "camera_test"
-    np.testing.assert_array_equal(image_view(message), pixels)
+    np.testing.assert_array_equal(image.view(message), pixels)
 
 
 def test_invalid_source_stamp_keeps_existing_skip_behavior(camera, mocker) -> None:

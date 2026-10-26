@@ -20,9 +20,7 @@ from reactivex import operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils.geometry import quaternion_from_euler
-from dimos.message_utils.image import image_from_array, image_to_rgb, image_view
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import geometry, image as image_utils, time as message_time
 
 # Generated detection values
 from dimos.messages.builtin_interfaces.msg import Time
@@ -52,7 +50,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 def _timed_image(image: Image) -> TimestampedData[Image]:
-    return TimestampedData(image, to_seconds(image.header.stamp))
+    return TimestampedData(image, message_time.to_seconds(image.header.stamp))
 
 
 logger = setup_logger()
@@ -94,9 +92,9 @@ class ObjectTracker3D(ObjectTracker2D):
         def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
             rgb_msg, depth_msg = (item.value for item in frames_tuple)
             with self._frame_lock:
-                self._latest_rgb_frame = image_to_rgb(rgb_msg)
+                self._latest_rgb_frame = image_utils.to_rgb(rgb_msg)
 
-                depth_data = image_view(depth_msg)
+                depth_data = image_utils.view(depth_msg)
                 # Convert from millimeters to meters if depth is DEPTH16 format
                 if depth_msg.encoding in ("16UC1", "mono16"):
                     depth_data = depth_data.astype(np.float32) / 1000.0
@@ -175,7 +173,7 @@ class ObjectTracker3D(ObjectTracker2D):
                 if self.last_good_matches and self.last_roi_kps and self.last_roi_bbox:
                     viz_image = self._draw_reid_overlay(viz_image)
 
-                viz_msg = image_from_array(
+                viz_msg = image_utils.from_array(
                     viz_image, encoding="rgb8", header=self._latest_detection2d.header
                 )
                 self.tracked_overlay.publish(viz_msg)
@@ -216,7 +214,7 @@ class ObjectTracker3D(ObjectTracker2D):
         position = Point(x=z_optical, y=-x_optical, z=-y_optical)
         robot_pose = Pose(
             position=position,
-            orientation=quaternion_from_euler(0, 0, math.atan2(position.y, position.x)),
+            orientation=geometry.quaternion_from_euler(0, 0, math.atan2(position.y, position.x)),
         )
 
         # Estimate object size in meters
