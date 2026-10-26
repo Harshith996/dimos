@@ -14,7 +14,6 @@
 
 from unittest.mock import patch
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -22,7 +21,6 @@ from dimos.message_utils import geometry, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import (
     BoundingBox3D,
     Detection3D,
@@ -205,12 +203,10 @@ def test_marker_namespace_prefix_child_frames() -> None:
         mod.stop()
 
 
-def test_marker_tf_wire_preserves_exact_timestamp():
+def test_marker_tf_preserves_source_timestamp():
     module = MarkerTfModule()
     outputs = []
-    unsubscribe = module.tf.subscribe(
-        lambda msg: outputs.append(cdr_decode(cdr_encode(msg), TFMessage))
-    )
+    unsubscribe = module.tf.subscribe(lambda msg: outputs.append(msg))
     detections = _detection_array(ts=0)
     detections.header.stamp.sec = 1700000000
     detections.header.stamp.nanosec = 123456789

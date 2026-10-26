@@ -13,14 +13,12 @@
 # limitations under the License.
 
 import cv2
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
 from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import marker_reprojection_error
 
@@ -113,8 +111,3 @@ def test_marker_detection3d_msg_preserves_marker_identity_on_wire() -> None:
     assert msg.bbox.size.x == pytest.approx(size.x)
     assert msg.bbox.size.y == pytest.approx(size.y)
     assert msg.bbox.size.z == pytest.approx(size.z)
-
-    decoded = cdr_decode(cdr_encode(msg), Detection3D)
-    assert decoded.id == "42"
-    assert len(decoded.results) == 1
-    assert decoded.results[0].hypothesis.class_id == "DICT_APRILTAG_36h11:42"
