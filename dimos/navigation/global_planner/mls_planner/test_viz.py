@@ -17,8 +17,7 @@ from functools import partial
 from dimos_cdrgen.registry import decode, encode
 import numpy as np
 
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
@@ -30,9 +29,9 @@ from dimos.messages.std_msgs.msg import Header
 
 
 def _region(points):
-    header = Header(frame_id="odom", stamp=time_from_nanoseconds(0))
+    header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0))
     return PointCloudRegion(
-        header=header, region_id=0, cloud=pointcloud_from_xyz(points, header=header)
+        header=header, region_id=0, cloud=pointcloud.from_xyz(points, header=header)
     )
 
 
@@ -92,7 +91,7 @@ def test_region_renders_are_static_and_an_empty_cell_still_lands() -> None:
     assert path == "world/surface_map/1_0" and static
     assert len(arch.positions.as_arrow_array()) == 0
 
-    header = Header(frame_id="odom", stamp=time_from_nanoseconds(0))
+    header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0))
     edges = LineSegments3DRegion(
         header=header, region_id=(2 << 16) | 3, lines=LineSegments3D(header=header, segments=[])
     )
@@ -117,7 +116,7 @@ def test_overrides_follow_the_planner_publish_rate() -> None:
 
 
 def test_cdr_weighted_region_renders_geometry_and_keeps_source_immutable():
-    header = Header(frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     value = LineSegments3DRegion(
         header=header,
         region_id=(-2 << 16) | 3,

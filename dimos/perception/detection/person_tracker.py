@@ -22,12 +22,7 @@ from reactivex.observable import Observable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.message_utils.geometry import (
-    compose_transforms,
-    pose_from_transform,
-    transform_from_pose,
-)
-from dimos.message_utils.time import to_nanoseconds
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
@@ -39,11 +34,11 @@ from dimos.utils.reactive import backpressure
 
 
 def _timed_image(message: Image) -> TimestampedData[Image]:
-    return TimestampedData(message, to_nanoseconds(message.header.stamp))
+    return TimestampedData(message, message_time.to_nanoseconds(message.header.stamp))
 
 
 def _timed_detections(message: Detection2DArray) -> TimestampedData[Detection2DArray]:
-    return TimestampedData(message, to_nanoseconds(message.header.stamp))
+    return TimestampedData(message, message_time.to_nanoseconds(message.header.stamp))
 
 
 def _has_detections(message: Detection2DArray) -> bool:
@@ -149,9 +144,9 @@ class PersonTracker(Module):
         if not tf_world_to_camera:
             return
 
-        tf_camera_to_target = transform_from_pose(pose_in_camera, child_frame_id="target")
-        tf_world_to_target = compose_transforms(tf_world_to_camera, tf_camera_to_target)
-        pose_in_world = pose_from_transform(tf_world_to_target)
+        tf_camera_to_target = geometry.transform_from_pose(pose_in_camera, child_frame_id="target")
+        tf_world_to_target = geometry.compose_transforms(tf_world_to_camera, tf_camera_to_target)
+        pose_in_world = geometry.pose_from_transform(tf_world_to_target)
         pose_in_world.header.stamp = deepcopy(detections2D.image.header.stamp)
 
         self.target.publish(pose_in_world)

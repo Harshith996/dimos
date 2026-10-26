@@ -22,7 +22,7 @@ from numpy.typing import NDArray
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.pointcloud import pointcloud_xyz, transform_cloud
+from dimos.message_utils import pointcloud
 from dimos.messages.sensor_msgs.msg import PointCloud2
 
 LOADED_MAP_STREAM = "loaded_map"
@@ -48,4 +48,6 @@ def place_loaded_map(
             f"no {world_frame}->{loaded_map.data.header.frame_id} transform at ts={ts:.3f} "
             "to place the loaded map"
         )
-    return np.asarray(pointcloud_xyz(transform_cloud(loaded_map.data, placement)), dtype=np.float32)
+    return np.asarray(
+        pointcloud.xyz(pointcloud.transform(loaded_map.data, placement)), dtype=np.float32
+    )

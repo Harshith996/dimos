@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.message_utils.pointcloud import select_points
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC, lattice_quantum
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -53,7 +52,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         )
         keep = np.zeros(world_pointcloud.width * world_pointcloud.height, dtype=bool)
         keep[indices] = True
-        projected_cloud = select_points(world_pointcloud, keep)
+        projected_cloud = pointcloud.select(world_pointcloud, keep)
         quantum = lattice_quantum(world_points)
         detections_3d = [
             d3d
@@ -66,7 +65,7 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
                     camera_info,
                     world_to_optical_transform,
                     world_pointcloud.header.frame_id,
-                    to_seconds(world_pointcloud.header.stamp),
+                    message_time.to_seconds(world_pointcloud.header.stamp),
                     filters,
                     splat_m=quantum / 2 if quantum is not None else None,
                     projected_cloud=projected_cloud,

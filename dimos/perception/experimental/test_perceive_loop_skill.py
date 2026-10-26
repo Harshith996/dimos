@@ -22,8 +22,7 @@ import numpy as np
 import pytest
 from reactivex.testing import ReactiveTest, TestScheduler
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.std_msgs.msg import Header
 from dimos.perception.experimental import perceive_loop_skill as skill_module
 from dimos.perception.experimental.perceive_loop_skill import PerceiveLoopSkill
@@ -70,21 +69,23 @@ def test_model_build_failure_surfaces_on_look_out_for(monkeypatch: pytest.Monkey
 
 def test_generated_sharpness_window_keeps_rolling_and_repeated_selection_and_disposes():
     scheduler = TestScheduler()
-    flat = image_from_array(
+    flat = image.from_array(
         np.full((32, 32, 3), 128, dtype=np.uint8),
         encoding="rgb8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(0)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(0)),
     )
     pixels = np.tile((np.indices((32, 32)).sum(axis=0) % 2 * 255)[:, :, None], (1, 1, 3)).astype(
         np.uint8
     )
-    sharp = image_from_array(
-        pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=time_from_seconds(0.1))
+    sharp = image.from_array(
+        pixels,
+        encoding="rgb8",
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(0.1)),
     )
-    latest = image_from_array(
+    latest = image.from_array(
         np.zeros((32, 32, 3), dtype=np.uint8),
         encoding="rgb8",
-        header=Header(frame_id="camera", stamp=time_from_seconds(0.3)),
+        header=Header(frame_id="camera", stamp=message_time.time_from_seconds(0.3)),
     )
     source = scheduler.create_hot_observable(
         ReactiveTest.on_next(0.05, flat),

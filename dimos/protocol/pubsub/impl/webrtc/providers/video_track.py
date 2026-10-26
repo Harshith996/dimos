@@ -29,7 +29,7 @@ from aiortc.mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, VideoStreamTr
 import av
 import numpy as np
 
-from dimos.message_utils.image import image_to_rgb, image_view
+from dimos.message_utils import image
 from dimos.messages.sensor_msgs.msg import Image as CdrImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
@@ -121,7 +121,7 @@ class CameraVideoTrack(VideoStreamTrack):
                     "rgba8": "rgba",
                     "mono8": "gray",
                 }
-                data = image_view(img) if img.encoding in formats else image_to_rgb(img)
+                data = image.view(img) if img.encoding in formats else image.to_rgb(img)
                 av_format = formats.get(img.encoding, "rgb24")
             else:
                 frame = img if img.format in _AV_FORMAT_MAP else img.to_rgb()

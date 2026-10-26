@@ -22,8 +22,7 @@ from mcap.writer import Writer
 import numpy as np
 import pytest
 
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
-from dimos.message_utils.time import time_from_nanoseconds, to_nanoseconds
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
@@ -37,8 +36,8 @@ from dimos.messages.std_msgs.msg import Header
 
 
 def region_values(region_id):
-    header = Header(frame_id="map", stamp=time_from_nanoseconds(1700000000123456789))
-    cloud = pointcloud_from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=deepcopy(header))
+    header = Header(frame_id="map", stamp=message_time.time_from_nanoseconds(1700000000123456789))
+    cloud = pointcloud.from_xyz(np.array([[1, 2, 3]], dtype=np.float32), header=deepcopy(header))
     lines = LineSegments3D(
         header=deepcopy(header),
         segments=[LineSegment3D(start=Point(x=1, y=2, z=3), end=Point(x=4, y=5, z=6), weight=0.75)],
@@ -65,7 +64,7 @@ def test_region_id_and_canonical_dependency_types_survive_cdr(region_id, index):
     assert encode(result) == encode(value)
     assert result.region_id == region_id
     assert type(result.header) is Header
-    assert to_nanoseconds(result.header.stamp) == 1700000000123456789
+    assert message_time.to_nanoseconds(result.header.stamp) == 1700000000123456789
     if index == 0:
         assert type(result.cloud) is PointCloud2 and type(result.cloud.header) is Header
     elif index == 1:

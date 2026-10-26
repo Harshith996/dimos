@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils.image import image_to_rgb
+from dimos.message_utils import image
 
 if TYPE_CHECKING:
     from dimos.perception.experimental.temporal_memory.frame_window_accumulator import Frame
@@ -70,8 +70,8 @@ def is_scene_stale(frames: list["Frame"], stale_threshold: float = 5.0) -> bool:
     last_img = frames[-1].image
     if first_img is None or last_img is None:
         return False
-    first = image_to_rgb(first_img)
-    last = image_to_rgb(last_img)
+    first = image.to_rgb(first_img)
+    last = image.to_rgb(last_img)
     if first.shape != last.shape:
         return False
     diff = np.abs(first.astype(float) - last.astype(float))

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.time import time_from_nanoseconds
+from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
@@ -37,7 +37,7 @@ from dimos.messages.std_msgs.msg import Header
 
 
 def canonical_pose_values():
-    header = Header(frame_id="odom", stamp=time_from_nanoseconds(1700000000123456789))
+    header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     pose = Pose(
         position=Point(x=1.5, y=-2, z=0.7), orientation=Quaternion(x=0.1, y=0.2, z=0.3, w=0.927)
     )
@@ -87,6 +87,6 @@ def test_canonical_pose_payloads_normalize_metadata_without_loading_or_mutation(
 
 
 def test_unsupported_message_is_not_silently_treated_as_a_pose():
-    header = Header(frame_id="odom", stamp=time_from_nanoseconds(0))
+    header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0))
     with pytest.raises(TypeError, match="Cannot coerce"):
         Observation(pose=header, _data="unchanged")

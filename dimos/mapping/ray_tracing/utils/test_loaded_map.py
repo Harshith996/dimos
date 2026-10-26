@@ -24,9 +24,7 @@ from scipy.spatial.transform import Rotation
 from dimos.mapping.ray_tracing.utils.loaded_map import first_loaded_map, place_loaded_map
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
-from dimos.message_utils.geometry import transform_from_matrix
-from dimos.message_utils.pointcloud import pointcloud_from_xyz, pointcloud_xyz
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
@@ -44,9 +42,9 @@ def store(tmp_path: Path) -> Iterator[SqliteStore]:
 
 
 def _cloud(x: float, ts: float) -> PointCloud2:
-    return pointcloud_from_xyz(
+    return pointcloud.from_xyz(
         np.array([[x, 0, 0]], dtype=np.float32),
-        header=Header(frame_id="map", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="map", stamp=message_time.time_from_seconds(ts)),
     )
 
 
@@ -55,9 +53,9 @@ def _world_to_map(yaw_deg: float, x: float, y: float, ts: float) -> TransformSta
     m[:3, :3] = Rotation.from_euler("z", yaw_deg, degrees=True).as_matrix()
     m[0, 3], m[1, 3] = x, y
     return TransformStamped(
-        header=Header(frame_id="world", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(ts)),
         child_frame_id="map",
-        transform=transform_from_matrix(m),
+        transform=geometry.transform_from_matrix(m),
     )
 
 
@@ -76,7 +74,7 @@ def test_first_loaded_map_is_the_earliest_by_ts(store: SqliteStore) -> None:
 
     assert first is not None
     assert first.ts == T0
-    np.testing.assert_allclose(pointcloud_xyz(first.data), [[1.0, 0.0, 0.0]])
+    np.testing.assert_allclose(pointcloud.xyz(first.data), [[1.0, 0.0, 0.0]])
 
 
 def test_place_loaded_map_moves_points_into_the_world(store: SqliteStore) -> None:
@@ -86,7 +84,9 @@ def test_place_loaded_map_moves_points_into_the_world(store: SqliteStore) -> Non
     tf = StreamTF(store.stream("tf", TFMessage))
     points = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
     loaded = store.stream("loaded_map", PointCloud2).append(
-        pointcloud_from_xyz(points, header=Header(frame_id="map", stamp=time_from_seconds(T0))),
+        pointcloud.from_xyz(
+            points, header=Header(frame_id="map", stamp=message_time.time_from_seconds(T0))
+        ),
         ts=T0,
     )
 

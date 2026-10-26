@@ -19,8 +19,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds
+from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
@@ -41,15 +40,15 @@ def camera_info(ts: float = 10.0) -> CameraInfo:
         binning_y=0,
         roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
     )
-    info.header.stamp = time_from_seconds(ts)
+    info.header.stamp = message_time.time_from_seconds(ts)
     return info
 
 
 def blank_image(ts: float = 10.0) -> Image:
-    return image_from_array(
+    return image.from_array(
         np.full((480, 640, 3), 255, dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(ts)),
     )
 
 
@@ -74,16 +73,16 @@ def synthetic_marker_image(marker_id: int = 7, ts: float = 10.0, inverted: bool 
     y0 = (canvas.shape[0] - side_px) // 2
     x0 = (canvas.shape[1] - side_px) // 2
     canvas[y0 : y0 + side_px, x0 : x0 + side_px] = tile
-    return image_from_array(
+    return image.from_array(
         cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(ts)),
     )
 
 
 def world_T_optical(ts: float = 10.0) -> TransformStamped:
     return TransformStamped(
-        header=Header(frame_id="world", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="world", stamp=message_time.time_from_seconds(ts)),
         child_frame_id="camera_optical",
         transform=Transform(
             translation=Vector3(x=1.0, y=2.0, z=3.0),

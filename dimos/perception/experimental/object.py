@@ -21,18 +21,12 @@ import uuid
 
 import numpy as np
 
-from dimos.message_utils.geometry import quaternion_from_matrix, transform_matrix
-from dimos.message_utils.image import image_to_rgb, image_view
-from dimos.message_utils.pointcloud import (
-    concatenate_clouds,
-    pointcloud_from_xyz,
-    pointcloud_from_xyz_rgb,
-    pointcloud_rgb,
-    pointcloud_to_open3d,
-    pointcloud_xyz,
-    voxel_downsample_cloud,
+from dimos.message_utils import (
+    geometry,
+    image,
+    pointcloud as pointcloud_utils,
+    time as message_time,
 )
-from dimos.message_utils.time import time_from_seconds
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
@@ -107,7 +101,7 @@ class Object(Detection3D):
             and other.camera_transform is not None
             and self.camera_transform is not None
         ):
-            self.pointcloud = concatenate_clouds(self.pointcloud, other.pointcloud)
+            self.pointcloud = pointcloud_utils.concatenate(self.pointcloud, other.pointcloud)
         else:
             self.pointcloud = other.pointcloud
 
@@ -133,7 +127,7 @@ class Object(Detection3D):
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
-        return pointcloud_to_open3d(self.pointcloud).get_oriented_bounding_box()
+        return pointcloud_utils.to_open3d(self.pointcloud).get_oriented_bounding_box()
 
     def _detection3d_bbox_components(self) -> tuple[Vector3, Quaternion, Vector3]:
         """Return canonical geometry without refitting the point cloud."""
@@ -214,7 +208,7 @@ class Object(Detection3D):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert object to dictionary with all relevant data."""
-        colors = pointcloud_rgb(self.pointcloud)
+        colors = pointcloud_utils.rgb(self.pointcloud)
         return {
             "object_id": self.object_id,
             "track_id": self.track_id,
@@ -225,10 +219,10 @@ class Object(Detection3D):
             "last_seen_ts": self.last_seen_ts,
             "mask": self.mask,
             "pointcloud": (
-                pointcloud_xyz(self.pointcloud),
+                pointcloud_utils.xyz(self.pointcloud),
                 None if colors is None else colors.astype(np.float64) / 255.0,
             ),
-            "image": image_view(self.image) if self.image else None,
+            "image": image.view(self.image) if self.image else None,
         }
 
     @classmethod
@@ -280,8 +274,8 @@ class Object(Detection3D):
         import cv2
         import open3d as o3d  # type: ignore[import-untyped]
 
-        color_cv = image_to_rgb(color_image)
-        depth_cv = image_view(depth_image)
+        color_cv = image.to_rgb(color_image)
+        depth_cv = image.view(depth_image)
         h, w = depth_cv.shape[:2]
 
         # Build Open3D camera intrinsics
@@ -325,13 +319,13 @@ class Object(Detection3D):
             )
             pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic_o3d)
 
-            initial = pointcloud_from_xyz_rgb(
+            initial = pointcloud_utils.from_xyz_rgb(
                 np.asarray(pcd.points),
                 (np.asarray(pcd.colors) * 255).astype(np.uint8),
                 header=depth_image.header,
             )
-            pc0 = voxel_downsample_cloud(initial, voxel_downsample)
-            pcd_filtered, _ = pointcloud_to_open3d(pc0).remove_statistical_outlier(
+            pc0 = pointcloud_utils.voxel_downsample(initial, voxel_downsample)
+            pcd_filtered, _ = pointcloud_utils.to_open3d(pc0).remove_statistical_outlier(
                 nb_neighbors=statistical_nb_neighbors,
                 std_ratio=statistical_std_ratio,
             )
@@ -341,11 +335,11 @@ class Object(Detection3D):
             if camera_transform is not None:
                 if camera_transform.child_frame_id != header.frame_id:
                     raise ValueError("Camera transform source frame does not match depth image")
-                pcd_filtered.transform(transform_matrix(camera_transform.transform))
+                pcd_filtered.transform(geometry.transform_matrix(camera_transform.transform))
                 header = Header(
                     stamp=depth_image.header.stamp, frame_id=camera_transform.header.frame_id
                 )
-            pc = pointcloud_from_xyz_rgb(
+            pc = pointcloud_utils.from_xyz_rgb(
                 np.asarray(pcd_filtered.points),
                 (np.asarray(pcd_filtered.colors) * 255).astype(np.uint8),
                 header=header,
@@ -364,7 +358,7 @@ class Object(Detection3D):
                 obb = pcd_filtered.get_oriented_bounding_box()
                 center = Vector3(x=obb.center[0], y=obb.center[1], z=obb.center[2])
                 sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
-                orientation = quaternion_from_matrix(np.asarray(obb.R))
+                orientation = geometry.quaternion_from_matrix(np.asarray(obb.R))
 
             if max_obstacle_width > 0:
                 sx = min(sx, max_obstacle_width)
@@ -426,10 +420,10 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     for obj in objects:
         if obj.frame_id != header.frame_id:
             raise ValueError("Cannot aggregate object clouds in different frames")
-        points = pointcloud_xyz(obj.pointcloud)
+        points = pointcloud_utils.xyz(obj.pointcloud)
         if len(points) == 0:
             continue
-        colors = pointcloud_rgb(obj.pointcloud)
+        colors = pointcloud_utils.rgb(obj.pointcloud)
         try:
             seed = int(obj.object_id, 16)
         except (ValueError, TypeError):
@@ -444,8 +438,8 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
         all_points.append(points)
         all_colors.append(blended)
     if not all_points:
-        return pointcloud_from_xyz(np.empty((0, 3), dtype=np.float32), header=header)
-    return pointcloud_from_xyz_rgb(
+        return pointcloud_utils.from_xyz(np.empty((0, 3), dtype=np.float32), header=header)
+    return pointcloud_utils.from_xyz_rgb(
         np.vstack(all_points), (np.vstack(all_colors) * 255).astype(np.uint8), header=header
     )
 
@@ -471,7 +465,7 @@ def to_detection3d_array(
     if resolved_frame_id is None:
         resolved_frame_id = objects[0].frame_id if objects else ""
     stamp = (
-        time_from_seconds(ts)
+        message_time.time_from_seconds(ts)
         if ts is not None
         else objects[0].pose.header.stamp
         if objects

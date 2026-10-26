@@ -16,8 +16,7 @@ import numpy as np
 import pytest
 
 from dimos.memory.type.observation import Observation
-from dimos.message_utils.image import image_from_array
-from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
@@ -33,12 +32,12 @@ def test_detect_markers_in_image_builds_rich_marker_detection() -> None:
     marker_id = 7
     marker_length_m = 0.18
     image = synthetic_marker_image(marker_id)
-    info = camera_info(to_seconds(image.header.stamp))
+    info = camera_info(message_time.to_seconds(image.header.stamp))
 
     detections = detect_markers_in_image(
         image,
         camera_info=info,
-        world_T_optical=world_T_optical(to_seconds(image.header.stamp)),
+        world_T_optical=world_T_optical(message_time.to_seconds(image.header.stamp)),
         marker_length_m=marker_length_m,
         aruco_dictionary="DICT_APRILTAG_36h11",
     )
@@ -67,10 +66,10 @@ def test_detect_markers_in_image_builds_rich_marker_detection() -> None:
 
 def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
     ts = 11.0
-    image = image_from_array(
+    image = image_utils.from_array(
         np.full((480, 640, 3), 255, dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(ts)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(ts)),
     )
 
     detections = detect_markers_in_image(
@@ -87,8 +86,8 @@ def test_detect_markers_in_image_returns_empty_for_no_marker_frame() -> None:
 def test_detect_markers_in_image_needs_detect_inverted_for_negative_tags() -> None:
     image = synthetic_marker_image(7, inverted=True)
     kwargs = {
-        "camera_info": camera_info(to_seconds(image.header.stamp)),
-        "world_T_optical": world_T_optical(to_seconds(image.header.stamp)),
+        "camera_info": camera_info(message_time.to_seconds(image.header.stamp)),
+        "world_T_optical": world_T_optical(message_time.to_seconds(image.header.stamp)),
         "marker_length_m": 0.18,
         "aruco_dictionary": "DICT_APRILTAG_36h11",
     }
@@ -105,13 +104,13 @@ def test_detect_markers_transformer_preserves_observation_context_and_tags() -> 
     image = synthetic_marker_image(marker_id, ts=12.0)
     obs = Observation[Image](
         id=42,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         data_type=Image,
         pose=(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
         _data=image,
     )
     transformer = DetectMarkers(
-        camera_info=camera_info(to_seconds(image.header.stamp)),
+        camera_info=camera_info(message_time.to_seconds(image.header.stamp)),
         marker_length_m=0.18,
         aruco_dictionary="DICT_APRILTAG_36h11",
     )
@@ -131,20 +130,20 @@ def test_detect_markers_transformer_preserves_observation_context_and_tags() -> 
 
 
 def test_detect_markers_transformer_can_emit_empty_frame_sentinel() -> None:
-    image = image_from_array(
+    image = image_utils.from_array(
         np.full((480, 640, 3), 255, dtype=np.uint8),
         encoding="bgr8",
-        header=Header(frame_id="camera_optical", stamp=time_from_seconds(13.0)),
+        header=Header(frame_id="camera_optical", stamp=message_time.time_from_seconds(13.0)),
     )
     obs = Observation[Image](
         id=43,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         data_type=Image,
         pose=(1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),
         _data=image,
     )
     transformer = DetectMarkers(
-        camera_info=camera_info(to_seconds(image.header.stamp)),
+        camera_info=camera_info(message_time.to_seconds(image.header.stamp)),
         marker_length_m=0.18,
         aruco_dictionary="DICT_APRILTAG_36h11",
         emit_empty_frames=True,
@@ -165,7 +164,7 @@ def test_detect_markers_transformer_uses_callablecamera_info_source() -> None:
     image = synthetic_marker_image(marker_id=7, ts=14.0)
     obs = Observation[Image](
         id=44,
-        ts=to_seconds(image.header.stamp),
+        ts=message_time.to_seconds(image.header.stamp),
         data_type=Image,
         pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
         _data=image,
@@ -180,7 +179,7 @@ def test_detect_markers_transformer_uses_callablecamera_info_source() -> None:
 
     assert list(transformer(iter([obs]))) == []
 
-    latest_info = camera_info(to_seconds(image.header.stamp))
+    latest_info = camera_info(message_time.to_seconds(image.header.stamp))
     results = list(transformer(iter([obs])))
 
     assert len(results) == 1
@@ -193,8 +192,8 @@ def test_detect_markers_rebuilds_intrinsics_without_resetting_smoothing_track() 
     marker_length_m = 0.18
     image_a = synthetic_marker_image(marker_id=marker_id, ts=15.0)
     image_b = synthetic_marker_image(marker_id=marker_id, ts=15.2)
-    info_a = camera_info(to_seconds(image_a.header.stamp))
-    info_b = camera_info(to_seconds(image_b.header.stamp))
+    info_a = camera_info(message_time.to_seconds(image_a.header.stamp))
+    info_b = camera_info(message_time.to_seconds(image_b.header.stamp))
 
     info_b.k[0] = info_b.k[4] = 900.0
     info_b.p[0] = info_b.p[5] = 900.0
@@ -202,14 +201,14 @@ def test_detect_markers_rebuilds_intrinsics_without_resetting_smoothing_track() 
 
     obs_a = Observation[Image](
         id=45,
-        ts=to_seconds(image_a.header.stamp),
+        ts=message_time.to_seconds(image_a.header.stamp),
         data_type=Image,
         pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
         _data=image_a,
     )
     obs_b = Observation[Image](
         id=46,
-        ts=to_seconds(image_b.header.stamp),
+        ts=message_time.to_seconds(image_b.header.stamp),
         data_type=Image,
         pose=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0),
         _data=image_b,

@@ -32,8 +32,7 @@ from dimos.mapping.pointclouds.occupancy import (
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.message_utils.occupancy import occupancy_from_array, occupancy_view
-from dimos.message_utils.pointcloud import pointcloud_from_xyz
+from dimos.message_utils import occupancy, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
@@ -55,7 +54,7 @@ def test_generated_costmaps_match_existing_math_and_keep_exact_header(source_hea
     points = np.array(
         [[-1, -1, 0], [-0.5, 0, 0.4], [0, 0, 0.4], [0.5, 0.5, 0], [1, 1, 0.2]], dtype=np.float32
     )
-    cloud = pointcloud_from_xyz(points, header=source_header)
+    cloud = pointcloud.from_xyz(points, header=source_header)
     legacy = LegacyCloud.from_numpy(points, frame_id="lidar", timestamp=0)
 
     actual = algorithm(cloud, resolution=0.25)
@@ -72,29 +71,29 @@ def test_generated_costmaps_match_existing_math_and_keep_exact_header(source_hea
         original.origin.position.x,
         original.origin.position.y,
     )
-    np.testing.assert_array_equal(occupancy_view(received), original.grid)
+    np.testing.assert_array_equal(occupancy.view(received), original.grid)
     actual.header.stamp.nanosec = 0
     assert cloud.header == source_header
 
 
 @pytest.mark.parametrize("algorithm", [simple_occupancy, general_occupancy, height_cost_occupancy])
 def test_empty_generated_cloud_retains_source_metadata_and_unknown_map(source_header, algorithm):
-    cloud = pointcloud_from_xyz(np.empty((0, 3), dtype=np.float32), header=source_header)
+    cloud = pointcloud.from_xyz(np.empty((0, 3), dtype=np.float32), header=source_header)
 
     actual = algorithm(cloud, resolution=0.25, frame_id="map")
 
     assert actual.header.frame_id == "map"
     assert actual.header.stamp == source_header.stamp
     assert actual.info.map_load_time == source_header.stamp
-    assert occupancy_view(actual).tolist() == [[-1]]
+    assert occupancy.view(actual).tolist() == [[-1]]
 
 
 def test_generated_missing_points_are_ignored_before_rasterization():
     header = Header(frame_id="lidar", stamp=Time(sec=0, nanosec=0))
     points = np.array([[0, 0, 0.4], [1, 1, 0], [np.nan, 0, 0], [0, np.inf, 0]], dtype=np.float32)
 
-    actual = simple_occupancy(pointcloud_from_xyz(points, header=header), resolution=0.25)
-    expected = simple_occupancy(pointcloud_from_xyz(points[:2], header=header), resolution=0.25)
+    actual = simple_occupancy(pointcloud.from_xyz(points, header=header), resolution=0.25)
+    expected = simple_occupancy(pointcloud.from_xyz(points[:2], header=header), resolution=0.25)
 
     np.testing.assert_array_equal(actual.data, expected.data)
     assert actual.header == header
@@ -123,12 +122,12 @@ def test_initial_safe_radius_uses_owned_cells_without_changing_metadata(mapper_f
     create, _ = mapper_factory
     module = create(initial_safe_radius_meters=0.25)
     header = Header(frame_id="map", stamp=Time(sec=1700000000, nanosec=123456789))
-    grid = occupancy_from_array(np.full((3, 3), 100, dtype=np.int8), header=header, resolution=0.25)
+    grid = occupancy.from_array(np.full((3, 3), 100, dtype=np.int8), header=header, resolution=0.25)
     original = deepcopy(grid.header)
 
     module._apply_initial_safe_radius(grid)
 
-    assert occupancy_view(grid).tolist() == [[0, 0, 100], [0, 0, 100], [100, 100, 100]]
+    assert occupancy.view(grid).tolist() == [[0, 0, 100], [0, 0, 100], [100, 100, 100]]
     assert grid.header == original
     assert grid.info.map_load_time == original.stamp
 
@@ -157,7 +156,7 @@ def test_costmapper_actual_generated_ports_deliver_cdr_without_network(
 
     cleanup.callback(output_wire.subscribe(receive))
     header = Header(frame_id="lidar", stamp=Time(sec=1700000000, nanosec=123456789))
-    cloud = pointcloud_from_xyz(np.array([[0, 0, 0.4], [1, 1, 0]], dtype=np.float32), header=header)
+    cloud = pointcloud.from_xyz(np.array([[0, 0, 0.4], [1, 1, 0]], dtype=np.float32), header=header)
     module.start()
 
     global_wire.broadcast(None, cloud)
@@ -169,7 +168,7 @@ def test_costmapper_actual_generated_ports_deliver_cdr_without_network(
 
     ready.clear()
     merged_header = Header(frame_id="merged_map", stamp=Time(sec=1700000000, nanosec=123456790))
-    merged = pointcloud_from_xyz(
+    merged = pointcloud.from_xyz(
         np.array([[0, 0, 0.4], [1, 1, 0]], dtype=np.float32), header=merged_header
     )
     merged_wire.broadcast(None, merged)
@@ -213,7 +212,7 @@ def test_generated_real_pointcloud_costmap_matches_existing_golden(
     )
 
     actual = algorithm(decode(encode(cloud), PointCloud2))
-    cells = occupancy_view(decode(encode(actual), OccupancyGrid))
+    cells = occupancy.view(decode(encode(actual), OccupancyGrid))
     if grayscale:
         expected = cv2.imread(str(get_data(expected_name)), cv2.IMREAD_GRAYSCALE)
         pixels = (cells + 1).astype(np.uint8)

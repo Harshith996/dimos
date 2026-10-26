@@ -22,8 +22,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos.message_utils.image import image_from_array, image_to_bgr
-from dimos.message_utils.time import to_seconds
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.type.utils import TableStr
 
@@ -46,14 +45,14 @@ class ImageDetections(TableStr, Generic[T]):
 
     @property
     def ts(self) -> float:
-        return to_seconds(self.image.header.stamp)
+        return message_time.to_seconds(self.image.header.stamp)
 
     def __init__(self, image: Image, detections: list[T] | None = None) -> None:
         self.image = image
         self.detections = detections or []
         for det in self.detections:
             if not det.ts:
-                det.ts = to_seconds(image.header.stamp)
+                det.ts = message_time.to_seconds(image.header.stamp)
 
     def __len__(self) -> int:
         return len(self.detections)
@@ -86,9 +85,9 @@ class ImageDetections(TableStr, Generic[T]):
 
     def annotated_image(self, scale: float = 1.0) -> Image:
         """Return the image with all detection bboxes and labels drawn on it."""
-        img = image_to_bgr(self.image)
+        img = image_utils.to_bgr(self.image)
         for det in self.detections:
             if hasattr(det, "draw_on"):
                 det.draw_on(img, scale=scale)
 
-        return image_from_array(img, encoding="bgr8", header=self.image.header)
+        return image_utils.from_array(img, encoding="bgr8", header=self.image.header)
