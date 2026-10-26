@@ -117,6 +117,42 @@ def test_browser_records_and_plans_home_without_an_xr_connection(operator_viewer
         viewer._collection.finish.assert_not_called()
 
 
+def test_bound_spatial_view_and_recording_reject_an_old_session(operator_viewer):
+    viewer = operator_viewer
+    with TestClient(viewer._web_server.app) as client:
+        assert client.get("/spatial", params={"operator_session": "old-session"}).status_code == 409
+        assert (
+            client.post(
+                "/spatial/collection",
+                json={
+                    "action": "record",
+                    "session": "old-session",
+                    "task": "Test",
+                },
+            ).status_code
+            == 409
+        )
+        viewer._collection.record.assert_not_called()
+        path = viewer.get_web_views()[0]["path"]
+        assert client.get(path).status_code == 200
+
+
+def test_old_spatial_input_session_cannot_take_control(viewer):
+    assert not viewer._dispatch_text_message(
+        json.dumps(
+            {
+                "type": "spatial_input",
+                "session": "old-session",
+                "sequence": 1,
+                "control_epoch": viewer._control_epoch,
+                "observed_at": time.time(),
+                "hands": {},
+            }
+        )
+    )
+    assert viewer._sequence == -1
+
+
 def test_home_rejects_active_recordings_and_stale_sessions(operator_viewer):
     viewer = operator_viewer
     with TestClient(viewer._web_server.app) as client:

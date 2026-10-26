@@ -153,7 +153,7 @@ export class SpatialUI {
       } else {
         const collection=await this.request('collection',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({action,task:document.querySelector('#task').value.trim()}),
+        body:JSON.stringify({action,session:this.control.session,task:document.querySelector('#task').value.trim()}),
         }).then(r=>r.json());
         if(version===this.version) { this.collection=collection; this.collectionAt=performance.now(); }
       }

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 
 import mujoco
@@ -38,18 +37,14 @@ from dimos.hardware.whole_body.spec import (
     WholeBodyConfig,
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES, dual_openyam_arm_joints
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_JOINTS,
 )
-from dimos.robot.manipulators.dual_openyam.spatial_model import (
-    artifact_directory,
-    write_ik_model,
-)
+from dimos.robot.manipulators.dual_openyam.spatial_model import artifact_directory
+from dimos.robot.manipulators.dual_openyam.spatial_planning import spatial_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_station import SpatialStation
 from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.dual_openyam.teleop_ik import DualOpenYamPinkPoseTargetSolver
@@ -256,23 +251,10 @@ class OpenYamSpatialCoordinator(TeleopControlCoordinator):
     config: SpatialCoordinatorConfig
     _simulation: SimulationSpec
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._model_directory: TemporaryDirectory[str] | None = None
-
     @rpc
     def build(self) -> None:
-        if self._model_directory is not None:
-            return
-        artifact = load_yam_artifact(self.config.artifact_directory)
-        self._model_directory = TemporaryDirectory(prefix="dimos-yam-ik-")
-        path = write_ik_model(
-            artifact, Path(self._model_directory.name) / "robot.urdf", self.config.base_poses
-        )
-        model = RobotModelConfig(
-            model=RobotModel.from_file(path).with_default_joint_acceleration_limit(1.0),
-            joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
-            base_link="world",
+        model = spatial_model_config(
+            artifact=self.config.artifact_directory, bases=self.config.base_poses
         )
         hardware = HardwareComponent(
             hardware_id="dual_openyam",
@@ -317,18 +299,7 @@ class OpenYamSpatialCoordinator(TeleopControlCoordinator):
                     ),
                 ]
             )
-        try:
-            super().build()
-        except BaseException:
-            self._model_directory.cleanup()
-            raise
+        super().build()
 
     def _create_whole_body_adapter(self, component: HardwareComponent) -> WholeBodyAdapter:
         return DualYamSimAdapter(self._simulation.describe()["robots"])
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-        if self._model_directory is not None:
-            self._model_directory.cleanup()
-            self._model_directory = None

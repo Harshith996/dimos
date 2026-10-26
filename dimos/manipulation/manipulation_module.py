@@ -21,16 +21,19 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
+import os
 import threading
 import time
 import traceback
 from typing import Any, Literal, TypeAlias
+from uuid import uuid4
 
 import numpy as np
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -49,6 +52,7 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
+from dimos.manipulation.operator_api import operator_call
 from dimos.manipulation.planning.factory import WorldBackend, create_planning_specs, create_world
 from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.groups.utils import (
@@ -230,6 +234,8 @@ class ManipulationModule(Module):
         self._error_message = ""
         self._planning_epoch = 0
         self._started = False
+        self._operator_session = uuid4().hex
+        self._operator_ready = False
 
         # Planning components (initialized in start())
         self._world_monitor: WorldMonitor | None = None
@@ -253,12 +259,40 @@ class ManipulationModule(Module):
         logger.info("ManipulationModule initialized")
 
     @rpc
+    def describe_operator(self) -> dict[str, Any]:
+        """Identify this planner instance before invoking JSON operator actions."""
+        return {
+            "run_id": os.environ.get(DIMOS_RUN_ID_ENV),
+            "session": self._operator_session,
+            "ready": self._operator_ready,
+            "instance": self.config.instance_name or self.__class__.__name__,
+        }
+
+    @rpc
+    def operator_request(
+        self, session: str, method: str, payload: dict[str, Any] | None = None
+    ) -> Any:
+        """Invoke an operator action against the previously inspected planner session.
+
+        Methods: get_state, list_planning_groups, model, get_obstacles,
+        plan_to_joints, plan_to_poses, plan_cartesian, evaluate, execute, cancel,
+        clear_planned_path. Native clients may keep using the typed RPCs.
+        """
+        if session != self._operator_session:
+            raise RuntimeError("Planner session changed; inspect the current run before acting")
+        if self._world_monitor is None or not self._operator_ready:
+            raise RuntimeError("Planner is not ready")
+        return operator_call(self, self._world_monitor, method, payload or {})
+
+    @rpc
     def start(self) -> None:
         """Start the manipulation module."""
         if self._started:
             logger.warning("ManipulationModule already running")
             return
         self._started = True
+        self._operator_session = uuid4().hex
+        self._operator_ready = False
         try:
             super().start()
 
@@ -270,6 +304,7 @@ class ManipulationModule(Module):
                 self.coordinator_joint_state.subscribe(self._on_joint_state)
                 logger.info("Subscribed to coordinator_joint_state port")
             logger.info("ManipulationModule started")
+            self._operator_ready = True
         except BaseException:
             self._started = False
             raise
@@ -1428,6 +1463,8 @@ class ManipulationModule(Module):
     def stop(self) -> None:
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
+        self._operator_ready = False
+        self._operator_session = uuid4().hex
 
         execution_manager = getattr(self, "_execution_manager", None)
         if execution_manager is not None:

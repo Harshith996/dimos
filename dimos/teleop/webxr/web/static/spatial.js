@@ -8,6 +8,7 @@ import {WorkspaceTransform} from './spatial_workspace.mjs';
 import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
+const boundSession = new URLSearchParams(location.search).get('operator_session');
 const desktop = embedded || new URLSearchParams(location.search).has('desktop');
 if (embedded) document.body.classList.add('embedded');
 const apiBase = new URL('./spatial/', location.href);
@@ -129,6 +130,13 @@ function connect() {
 }
 poll(endpoint('state'), 35, async response => {
   const next = await response.json();
+  if(boundSession && next.control?.session !== boundSession) {
+    stopped=true; controlRequested=false; controlEpoch=null; socket?.close();
+    document.body.replaceChildren(Object.assign(document.createElement('p'), {
+      textContent:'This blueprint session ended. Select the current run in Controller.'
+    }));
+    throw new Error('Spatial session changed');
+  }
   if(!Number.isInteger(next.control?.epoch) || !next.control.modes?.includes('clutch')) {
     entryError='Station controls were updated. Restart the blueprint and reload this page.';
     throw new Error(entryError);
@@ -287,7 +295,7 @@ document.querySelector('#entry-hint').textContent=supportedModes[1][1]
 function send(hands, focus = null) {
   if (socket?.readyState !== WebSocket.OPEN || controlEpoch===null) return;
   if (socket.bufferedAmount > 16384) { socket.close(); resetHands(); return; }
-  socket.send(JSON.stringify({type: 'spatial_input', mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus}));
+  socket.send(JSON.stringify({type: 'spatial_input', session: boundSession || feedback?.control?.session, mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus}));
 }
 function track(frame, reference, observationsFresh, viewer) {
   const raw=sampleXRInputs(frame,reference), samples={};

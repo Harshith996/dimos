@@ -87,6 +87,7 @@ class SpatialHand(BaseModel):
 class SpatialInput(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     type: Literal["spatial_input"]
+    session: str | None = None
     sequence: int = Field(ge=0)
     control_epoch: int = Field(ge=0)
     observed_at: float
@@ -106,6 +107,7 @@ class SpatialInput(BaseModel):
 class CollectionAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal["record", "save", "discard"]
+    session: str | None = None
     task: str = Field(default="OpenYAM manipulation demonstration", min_length=1, max_length=256)
 
 
@@ -222,7 +224,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         app = self._web_server.app
 
         @app.get("/spatial", response_class=HTMLResponse)
-        def index() -> HTMLResponse:
+        def index(operator_session: str | None = None) -> HTMLResponse:
+            if operator_session is not None and operator_session != self._operator_session:
+                raise HTTPException(409, "This blueprint session ended; reopen the current view")
             return HTMLResponse((STATIC_DIR / "spatial.html").read_text())
 
         @app.get("/spatial/model")
@@ -298,6 +302,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         @app.post("/spatial/collection")
         def collection_action(command: CollectionAction) -> dict[str, Any]:
             try:
+                if command.session is not None and command.session != self._operator_session:
+                    raise ValueError("Recording session changed; inspect the current blueprint")
                 if command.action == "record":
                     return self._collection.record(command.task)
                 return self._collection.finish(command.action == "save")
@@ -384,7 +390,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 "title": "Spatial workstation",
                 "scheme": "https",
                 "port": self.config.server_port,
-                "path": "/spatial",
+                "path": f"/spatial?operator_session={self._operator_session}",
                 "embed": True,
                 "description": "Pinch the round tool handle to move the arm. Pinch and slide its opening control to adjust the jaws. Release to hold.",
             }
@@ -470,7 +476,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             # Expire before accepting input too: queued messages must not revive
             # an old grab if the watchdog thread was delayed by the same stall.
             self._expire_stale_state(time.monotonic())
-            if message.control_epoch != self._control_epoch:
+            if (message.session is not None and message.session != self._operator_session) or (
+                message.control_epoch != self._control_epoch
+            ):
                 return False
             if self._operator_paused:
                 return False

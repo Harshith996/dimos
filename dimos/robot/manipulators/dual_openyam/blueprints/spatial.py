@@ -16,6 +16,7 @@
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
 from dimos.protocol.testing.link import LinkConditions
@@ -24,6 +25,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_o
 from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollection
 from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_cameras import OpenYamSpatialCameras
+from dimos.robot.manipulators.dual_openyam.spatial_planning import spatial_model_config
 from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
     OpenYamSpatialCoordinator,
     OpenYamSpatialSimulation,
@@ -75,6 +77,7 @@ def build_openyam_spatial_sim(
             OpenYamSpatialCoordinator.blueprint(
                 instance_name="SpatialControlCoordinator", base_poses=station.bases
             ),
+            ManipulationModule.blueprint(model=spatial_model_config(bases=station.bases)),
             OpenYamSpatialTeleop.blueprint(
                 base_poses=station.bases, link_conditions=link_conditions
             ),
