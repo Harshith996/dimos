@@ -114,7 +114,6 @@ def file_issues(
             raise
         label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/flaky-tests"}
         fetch(f"{API}/repos/{repo}/labels", token, label)
-    run = os.environ.get("GITHUB_RUN_ID")
     window = "day" if days == 1 else f"{days} days"
 
     actions = []
