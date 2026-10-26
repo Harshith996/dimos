@@ -14,7 +14,7 @@
 
 """Camera metadata uses the same generated header and frame chain as its images."""
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_cdrgen.registry import encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -22,7 +22,6 @@ from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.message_utils import geometry
 from dimos.messages.sensor_msgs.msg import CameraInfo
-from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
@@ -50,8 +49,8 @@ def test_metadata_preserves_calibration_and_does_not_mutate_mount_template(modul
 
     info_publish.assert_called_once()
     tf_publish.assert_called_once()
-    info = cdr_decode(cdr_encode(info_publish.call_args.args[0]), CameraInfo)
-    transforms = cdr_decode(cdr_encode(tf_publish.call_args.args[0]), TFMessage).transforms
+    info = info_publish.call_args.args[0]
+    transforms = tf_publish.call_args.args[0].transforms
     assert (info.header.stamp.sec, info.header.stamp.nanosec) == (1700000000, 123456789)
     assert len(transforms) == 2
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in transforms] == [

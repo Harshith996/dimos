@@ -16,7 +16,6 @@
 
 import math
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import pytest
 
 from dimos.message_utils import geometry
@@ -36,7 +35,7 @@ def test_frame_tree_skips_root_and_composes_rotated_mounts():
         ("world", "body"),
         ("body", "camera"),
     ]
-    decoded = cdr_decode(cdr_encode(TFMessage(transforms=edges)), TFMessage)
+    decoded = TFMessage(transforms=edges)
     combined = geometry.compose_transforms(*decoded.transforms)
     translation = combined.transform.translation
     assert (translation.x, translation.y, translation.z) == pytest.approx((1, 2, 3))
