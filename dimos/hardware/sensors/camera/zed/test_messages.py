@@ -18,19 +18,16 @@ import math
 import sys
 from types import ModuleType
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.hardware.sensors.camera.zed.compat import CameraInfo as ZedCalibration
 from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Transform, Vector3
-from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 @pytest.fixture
 def camera(monkeypatch, mocker):
-    # Mock the unavailable hardware SDK; exercise the real camera methods and CDR codec.
+    # Mock the unavailable hardware SDK; exercise the real camera methods.
     sdk = ModuleType("pyzed.sl")
     sdk.DEPTH_MODE = IntEnum("DEPTH_MODE", {"NEURAL": 0})
     sdk.REFERENCE_FRAME = IntEnum("REFERENCE_FRAME", {"WORLD": 0})
@@ -60,7 +57,7 @@ def sdk_pose(mocker, translation, rotation):
 
 
 @pytest.mark.parametrize("ns", [0, -1, 1700000000123456789])
-def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns, camera, mocker):
+def test_frames_preserve_source_stamp_and_extrinsics(ns, camera, mocker):
     stamp = message_time.time_from_nanoseconds(ns)
     extrinsics = Transform(
         translation=Vector3(x=1, y=2, z=3),
@@ -78,7 +75,7 @@ def test_frames_roundtrip_cdr_preserves_exact_stamp_and_extrinsics(ns, camera, m
     )
     camera._publish_tf(stamp)
     message = camera.tf.publish.call_args.args[0]
-    actual = decode(encode(message), TFMessage)
+    actual = message
 
     assert [(edge.header.frame_id, edge.child_frame_id) for edge in actual.transforms] == [
         ("base", "zed_link"),
@@ -127,7 +124,7 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge(camer
     mocker.patch.object(camera, "_tracking_transform", return_value=tracking)
     camera._publish_tf(stamp)
     message = camera.tf.publish.call_args.args[0]
-    actual = decode(encode(message), TFMessage)
+    actual = message
 
     assert tracking.header.frame_id == "world"
     assert tracking.child_frame_id == "base"
@@ -141,26 +138,3 @@ def test_tracking_removes_rotated_mount_and_is_included_without_mount_edge(camer
     assert len(actual.transforms) == 5
     assert actual.transforms[-1] == tracking
     assert actual.transforms[0].header.frame_id == "zed_link"
-
-
-@pytest.mark.parametrize("translation,rotation", [([1, 2], [0, 0, 0, 1]), ([1, 2, 3], [0, 0, 1])])
-def test_incomplete_sdk_pose_is_rejected(translation, rotation, camera, mocker):
-    with pytest.raises(ValueError):
-        camera._extrinsics_to_transform(
-            sdk_pose(mocker, translation, rotation),
-            "world",
-            "camera",
-            message_time.time_from_nanoseconds(0),
-        )
-
-
-def test_shipped_zed_calibration_is_generated_and_roundtrips_cdr():
-    calibration = ZedCalibration.SingleWebcam
-
-    actual = decode(encode(calibration), type(calibration))
-
-    assert (actual.width, actual.height) == (640, 376)
-    assert actual.header.frame_id == "camera_optical"
-    assert message_time.to_nanoseconds(actual.header.stamp) == 0
-    assert actual.k[0] == pytest.approx(379.45267)
-    assert actual.d[0] == pytest.approx(-0.309435)

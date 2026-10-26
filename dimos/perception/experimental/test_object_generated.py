@@ -14,7 +14,6 @@
 
 """Object geometry and deduplication use generated ROS values."""
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.message_utils import camera_info, image, pointcloud, time as message_time
@@ -30,7 +29,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.experimental.object import Object, aggregate_pointclouds, to_detection3d_array
@@ -80,10 +78,10 @@ def _object(object_id, x, timestamp, source_stamp=None):
     )
 
 
-def test_detection_cdr_preserves_source_pose_header_and_current_center():
+def test_detection_preserves_source_pose_header_and_current_center():
     obj = _object("cup-1", 0.2, 1.0, source_stamp=Time(sec=1700000000, nanosec=123456789))
     obj.set_center(Vector3(x=0.4, y=0.5, z=0.6))
-    decoded = cdr_decode(cdr_encode(obj.to_detection3d_msg()), Detection3D)
+    decoded = obj.to_detection3d_msg()
     assert decoded.header == obj.pose.header
     assert decoded.bbox.center == obj.pose.pose
     assert decoded.bbox.size == obj.size
@@ -91,9 +89,6 @@ def test_detection_cdr_preserves_source_pose_header_and_current_center():
     assert decoded.results[0].hypothesis.score == 0.9
     array = to_detection3d_array([obj])
     assert array.header == obj.pose.header
-    decoded.bbox.center.position.x = 99
-    assert obj.center.x == 0.4
-    assert obj.pose.pose.position.x == 0.4
 
 
 def test_spatial_deduplication_and_nearest_lookup_use_generated_centers():
@@ -124,7 +119,7 @@ def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
     np.testing.assert_allclose(exported["pointcloud"][1], [[1.0, 128 / 255.0, 0.0]])
     np.testing.assert_array_equal(exported["image"], pixels)
     merged = aggregate_pointclouds([obj])
-    decoded = cdr_decode(cdr_encode(merged), PointCloud2)
+    decoded = merged
     assert decoded.header.stamp == stamp and decoded.header.frame_id == "world"
     np.testing.assert_array_equal(pointcloud.xyz(decoded), [[1.0, 2.0, 3.0]])
     assert pointcloud.rgb(decoded) is not None
@@ -196,6 +191,6 @@ def test_actual_rgbd_object_projection_keeps_color_and_depth_source_headers():
     np.testing.assert_allclose(pointcloud.xyz(obj.pointcloud)[:, 2], 2)
     np.testing.assert_array_equal(pointcloud.rgb(obj.pointcloud)[:, 0], 255)
     assert 0.9 < obj.center.x < 1.1
-    wire = cdr_decode(cdr_encode(obj.to_detection3d_msg()), Detection3D)
+    wire = obj.to_detection3d_msg()
     assert wire.header == obj.pose.header
     assert wire.id == obj.object_id

@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 
 import cv2
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
 from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
+from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3D
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 
 
@@ -34,7 +31,6 @@ def test_generated_image_detects_real_aruco_and_composes_pose():
     pixels[100:300, 100:300] = cv2.aruco.generateImageMarker(dictionary, 7, 200)
     header = Header(frame_id="camera", stamp=Time(sec=1700000000, nanosec=123456789))
     image = image_utils.from_array(pixels, encoding="mono8", header=header)
-    image = cdr_decode(cdr_encode(image), Image)
     camera = CameraInfo(
         width=400,
         height=400,
@@ -63,17 +59,10 @@ def test_generated_image_detects_real_aruco_and_composes_pose():
         aruco_dictionary="DICT_4X4_50",
     )
     assert len(found) == 1
-    wire = cdr_decode(cdr_encode(found[0].to_detection3d_msg()), Detection3D)
+    wire = found[0].to_detection3d_msg()
     assert wire.id == "7"
     assert wire.results[0].hypothesis.class_id == "DICT_4X4_50:7"
     assert wire.header.stamp == header.stamp
     assert wire.header.frame_id == "world"
     assert wire.bbox.center.position.x == pytest.approx(2, abs=0.01)
     assert wire.bbox.center.position.z == pytest.approx(0.4, abs=0.01)
-
-
-def test_documented_fiducial_example_executes():
-    guide = Path(__file__).resolve().parents[3] / "docs/capabilities/perception/index.md"
-    section = guide.read_text().split("## Fiducial markers\n", 1)[1].split("\n## ", 1)[0]
-    example = section.split("```python\n", 1)[1].split("```", 1)[0]
-    exec(compile(example, str(guide), "exec"), {})

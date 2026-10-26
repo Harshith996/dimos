@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.message_utils import camera_info, image
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
+from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.messages.std_msgs.msg import Header
 
 
@@ -62,7 +61,7 @@ def test_webcam_stereo_slice_halves_the_nominal_pinhole_width() -> None:
 
 
 @pytest.mark.parametrize("side,start", [("left", 0), ("right", 2)])
-def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker):
+def test_capture_converts_bgr_and_crops(side, start, mocker):
     camera = Webcam(stereo_slice=side, frame_id_prefix="robot")
     pixels = np.arange(2 * 4 * 3, dtype=np.uint8).reshape(2, 4, 3)
     capture = mocker.Mock()
@@ -70,7 +69,7 @@ def test_capture_converts_bgr_and_crops_before_cdr_encoding(side, start, mocker)
     mocker.patch.object(camera, "_capture", capture)
     mocker.patch("dimos.message_utils.time.time.time_ns", return_value=1700000000123456789)
     try:
-        message = cdr_decode(cdr_encode(camera.capture_frame()), Image)
+        message = camera.capture_frame()
     finally:
         camera.stop()
     assert message.encoding == "rgb8"

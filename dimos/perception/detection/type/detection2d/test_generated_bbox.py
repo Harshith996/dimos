@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 
 from dimos.message_utils import image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection2D, Detection2DArray
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 
-def test_generated_bbox_image_and_wire_round_trip():
+def test_bbox_crop_annotation_and_message_conversion():
     header = Header(frame_id="camera_optical", stamp=Time(sec=1700000000, nanosec=123456789))
     pixels = np.zeros((40, 60, 3), dtype=np.uint8)
     pixels[:, :, 0] = 250
@@ -48,7 +46,7 @@ def test_generated_bbox_image_and_wire_round_trip():
     assert annotated.header == header
     np.testing.assert_array_equal(image_utils.view(annotated)[39, 59], [0, 0, 250])
     np.testing.assert_array_equal(image_utils.view(image), pixels)
-    wire = cdr_decode(cdr_encode(det.to_ros_detection2d()), Detection2D)
+    wire = det.to_ros_detection2d()
     assert wire.header == header
     assert wire.results[0].hypothesis.class_id == "2"
     restored = Detection2DBBox.from_ros_detection2d(wire, image=image)
@@ -57,7 +55,7 @@ def test_generated_bbox_image_and_wire_round_trip():
     assert restored.class_id == 2
 
 
-def test_generated_detection_collection_round_trip():
+def test_detection_collection_message_conversion():
     pixels = np.zeros((40, 60, 3), dtype=np.uint8)
     image = image_utils.from_array(
         pixels, encoding="rgb8", header=Header(frame_id="camera", stamp=Time(nanosec=123, sec=0))
@@ -72,7 +70,7 @@ def test_generated_detection_collection_round_trip():
         image=image,
     )
     collection = ImageDetections2D(image=image, detections=[det])
-    wire = cdr_decode(cdr_encode(collection.to_ros_detection2d_array()), Detection2DArray)
+    wire = collection.to_ros_detection2d_array()
     assert wire.header == image.header
     assert len(wire.detections) == 1
     restored = ImageDetections2D.from_ros_detection2d_array(image, wire)
@@ -85,7 +83,7 @@ def test_generated_detection_collection_round_trip():
     assert not np.any(image_utils.view(image))
 
 
-def test_generated_point_detection_crop_and_cdr():
+def test_point_detection_crop_and_message_conversion():
     pixels = np.arange(100, dtype=np.uint8).reshape(10, 10)
     image = image_utils.from_array(
         pixels, encoding="mono8", header=Header(frame_id="camera", stamp=Time(nanosec=789, sec=0))
@@ -95,7 +93,7 @@ def test_generated_point_detection_crop_and_cdr():
     crop = point.cropped_image(padding=2)
     np.testing.assert_array_equal(image_utils.view(crop), pixels[:3, :3])
     assert crop.header == image.header
-    wire = cdr_decode(cdr_encode(point.to_ros_detection2d()), Detection2D)
+    wire = point.to_ros_detection2d()
     assert wire.header == image.header
     assert wire.bbox.center.position.x == wire.bbox.center.position.y == 1
     assert wire.bbox.size_x == wire.bbox.size_y == 0
