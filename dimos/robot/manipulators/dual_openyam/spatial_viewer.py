@@ -322,7 +322,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
     def operator_action(self, action: str, session: str, epoch: int) -> None:
         """Use the same session controls from Desktop, a browser or XR.
 
-        Home plans both OpenYAM arms to their existing zero posture. It leaves
+        Home plans both OpenYAM arms to their configured home posture. It leaves
         teleop paused and never resets the simulator or discards an episode.
         """
         if action not in ("home", "hold", "resume"):
@@ -389,6 +389,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         return [
             {
                 "title": "Spatial workstation",
+                "presentation": "spatial-workspace",
                 "scheme": "https",
                 "port": self.config.server_port,
                 "path": f"/spatial?operator_session={self._operator_session}",

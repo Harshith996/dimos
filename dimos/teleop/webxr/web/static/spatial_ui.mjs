@@ -57,9 +57,10 @@ export class SpatialUI {
       const view=panel(parent,0.42,0.3465,[0.78,y,0.68],[640,528]);
       Object.assign(view,{id:`camera-${name}`,name,title,ts:0,url:null,stale:true}); this.cameras.set(name,view);
       this.layout.add(view.id,view.mesh);
-      this.cameraStatus(view,false); this.poll(()=>this.loadCamera(view),150);
+      this.cameraStatus(view,false);
+      if(!embedded) this.poll(()=>this.loadCamera(view),150);
     }
-    this.poll(()=>this.loadCollection(),500);
+    if(!embedded) this.poll(()=>this.loadCollection(),500);
     for(const button of document.querySelectorAll('[data-action]')) {
       button.onclick=()=>this.activate(button.dataset.action);
     }
@@ -262,7 +263,7 @@ export class SpatialUI {
   setWorkspaceBounds(robotBounds) {
     const bounds=robotBounds.clone();
     for(const view of [this.hud,...this.cameras.values()]) {
-      if(view.mesh.parent!==this.layout.workspace) continue;
+      if(!view.mesh.visible || view.mesh.parent!==this.layout.workspace) continue;
       view.mesh.updateMatrix(); view.mesh.geometry.computeBoundingBox();
       bounds.union(view.mesh.geometry.boundingBox.clone().applyMatrix4(view.mesh.matrix));
     }
@@ -270,6 +271,10 @@ export class SpatialUI {
   }
 
   hidePalm() { this.palm.mesh.visible=false; this.palmOwner=null; this.palmCandidate=null; }
+
+  setImmersive(active) {
+    for(const view of [this.hud,...this.cameras.values()]) view.mesh.visible=active;
+  }
 
   updatePalm(hands, eye, blocked, now) {
     if(blocked || !eye) { this.hidePalm(); return; }

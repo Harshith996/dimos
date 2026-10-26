@@ -82,6 +82,7 @@ let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
 let modePreference='auto', activeMode='tools';
+let desktopFramed=false, selectedArm='left';
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
@@ -133,7 +134,7 @@ poll(endpoint('state'), 35, async response => {
   if(boundSession && next.control?.session !== boundSession) {
     stopped=true; controlRequested=false; controlEpoch=null; socket?.close();
     document.body.replaceChildren(Object.assign(document.createElement('p'), {
-      textContent:'This blueprint session ended. Select the current run in Controller.'
+      textContent:'This blueprint session ended. Reopen the current workspace.'
     }));
     throw new Error('Spatial session changed');
   }
@@ -407,14 +408,17 @@ function track(frame, reference, observationsFresh, viewer) {
   send(generation===inputGeneration?inputs:{}, focus);
 }
 renderer.setAnimationLoop((time, frame) => {
+  const immersive=renderer.xr.isPresenting;
+  ui.setImmersive(immersive);
   const fresh = !!observationsFresh();
   const ready = !!feedback?.control?.robot_ready && controlEpoch!==null;
   for (const side of ['left', 'right']) {
     const moving=Object.values(gestures).find(g=>g.arm===side && g.action==='move');
     const opening=Object.values(gestures).find(g=>g.arm===side && g.action==='opening');
     const known=!!feedback?.arms?.[side];
-    arms[side].visible = known; handles[side].visible = known && activeMode==='tools';
-    const c=openingControls[side]; c.group.visible=known && activeMode==='tools';
+    arms[side].visible = known; handles[side].visible = immersive && known && activeMode==='tools';
+    const c=openingControls[side]; c.group.visible=immersive && known && activeMode==='tools';
+    for(const mesh of arms[side].children) mesh.material.emissive.setHex(embedded && !immersive && side===selectedArm ? (side==='left'?0x14352b:0x392514) : 0);
     handles[side].material.opacity=workspace.active||paused||!ready?0.12:moving?1:0.45;
     c.rail.material.opacity=workspace.active?0.12:0.65; c.label.material.opacity=workspace.active?0.25:1;
     c.requested.visible=known && !!opening;
@@ -422,6 +426,10 @@ renderer.setAnimationLoop((time, frame) => {
   }
   // Delayed observations change presentation, never an active tool's ownership.
   cloud.visible = cloudTS > 0;
+  if(embedded && !desktopFramed && cloudTS>0 && ready) {
+    desktopFramed=true; frameWorkspace('fit');
+    parent.postMessage({type:'dimos.spatial.ready'},location.origin);
+  }
   detections.visible=fresh;
   if(!fresh) focusMarker.visible=false;
   const controlStatus=paused?'teleop paused':!controlRequested?'desktop controls':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.mode!==activeMode?'changing control mode':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
@@ -447,3 +455,37 @@ renderer.setAnimationLoop((time, frame) => {
 });
 addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); });
+
+function frameWorkspace(view) {
+  stage.updateMatrixWorld(true);
+  const bounds=new THREE.Box3();
+  for(const arm of Object.values(arms)) if(arm.visible) bounds.union(new THREE.Box3().setFromObject(arm));
+  if(bounds.isEmpty()) return;
+  // Frame the known manipulation workspace; distant depth fragments must not
+  // make the arms tiny. This changes the camera, not the sensor observations.
+  bounds.expandByScalar(0.12);
+  const center=bounds.getCenter(new THREE.Vector3());
+  const size=bounds.getSize(new THREE.Vector3());
+  const distance=Math.max(size.y,size.x/camera.aspect,size.z)*0.65/Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+  const direction=new THREE.Vector3(...(view==='top'?[0,1,0.001]:view==='front'?[0,0.35,1]:[0.8,0.65,1])).normalize();
+  orbit.target.copy(center); camera.position.copy(center).addScaledVector(direction,Math.max(0.7,distance)); orbit.update();
+}
+if(embedded) {
+  addEventListener('message',event=>{
+    if(event.source!==parent || event.origin!==location.origin) return;
+    if(event.data?.type==='dimos.spatial.selection' && geometry.sides.includes(event.data.value)) selectedArm=event.data.value;
+    if(event.data?.type==='dimos.spatial.view' && ['fit','top','front'].includes(event.data.value)) frameWorkspace(event.data.value);
+  });
+  let down=null;
+  renderer.domElement.addEventListener('pointerdown',event=>{down=[event.clientX,event.clientY];});
+  renderer.domElement.addEventListener('pointerup',event=>{
+    if(!down || Math.hypot(event.clientX-down[0],event.clientY-down[1])>5) {down=null;return;}
+    down=null;
+    const box=renderer.domElement.getBoundingClientRect();
+    const ray=new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((event.clientX-box.left)/box.width*2-1,1-(event.clientY-box.top)/box.height*2),camera);
+    const hit=ray.intersectObjects(Object.values(arms),true)[0];
+    const side=geometry.sides.find(side=>arms[side].children.includes(hit?.object));
+    if(side) parent.postMessage({type:'dimos.spatial.select',value:side},location.origin);
+  });
+}
