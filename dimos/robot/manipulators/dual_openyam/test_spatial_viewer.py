@@ -141,6 +141,8 @@ def send(
     focus=None,
     action="move",
     offset=(0, 0, 0),
+    mode="tools",
+    trigger=0.0,
 ):
     hands = {}
     for side, grab in [("left", left), ("right", right)]:
@@ -153,6 +155,7 @@ def send(
                 "pinched": grab,
                 "action": action if grab else None,
                 "arm": side if grab else None,
+                "trigger": trigger,
             }
     return module._dispatch_text_message(
         json.dumps(
@@ -163,9 +166,77 @@ def send(
                 "observed_at": time.time() if observed_at is None else observed_at,
                 "hands": hands,
                 "focus": focus,
+                "mode": mode,
             }
         )
     )
+
+
+@pytest.mark.parametrize("side,hand", [("left", Hand.LEFT), ("right", Hand.RIGHT)])
+def test_clutch_moves_one_arm_from_free_space_and_trigger_controls_only_its_jaws(
+    viewer, side, hand
+):
+    assert not send(viewer, 0, mode="clutch")  # Mode switch invalidates the previous epoch.
+    assert send(viewer, 1, mode="clutch", **{side: False})
+    assert send(viewer, 2, mode="clutch", offset=(2, 0, 0), trigger=0.7, **{side: True})
+    assert viewer._controllers[hand].trigger == 0.7
+    assert viewer._current_poses[hand].position.x == 2
+    other = Hand.RIGHT if hand == Hand.LEFT else Hand.LEFT
+    assert viewer._controllers[other] is None
+    ports = {Hand.LEFT: viewer.left_gripper_command, Hand.RIGHT: viewer.right_gripper_command}
+    viewer._publish_button_state(viewer._controllers[Hand.LEFT], viewer._controllers[Hand.RIGHT])
+    assert ports[hand].publish.call_args.args[0].data == pytest.approx(0.3)
+    ports[other].publish.assert_not_called()
+    ports[hand].publish.reset_mock()
+    assert send(viewer, 3, mode="clutch", trigger=1, **{side: False})
+    assert viewer._controllers[hand] is None
+    viewer._publish_button_state(viewer._controllers[Hand.LEFT], viewer._controllers[Hand.RIGHT])
+    ports[hand].publish.assert_not_called()
+
+
+def test_clutch_mode_change_and_tracking_loss_require_release_before_reengaging(viewer):
+    send(viewer, 0, left=False)
+    send(viewer, 1, left=True)
+    epoch = viewer._control_epoch
+    assert not send(viewer, 2, mode="clutch", left=True)
+    assert viewer._claims == {}
+    assert viewer._control_epoch > epoch
+    assert not send(viewer, 3, control_epoch=epoch, left=True)
+    assert send(viewer, 4, mode="clutch", left=True)
+    assert viewer._claims == {}
+    assert send(viewer, 5, mode="clutch", left=False, right=False)
+    assert send(viewer, 6, mode="clutch", left=True, right=True)
+    assert all(controller.grip == 1 for controller in viewer._controllers.values())
+    assert send(viewer, 7, mode="clutch", right=True)
+    assert send(viewer, 8, mode="clutch", left=True, right=True)
+    assert viewer._controllers[Hand.LEFT] is None
+    assert viewer._controllers[Hand.RIGHT].grip == 1
+    assert send(viewer, 9, mode="clutch", left=False, right=True)
+    assert send(viewer, 10, mode="clutch", left=True, right=True)
+    assert viewer._controllers[Hand.LEFT].grip == 1
+
+
+def test_clutch_cannot_cross_assign_arms_or_weaken_tool_proximity(viewer):
+    assert not send(viewer, 0, mode="clutch")
+    assert send(viewer, 1, mode="clutch", left=False)
+    assert not send(
+        viewer,
+        2,
+        mode="clutch",
+        left={
+            "position": [2, 0, 0],
+            "orientation": [0, 0, 0, 1],
+            "pinched": True,
+            "arm": "right",
+            "action": "move",
+            "trigger": 0.5,
+        },
+    )
+    assert viewer._claims == {}
+    assert not send(viewer, 3, mode="tools")
+    assert send(viewer, 4, left=False)
+    assert send(viewer, 5, left=True, offset=(2, 0, 0))
+    assert viewer._claims == {}
 
 
 def test_hands_grab_independently_and_tracking_loss_requires_release(viewer):

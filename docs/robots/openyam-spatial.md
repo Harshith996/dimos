@@ -1,6 +1,6 @@
 # OpenYAM spatial teleoperation
 
-`openyam-spatial-sim` and `openyam-spatial` use the same WebXR hand interface
+`openyam-spatial-sim` and `openyam-spatial` use the same WebXR hand/controller interface
 and registered RGB-D observation renderer. The first uses sim2 devices; the
 second composes the existing physical dual-YAM coordinator, wrist-camera
 collection module, RealSense and a calibrated camera mount. The viewer is
@@ -69,12 +69,49 @@ be reachable from the headset. Port 8445 here keeps the prototype apart from
 a physical station's usual 8443 server. A desktop browser can open the same
 page to preview observations without acquiring the control connection.
 
-Select **Enter immersive view** and allow hand tracking. The workspace is
+Select a control mode and **Enter XR**. Hand tracking is optional. **Auto** uses
+tool handles with hands, or classic teleop with tracked controllers that have a
+grip button. Pico/Quest-style controllers do not need hand tracking to enter.
+Both modes use the same robot-local IK, feedback watchdog and gripper owner:
+
+- **Tool handles:** index/thumb pinch or controller trigger near a tool moves
+  that arm; its opening slider adjusts the jaws. Either input can select either
+  tool. Point and pinch/trigger to operate menus.
+- **Classic teleop:** hold a controller's grip anywhere to move the corresponding
+  arm, use its trigger to close the jaws, and release grip to hold. Each arm is
+  independent. Tracked hands can also use index pinch to clutch and middle pinch
+  to close. Menu actions take precedence over a new hand clutch.
+
+Change modes from the browser selector or the immersive session panel. Switching
+invalidates the old control epoch; release and grab again to move. Actual tracking
+loss likewise requires release/regrab. Observation latency does not release a
+tracked tool. Classic is the familiar clutch interaction within this viewer;
+the original standalone WebXR page and its binary protocol are unchanged.
+
+**Mixed reality** is available only when the browser reports `immersive-ar`.
+It uses transparent rendering over headset passthrough. Session mode is chosen
+before entry: use **Exit XR**, select VR/MR, and enter again. This does not
+automatically register a physical robot to the room; placement remains an
+operator view transform. The application uses WebXR feature detection rather
+than headset brand detection; actual Pico, Quest and AVP acceptance is a device
+test, not established by synthetic browser checks.
+
+Camera panels and session controls have draggable title bars. Point and
+pinch/trigger on the bar, move the hand/controller, and release to park the panel.
+**HUD** attaches it to the viewer while preserving its apparent pose and scale;
+**Unpin** attaches it back to the workspace. Dragging a pinned panel also unpins
+it. Either hand can move a panel, one owner at a time. Lost tracking ends the
+drag; panel interaction cannot simultaneously acquire an arm.
+
+The workspace is
 placed at metre scale ahead of the current head direction. The same transform
 maps both displayed geometry and hand commands. Exit and re-enter to place it
-ahead again; the desktop **Place workspace ahead** button also requests this.
+ahead again; **Place workspace / set forward** and immersive **Bring here** also
+request this. They reset the view-relative forward direction and require a new
+grab, retaining the existing scene scale.
 
-In immersive view, pinch thumb and index on **both hands in free space**, close
+In tool mode, pinch thumb and index (or hold both controller triggers) in
+**free space**, close
 together in time. The workspace lights up and its tool controls dim. Move your
 hands together to drag, spread/squeeze to resize, or turn them to rotate the
 view while keeping it upright. Release either hand to continue dragging with
@@ -206,6 +243,37 @@ or command owners disable manual controls; missing recorder RPCs hide recording.
 If several runs exist, select one. Replacement runs reconnect automatically
 when following the sole run, and old run commands and callbacks are rejected.
 
+### Consolidation with Desktop Controller
+
+The installed SONIC Controller app already supplies typed scene layers and TF,
+robot profiles, camera quality controls, network diagnostics, manipulation
+planning, MCAP capture and agent-visible HTTP/OpenAPI actions. Its SONIC panel
+discovers policy RPCs through Desktop's active-run gateway. These are useful
+integration points; duplicating its gateway, scene discovery or planner in this
+viewer would create competing state owners.
+
+The intended boundary is one robot session with several presentations:
+browser panels, immersive panels and agent calls invoke the same capability
+owners. DimOS `@skill` methods remain robot-side tools, exposed through existing
+MCP where installed. Controller's HTTP app actions and its shell-command action
+buttons are different things; shell buttons are not a robot skill contract.
+High-rate grip/pose streams retain their existing control path.
+
+The current increment extracts only device input (`xr_input.mjs`) and panel
+placement (`xr_panels.mjs`) into robot-independent browser helpers. The spatial
+renderer and server still contain the dual-OpenYAM model/tool adapter. Supporting
+another robot should supply model, observations and applicable control/skill
+capabilities without changing device sampling or panel placement. Generic
+capability discovery and sharing Controller's browser state with XR are planned,
+not implemented by these helpers. Browser/XR need different widgets for the same
+actions; React DOM panels do not automatically become immersive UI.
+
+Controller's general stream recorder and this workflow's accepted demonstration
+episodes also have different contracts. Keep one episode owner underneath both
+views; do not treat any MCAP capture as a training-ready demonstration. Remote
+Desktop attachment, the older standalone learning mode and dual-arm ACT rollout
+remain separate integration work.
+
 ## Physical station
 
 Run the physical blueprint with a station JSON file through the normal CLI:
@@ -268,7 +336,7 @@ replaces the previous one; this is not a persistent reconstructed map.
 | --- | --- | --- |
 | `OpenYamSpatialSimulation` | Native servo targets | Physics and sim2 device observations |
 | `OpenYamSpatialCameras` | Read-only sim2 sensor snapshots | Central RGB/depth/intrinsics/cloud/TF; two wrist RGB feeds |
-| `OpenYamSpatialTeleop` | Registered RGB/depth/intrinsics + timestamped TF; measured joints; tracked hands | Sensor-derived surface; independent pose/opening actions through existing teleop streams; optional focus request |
+| `OpenYamSpatialTeleop` | Registered RGB/depth/intrinsics + timestamped TF; measured joints; tracked hands/controllers | Sensor-derived surface; tool or clutch actions through existing teleop streams; optional focus request |
 | `OpenYamSpatialCoordinator` | Per-arm teleop streams | Existing per-arm IK tasks; one writer for both sim2 arm devices |
 | `DualOpenYamCollection` | Measured joints, accepted commands, two wrist images | Existing native MCAP recorder and episode RPCs shared with Desktop |
 

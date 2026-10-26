@@ -64,6 +64,7 @@ class SpatialHand(BaseModel):
     pinched: bool
     action: Literal["move", "opening"] | None = None
     arm: Literal["left", "right"] | None = None
+    trigger: float = Field(default=0.0, ge=0, le=1)
 
     @model_validator(mode="after")
     def tool_target(self) -> SpatialHand:
@@ -89,6 +90,15 @@ class SpatialInput(BaseModel):
     observed_at: float
     hands: dict[Literal["left", "right"], SpatialHand]
     focus: tuple[float, float, float] | None = None
+    mode: Literal["tools", "clutch"] = "tools"
+
+    @model_validator(mode="after")
+    def clutch_targets(self) -> SpatialInput:
+        if self.mode == "clutch":
+            for side, sample in self.hands.items():
+                if sample.action not in (None, "move") or sample.arm not in (None, side):
+                    raise ValueError("clutch control maps each input to its corresponding arm")
+        return self
 
 
 class CollectionAction(BaseModel):
@@ -158,6 +168,7 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         self._transforms = MultiTBuffer()
         self._sequence = -1
         self._control_epoch = 0
+        self._input_mode: Literal["tools", "clutch"] = "tools"
         self._hold_reason: str | None = "Release and pinch a tool to take control"
         self._released = {hand: False for hand in Hand}
         self._claims: dict[Hand, tuple[Hand, str]] = {}
@@ -231,6 +242,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     "observation_timeout_s": self.config.observation_timeout_s,
                     "control": {
                         "epoch": self._control_epoch,
+                        "mode": self._input_mode,
+                        "modes": ["tools", "clutch"],
                         "robot_ready": self._joint_feedback_ready(now),
                         "hold_reason": self._hold_reason,
                     },
@@ -371,6 +384,10 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             self._expire_stale_state(time.monotonic())
             if message.control_epoch != self._control_epoch:
                 return False
+            if message.mode != self._input_mode:
+                self._input_mode = message.mode
+                self._hold_control("Control mode changed; release and grab again")
+                return False
             now = time.time()
             if message.sequence <= self._sequence:
                 self._hold_control("Repeated control input; release and pinch again")
@@ -416,7 +433,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 if sample.action == "opening" and np.linalg.norm(position - knob) < 0.055:
                     self._claims[hand] = (target, "opening")
                     self._opening_refs[hand] = (position, axis, opening)
-                elif sample.action == "move" and np.linalg.norm(position - arm["grasp"]) < 0.12:
+                elif sample.action == "move" and (
+                    message.mode == "clutch" or np.linalg.norm(position - arm["grasp"]) < 0.12
+                ):
                     self._claims[hand] = (target, "move")
                 if hand in self._claims:
                     reserved.add(self._claims[hand])
@@ -456,7 +475,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     else None
                 )
                 opening = float(measured["opening"])
-                if opener is not None:
+                if message.mode == "clutch" and pose is not None:
+                    opening = 1 - pose.trigger
+                elif opener is not None:
                     sample = message.hands["left" if opener == Hand.LEFT else "right"]
                     origin, axis, initial = self._opening_refs[opener]
                     opening = float(
@@ -500,7 +521,9 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
 
     def _gripper_is_enabled(self, hand: Hand, buttons: Buttons) -> bool:
         # Either human hand may own this robot arm's independent opening control.
-        return self._owner(hand, "opening") is not None
+        return self._owner(hand, "opening") is not None or (
+            self._input_mode == "clutch" and self._owner(hand, "move") is not None
+        )
 
     def _reset_controller_state(self) -> None:
         with self._lock:

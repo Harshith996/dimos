@@ -1,10 +1,11 @@
 // Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0.
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {ToolPinch} from './spatial_input.mjs';
+import {PinchGrab, ToolPinch} from './spatial_input.mjs';
 import {decodeSurface, SurfaceGrid} from './spatial_surface.mjs';
 import {SpatialUI} from './spatial_ui.mjs';
 import {WorkspaceTransform} from './spatial_workspace.mjs';
+import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 if (embedded) document.body.classList.add('embedded');
@@ -12,7 +13,7 @@ const apiBase = new URL('./spatial/', location.href);
 const endpoint = path => new URL(path, apiBase).href;
 const status = document.querySelector('#status');
 const enter = document.querySelector('#enter');
-const renderer = new THREE.WebGLRenderer({antialias: true});
+const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = !embedded;
@@ -36,6 +37,7 @@ const stage = new THREE.Group(); stage.matrixAutoUpdate = false;
 scene.add(stage); applyPlacement();
 const inverseStage = new THREE.Matrix4();
 const arms = {}, handles = {}, gestures = {}, handDots = {}, openingControls = {};
+const clutches = {}, sources = {}, rays = {};
 const colours = {left: 0x76e2c1, right: 0xfab972};
 for (const side of ['left', 'right']) {
   arms[side] = new THREE.Group(); stage.add(arms[side]);
@@ -43,6 +45,10 @@ for (const side of ['left', 'right']) {
     new THREE.MeshBasicMaterial({color: colours[side], transparent: true, opacity: 0.7, wireframe: true}));
   handles[side] = handle; stage.add(handle); handle.visible = false;
   gestures[side] = new ToolPinch();
+  clutches[side] = new PinchGrab();
+  rays[side]=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({color:colours[side],transparent:true,opacity:0.6}));
+  rays[side].visible=false; scene.add(rays[side]);
   const control = new THREE.Group(); stage.add(control); control.visible = false;
   const material = new THREE.MeshBasicMaterial({color: colours[side], transparent:true, opacity:0.65});
   const rail = new THREE.Mesh(new THREE.BoxGeometry(1,0.003,0.003), material);
@@ -73,10 +79,13 @@ let feedback = null, feedbackAt = 0, cloudAt = 0, cloudTS = 0, sequence = 0, soc
 let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
+let modePreference='auto', activeMode='tools';
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:action=>{
   if(action==='hold') paused=!paused;
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
   if(action==='bring_here') placeAhead=true;
+  if(action.startsWith('mode:')) setInteractionMode(action.slice(5));
+  if(action==='exit_xr') renderer.xr.getSession()?.end().catch(error=>{entryError=error.message;});
   resetHands(); send({});
 }});
 const uiPointer=new THREE.Mesh(new THREE.SphereGeometry(0.007,8,6),new THREE.MeshBasicMaterial({color:0xffffff,depthTest:false}));
@@ -119,7 +128,7 @@ function connect() {
 }
 poll(endpoint('state'), 35, async response => {
   const next = await response.json();
-  if(!Number.isInteger(next.control?.epoch)) {
+  if(!Number.isInteger(next.control?.epoch) || !next.control.modes?.includes('clutch')) {
     entryError='Station controls were updated. Restart the blueprint and reload this page.';
     throw new Error(entryError);
   }
@@ -193,8 +202,24 @@ async function pollSurface() {
   }
 }
 pollSurface();
-function resetTools() { inputGeneration++; for (const state of Object.values(gestures)) state.reset(); }
-function resetHands() { resetTools(); workspace.cancel(); ui.hidePalm(); }
+function resetTools() {
+  inputGeneration++;
+  for (const state of [...Object.values(gestures),...Object.values(clutches)]) state.reset();
+  ui.layout.cancel();
+}
+function resetHands() {
+  resetTools(); workspace.cancel(); ui.hidePalm(); uiPointer.visible=false;
+  for(const side of ['left','right']) {
+    rays[side].visible=false;
+    for(const dot of handDots[side]) dot.visible=false;
+  }
+}
+function setInteractionMode(preference) {
+  modePreference=preference; document.querySelector('#interaction-mode').value=preference;
+  if(preference!=='auto') activeMode=preference;
+  resetHands(); send({});
+}
+document.querySelector('#interaction-mode').onchange=event=>setInteractionMode(event.target.value);
 function workspacePivot() {
   const known=Object.values(feedback?.arms??{});
   return known.reduce((center,arm)=>center.add(new THREE.Vector3().fromArray(arm.grasp)),new THREE.Vector3())
@@ -226,62 +251,90 @@ function place(viewer) {
 document.querySelector('#place').onclick = () => { placeAhead=true; resetHands(); send({}); };
 enter.onclick = async () => {
   entryError = '';
+  let session;
   try {
-    const session = await navigator.xr.requestSession('immersive-vr', {requiredFeatures: ['local-floor', 'hand-tracking']});
+    session = await navigator.xr.requestSession(document.querySelector('#xr-mode').value, xrSessionOptions());
     controlRequested = true; paused=false;
-    session.addEventListener('end', () => { controlRequested = false; resetHands(); send({}); socket?.close(); enter.disabled = false; orbit.enabled = true; });
+    scene.background=session.environmentBlendMode==='opaque'?new THREE.Color('#11181d'):null;
+    renderer.setClearAlpha(scene.background?1:0);
+    session.addEventListener('end', () => {
+      controlRequested = false; resetHands(); send({}); socket?.close(); enter.disabled = false; orbit.enabled = true;
+      document.querySelector('#xr-mode').disabled=false;
+      scene.background=new THREE.Color('#11181d'); renderer.setClearAlpha(1);
+    });
     session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') { resetHands(); send({}); } });
     await renderer.xr.setSession(session); connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
-  } catch (error) { controlRequested = false; socket?.close(); entryError = `Cannot enter WebXR: ${error.message}`; }
+    document.querySelector('#xr-mode').disabled=true;
+  } catch (error) {
+    controlRequested = false; socket?.close(); entryError = `Cannot enter WebXR: ${error.message}`;
+    if(session) await session.end().catch(endError=>console.warn('Ending failed XR session:',endError.message));
+  }
 };
-if (!embedded && navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')) enter.disabled = false;
+const xrMode=document.querySelector('#xr-mode');
+const supportedModes=await Promise.all(['immersive-vr','immersive-ar'].map(async mode=>
+  [mode,!embedded && !!navigator.xr && await navigator.xr.isSessionSupported(mode).catch(()=>false)]));
+for(const [mode,supported] of supportedModes) xrMode.querySelector(`[value="${mode}"]`).disabled=!supported;
+const firstMode=supportedModes.find(([,supported])=>supported)?.[0];
+if(firstMode) { xrMode.value=firstMode; enter.disabled=false; }
 else enter.textContent = 'WebXR unavailable in this browser';
+document.querySelector('#entry-hint').textContent=supportedModes[1][1]
+  ? 'Mixed reality shows passthrough. Exit XR to change VR / MR; HUD pins follow your view.'
+  : 'This browser does not advertise mixed reality. Hand tracking is optional.';
 
 function send(hands, focus = null) {
   if (socket?.readyState !== WebSocket.OPEN || controlEpoch===null) return;
   if (socket.bufferedAmount > 16384) { socket.close(); resetHands(); return; }
-  socket.send(JSON.stringify({type: 'spatial_input', sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus}));
+  socket.send(JSON.stringify({type: 'spatial_input', mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus}));
 }
 function track(frame, reference, observationsFresh, viewer) {
-  const samples={};
+  const raw=sampleXRInputs(frame,reference), samples={};
+  const mode=Object.keys(raw).length?interactionMode(modePreference,raw):activeMode;
+  if(mode!==activeMode) { activeMode=mode; resetHands(); send({}); }
+  const robotReady=feedback?.control?.robot_ready && feedback.control.mode===activeMode;
   ui.hovered=null; uiPointer.visible=false;
-  for (const source of frame.session.inputSources) {
-    // Vision Pro's gaze+pinch transient-pointer is NOT a hand pose source.
-    if (!source.hand || source.targetRayMode !== 'tracked-pointer' || !gestures[source.handedness]) continue;
-    const side = source.handedness;
-    const poses = {};
-    let index = 0;
-    for (const [name, joint] of source.hand) {
-      const pose = frame.getJointPose(joint, reference); poses[name] = pose;
-      const dot = handDots[side][index++]; if (!dot) continue;
-      dot.visible = !!pose; if (pose) dot.position.copy(pose.transform.position);
+  for(const side of ['left','right']) {
+    const sample=raw[side];
+    for(const dot of handDots[side]) dot.visible=false;
+    rays[side].visible=false;
+    if(sources[side]!==sample?.source) {
+      gestures[side].reset(); clutches[side].reset(); ui.layout.end(side); sources[side]=sample?.source;
     }
-    const thumb = poses['thumb-tip'], tip = poses['index-finger-tip'], wrist = poses.wrist;
-    if (!thumb || !tip || !wrist) { gestures[side].reset(); continue; }
-    const indexPosition = new THREE.Vector3().copy(tip.transform.position);
-    const thumbPosition = new THREE.Vector3().copy(thumb.transform.position);
-    samples[side]={poses,indexPosition,thumbPosition,wrist,knuckle:poses['index-finger-metacarpal'],
-      position:indexPosition.clone().add(thumbPosition).multiplyScalar(0.5),
-      distance:indexPosition.distanceTo(thumbPosition)};
-  }
-  for(const side of ['left','right']) if(!samples[side]) {
-    gestures[side].reset(); for(const dot of handDots[side]) dot.visible=false;
+    if(!sample) continue;
+    const position=new THREE.Vector3().fromArray(sample.position);
+    const orientation=new THREE.Quaternion().fromArray(sample.orientation);
+    const hand={...sample,position,orientation,pose:new THREE.Matrix4().compose(position,orientation,new THREE.Vector3(1,1,1))};
+    if(sample.kind==='hand') {
+      Object.values(sample.poses).forEach((pose,i)=>{
+        const dot=handDots[side][i]; if(dot && pose) { dot.visible=true; dot.position.copy(pose.transform.position); }
+      });
+      hand.wrist=sample.poses.wrist;
+      hand.indexPosition=new THREE.Vector3().copy(sample.poses['index-finger-tip'].transform.position);
+      const knuckle=sample.poses['index-finger-metacarpal'];
+      const direction=knuckle?hand.indexPosition.clone().sub(new THREE.Vector3().copy(knuckle.transform.position)):null;
+      hand.ray=direction?.length()>0.01?new THREE.Raycaster(hand.indexPosition,direction.normalize(),0,3):null;
+    } else hand.ray=sample.ray?new THREE.Raycaster(new THREE.Vector3().fromArray(sample.ray.position),
+      new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().fromArray(sample.ray.orientation)),0,3):null;
+    samples[side]=hand;
   }
   stage.updateMatrixWorld(true);
   inverseStage.copy(stage.matrixWorld).invert();
-  const owned=Object.values(gestures).some(g=>g.grabbed);
+  const owned=[...Object.values(gestures),...Object.values(clutches)].some(g=>g.grabbed);
   const now=performance.now();
   ui.updatePalm(samples,viewer?.transform.position,workspace.active||owned,now);
   // Resolve every tool/UI target before considering a two-hand air grab.
   for(const [side,hand] of Object.entries(samples)) {
     hand.local=hand.position.clone().applyMatrix4(inverseStage);
-    const direction=hand.knuckle?hand.indexPosition.clone().sub(new THREE.Vector3().copy(hand.knuckle.transform.position)):null;
-    hand.ray=direction?.length()>0.01?new THREE.Raycaster(hand.indexPosition,direction.normalize(),0,3):null;
     hand.uiHit=ui.hit(hand.ray,side,hand.position);
+    if(hand.kind==='controller' && hand.ray) {
+      const points=rays[side].geometry.attributes.position;
+      const end=hand.uiHit?.point??hand.ray.ray.at(1,new THREE.Vector3());
+      points.setXYZ(0,...hand.ray.ray.origin.toArray()); points.setXYZ(1,...end.toArray());
+      points.needsUpdate=true; rays[side].geometry.computeBoundingSphere(); rays[side].visible=true;
+    }
     const targets=[];
     // Known tools keep their hit space even while held or observations lag.
     // Otherwise a pinch at a delayed tool can become a workspace gesture.
-    for(const arm of Object.keys(feedback?.arms??{})) {
+    for(const arm of activeMode==='tools'?Object.keys(feedback?.arms??{}):[]) {
       const c=openingControls[arm];
       const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
       for(const [action,position,radius] of [['opening',knob,0.045],['move',handles[arm].position,0.10]]) {
@@ -292,7 +345,7 @@ function track(frame, reference, observationsFresh, viewer) {
     hand.tool=targets.sort((a,b)=>a.distance-b.distance)[0]??null;
     hand.target=hand.tool?.action || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
   }
-  const arranging=workspace.update(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
+  const arranging=activeMode==='tools' && workspace.update(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
     side,{position:hand.position.toArray(),distance:hand.distance,available:hand.target===null},
   ])),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
   if(arranging) {
@@ -307,22 +360,33 @@ function track(frame, reference, observationsFresh, viewer) {
   // Uniform view scale affects positions, never the hand's orientation quaternion.
   const rotation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(inverseStage));
   for(const [side,hand] of Object.entries(samples)) {
-    const {wrist,local:pinchPosition,ray,uiHit}=hand;
+    const {local:pinchPosition,ray,uiHit}=hand;
+    const orientation=rotation.clone().multiply(hand.orientation);
+    if(activeMode==='clutch') {
+      const clutch=clutches[side].update(hand.clutchDistance,
+        !paused && robotReady && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
+      if(clutch.grab) {
+        gestures[side].reset(); ui.layout.end(side);
+        inputs[side]={position:pinchPosition.toArray(),orientation:orientation.toArray(),
+          pinched:true,arm:side,action:'move',trigger:hand.trigger};
+        continue;
+      }
+    }
     const state=gestures[side], armSide=state.arm??hand.tool?.arm;
     const arm=feedback?.arms?.[armSide], c=openingControls[armSide];
     const axis=new THREE.Vector3(1,0,0); if(c) axis.applyQuaternion(c.group.quaternion);
     const key=hand.tool?`${hand.tool.arm}:${hand.tool.action}`:null;
     const target=key && owners.has(key) && owners.get(key)!==side?null:hand.target;
     if(target?.startsWith('ui:')) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
-    const selectable=hand.tool && (paused || !feedback?.control?.robot_ready)?null:target;
+    const selectable=hand.tool && (paused || !robotReady)?null:target;
     const gesture=state.update(hand.distance,selectable,
       pinchPosition.toArray(),axis.toArray(),arm?.opening??0,feedback?.opening_handle_travel_m??1,hand.tool?.arm??null);
     if(state.arm!==null) owners.set(`${state.arm}:${state.action}`,side);
-    const orientation = rotation.clone().multiply(new THREE.Quaternion().copy(wrist.transform.orientation));
     if(feedback?.arms && !paused) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
-      pinched:gesture.pinched, arm:state.arm, action:['move','opening'].includes(gesture.action)?gesture.action:null};
-    if(gesture.pressed && gesture.action?.startsWith('ui:')) ui.activate(gesture.action.slice(3));
-    if (observationsFresh && gesture.releasedFree && target===null) {
+      pinched:activeMode==='tools'&&gesture.pinched, arm:state.arm, action:['move','opening'].includes(gesture.action)?gesture.action:null};
+    ui.drag(gesture.action,side,hand.pose,gesture.pressed);
+    if(gesture.pressed && gesture.action?.startsWith('ui:') && !gesture.action.startsWith('ui:drag:')) ui.activate(gesture.action.slice(3));
+    if (activeMode==='tools' && observationsFresh && gesture.releasedFree && target===null) {
       if (ray) {
         const hit = ray.intersectObject(cloud)[0];
         if (hit) { focus = hit.point.clone().applyMatrix4(inverseStage).toArray(); focusMarker.position.fromArray(focus); focusMarker.visible = true; }
@@ -338,8 +402,8 @@ renderer.setAnimationLoop((time, frame) => {
     const moving=Object.values(gestures).find(g=>g.arm===side && g.action==='move');
     const opening=Object.values(gestures).find(g=>g.arm===side && g.action==='opening');
     const known=!!feedback?.arms?.[side];
-    arms[side].visible = known; handles[side].visible = known;
-    const c=openingControls[side]; c.group.visible=known;
+    arms[side].visible = known; handles[side].visible = known && activeMode==='tools';
+    const c=openingControls[side]; c.group.visible=known && activeMode==='tools';
     handles[side].material.opacity=workspace.active||paused||!ready?0.12:moving?1:0.45;
     c.rail.material.opacity=workspace.active?0.12:0.65; c.label.material.opacity=workspace.active?0.25:1;
     c.requested.visible=known && !!opening;
@@ -349,15 +413,18 @@ renderer.setAnimationLoop((time, frame) => {
   cloud.visible = cloudTS > 0;
   detections.visible=fresh;
   if(!fresh) focusMarker.visible=false;
-  const controlStatus=!controlRequested?'desktop preview':paused?'control paused':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
+  const controlStatus=!controlRequested?'desktop preview':paused?'control paused':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.mode!==activeMode?'changing control mode':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
   const viewStatus=fresh?`Live · ${surfaceGrid?.valid || 0} depth samples`:cloudTS>0?'View delayed · showing last surface':feedback?.observation_error || 'Waiting for RGB-D observations';
   status.textContent = entryError || `${viewStatus} · ${controlStatus}`;
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
     ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused,actions:feedback?.actions,preview:!controlRequested,
-    workspaceScale:workspace.scale,workspaceActive:workspace.active});
+    workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);
+    if(viewer) ui.layout.updateHead(
+      new THREE.Vector3().copy(viewer.transform.position).toArray(),
+      new THREE.Quaternion().copy(viewer.transform.orientation).toArray());
     if (placeAhead && viewer) place(viewer);
     if (time-lastSend > 20) {
       lastSend = time;
