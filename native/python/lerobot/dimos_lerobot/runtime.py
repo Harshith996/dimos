@@ -237,7 +237,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             return
         with self._lock:
             self._latest_image = (
-                np.array(pixels, copy=True, order="C"),
+                np.ascontiguousarray(pixels),
                 message_time.to_seconds(image.header.stamp),
             )
 

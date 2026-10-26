@@ -21,7 +21,8 @@ from typing import Any
 from reactivex import Observable, Subject
 
 from dimos.core.global_config import TransportBackend
-from dimos.core.transport import LCMTransport, PubSubTransport
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
 from dimos.messages.geometry_msgs.msg import (
     PoseStamped as CdrPoseStamped,
     Quaternion,
@@ -63,10 +64,10 @@ class DimSimConnection:
         self.config = config
         self._transport_backend = transport
         self._dimsim_process: DimSimProcess = DimSimProcess(config)
-        self._odom_transport: PubSubTransport[CdrPoseStamped] = LCMTransport(
+        self._odom_transport: PubSubTransport[CdrPoseStamped] = make_transport(
             "/odom", CdrPoseStamped
         )
-        self._tf_transport: PubSubTransport[TFMessage] = LCMTransport("/tf", TFMessage)
+        self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
         self._first_odom = threading.Event()
 

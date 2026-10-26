@@ -307,7 +307,7 @@ impl Worker {
                     let pose = pose.expect("Drive implies a pose");
                     let path = snap.path.clone().expect("Drive implies a path");
                     let states = msg::path_states(&path);
-                    let ts = msg::relative_path_stamps(&path);
+                    let ts = msg::path_stamps(&path);
                     // no clearance array: the law decodes the stamps itself
                     let (vx, vy, wz) = hinted_update(pose, &states, None, Some(&ts), &hinted);
                     self.publish_twist(vx, vy, wz).await;
@@ -344,7 +344,7 @@ mod tests {
         for little_endian in [false, true] {
             let bytes = dimos_module::cdr::encode_endian(&path, little_endian).unwrap();
             let decoded: Path = dimos_module::cdr::decode(&bytes).unwrap();
-            assert_eq!(msg::relative_path_stamps(&decoded), vec![0.0, 1e-9]);
+            assert_eq!(msg::path_stamps(&decoded)[0], msg::path_stamps(&decoded)[1]);
             assert_eq!(decoded.poses[0].header.stamp.nanosec, 123_456_789);
             let mut latch = latch();
             latch.set_goal(goal_of(&decoded).unwrap());

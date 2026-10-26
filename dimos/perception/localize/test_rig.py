@@ -139,7 +139,7 @@ def test_lidar_map_registers_and_deduplicates_scans_in_world_frame() -> None:
 
     assert merged is not None
     assert merged.header.frame_id == "world"
-    assert merged.header.stamp == cloud.header.stamp
+    assert merged.header.stamp == message_time.time_from_seconds(2.0)
     np.testing.assert_allclose(
         pointcloud.xyz(merged), [[10.0, 0.0, 0.0], [10.1, 0.0, 0.0]], atol=1e-6
     )

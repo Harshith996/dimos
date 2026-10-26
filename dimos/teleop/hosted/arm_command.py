@@ -77,8 +77,8 @@ class ArmCommandModule(ArmTeleopModule):
         self._cmd = SerializedCommandExecutor(
             lambda nonce, ok: self._send_ack(nonce, ok), lambda: self._estopped
         )
-        self._last_twist_ns: int | None = None
-        self._last_pose_ns: dict[Hand, int | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._last_twist_ts = 0.0
+        self._last_pose_ts = {Hand.LEFT: 0.0, Hand.RIGHT: 0.0}
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
 
@@ -127,7 +127,6 @@ class ArmCommandModule(ArmTeleopModule):
             position=(p.x, p.y, p.z),
             orientation=(q.x, q.y, q.z, q.w),
         )
-        source_ns = message_time.to_nanoseconds(wire.header.stamp)
         try:
             hand = self._resolve_hand(msg.frame_id)
         except ValueError:
@@ -148,10 +147,9 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_future_warn = now
                 logger.warning("dropping future-stamped pose — operator clock sync likely off")
             return
-        previous = self._last_pose_ns[hand]
-        if previous is not None and source_ns <= previous:
+        if ts <= self._last_pose_ts[hand]:
             return
-        self._last_pose_ns[hand] = source_ns
+        self._last_pose_ts[hand] = ts
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
@@ -162,7 +160,6 @@ class ArmCommandModule(ArmTeleopModule):
         if self._estopped:
             return
         msg = cdr_decode(data, TwistStamped)
-        source_ns = message_time.to_nanoseconds(msg.header.stamp)
         ts = message_time.to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
@@ -179,9 +176,9 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_future_warn = now
                 logger.warning("dropping future-stamped ee_twist — operator clock sync likely off")
             return
-        if self._last_twist_ns is not None and source_ns <= self._last_twist_ns:
+        if ts <= self._last_twist_ts:
             return
-        self._last_twist_ns = source_ns
+        self._last_twist_ts = ts
         with self._lock:
             scale = self._translation_scale
         self.ee_twist_command.publish(

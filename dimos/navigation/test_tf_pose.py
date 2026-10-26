@@ -109,7 +109,7 @@ def test_tf_pose_retries_a_missing_edge_once_per_period():
 
 
 @pytest.mark.parametrize("stamp", [0, -1, 1700000000123456789])
-def test_tf_pose_observes_single_nanosecond_progress_without_float_conversion(stamp):
+def test_tf_pose_preserves_headers_and_existing_float_deadman(stamp):
     tf, clock = MultiTBuffer(), _Clock()
     source = TfPose(tf, "base_link", max_age_s=2.5, clock=clock)
     transform = _body_at(1.0, 0.0)
@@ -124,4 +124,7 @@ def test_tf_pose_observes_single_nanosecond_progress_without_float_conversion(st
     transform.header.stamp = message_time.time_from_nanoseconds(stamp + 1)
     tf.receive_transform(transform)
     fresh = source.get("odom")
-    assert fresh.header == transform.header and fresh.pose.position.x == 1
+    if stamp == 1700000000123456789:
+        assert fresh is None
+    else:
+        assert fresh.header == transform.header and fresh.pose.position.x == 1

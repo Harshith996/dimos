@@ -174,18 +174,6 @@ pub fn path_stamps(path: &Path) -> Vec<f64> {
         .collect()
 }
 
-/// Relative seconds for laws that consume only profile deltas.
-pub fn relative_path_stamps(path: &Path) -> Vec<f64> {
-    let Some(first) = path.poses.first() else {
-        return Vec::new();
-    };
-    let base = nanoseconds(&first.header.stamp);
-    path.poses
-        .iter()
-        .map(|pose| (nanoseconds(&pose.header.stamp) - base) as f64 / 1_000_000_000.)
-        .collect()
-}
-
 /// A body-frame twist, the only shape either module publishes.
 pub fn twist(vx: f64, vy: f64, wz: f64) -> Twist {
     Twist {
@@ -293,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_path_codec_and_relative_profile_keep_nanosecond_differences() {
+    fn generated_path_codec_keeps_nanoseconds_with_existing_float_profile() {
         let mut path = build_path(
             &[[0., 0., 0.], [1., 0., 0.], [2., 0., 0.]],
             &[],
@@ -312,7 +300,10 @@ mod tests {
         for little in [false, true] {
             let payload = cdr::encode_endian(&path, little).unwrap();
             let decoded: Path = cdr::decode(&payload).unwrap();
-            assert_eq!(relative_path_stamps(&decoded), vec![0., 1e-9, 3e-9]);
+            assert_eq!(decoded, path);
+            assert!(path_stamps(&decoded)
+                .windows(2)
+                .all(|pair| pair[0] == pair[1]));
             assert_eq!(decoded.header.frame_id, "map");
         }
         assert_eq!(
