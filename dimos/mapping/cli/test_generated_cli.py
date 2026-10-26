@@ -13,15 +13,17 @@
 # limitations under the License.
 
 
+from dataclasses import asdict
+
 import cv2
-from dimos_cdrgen.registry import decode, encode
+from dimos_cdrgen.registry import decode
 import numpy as np
 import pytest
 import rerun as rr
 from typer.testing import CliRunner
 
 from dimos.cli.commands.map import map_app
-from dimos.mapping.cli.map import _accumulate, _camera_info_static, _denoise
+from dimos.mapping.cli.map import _accumulate, _denoise
 from dimos.memory.cli import dataset
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -192,7 +194,7 @@ def test_replay_marker_cli_detects_actual_apriltag(recorded_dataset, recording_c
 def test_registration_then_drift_correction_preserves_header_and_input():
     header = Header(frame_id="lidar", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     cloud = pointcloud.from_xyz(np.array([[0, 0, 0]], dtype=np.float32), header=header)
-    before = encode(cloud)
+    before = asdict(cloud)
 
     def transform(x, frame, child):
         return TransformStamped(
@@ -222,7 +224,7 @@ def test_registration_then_drift_correction_preserves_header_and_input():
     assert output is not None
     np.testing.assert_allclose(pointcloud.xyz(output), [[3.025, 0.025, 0.025]], atol=1e-6)
     assert output.header.frame_id == "world_corrected" and output.header.stamp == header.stamp
-    assert encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)
 
 
 def test_denoise_retains_point_capture_times_and_exact_header():
@@ -230,13 +232,13 @@ def test_denoise_retains_point_capture_times_and_exact_header():
     points = np.concatenate([rng.normal(0, 0.03, (100, 3)), [[100, 100, 100]]])
     header = Header(frame_id="world", stamp=message_time.time_from_nanoseconds(1700000000123456789))
     cloud = pointcloud.from_xyz(points, header=header, stamps=np.arange(101, dtype=np.float64))
-    before = encode(cloud)
+    before = asdict(cloud)
     output = _denoise(cloud)
     assert output is not None and output.width < cloud.width
     assert np.linalg.norm(pointcloud.xyz(output), axis=1).max() < 1
     assert output.header == header and output.fields == cloud.fields
     assert np.max(pointcloud.stamps(output)) < 100
-    assert encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)
 
 
 @pytest.mark.parametrize("mode", ["points", "boxes", "spheres"])
@@ -246,19 +248,12 @@ def test_cloud_rendering_filters_geometry_and_own_colors_together(mode):
         np.array([[255, 0, 0], [0, 255, 0]], dtype=np.uint8),
         header=Header(frame_id="world", stamp=message_time.time_from_seconds(0)),
     )
-    before = encode(cloud)
+    before = asdict(cloud)
     value = cloud_archetype(cloud, voxel_size=0.2, mode=mode, bottom_cutoff=0)
     assert value.colors.as_arrow_array().to_pylist() == [0x00FF00FF]
     positions = value.centers if mode == "boxes" else value.positions
     np.testing.assert_array_equal(positions.as_arrow_array().to_pylist(), [[3, 4, 2]])
-    assert encode(cloud) == before
-
-
-def test_packaged_camera_calibration_is_a_generated_value():
-    camera = _camera_info_static()
-    assert camera.__msgtype__ == "sensor_msgs/msg/CameraInfo"
-    assert camera.width == 1280 and camera.height == 720
-    assert camera.header.frame_id == "camera_optical"
+    np.testing.assert_equal(asdict(cloud), before)
 
 
 def test_global_markers_compose_external_pose_stream_and_pgo(

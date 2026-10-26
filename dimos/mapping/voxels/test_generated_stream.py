@@ -16,7 +16,6 @@ from contextlib import ExitStack
 from copy import deepcopy
 from threading import Event
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import open3d.core as o3c
 import pytest
@@ -124,7 +123,7 @@ def test_generated_stream_retains_exact_headers_batch_tail_and_observation_metad
     assert [item.ts for item in result] == [42 + index for index in indices]
     assert all(item.tags["source"] == "lidar" and item.pose is None for item in result)
     assert all(item.data.header.frame_id == "map" for item in result)
-    received = decode(encode(result[-1].data), PointCloud2)
+    received = result[-1].data
     assert len(pointcloud.xyz(received)) == 3
     assert frames[-1].data.header == original
 

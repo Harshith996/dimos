@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 
@@ -55,7 +56,7 @@ def test_generated_corrections_preserve_frames_time_and_nearest_neighbor() -> No
         corrections = keyframes_to_corrections(keyframes)
         lookup = make_interpolator(corrections)
         for ts, expected in [(-1, 2), (0.9, 2), (1.1, 4), (3, 4)]:
-            correction = cdr_decode(cdr_encode(lookup(ts)), TransformStamped)
+            correction = lookup(ts)
             assert correction.transform.translation.x == expected
             assert correction.header.frame_id == FRAME_WORLD_CORRECTED
             assert correction.child_frame_id == FRAME_WORLD_RAW
@@ -89,7 +90,7 @@ def test_pgo_consumes_generated_cloud_without_mutating_input() -> None:
         np.array([[1.0, 0, 0], [1, 1, 0], [1, 0, 1]]),
         header=Header(frame_id=FRAME_WORLD_RAW, stamp=message_time.time_from_seconds(12.25)),
     )
-    before = cdr_encode(cloud)
+    before = asdict(cloud)
     quaternion = geometry.quaternion_from_euler(0, 0, 0.1)
     observation = Observation(
         ts=12.25,
@@ -103,4 +104,4 @@ def test_pgo_consumes_generated_cloud_without_mutating_input() -> None:
     correction = graph.correction_at(12.25)
     assert correction.transform.translation.x == pytest.approx(0, abs=1e-6)
     assert correction.transform.rotation.w == pytest.approx(1)
-    assert cdr_encode(cloud) == before
+    np.testing.assert_equal(asdict(cloud), before)

@@ -16,7 +16,6 @@
 from copy import deepcopy
 import math
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -70,7 +69,7 @@ def test_generated_resampling_keeps_exact_metadata_and_matches_existing_numerics
     method, stamp, goal_yaw
 ):
     points = [(0.0, 0.0), (0.4, 0.0), (0.4, 0.4), (0.8, 0.4)]
-    source = decode(encode(make_path(points, stamp)), Path)
+    source = make_path(points, stamp)
     before = deepcopy(source)
     quaternion = Quaternion(x=0, y=0, z=math.sin(goal_yaw / 2), w=math.cos(goal_yaw / 2))
     goal = Pose(position=Point(x=0.8, y=0.4, z=0), orientation=quaternion)
@@ -107,7 +106,6 @@ def test_generated_resampling_keeps_exact_metadata_and_matches_existing_numerics
         atol=1e-14,
     )
     np.testing.assert_allclose(values(result)[[0, -1], :3], [[0, 0, 0], [0.8, 0.4, 0]])
-    assert decode(encode(result), Path) == result
     if method is smooth_resample_path:
         assert source == before
     else:

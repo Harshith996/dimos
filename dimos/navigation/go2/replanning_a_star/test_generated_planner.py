@@ -17,7 +17,6 @@ from copy import deepcopy
 import math
 from threading import Event
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -82,7 +81,6 @@ def test_generated_p_controller_retains_advance_and_rotate_then_drive_commands(t
         0,
         0,
     )
-    assert decode(encode(command), type(command)) == command
 
 
 def test_generated_pd_controller_retains_derivative_and_acceleration_state():

@@ -21,9 +21,9 @@ The end-to-end `dimos map pose-fill` path against a real recording lives in
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import asdict
 import math
 
-from dimos_cdrgen.registry import encode
 import numpy as np
 
 from dimos.mapping.cli.pose_fill import pose_fill, pose_fill_db
@@ -103,11 +103,11 @@ def test_stamped_pose_mount_rotates_the_offset_and_keeps_payload():
         source = store.stream("pose", PoseStamped)
         target.append("frame", ts=10.0)
         source.append(pose, ts=10.01)
-        before = encode(pose)
+        before = asdict(pose)
         [result] = pose_fill(target, source, mount=mount).to_list()
         assert result.data == "frame"
         np.testing.assert_allclose(result.pose_tuple[:3], [1, 3, 3], atol=1e-12)
-        assert encode(pose) == before
+        np.testing.assert_equal(asdict(pose), before)
 
 
 def test_sqlite_pose_fill_copies_original_cdr_bytes_and_exact_header(tmp_path):
@@ -133,9 +133,11 @@ def test_sqlite_pose_fill_copies_original_cdr_bytes_and_exact_header(tmp_path):
         result = store.stream("lidar", PointCloud2).first()
         assert result.pose_tuple == (4.0, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0)
         assert result.ts == 10.0
-        assert encode(result.data) == encode(cloud)
+        np.testing.assert_equal(asdict(result.data), asdict(cloud))
         assert result.data.header.stamp.nanosec == 123456789
-        assert encode(store.stream("odom", PoseStamped).first().data) == encode(pose)
+        np.testing.assert_equal(
+            asdict(store.stream("odom", PoseStamped).first().data), asdict(pose)
+        )
         before = original.stream("lidar", PointCloud2)
         after = store.stream("lidar", PointCloud2)
         assert before._source.blob_store.get(
