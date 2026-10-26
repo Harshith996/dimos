@@ -56,12 +56,12 @@ class OdometryHist(Module):
         super().__init__(**kwargs)
         self._poses: deque[PoseStamped] = deque(maxlen=self.config.max_poses)
         # None distinguishes an unpublished history from a recording starting at zero.
-        self._last_publish_ns: int | None = None
+        self._last_publish_ts: float | None = None
         self._unpublished = False
 
     async def handle_odometry(self, msg: Odometry) -> None:
         position = msg.pose.pose.position
-        stamp_ns = message_time.to_nanoseconds(msg.header.stamp)
+        stamp = message_time.to_seconds(msg.header.stamp)
         point = (position.x, position.y, position.z)
         frame_id = self.config.frame_id or msg.header.frame_id
         previous = self._poses[-1] if self._poses else None
@@ -80,13 +80,13 @@ class OdometryHist(Module):
 
         if not self._unpublished:
             return
-        if self._last_publish_ns is not None:
-            elapsed = stamp_ns - self._last_publish_ns
+        if self._last_publish_ts is not None:
+            elapsed = stamp - self._last_publish_ts
             # A replay restart moves the stamp backwards; publish rather than wait it out.
-            if 0 <= elapsed < self.config.min_publish_interval_seconds * 1_000_000_000:
+            if 0.0 <= elapsed < self.config.min_publish_interval_seconds:
                 return
-        self._last_publish_ns = stamp_ns
+        self._last_publish_ts = stamp
         self._unpublished = False
         header = deepcopy(msg.header)
         header.frame_id = frame_id
-        self.odom_hist.publish(Path(header=header, poses=deepcopy(list(self._poses))))
+        self.odom_hist.publish(Path(header=header, poses=list(self._poses)))

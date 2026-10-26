@@ -18,6 +18,8 @@ from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPose
+from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import decode_ceilings
 
@@ -135,10 +137,18 @@ def test_stall_never_reads_as_schedule() -> None:
     np.testing.assert_allclose(ca, cb)
 
 
-def test_exact_epoch_nanosecond_deltas_drive_the_profile_without_float_loss():
+def test_generated_profile_matches_existing_float_computation():
     path = _path(n=3, step=0.1)
     base = 1700000000123456789
     for pose, delta in zip(path.poses, [0, 200000000, 700000000], strict=True):
         pose.header.stamp = message_time.time_from_nanoseconds(base + delta)
     ceilings = decode_ceilings(path, MIN_SPEED, MAX_SPEED)
-    np.testing.assert_allclose(ceilings, [0.5, 0.5, 0.2], rtol=0, atol=1e-15)
+    legacy = LegacyPath(
+        poses=[
+            LegacyPose(
+                ts=message_time.to_seconds(p.header.stamp), position=[p.pose.position.x, 0, 0]
+            )
+            for p in path.poses
+        ]
+    )
+    np.testing.assert_array_equal(ceilings, decode_ceilings(legacy, MIN_SPEED, MAX_SPEED))

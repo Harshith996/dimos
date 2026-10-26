@@ -50,7 +50,7 @@ class TfPose:
         # The stamp last seen and when it was first seen, on OUR clock: the
         # edge's stamp is the robot's clock, which need not be ours, and what
         # the deadman asks is how long since tf last moved.
-        self._seen: tuple[int, float] | None = None
+        self._seen: tuple[float, float] | None = None
 
     def get(self, world_frame: str) -> PoseStamped | None:
         now = self._clock()
@@ -61,7 +61,7 @@ class TfPose:
             self._next_lookup = now + self.RETRY_PERIOD_S
             self._seen = None
             return None
-        stamp = message_time.to_nanoseconds(tf.header.stamp)
+        stamp = message_time.to_seconds(tf.header.stamp)
         if self._seen is None or self._seen[0] != stamp:
             self._seen = (stamp, now)
         if now - self._seen[1] > self.max_age_s:
