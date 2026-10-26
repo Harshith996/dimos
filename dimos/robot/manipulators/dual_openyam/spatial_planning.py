@@ -38,6 +38,11 @@ from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
 from dimos.robot.manipulators.openyam.simulation import load_yam_artifact
 from dimos.sim2.sensors.spec import Mount
 
+# Named rest pose for the v1 spatial station, in its model joint convention.
+# In this artifact joint2 and joint3 have a 0.01 rad lower bound: zero is invalid.
+# This is a configured pose, independent of the first observed joint state.
+_SPATIAL_ARM_HOME = (0.0, 1.047, 1.05, -0.9, 0.0, 0.0)
+
 
 class SpatialModelPath(os.PathLike[str]):
     """Materialize only when RobotModel loads, never during blueprint import."""
@@ -82,5 +87,5 @@ def spatial_model_config(
             )
             for side in DUAL_OPENYAM_SIDES
         ],
-        home_joints=[0.0] * len(DUAL_OPENYAM_ARM_JOINTS),
+        home_joints=list(_SPATIAL_ARM_HOME) * len(DUAL_OPENYAM_SIDES),
     )

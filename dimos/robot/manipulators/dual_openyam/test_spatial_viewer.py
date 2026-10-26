@@ -30,14 +30,18 @@ from dimos.imitation.collection.spec import EpisodeCollectionSpec
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
     ExecutionStatus,
+    ManipulationSnapshot,
     ManipulationSpec,
+    OperationStatus,
     PlanningGroupInfo,
+    PlanningGroupState,
     PlanResult,
     PlanStatus,
 )
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.testing.link import Delay, DelayTimeline, DeliveryQueue, LinkConditions
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
 from dimos.teleop.webxr.controller_types import Hand
@@ -83,6 +87,26 @@ def operator_viewer(viewer, mocker):
         PlanningGroupInfo(side, (f"{side}/joint1", f"{side}/joint2"), "world", None, True)
         for side in ("left", "right")
     )
+    planner.get_state.return_value = ManipulationSnapshot(
+        timestamp=1000.0,
+        operation_status=OperationStatus.IDLE,
+        error=None,
+        has_pending_plan=False,
+        execution_status=ExecutionStatus.IDLE,
+        groups={
+            side: PlanningGroupState(
+                None,
+                None,
+                None,
+                {
+                    "home": JointState(
+                        name=[f"{side}/joint1", f"{side}/joint2"], position=[0.2, -0.3]
+                    ),
+                },
+            )
+            for side in ("left", "right")
+        },
+    )
     planner.plan_to_joints.return_value = PlanResult(
         PlanStatus.SUCCEEDED, plan=mocker.Mock(plan_id="home-plan")
     )
@@ -112,9 +136,27 @@ def test_browser_records_and_plans_home_without_an_xr_connection(operator_viewer
         assert response.json()["control"]["epoch"] > control["epoch"]
         targets = viewer._manipulation.plan_to_joints.call_args.args[0]
         assert set(targets) == {"left", "right"}
-        assert all(list(target.position) == [0.0, 0.0] for target in targets.values())
+        assert all(list(target.position) == [0.2, -0.3] for target in targets.values())
         viewer._manipulation.execute.assert_called_once_with(blocking=False, plan_id="home-plan")
         viewer._collection.finish.assert_not_called()
+
+
+def test_home_requires_a_configured_preset_for_each_arm(operator_viewer):
+    viewer = operator_viewer
+    viewer._manipulation.get_state.return_value.groups["right"].joint_presets.clear()
+    with TestClient(viewer._web_server.app) as client:
+        control = client.get("/spatial/state").json()["control"]
+        response = client.post(
+            "/spatial/control",
+            json={
+                "action": "home",
+                "session": control["session"],
+                "epoch": control["epoch"],
+            },
+        )
+        assert response.status_code == 409
+        viewer._manipulation.plan_to_joints.assert_not_called()
+        assert viewer._operator_paused
 
 
 def test_bound_spatial_view_and_recording_reject_an_old_session(operator_viewer):

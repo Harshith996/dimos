@@ -356,12 +356,13 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
             self._hold_reason = "Planning home motion"
 
         assert self._manipulation is not None
-        targets = {
-            group.id: JointState(
-                name=list(group.joint_names), position=[0.0] * len(group.joint_names)
-            )
-            for group in self._manipulation.list_planning_groups()
-        }
+        groups = self._manipulation.get_state().groups
+        if not groups or any("home" not in state.joint_presets for state in groups.values()):
+            with self._lock:
+                self._home_epoch = None
+                self._hold_reason = "Home unavailable: configure a home pose for every arm"
+            raise RuntimeError(self._hold_reason)
+        targets = {name: state.joint_presets["home"] for name, state in groups.items()}
         plan = self._manipulation.plan_to_joints(targets)
         with self._lock:
             if self._home_epoch != home_epoch or self._control_epoch != home_epoch:
