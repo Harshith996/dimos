@@ -127,6 +127,11 @@ GraspGenerator = Literal["heuristic", "graspgenx"]
 """Who answers the pick pipeline's ``propose_grasps``: the top-down heuristic, or GraspGenX, the
 learned generator, in its own Python environment (``native/python/graspgenx``) with the v1.0
 gripper's geometry (``alfred.gripper``)."""
+# IsolatedPythonModule's 30 s default bounds only GraspGenX's READY handshake: `uv run --frozen
+# --with-editable` and importing graspgenx_runtime.runtime with its dimos imports. On the Orin
+# that runs while ten workers start and OWLv2 and EdgeTAM load, so 30 s is tight; the model
+# itself loads afterwards, in start(), which this does not bound.
+GRASPGENX_STARTUP_TIMEOUT_S = 90.0
 
 
 def alfred_perception_modules(
@@ -298,6 +303,7 @@ def _grasp_generator(grasp: GraspGenerator) -> Any:
         return GraspGenXModule.blueprint(
             gripper=OPENARM_V10_SWEEP_VOLUME,
             grasp_frame_to_tcp=OPENARM_V10_GRASP_FRAME_TO_TCP,
+            startup_timeout=GRASPGENX_STARTUP_TIMEOUT_S,
         )
     if grasp == "heuristic":
         return HeuristicGraspModule.blueprint()

@@ -651,6 +651,18 @@ def test_the_bench_stack_picks_with_graspgenx_and_can_fall_back_to_the_heuristic
     }, "GraspGenX is a GPU model"
 
 
+def test_graspgenx_has_time_to_start_beside_the_models() -> None:
+    """The 30 s default covers `uv run` and the runtime's imports, which on the Orin run while ten
+    workers start and OWLv2 and EdgeTAM load; the model itself loads later, in start()."""
+    (graspgenx,) = [
+        atom
+        for fragment in alfred_perception_modules(gpu=True)
+        for atom in fragment.blueprints
+        if atom.module is GraspGenXModule
+    ]
+    assert GraspGenXConfig.model_validate(graspgenx.kwargs).startup_timeout >= 60.0
+
+
 def test_the_rerun_bridge_keeps_little_for_late_viewers() -> None:
     """A quarter of the Orin's RAM (the bridge's default) is what the models run in: that
     worker reached 6.4 GB and was OOM-killed, with the box thrashing first."""
