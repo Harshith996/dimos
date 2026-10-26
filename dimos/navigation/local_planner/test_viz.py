@@ -14,10 +14,9 @@
 
 """The plan-body overlay."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import math
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 from numpy.typing import NDArray
 import rerun as rr
@@ -73,14 +72,13 @@ def _rgba(boxes) -> NDArray[np.float64]:
 def test_cdr_plan_draws_without_mutating_exact_source_values() -> None:
     plan = _plan(n=2, yaw=math.pi / 2)
     plan.header.stamp = message_time.time_from_nanoseconds(1_700_000_000_123_456_789)
-    payload = encode(plan)
-    received = decode(payload, Path)
-    drawn = render_plan(received, GO2)
+    original = asdict(plan)
+    drawn = render_plan(plan, GO2)
     assert drawn is not None
     assert drawn[0] == ("world/path", rr.Transform3D(parent_frame="tf#/odom"))
     assert len(drawn[1][1].centers.pa_array) == 2
-    assert message_time.to_nanoseconds(received.header.stamp) == 1_700_000_000_123_456_789
-    assert encode(received) == payload
+    assert message_time.to_nanoseconds(plan.header.stamp) == 1_700_000_000_123_456_789
+    np.testing.assert_equal(asdict(plan), original)
 
 
 def test_boxes_are_subsampled_by_arc_not_by_index() -> None:

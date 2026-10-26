@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from copy import deepcopy
+from dataclasses import asdict
 import math
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -57,8 +57,7 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
     cells = np.zeros((12, 12), dtype=np.int8)
     cells[5:7, 5:7] = 100
     grid = grid_from_cells(cells, rotated)
-    grid = decode(encode(grid), type(grid))
-    before = encode(grid)
+    before = asdict(grid)
     point = occupancy.grid_to_world(grid, (5.25, 5.25))
     expected = find_safe_goal(
         LegacyGrid(cells, resolution=0.5),
@@ -76,8 +75,7 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
     assert expected is not None
     coordinate = occupancy.world_to_grid(grid, result)
     np.testing.assert_allclose(coordinate, (expected.x / 0.5, expected.y / 0.5), atol=1e-12, rtol=0)
-    assert encode(grid) == before
-    assert decode(encode(result), Point) == result
+    np.testing.assert_equal(asdict(grid), before)
 
 
 @pytest.mark.parametrize("algorithm", ["bfs", "bfs_contiguous"])

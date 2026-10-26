@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
 pytest.importorskip("dimos_mls_planner")
 
-from dimos_cdrgen.registry import encode
 
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import pointcloud, time as message_time
@@ -120,7 +121,7 @@ def test_no_route_yields_empty_path_with_planned_false() -> None:
 def test_generated_path_preserves_input_header_nanoseconds_without_aliasing(stamp_ns):
     obs = _obs(_flat_floor(), pose=(-2.0, -2.0, 1.0), region_bounds=(0.0, 0.0, 5.0, -1.0, 2.0))
     obs.data.header.stamp = message_time.time_from_nanoseconds(stamp_ns)
-    before = encode(obs.data)
+    before = asdict(obs.data)
     [result] = list(MLSPlan(goal=(2.0, 2.0, 0.0), voxel_size=0.2, robot_height=1.0)(iter([obs])))
     assert len(result.data.poses) >= 2
     assert message_time.to_nanoseconds(result.data.header.stamp) == stamp_ns
@@ -128,4 +129,4 @@ def test_generated_path_preserves_input_header_nanoseconds_without_aliasing(stam
     result.data.header.frame_id = "changed"
     assert obs.data.header.frame_id == "world"
     assert result.data.poses[0].header.frame_id == "world"
-    assert encode(obs.data) == before
+    np.testing.assert_equal(asdict(obs.data), before)

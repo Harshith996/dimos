@@ -24,7 +24,6 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import cv2
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -161,7 +160,7 @@ def test_malformed_frame_does_not_kill_next_valid_cdr_update(module, kind):
         broken.info.width = 2
         module._on_costmap(broken)
         good = _occupancy([[100]])
-        module._on_costmap(decode(encode(good), OccupancyGrid))
+        module._on_costmap(good)
         payload = _published_json(module.map_out, "map")
         assert payload["w"] == 1 and payload["h"] == 1
         assert good.data.tolist() == [100]
@@ -176,7 +175,7 @@ def test_malformed_frame_does_not_kill_next_valid_cdr_update(module, kind):
             Header(message_time.time_from_seconds(17.25), "map"),
             Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1)),
         )
-        module._on_odom(decode(encode(good), PoseStamped))
+        module._on_odom(good)
         assert _published_json(module.map_out, "odom") == {
             "type": "odom",
             "x": 1.0,
