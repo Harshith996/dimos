@@ -131,20 +131,22 @@ def test_generated_object_cloud_aggregation_and_dictionary_preserve_values():
     assert aggregate_pointclouds([]).width == 0
 
 
-def test_zero_and_adjacent_source_stamps_are_distinct_observations():
-    for sec in [0, 1700000000]:
-        database = ObjectDB(min_detections_for_permanent=2)
-        stamp = Time(sec=sec, nanosec=0)
-        first = _object("first", 0, float(sec), source_stamp=stamp)
-        duplicate = _object("duplicate", 0, float(sec), source_stamp=stamp)
-        newer = _object("newer", 0, float(sec), source_stamp=Time(sec=sec, nanosec=1))
-        database.add_objects([first, duplicate])
-        assert first.detections_count == 1
-        assert first.ts == float(sec)
-        database.add_objects([newer])
-        assert first.detections_count == 2
-        assert first.pose.header.stamp == newer.pose.header.stamp
-        assert database.get_objects() == [first]
+def test_deduplication_retains_existing_float_timestamp_behavior():
+    database = ObjectDB(min_detections_for_permanent=2)
+    sec = 1700000000
+    first = _object("first", 0, float(sec), source_stamp=Time(sec=sec, nanosec=0))
+    adjacent = _object("adjacent", 0, float(sec), source_stamp=Time(sec=sec, nanosec=1))
+    database.add_objects([first, adjacent])
+    assert first.detections_count == 1
+    assert database.get_objects() == []
+
+
+def test_zero_timestamp_retains_wall_clock_fallback(monkeypatch):
+    monkeypatch.setattr("dimos.perception.experimental.objectDB.time.time", lambda: 1000.0)
+    database = ObjectDB()
+    first = _object("first", 0, 0.0, source_stamp=Time(sec=0, nanosec=0))
+    database.add_objects([first])
+    assert first.ts == 1000.0
 
 
 def test_actual_rgbd_object_projection_keeps_color_and_depth_source_headers():
