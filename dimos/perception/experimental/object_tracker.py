@@ -427,9 +427,7 @@ class ObjectTracking(Module):
             return
 
         # Create detections if tracking succeeded
-        header = Header(
-            stamp=message_time.time_from_seconds(time.time()), frame_id=self.frame_id
-        )
+        header = Header(stamp=message_time.time_from_seconds(time.time()), frame_id=self.frame_id)
         detection2darray = Detection2DArray(header=header, detections=[])
         detection3darray = Detection3DArray(header=header, detections=[])
 
