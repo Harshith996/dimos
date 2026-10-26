@@ -19,19 +19,19 @@ export class PinchGrab {
 export class ToolPinch {
   constructor() { this.reset(); }
   reset() {
-    this.pinch = new PinchGrab(); this.action = null; this.opening = null;
+    this.pinch = new PinchGrab(); this.action = null; this.arm = null; this.opening = null;
     this.origin = null; this.axis = null; this.initial = 0; this.travel = 1;
   }
   get grabbed() { return this.action !== null; }
-  update(distance, target, position, axis, measuredOpening, travel) {
+  update(distance, target, position, axis, measuredOpening, travel, arm = null) {
     const releasedFree=this.pinch.pinched && this.action===null && distance>0.035;
     const edge = this.pinch.update(distance, target !== null);
     if (edge.pressed && edge.grab) {
-      this.action = target;
+      this.action = target; this.arm = arm;
       this.origin = [...position]; this.axis = [...axis];
       this.initial = measuredOpening; this.travel = travel;
     }
-    if (!edge.grab) { this.action = null; this.opening = null; }
+    if (!edge.grab) { this.action = null; this.arm = null; this.opening = null; }
     if (this.action === 'opening') {
       const delta = position.reduce((sum, v, i) => sum + (v-this.origin[i])*this.axis[i], 0);
       this.opening = Math.max(0, Math.min(1, this.initial + delta/this.travel));

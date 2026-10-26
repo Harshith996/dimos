@@ -48,6 +48,9 @@ def test_setup_supplies_model_limits_to_hardware(mocker, ports):
     try:
         coordinator._setup_from_config()
         component = coordinator.config.hardware[0]
+        assert component.adapter_kwargs.get("kinematic_model") == (
+            coordinator.config.robot_model if ports else None
+        )
         adapter = MockWholeBodyAdapter(dof=len(component.joints))
         hardware = ConnectedWholeBody(adapter, component)
         limits = hardware.get_limits()

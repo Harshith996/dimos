@@ -69,12 +69,15 @@ def send(
 ):
     hands = {}
     for side, grab in [("left", left), ("right", right)]:
-        if grab is not None:
+        if isinstance(grab, dict):
+            hands[side] = grab
+        elif grab is not None:
             hands[side] = {
                 "position": (np.asarray(module._feedback["arms"][side]["grasp"]) + offset).tolist(),
                 "orientation": [0, 0, 0, 1],
                 "pinched": grab,
                 "action": action if grab else None,
+                "arm": side if grab else None,
             }
     return module._dispatch_text_message(
         json.dumps(
@@ -91,14 +94,14 @@ def send(
 
 def test_hands_grab_independently_and_tracking_loss_requires_release(viewer):
     assert send(viewer, 0, left=True)  # Arriving already pinched cannot engage.
-    assert not viewer._controllers[Hand.LEFT].grip
+    assert viewer._controllers[Hand.LEFT] is None
     assert send(viewer, 1, left=False, right=False)
     assert send(viewer, 2, left=True, right=False)
     assert viewer._controllers[Hand.LEFT].grip
-    assert not viewer._controllers[Hand.RIGHT].grip
+    assert viewer._controllers[Hand.RIGHT] is None
     assert send(viewer, 3, right=False)  # Left tracking disappears.
     assert send(viewer, 4, left=True, right=False)
-    assert not viewer._controllers[Hand.LEFT].grip
+    assert viewer._controllers[Hand.LEFT] is None
     assert send(viewer, 5, left=False)
     assert send(viewer, 6, left=True)
     assert viewer._controllers[Hand.LEFT].grip
@@ -111,7 +114,7 @@ def test_old_view_stops_control_and_replayed_sequence_cannot_reengage(viewer):
     assert viewer._controllers[Hand.LEFT] is None
     assert not send(viewer, 3, left=False, observed_at=time.time() - 2)
     assert send(viewer, 4, left=True)
-    assert not viewer._controllers[Hand.LEFT].grip
+    assert viewer._controllers[Hand.LEFT] is None
 
 
 def test_control_and_display_use_world_frame_without_quest_rotation(viewer):
@@ -144,8 +147,8 @@ def test_move_cannot_command_jaws_or_switch_to_opening_without_release(viewer):
     viewer._publish_button_state(viewer._controllers[Hand.LEFT], None)
     viewer.left_gripper_command.publish.assert_not_called()
     assert send(viewer, 2, left=True, action="opening", offset=(0, 0.14, 0))
-    assert viewer._actions[Hand.LEFT] is None
-    assert not viewer._controllers[Hand.LEFT].grip
+    assert Hand.LEFT not in viewer._claims
+    assert viewer._controllers[Hand.LEFT] is None
     assert send(viewer, 3, left=True, action="opening", offset=(0, 0.14, 0))
     viewer._publish_button_state(viewer._controllers[Hand.LEFT], None)
     viewer.left_gripper_command.publish.assert_not_called()
@@ -156,7 +159,7 @@ def test_lost_opening_tracking_requires_release_before_any_regrab(viewer):
     assert send(viewer, 1, left=True, action="opening", offset=(0, 0.14, 0))
     assert send(viewer, 2)
     assert send(viewer, 3, left=True, action="opening", offset=(0, 0.14, 0))
-    assert viewer._actions[Hand.LEFT] is None
+    assert Hand.LEFT not in viewer._claims
     assert send(viewer, 4, left=False)
     assert send(viewer, 5, left=True)
     assert viewer._controllers[Hand.LEFT].grip
@@ -210,3 +213,97 @@ def test_spatial_episode_controls_call_the_existing_owner_and_report_rejected_sa
         assert result.json()["detail"] == "Camera stopped; discard this take"
         owner.finish.assert_called_once_with(True)
         assert client.post("/spatial/collection", json={"action": "move"}).status_code == 422
+
+
+def tool_sample(viewer, arm, action, *, pinched=True, offset=(0, 0, 0)):
+    return {
+        "arm": arm if pinched else None,
+        "action": action if pinched else None,
+        "pinched": pinched,
+        "position": (np.asarray(viewer._feedback["arms"][arm]["grasp"]) + offset).tolist(),
+        "orientation": [0, 0, 0, 1],
+    }
+
+
+@pytest.mark.parametrize("human,robot", [("left", Hand.RIGHT), ("right", Hand.LEFT)])
+def test_either_human_hand_controls_the_opposite_arm(viewer, human, robot):
+    target = robot.name.lower()
+    assert send(viewer, 0, **{human: False})
+    assert send(viewer, 1, **{human: tool_sample(viewer, target, "move")})
+    assert viewer._controllers[robot].grip
+    assert viewer._controllers[Hand(1 - robot)] is None
+    assert (
+        viewer._get_output_pose(robot).position.to_list()
+        == viewer._feedback["arms"][target]["grasp"]
+    )
+
+
+def test_two_hands_can_move_and_adjust_the_same_arm_independently(viewer):
+    move = tool_sample(viewer, "right", "move")
+    opening = tool_sample(viewer, "right", "opening", offset=(0, 0.14, 0))
+    assert send(viewer, 0, left=False, right=False)
+    assert send(viewer, 1, left=move, right=opening)
+    assert viewer._controllers[Hand.RIGHT].grip
+    assert viewer._controllers[Hand.RIGHT].trigger == 0.5
+    move = tool_sample(viewer, "right", "move", offset=(0.02, 0, 0))
+    opening = tool_sample(viewer, "right", "opening", offset=(-0.03, 0.14, 0))
+    assert send(viewer, 2, left=move, right=opening)
+    viewer._publish_button_state(None, viewer._controllers[Hand.RIGHT])
+    assert viewer.right_gripper_command.publish.call_args.args[0].data == pytest.approx(0.25)
+    assert viewer._get_output_pose(Hand.RIGHT).position.x == pytest.approx(0.02)
+    viewer.left_gripper_command.publish.assert_not_called()
+    assert send(viewer, 3, left=move, right=False)
+    assert viewer._controllers[Hand.RIGHT].grip
+    viewer.right_gripper_command.publish.reset_mock()
+    viewer._publish_button_state(None, viewer._controllers[Hand.RIGHT])
+    viewer.right_gripper_command.publish.assert_not_called()
+
+
+def test_one_control_cannot_be_stolen_and_transfer_publishes_release_before_next_tick(viewer):
+    move = tool_sample(viewer, "left", "move")
+    assert send(viewer, 0, left=False, right=False)
+    assert send(viewer, 1, left=move, right=move)
+    assert viewer._owner(Hand.LEFT, "move") == Hand.LEFT
+    assert send(viewer, 2, left=False, right=move)
+    assert not viewer.teleop_buttons.publish.call_args.args[0].left_grip
+    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 3, right=move)
+    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 4, right=False)
+    assert send(viewer, 5, right=move)
+    assert viewer._owner(Hand.LEFT, "move") == Hand.RIGHT
+    assert viewer._controllers[Hand.LEFT].grip
+
+
+def test_losing_movement_hand_keeps_only_the_independently_owned_slider(viewer):
+    move = tool_sample(viewer, "left", "move")
+    opening = tool_sample(viewer, "left", "opening", offset=(0, 0.14, 0))
+    assert send(viewer, 0, left=False, right=False)
+    assert send(viewer, 1, left=move, right=opening)
+    assert send(viewer, 2, right=opening)
+    assert not viewer._controllers[Hand.LEFT].grip
+    assert viewer._gripper_is_enabled(Hand.LEFT, None)
+    assert send(viewer, 3, left=move, right=opening)
+    assert not viewer._controllers[Hand.LEFT].grip
+    viewer._expire_stale_state(time.monotonic() + 1)
+    assert viewer._controllers[Hand.LEFT] is None
+    assert send(viewer, 4, left=move, right=opening)
+    assert viewer._controllers[Hand.LEFT] is None
+
+
+def test_claim_cannot_change_robot_arm_while_pinched_or_start_far_from_target(viewer):
+    assert send(viewer, 0, left=False)
+    assert send(viewer, 1, left=tool_sample(viewer, "right", "move"))
+    assert send(viewer, 2, left=tool_sample(viewer, "left", "move"))
+    assert viewer._controllers[Hand.LEFT] is None
+    assert viewer._controllers[Hand.RIGHT] is None
+    assert send(viewer, 3, left=False)
+    assert send(viewer, 4, left=tool_sample(viewer, "right", "opening", offset=(1, 1, 1)))
+    assert viewer._controllers[Hand.RIGHT] is None
+
+
+def test_tool_packets_require_explicit_robot_identity(viewer):
+    sample = tool_sample(viewer, "left", "move")
+    del sample["arm"]
+    assert not send(viewer, 0, left=sample)
+    assert viewer._controllers[Hand.LEFT] is None

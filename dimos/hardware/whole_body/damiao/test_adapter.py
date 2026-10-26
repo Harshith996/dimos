@@ -266,12 +266,15 @@ def gravity_adapter_factory(
     model_path.write_text("<robot/>")
     adapters: list[GravityDualAdapter] = []
 
-    def create(*, model: FakePinModel, gravity_comp: bool = True) -> GravityDualAdapter:
+    def create(
+        *, model: FakePinModel, gravity_comp: bool = True, kinematic_model: RobotModel | None = None
+    ) -> GravityDualAdapter:
         pin_model_builder.return_value = model
         adapter = GravityDualAdapter(
             dual_robot,
             model_path,
             runtime_config=DamiaoRuntimeConfig(gravity_comp=gravity_comp),
+            kinematic_model=kinematic_model,
         )
         adapters.append(adapter)
         return adapter
@@ -819,6 +822,20 @@ def test_connect_existing_kinematic_model_loads_model(
 
     assert adapter.connect()
     pin_model_builder.assert_called_once()
+
+
+def test_deployment_model_is_used_instead_of_the_default_artifact(
+    gravity_adapter_factory: Callable[..., GravityDualAdapter],
+    pin_model_builder: Mock,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "calibrated.urdf"
+    path.write_text('<robot name="calibrated"><link name="base"/></robot>')
+    adapter = gravity_adapter_factory(
+        model=FakePinModel(), kinematic_model=RobotModel.from_file(path)
+    )
+    assert adapter.connect()
+    pin_model_builder.assert_called_once_with(RobotModel.from_file(path).load().xml)
 
 
 def test_connect_kinematic_model_dimension_mismatch_returns_false(

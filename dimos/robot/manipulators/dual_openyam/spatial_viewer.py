@@ -24,7 +24,7 @@ from typing import Any, Literal
 from fastapi import HTTPException, WebSocket
 from fastapi.responses import HTMLResponse, Response
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
@@ -61,6 +61,13 @@ class SpatialHand(BaseModel):
     orientation: tuple[float, float, float, float]
     pinched: bool
     action: Literal["move", "opening"] | None = None
+    arm: Literal["left", "right"] | None = None
+
+    @model_validator(mode="after")
+    def tool_target(self) -> SpatialHand:
+        if (self.action is None) != (self.arm is None):
+            raise ValueError("a tool action requires an explicit robot arm")
+        return self
 
     @field_validator("orientation")
     @classmethod
@@ -146,7 +153,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
         self._transforms = MultiTBuffer()
         self._sequence = -1
         self._released = {hand: False for hand in Hand}
-        self._actions: dict[Hand, str | None] = {hand: None for hand in Hand}
+        self._claims: dict[Hand, tuple[Hand, str]] = {}
+        self._last_input_update: float | None = None
         self._opening_refs: dict[Hand, tuple[np.ndarray, np.ndarray, float]] = {}
 
     @rpc
@@ -202,8 +210,12 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     "opening_handle_offset": self.config.opening_handle_offset,
                     "opening_handle_travel_m": self.config.opening_handle_travel_m,
                     "actions": {
-                        "left" if hand == Hand.LEFT else "right": action
-                        for hand, action in self._actions.items()
+                        arm.name.lower(): {
+                            action: hand.name.lower()
+                            for hand, (target, action) in self._claims.items()
+                            if target == arm
+                        }
+                        for arm in Hand
                     },
                     "objects": self._objects if now - self._objects_at < 2 else [],
                     "objects_active": now - self._objects_at < 2,
@@ -351,64 +363,108 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                 self._reset_controller_state()
                 return False
             self._sequence = message.sequence
+            # Claims belong to human hands; downstream controller slots belong to
+            # robot arms. Reserve previous owners through this release frame.
+            reserved = set(self._claims.values())
+            previous_movers = {arm: self._owner(arm, "move") for arm in Hand}
             for hand in Hand:
-                side: Literal["left", "right"] = "left" if hand == Hand.LEFT else "right"
-                sample = message.hands.get(side)
-                if sample is None:
-                    self._controllers[hand] = None
-                    self._current_poses[hand] = None
-                    self._released[hand] = False
-                    self._actions[hand] = None
+                sample = message.hands.get("left" if hand == Hand.LEFT else "right")
+                if sample is None or not sample.pinched:
+                    self._released[hand] = sample is not None
+                    self._claims.pop(hand, None)
                     self._opening_refs.pop(hand, None)
                     continue
-                arm = self._feedback["arms"][side]
+                target = Hand.LEFT if sample.arm == "left" else Hand.RIGHT
+                claim = (target, sample.action) if sample.action is not None else None
+                if hand in self._claims:
+                    if claim != self._claims[hand]:
+                        self._claims.pop(hand)
+                        self._opening_refs.pop(hand, None)
+                    continue
+                if not self._released[hand]:
+                    continue
+                self._released[hand] = False
+                if claim is None or claim in reserved:
+                    continue
+                arm = self._feedback["arms"][sample.arm]
                 position = np.asarray(sample.position)
                 opening = float(arm["opening"])
-                if not sample.pinched:
-                    self._released[hand] = True
-                    self._actions[hand] = None
-                    self._opening_refs.pop(hand, None)
-                elif self._released[hand]:
-                    # Capture one action at the pinch edge. Moving over another
-                    # control while held cannot switch ownership or acquire it.
-                    self._released[hand] = False
-                    rotation = Rotation.from_quat(arm["orientation"])
-                    axis = rotation.apply([1.0, 0.0, 0.0])
-                    knob = (
-                        np.asarray(arm["grasp"])
-                        + rotation.apply(self.config.opening_handle_offset)
-                        + axis * (opening - 0.5) * self.config.opening_handle_travel_m
+                rotation = Rotation.from_quat(arm["orientation"])
+                axis = rotation.apply([1.0, 0.0, 0.0])
+                knob = (
+                    np.asarray(arm["grasp"])
+                    + rotation.apply(self.config.opening_handle_offset)
+                    + axis * (opening - 0.5) * self.config.opening_handle_travel_m
+                )
+                if sample.action == "opening" and np.linalg.norm(position - knob) < 0.055:
+                    self._claims[hand] = (target, "opening")
+                    self._opening_refs[hand] = (position, axis, opening)
+                elif sample.action == "move" and np.linalg.norm(position - arm["grasp"]) < 0.12:
+                    self._claims[hand] = (target, "move")
+                if hand in self._claims:
+                    reserved.add(self._claims[hand])
+
+            # Publish releases immediately, even if release/regrab packets arrive
+            # between control ticks. IK must recapture for a different human hand.
+            released = False
+            for arm in Hand:
+                if (
+                    previous_movers[arm] is not None
+                    and self._owner(arm, "move") != previous_movers[arm]
+                ):
+                    controller = self._controllers[arm]
+                    if controller is not None:
+                        controller.grip = 0.0
+                    released = True
+            if released:
+                self._publish_buttons(
+                    Buttons.from_controllers(
+                        self._controllers[Hand.LEFT], self._controllers[Hand.RIGHT]
                     )
-                    if sample.action == "opening" and np.linalg.norm(position - knob) < 0.055:
-                        self._actions[hand] = "opening"
-                        self._opening_refs[hand] = (position, axis, opening)
-                    elif sample.action == "move" and np.linalg.norm(position - arm["grasp"]) < 0.12:
-                        self._actions[hand] = "move"
-                elif sample.action != self._actions[hand]:
-                    self._actions[hand] = None
-                    self._opening_refs.pop(hand, None)
-                if self._actions[hand] == "opening":
-                    origin, axis, initial = self._opening_refs[hand]
+                )
+
+            self._last_input_update = time.monotonic()
+            for arm in Hand:
+                side = "left" if arm == Hand.LEFT else "right"
+                measured = self._feedback["arms"][side]
+                mover, opener = self._owner(arm, "move"), self._owner(arm, "opening")
+                if mover is None and opener is None:
+                    self._controllers[arm] = None
+                    self._current_poses[arm] = None
+                    self._last_pose_update[arm] = self._last_controller_update[arm] = None
+                    continue
+                pose = (
+                    message.hands["left" if mover == Hand.LEFT else "right"]
+                    if mover is not None
+                    else None
+                )
+                opening = float(measured["opening"])
+                if opener is not None:
+                    sample = message.hands["left" if opener == Hand.LEFT else "right"]
+                    origin, axis, initial = self._opening_refs[opener]
                     opening = float(
                         np.clip(
                             initial
-                            + np.dot(position - origin, axis) / self.config.opening_handle_travel_m,
+                            + np.dot(np.asarray(sample.position) - origin, axis)
+                            / self.config.opening_handle_travel_m,
                             0,
                             1,
                         )
                     )
-                self._current_poses[hand] = PoseStamped(
-                    position=sample.position,
-                    orientation=sample.orientation,
+                self._current_poses[arm] = PoseStamped(
+                    position=pose.position if pose else measured["grasp"],
+                    orientation=pose.orientation if pose else measured["orientation"],
                     frame_id="world",
                     ts=now,
                 )
-                self._controllers[hand] = WebXRControllerState(
-                    is_left=hand == Hand.LEFT,
-                    grip=float(self._actions[hand] == "move"),
+                self._controllers[arm] = WebXRControllerState(
+                    is_left=arm == Hand.LEFT,
+                    grip=float(mover is not None),
                     trigger=1 - opening,
                 )
-                self._last_pose_update[hand] = self._last_controller_update[hand] = time.monotonic()
+                self._last_pose_update[arm] = self._last_controller_update[arm] = (
+                    self._last_input_update
+                )
             if message.focus is not None:
                 assert self._surface is not None
                 points = self._surface.points
@@ -418,25 +474,27 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                     )
             return True
 
+    def _owner(self, arm: Hand, action: str) -> Hand | None:
+        return next((hand for hand, claim in self._claims.items() if claim == (arm, action)), None)
+
     def _gripper_is_enabled(self, hand: Hand, buttons: Buttons) -> bool:
-        # The opening handle owns only the gripper; IK receives a released grip.
-        return self._actions[hand] == "opening"
+        # Either human hand may own this robot arm's independent opening control.
+        return self._owner(hand, "opening") is not None
 
     def _reset_controller_state(self) -> None:
         with self._lock:
             self._released = {hand: False for hand in Hand}
-            self._actions = {hand: None for hand in Hand}
+            self._claims.clear()
             self._opening_refs.clear()
+            self._last_input_update = None
             super()._reset_controller_state()
 
     def _expire_stale_state(self, now: float) -> None:
-        for hand in Hand:
-            updated = self._last_pose_update[hand]
-            if updated is None or now - updated > self.config.input_timeout_s:
-                self._released[hand] = False
-                self._actions[hand] = None
-                self._opening_refs.pop(hand, None)
+        # Each packet is a complete snapshot; omitted hands release immediately.
         if (
+            self._last_input_update is not None
+            and now - self._last_input_update > self.config.input_timeout_s
+        ) or (
             time.time() - min(self._feedback.get("ts", 0), self._surface.ts if self._surface else 0)
             > self.config.observation_timeout_s
         ):

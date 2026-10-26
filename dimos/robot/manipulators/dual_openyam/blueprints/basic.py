@@ -64,6 +64,8 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
         ]
         # Resolve assets at startup, using the same bounds as the planning model.
         component = self.config.hardware[0]
+        if self.config.left_can_port is not None:
+            component.adapter_kwargs["kinematic_model"] = self.config.robot_model
         assert component.limits is not None
         lower = list(component.limits.position_lower)
         upper = list(component.limits.position_upper)

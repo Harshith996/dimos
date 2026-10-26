@@ -62,3 +62,14 @@ test('free-space selection happens on release, excluding tool releases and cance
   update(.01); hand.reset();
   assert.equal(update(.05).releasedFree, false);
 });
+test('a tool grab keeps its robot identity until release, independently of human handedness', () => {
+  const hand = new ToolPinch();
+  const update = (distance, arm, action = 'opening') => hand.update(distance, action, [0,0,0], [1,0,0], .6, .12, arm);
+  update(.05, 'right'); update(.01, 'right');
+  assert.equal(hand.arm, 'right'); assert.equal(hand.opening, .6);
+  update(.01, 'left', 'move');
+  assert.equal(hand.arm, 'right'); assert.equal(hand.action, 'opening');
+  update(.05, 'left'); assert.equal(hand.arm, null);
+  update(.01, 'left', 'move'); assert.equal(hand.arm, 'left');
+  hand.reset(); assert.equal(hand.arm, null);
+});

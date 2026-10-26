@@ -165,7 +165,10 @@ export class SpatialUI {
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
     const hint=this.error || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
-    const arms=['left','right'].map(side=>`${side.toUpperCase()} ${ready&&!paused&&!workspaceActive?(actions?.[side]==='move'?'MOVING':actions?.[side]==='opening'?'JAWS':'HELD'):'HELD'}`).join('   ·   ');
+    const arms=['left','right'].map(side=>{
+      const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;
+      return `${side.toUpperCase()} ${owned?.move&&owned?.opening?'MOVING + JAWS':owned?.move?'MOVING':owned?.opening?'JAWS':'HELD'}`;
+    }).join('   ·   ');
     const summary=`${take} · ${state?.episodes_saved??0} saved · ${state?.episodes_discarded??0} discarded`;
     document.querySelector('#episode-state').textContent=summary;
     document.querySelector('#episode-hint').textContent=hint;

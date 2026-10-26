@@ -55,6 +55,7 @@ class DamiaoWholeBodyAdapter(ABC):
         address: str | Path | None = None,
         *,
         runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
+        kinematic_model: RobotModel | None = None,
         dof: int | None = None,
         hardware_id: str = "whole_body",
         domain_id: int = 0,
@@ -92,6 +93,7 @@ class DamiaoWholeBodyAdapter(ABC):
             raise ValueError("kinematic joint mapping must contain every angular arm joint")
 
         self._runtime_config = config
+        self._kinematic_model_override = kinematic_model
         self._hardware_id = hardware_id
         self._connected = False
         self._active = False
@@ -388,7 +390,7 @@ class DamiaoWholeBodyAdapter(ABC):
     def _load_kinematic_model(self) -> None:
         if not self.kinematic_joint_names:
             return
-        robot_model = self.kinematic_model
+        robot_model = self._kinematic_model_override or self.kinematic_model
         if robot_model is None:
             raise ValueError("Damiao arm safety requires a kinematic model")
         model = pinocchio.buildModelFromXML(robot_model.load().xml)

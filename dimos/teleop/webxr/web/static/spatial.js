@@ -51,10 +51,10 @@ for (const side of ['left', 'right']) {
   const requested = new THREE.Mesh(new THREE.SphereGeometry(0.018,16,12),
     new THREE.MeshBasicMaterial({color:0xffffff, wireframe:true}));
   control.add(measured,requested); requested.visible=false;
-  const canvas = document.createElement('canvas'); canvas.width=512; canvas.height=128;
+  const canvas = document.createElement('canvas'); canvas.width=256; canvas.height=64;
   const texture = new THREE.CanvasTexture(canvas); texture.colorSpace=THREE.SRGBColorSpace;
   const label = new THREE.Sprite(new THREE.SpriteMaterial({map:texture,depthTest:false}));
-  label.scale.set(0.19,0.0475,1); label.position.set(0,0.05,0); control.add(label);
+  label.scale.set(0.075,0.01875,1); label.position.set(0,0.025,0); control.add(label);
   openingControls[side] = {group:control,rail,measured,requested,canvas,texture,label,lastText:''};
   handDots[side] = [];
   for (let i = 0; i < 25; i++) {
@@ -128,13 +128,13 @@ poll(endpoint('state'), 35, async response => {
     c.group.quaternion.copy(q);
     c.rail.scale.x=feedback.opening_handle_travel_m;
     c.measured.position.x=(arm.opening-0.5)*feedback.opening_handle_travel_m;
-    const text=`${side.toUpperCase()} · ${Math.round(arm.opening*100)}% OPEN`;
+    c.label.position.x=c.measured.position.x;
+    const text=`${Math.round(arm.opening*100)}%`;
     if(text!==c.lastText) {
-      c.lastText=text; const ctx=c.canvas.getContext('2d'); ctx.clearRect(0,0,512,128);
-      ctx.fillStyle='#13242ee8'; ctx.fillRect(0,0,512,128);
-      ctx.fillStyle=side==='left'?'#76e2c1':'#fab972'; ctx.font='bold 32px system-ui';
-      ctx.textAlign='center'; ctx.fillText(text,256,47);
-      ctx.fillStyle='#ffffff'; ctx.font='25px system-ui'; ctx.fillText('CLOSE   ←  PINCH & SLIDE  →   OPEN',256,96);
+      c.lastText=text; const ctx=c.canvas.getContext('2d'); ctx.clearRect(0,0,256,64);
+      ctx.fillStyle=side==='left'?'#76e2c1':'#fab972'; ctx.font='bold 44px system-ui';
+      ctx.strokeStyle='#10202b'; ctx.lineWidth=6; ctx.lineJoin='round'; ctx.textAlign='center';
+      ctx.strokeText(text,128,48); ctx.fillText(text,128,48);
       c.texture.needsUpdate=true;
     }
   }
@@ -266,16 +266,21 @@ function track(frame, reference, ready, viewer) {
   ui.updatePalm(samples,viewer?.transform.position,workspace.active||owned,now);
   // Resolve every tool/UI target before considering a two-hand air grab.
   for(const [side,hand] of Object.entries(samples)) {
-    const c=openingControls[side], arm=feedback?.arms?.[side];
     hand.local=hand.position.clone().applyMatrix4(inverseStage);
-    hand.axis=new THREE.Vector3(1,0,0).applyQuaternion(c.group.quaternion);
-    const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
     const direction=hand.knuckle?hand.indexPosition.clone().sub(new THREE.Vector3().copy(hand.knuckle.transform.position)):null;
     hand.ray=direction?.length()>0.01?new THREE.Raycaster(hand.indexPosition,direction.normalize(),0,3):null;
     hand.uiHit=ui.hit(hand.ray,side,hand.position);
-    const toolTarget=!ready||!arm||paused?null:hand.local.distanceTo(knob)<0.045?'opening'
-      :hand.local.distanceTo(handles[side].position)<0.10?'move':null;
-    hand.target=toolTarget || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
+    const targets=[];
+    if(ready && !paused) for(const arm of Object.keys(feedback?.arms??{})) {
+      const c=openingControls[arm];
+      const knob=c.measured.position.clone().applyQuaternion(c.group.quaternion).add(c.group.position);
+      for(const [action,position,radius] of [['opening',knob,0.045],['move',handles[arm].position,0.10]]) {
+        const distance=hand.local.distanceTo(position);
+        if(distance<radius) targets.push({arm,action,distance});
+      }
+    }
+    hand.tool=targets.sort((a,b)=>a.distance-b.distance)[0]??null;
+    hand.target=hand.tool?.action || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
   }
   const arranging=workspace.update(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
     side,{position:hand.position.toArray(),distance:hand.distance,available:hand.target===null},
@@ -285,20 +290,27 @@ function track(frame, reference, ready, viewer) {
   }
   const inputs = {}; let focus = null;
   const generation=inputGeneration;
+  // A control has one owner. Keep previous owners reserved through their release
+  // frame so another held pinch cannot silently take over.
+  const owners=new Map(Object.entries(gestures).filter(([,g])=>g.arm!==null)
+    .map(([side,g])=>[`${g.arm}:${g.action}`,side]));
   // Uniform view scale affects positions, never the hand's orientation quaternion.
   const rotation = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().extractRotation(inverseStage));
   for(const [side,hand] of Object.entries(samples)) {
-    const {wrist,local:pinchPosition,axis,ray,uiHit,target}=hand;
-    const c=openingControls[side], arm=feedback?.arms?.[side];
+    const {wrist,local:pinchPosition,ray,uiHit}=hand;
+    const state=gestures[side], armSide=state.arm??hand.tool?.arm;
+    const arm=feedback?.arms?.[armSide], c=openingControls[armSide];
+    const axis=new THREE.Vector3(1,0,0); if(c) axis.applyQuaternion(c.group.quaternion);
+    const key=hand.tool?`${hand.tool.arm}:${hand.tool.action}`:null;
+    const target=key && owners.has(key) && owners.get(key)!==side?null:hand.target;
     if(target?.startsWith('ui:')) { ui.hovered=uiHit.action; uiPointer.position.copy(uiHit.point); uiPointer.visible=true; }
-    const gesture=gestures[side].update(hand.distance,target,
-      pinchPosition.toArray(),axis.toArray(),arm?.opening??0,feedback?.opening_handle_travel_m??1);
+    const gesture=state.update(hand.distance,target,
+      pinchPosition.toArray(),axis.toArray(),arm?.opening??0,feedback?.opening_handle_travel_m??1,hand.tool?.arm??null);
+    if(state.arm!==null) owners.set(`${state.arm}:${state.action}`,side);
     const orientation = rotation.clone().multiply(new THREE.Quaternion().copy(wrist.transform.orientation));
-    if(ready && arm) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
-      pinched:gesture.pinched, action:['move','opening'].includes(gesture.action)?gesture.action:null};
+    if(ready) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
+      pinched:gesture.pinched, arm:state.arm, action:['move','opening'].includes(gesture.action)?gesture.action:null};
     if(gesture.pressed && gesture.action?.startsWith('ui:')) ui.activate(gesture.action.slice(3));
-    handles[side].material.opacity = gesture.action==='move' ? 1 : 0.45;
-    c.measured.material.opacity=target==='opening' || gesture.action==='opening' ? 1 : 0.55;
     if (ready && gesture.releasedFree && target===null) {
       if (ray) {
         const hit = ray.intersectObject(cloud)[0];
@@ -313,12 +325,14 @@ renderer.setAnimationLoop((time, frame) => {
   if(!ready && observationsReady) resetTools();
   observationsReady=ready;
   for (const side of ['left', 'right']) {
+    const moving=Object.values(gestures).find(g=>g.arm===side && g.action==='move');
+    const opening=Object.values(gestures).find(g=>g.arm===side && g.action==='opening');
     arms[side].visible = !!feedback?.arms?.[side]; handles[side].visible = ready;
     const c=openingControls[side]; c.group.visible=ready;
-    handles[side].material.opacity=workspace.active?0.12:gestures[side].action==='move'?1:0.45;
+    handles[side].material.opacity=workspace.active?0.12:moving?1:0.45;
     c.rail.material.opacity=workspace.active?0.12:0.65; c.label.material.opacity=workspace.active?0.25:1;
-    c.requested.visible=ready && gestures[side].action==='opening';
-    if(c.requested.visible) c.requested.position.x=(gestures[side].opening-0.5)*feedback.opening_handle_travel_m;
+    c.requested.visible=ready && !!opening;
+    if(c.requested.visible) c.requested.position.x=(opening.opening-0.5)*feedback.opening_handle_travel_m;
   }
   cloud.visible = ready;
   detections.visible=ready;

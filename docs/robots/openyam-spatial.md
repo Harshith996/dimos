@@ -60,12 +60,13 @@ orientation uses only the transform's rotation, independent of display scale.
 Losing an owned hand's tracking freezes the view and requires fresh pinches.
 
 - Open your hand, then pinch index and thumb near the corresponding coloured
-  gripper handle. Move and rotate that hand to move that arm independently.
+  gripper handle with either hand. Move and rotate that hand to move the selected arm.
 - Release the pinch to hold. Re-grabbing captures new hand and robot references.
 - Pinch the small bead on the tool's opening rail, then slide toward OPEN or
   CLOSE. Opening starts at measured feedback, so grabbing the bead does not
-  jump the jaws. This action holds the arm; moving the arm leaves opening alone.
-- The solid bead and percentage show measured opening. A white outline shows
+  jump the jaws. The other hand can simultaneously move that same arm. Each
+  pose handle and opening slider has its own exclusive owner.
+- The solid bead and small percentage label show measured opening. A white outline shows
   the requested opening while dragging. Release holds the last command.
 - Each pinch captures one action until release. Crossing another handle while
   pinched cannot switch actions. Middle-finger position does not control the jaws.
@@ -153,7 +154,8 @@ The default physical model is `dual_openyam_abc_box_v2`. Verify its arm-base
 placements against the actual rig. The simulation artifact has different grasp
 frames and joint limits and is not substituted for this model. For a calibrated
 station URDF, compose `build_openyam_spatial(model=...)` with a `RobotModelConfig`;
-that exact model is passed to IK, hardware limits, manipulation and display.
+that exact model is passed to IK, coordinator limits, the hardware adapter's
+safety/gravity model, manipulation and display.
 Do not independently override only the viewer's model.
 
 The existing physical URDF fixes its fingertip visuals and supplies no moving
@@ -235,7 +237,47 @@ The default blueprint loads no semantic model and says so in the interface.
 The spatial blueprint attaches the existing collection recorder. It does not
 yet supply bimanual ACT training or policy rollout.
 
+## Ambidextrous controls and Anvil preparation (2026-10-25)
+
+Human hand identity is independent of robot arm identity. Each input names the
+selected arm and action. Each pose handle and opening slider has one owner until
+release; one hand can move an arm while the other adjusts that arm's jaws. The
+server validates proximity and ownership, and immediately publishes pose releases
+so IK recaptures on a handoff even between control ticks. The percentage beside
+each opening slider is compact and has no background box.
+
+The simulator artifact still has 35.5 mm travel per finger (71 mm mesh gap).
+The manufacturer's [linear 4310 model](https://github.com/i2rt-robotics/i2rt/blob/main/i2rt/robot_models/gripper/linear_4310/linear_4310.xml)
+has 47.5 mm travel per finger. Anvil's real grippers reported normalized 1.0
+with fresh joint feedback and three camera images. This establishes a model
+mismatch, not a measured physical jaw gap. Do not silently widen the old
+artifact's verified contract; a matching gripper artifact remains to be supplied.
+
+Anvil has a separate worktree at `/home/anvil/pim/dimos-apple-vision-pro` and
+station package at `/home/anvil/pim/openyam-station`. The package composes the
+normal factory with the saved `dual_openyam_workcell_v2` model/calibration from
+`krishna/test/dual-openyam-bench-calibrated` at `6219280952`. The camera mount
+converts the saved color-optical pose to the native camera-link frame using
+factory extrinsics. It selects the overhead D405 by serial, both wrist cameras
+by USB topology, 640x480 at 15 Hz, and the measured overhead depth unit of 1 mm.
+Model loading and configuration validation are read-only preparation; physical
+activation still requires a controlled switchover from the existing teleop run.
+The driver performs gripper endpoint calibration on enable.
+
 ## Verification
+
+Ambidextrous controls, 2026-10-25: 91 focused Python tests, 19 JavaScript tests,
+and the browser input harness passed. Browser checks use synthetic tracked
+hands/live observations/captured packets and retain workspace/palm behavior.
+A native sim WebSocket exercise routed the left human hand to the right robot
+arm and the right hand to its opening slider: 14.90 mm measured arm movement,
+opening 1.0 to 0.726, and zero left-arm drift. Releasing the slider left movement
+owned independently; the test restored both grippers above 99.8% open. The
+first attempt was rejected because another client owned control; the exercise
+was rerun only after that client disconnected. Strict typing on the changed
+production Python files passed. Evidence:
+`/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/apple-vision-pro-ambidextrous-20261025/`.
+
 
 Free-air arrangement and palm recovery, later 2026-10-25: eighteen JavaScript
 tests pass, including dual-pinch timing, target ownership, scaling about a
