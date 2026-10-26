@@ -14,6 +14,7 @@
 
 """Realtime-load benchmark of the unitree-go2 blueprint under replay."""
 
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -25,9 +26,10 @@ import threading
 import pytest
 
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import occupancy
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 
 REPLAY_DB = os.environ.get("DIMOS_BENCH_REPLAY_DB", "go2_short")
 RUN_TIMEOUT = 420.0  # spawn -> exit deadline, inside the test timeout
@@ -202,7 +204,7 @@ def _perf_counts(path: Path, events: list[str]) -> tuple[dict[str, float], float
 # in-test LCM subscriptions would need lo0 route + maxdgram host tuning.
 @pytest.mark.skipif_macos_bug
 @pytest.mark.timeout(900)
-def test_go2_replay_realtime_load() -> None:
+def test_go2_replay_realtime_load(record_property: Callable[[str, str], None]) -> None:
     """Run `dimos --replay run unitree-go2 --go2connection.replay-exit=true` to completion."""
     from dimos.memory.replay import resolve_db_path
 
@@ -224,6 +226,19 @@ def test_go2_replay_realtime_load() -> None:
     transports = [make_transport(name, typ) for name, typ in WATCHED]
     for (name, _), transport in zip(WATCHED, transports, strict=True):
         transport.subscribe(lambda _msg, _name=name: record(_name))
+
+    latest_costmap: OccupancyGrid | None = None
+    costmap_count = 0
+
+    def record_costmap(message: OccupancyGrid) -> None:
+        nonlocal latest_costmap, costmap_count
+        with lock:
+            latest_costmap = message
+            costmap_count += 1
+
+    costmap_transport = make_transport("global_costmap", OccupancyGrid)
+    transports.append(costmap_transport)
+    costmap_transport.subscribe(record_costmap)
 
     peak_anon = 0
     peak_tasks = 0
@@ -301,6 +316,16 @@ def test_go2_replay_realtime_load() -> None:
     assert returncode == 0, f"dimos exited with {returncode}: counts={counts}"
     low = {name: (counts[name], floors[name]) for name in floors if counts[name] < floors[name]}
     assert not low, f"floors not met (got, floor): {low}, expected~{expected}"
+    assert latest_costmap is not None, "replay produced no final costmap"
+    cells = occupancy.view(latest_costmap)
+    assert cells.size > 0
+    assert latest_costmap.info.resolution > 0
+    assert ((cells >= -1) & (cells <= 100)).all()
+    assert (cells >= 0).any(), "costmap contains no observed cells"
+    record_property("source_counts", json.dumps(counts))
+    record_property("costmap_count", str(costmap_count))
+    record_property("costmap_shape", str(cells.shape))
+    record_property("costmap_observed_cells", str(int((cells >= 0).sum())))
 
     if METRICS_PATH:
         entries = [

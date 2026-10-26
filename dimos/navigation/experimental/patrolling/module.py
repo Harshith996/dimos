@@ -17,7 +17,6 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 from pydantic import Field
 
 from dimos.agents.annotation import skill
@@ -25,8 +24,10 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Bool
+from dimos.navigation.experimental.message_values import occupancy_value, pose_message, pose_value
 from dimos.navigation.experimental.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
@@ -67,10 +68,10 @@ class PatrollingModule(Module):
 
     async def handle_odom(self, msg: PoseStamped) -> None:
         self._latest_pose = msg
-        self._router.handle_odom(msg)
+        self._router.handle_odom(pose_value(msg))
 
     async def handle_global_costmap(self, msg: OccupancyGrid) -> None:
-        self._router.handle_occupancy_grid(msg)
+        self._router.handle_occupancy_grid(occupancy_value(msg))
 
     async def handle_goal_reached(self, _msg: Bool) -> None:
         self._goal_reached_event.set()
@@ -127,5 +128,5 @@ class PatrollingModule(Module):
                 continue
 
             self._goal_reached_event.clear()
-            self.goal_request.publish(goal)
+            self.goal_request.publish(pose_message(goal))
             await self._goal_reached_event.wait()

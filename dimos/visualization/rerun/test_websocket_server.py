@@ -42,7 +42,7 @@ class MockViewerPublisher:
         self._ws = self._loop.run_until_complete(self._connect())
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_: object) -> None:
         if self._ws is not None and self._loop is not None:
             self._loop.run_until_complete(self._ws.close())
         if self._loop is not None:
@@ -131,11 +131,12 @@ def test_click_publishes_point_stamped(
 
     assert len(received) == 1
     point = received[0]
-    assert point.x == pytest.approx(1.5)
-    assert point.y == pytest.approx(2.5)
-    assert point.z == pytest.approx(0.0)
-    assert point.frame_id == "/robot/base"
-    assert point.ts == pytest.approx(5.0)
+    assert point.point.x == pytest.approx(1.5)
+    assert point.point.y == pytest.approx(2.5)
+    assert point.point.z == pytest.approx(0.0)
+    assert point.header.frame_id == "/robot/base"
+    assert point.header.stamp.sec == 5
+    assert point.header.stamp.nanosec == 0
 
 
 def test_twist_publishes_on_tele_cmd_vel(
@@ -172,7 +173,9 @@ def test_stop_publishes_zero_twist(
     unsub()
 
     assert len(received) == 1
-    assert received[0].is_zero()
+    twist = received[0]
+    assert (twist.linear.x, twist.linear.y, twist.linear.z) == (0.0, 0.0, 0.0)
+    assert (twist.angular.x, twist.angular.y, twist.angular.z) == (0.0, 0.0, 0.0)
 
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
@@ -239,6 +242,6 @@ def test_mixed_message_sequence(
     unsub()
 
     assert len(received) == 1
-    assert received[0].x == pytest.approx(7.0)
-    assert received[0].y == pytest.approx(8.0)
-    assert received[0].z == pytest.approx(9.0)
+    assert received[0].point.x == pytest.approx(7.0)
+    assert received[0].point.y == pytest.approx(8.0)
+    assert received[0].point.z == pytest.approx(9.0)

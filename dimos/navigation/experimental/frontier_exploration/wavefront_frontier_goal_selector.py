@@ -25,7 +25,6 @@ from enum import IntFlag
 import threading
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -36,9 +35,13 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
+from dimos.messages.geometry_msgs.msg import PoseStamped as WirePoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid as WireOccupancyGrid
+from dimos.messages.std_msgs.msg import Bool
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.navigation.experimental.message_values import occupancy_value, pose_message, pose_value
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
@@ -110,16 +113,16 @@ class WavefrontFrontierExplorer(Module):
 
     config: WavefrontConfig
 
-    # LCM inputs
-    global_costmap: In[OccupancyGrid]
-    odom: In[PoseStamped]
+    # Inputs
+    global_costmap: In[WireOccupancyGrid]
+    odom: In[WirePoseStamped]
     goal_reached: In[Bool]
     explore_cmd: In[Bool]
     stop_explore_cmd: In[Bool]
     stop_movement: In[Bool]
 
-    # LCM outputs
-    goal_request: Out[PoseStamped]
+    # Outputs
+    goal_request: Out[WirePoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -182,13 +185,13 @@ class WavefrontFrontierExplorer(Module):
         self.stop_exploration()
         super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid) -> None:
+    def _on_costmap(self, msg: WireOccupancyGrid) -> None:
         """Handle incoming costmap messages."""
-        self.latest_costmap = msg
+        self.latest_costmap = occupancy_value(msg)
 
-    def _on_odometry(self, msg: PoseStamped) -> None:
+    def _on_odometry(self, msg: WirePoseStamped) -> None:
         """Handle incoming odometry messages."""
-        self.latest_odometry = msg
+        self.latest_odometry = pose_value(msg)
 
     def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached messages."""
@@ -198,13 +201,13 @@ class WavefrontFrontierExplorer(Module):
     def _on_explore_cmd(self, msg: Bool) -> None:
         """Handle exploration command messages."""
         if msg.data:
-            logger.info("Received exploration start command via LCM")
+            logger.info("Received exploration start command")
             self.explore()
 
     def _on_stop_explore_cmd(self, msg: Bool) -> None:
         """Handle stop exploration command messages."""
         if msg.data:
-            logger.info("Received exploration stop command via LCM")
+            logger.info("Received exploration stop command")
             self.stop_exploration()
 
     def _on_stop_movement(self, msg: Bool) -> None:
@@ -755,7 +758,7 @@ class WavefrontFrontierExplorer(Module):
                 frame_id="world",
                 ts=self.latest_odometry.ts,
             )
-            self.goal_request.publish(goal)
+            self.goal_request.publish(pose_message(goal))
 
         logger.info("Stopped autonomous frontier exploration")
         return True
@@ -809,7 +812,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.frame_id = "world"
                 goal_msg.ts = self.latest_costmap.ts
 
-                self.goal_request.publish(goal_msg)
+                self.goal_request.publish(pose_message(goal_msg))
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1
