@@ -69,6 +69,7 @@ MOUNT_TF_TOLERANCE_S = 0.3
 MANIP_GRACE_DEPTH_M = 0.05
 MANIP_GRAZE_COS = 0.3
 SELF_FILTER_PADDING_M = 0.05
+MANIP_MAP_EMIT_EVERY = 5  # of the camera's 5 Hz: 1 Hz
 
 D455_WIDTH, D455_HEIGHT, D455_FPS = 848, 480, 15
 
@@ -172,6 +173,9 @@ def alfred_perception_modules(
             # the robot drove past stayed in the map for the rest of the run.
             grace_depth=MANIP_GRACE_DEPTH_M,
             graze_cos=MANIP_GRAZE_COS,
+            # ManipulationModule rebuilds its octree under the planner's lock for every map it
+            # gets (60-70 ms each on the Orin): once a second is plenty for a bench.
+            global_emit_every=MANIP_MAP_EMIT_EVERY,
         ).remappings(
             [
                 (MANIP_VOXEL_MAP, "lidar", "filtered_pointcloud"),

@@ -322,6 +322,7 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     assert manip_map.kwargs["grace_depth"] <= 0.05 and manip_map.kwargs["graze_cos"] <= 0.3, (
         "clearing must reach a bench seen at 25-54 degrees"
     )
+    assert manip_map.kwargs["global_emit_every"] >= 5, "the planner rebuilds its octree per map"
     (self_filter,) = _atoms(alfred_full_perception, RoboPlanPointCloudSelfFilter)
     assert self_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
