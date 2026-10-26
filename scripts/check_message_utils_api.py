@@ -40,7 +40,7 @@ def check() -> list[str]:
             if isinstance(target, ast.Name)
         )
     errors = []
-    for folder in ("dimos", "examples", "scripts"):
+    for folder in ("dimos", "examples", "scripts", "native"):
         for path in sorted((ROOT / folder).rglob("*.py")):
             source = path.read_text()
             if "dimos.message_utils" not in source or path == Path(__file__).resolve():
