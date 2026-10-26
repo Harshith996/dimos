@@ -35,7 +35,7 @@ pub struct BasePose {
 pub struct PoseWatch {
     max_age_s: f64,
     /// The stamp last seen, and when it was first seen.
-    seen: Option<(i64, Instant)>,
+    seen: Option<(f64, Instant)>,
 }
 
 impl PoseWatch {
@@ -47,26 +47,13 @@ impl PoseWatch {
     }
 
     pub fn get(&mut self, tf: &Tf, world: &str, base: &str, now: Instant) -> Option<BasePose> {
-        self.observe_nanoseconds(tf.get_latest(world, base).and_then(edge_of), now)
+        self.observe(tf.get_latest(world, base).and_then(edge_of), now)
     }
 
     /// The tick's pose off what tf handed back, as `(stamp, transform)`.
     pub fn observe(
         &mut self,
         edge: Option<(f64, Isometry3<f64>)>,
-        now: Instant,
-    ) -> Option<BasePose> {
-        let edge = edge.and_then(|(seconds, iso)| {
-            let ns = (seconds * 1_000_000_000.).round();
-            (ns.is_finite() && ns >= i64::MIN as f64 && ns < i64::MAX as f64)
-                .then_some((ns as i64, iso))
-        });
-        self.observe_nanoseconds(edge, now)
-    }
-
-    pub fn observe_nanoseconds(
-        &mut self,
-        edge: Option<(i64, Isometry3<f64>)>,
         now: Instant,
     ) -> Option<BasePose> {
         let Some((ts, iso)) = edge else {
@@ -90,9 +77,9 @@ impl PoseWatch {
     }
 }
 
-fn edge_of(t: TransformStamped) -> Option<(i64, Isometry3<f64>)> {
+fn edge_of(t: TransformStamped) -> Option<(f64, Isometry3<f64>)> {
     Some((
-        dimos_module::tf::nanoseconds(&t.header.stamp).ok()?,
+        crate::module::msg::secs_of(&t.header.stamp),
         dimos_module::tf::isometry(&t).ok()?,
     ))
 }
@@ -193,7 +180,7 @@ mod tests {
         }
     }
     #[test]
-    fn epoch_nanosecond_progress_refreshes_the_existing_deadman() {
+    fn epoch_nanosecond_progress_retains_existing_float_deadman() {
         let mut watch = PoseWatch::new(2.5);
         let now = Instant::now();
         let ns = 1_700_000_000_123_456_789;
@@ -203,11 +190,9 @@ mod tests {
             dimos_module::tf::time_from_nanoseconds(ns).unwrap(),
             Isometry3::identity(),
         );
+        assert!(watch.observe(edge_of(first.clone()), now).is_some());
         assert!(watch
-            .observe_nanoseconds(edge_of(first.clone()), now)
-            .is_some());
-        assert!(watch
-            .observe_nanoseconds(edge_of(first), now + Duration::from_secs(3))
+            .observe(edge_of(first), now + Duration::from_secs(3))
             .is_none());
         let fresh = dimos_module::tf::from_isometry(
             "world",
@@ -216,7 +201,7 @@ mod tests {
             Isometry3::identity(),
         );
         assert!(watch
-            .observe_nanoseconds(edge_of(fresh), now + Duration::from_secs(3))
-            .is_some());
+            .observe(edge_of(fresh), now + Duration::from_secs(3))
+            .is_none());
     }
 }
