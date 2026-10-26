@@ -65,6 +65,7 @@ data/*
 # Runtime output
 /logs
 /recordings
+/datasets
 /downloads
 results/
 /assets/output/

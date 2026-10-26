@@ -25,9 +25,14 @@ dimos --simulation run learning-collect-webxr-xarm7
 
 # Piper on real hardware
 dimos run learning-collect-webxr-piper
+
+# Dual OpenYAM with its egocentric and wrist cameras
+dimos run learning-collect-webxr-dual-openyam
 ```
 
-This brings up teleop, a RealSense (real only), the episode monitor, and the
+This brings up teleop, the cameras (a RealSense on real xArm/Piper hardware;
+the three headset cameras on Dual OpenYAM, selected as described in the
+[WebXR README](/dimos/teleop/webxr/README.md)), the episode monitor, and the
 recorder, all wired together.
 
 ### Controls (WebXR)
@@ -58,7 +63,9 @@ prints one line per transition:
 
 A new timestamped file per run (nothing is overwritten). It records three
 streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+start/save/discard markers). The Dual OpenYAM recorder captures
+`egocentric_image`, `left_wrist_image`, and `right_wrist_image` in place of
+`color_image`.
 
 The exact path is printed when the recorder starts — note it for the next step.
 
@@ -80,6 +87,18 @@ Use `dimos dataprep inspect data/recordings/session.db` to inspect a recording,
 or `dimos dataprep inspect data/datasets/session.hdf5` to inspect the output.
 Saved episodes are validated before export; discarded and unfinished episodes
 are excluded. HDF5 export requires an episode task label.
+
+Dual OpenYAM exports for you: `learning-collect-webxr-dual-openyam` runs a
+`LeRobotExportModule` that rebuilds the LeRobot dataset every time you save an
+episode, into `datasets/dual_openyam_<ts>` next to the `recordings/` directory
+(the repo root in a checkout, the state directory when installed). The headset
+HUD shows the export progress and the episode count. Pass
+`--export-on-save false` to export only once, at shutdown. The config it uses,
+`dimos/robot/manipulators/dual_openyam/lerobot_dataprep.json`, maps the three
+cameras to `observation.images.{egocentric,left_wrist,right_wrist}` and the 14
+joints to `observation.state` and `action`; it works with `dimos dataprep
+build --config` too. Its image shapes follow the `TeleopCamera` defaults, so
+adjust them if you change the capture size.
 
 See the [offline dataset guide](/dimos/imitation/dataprep/README.md) for an executable config
 example, Python quality-inspection API, alignment rules, and output provenance.
@@ -106,6 +125,11 @@ example, Python quality-inspection API, alignment rules, and output provenance.
 - **Sim vs real camera** — under `--simulation` the MuJoCo camera supplies
   `color_image`; on real hardware a RealSense does. The blueprint picks the
   right one automatically.
+- **Dual OpenYAM controls** — the grips are the arm deadman, **B** toggles
+  recording, **Y** discards, and the zero-pose reset is on **A** instead of its
+  usual **B**. The headset HUD below the center camera panel shows the state
+  (`READY`, a blinking red `REC 00:07`, `SAVED`), this button map, the task,
+  take counters, and LeRobot export progress.
 - **Action semantics are explicit**: the example config uses measured joint-state
   snapshots. To train on accepted targets, record their command stream and use
   `source_kind="joint_position_updates"`; this reconstructs sparse targets

@@ -23,6 +23,7 @@ follows the operator's arm, not only the hand.
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.visualization.config import ManipulationVisualizationConfig
@@ -96,16 +97,41 @@ _dual_openyam_webxr_tasks = {
 
 
 def build_dual_openyam_webxr(
-    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+    *,
+    visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
+    zero_button: str | None = "B",
+    hud_hint: str | None = None,
+    realsense_ego: bool = False,
 ) -> Blueprint:
-    """Compose dual-arm teleop, headset camera panels, and deployment-specific visualization."""
+    """Compose dual-arm teleop, headset camera panels, and deployment-specific visualization.
+
+    `zero_button` is the Quest button that moves both arms to the zero joint
+    pose; stacks that give B another job (episode recording) pick a free one
+    and describe their button map in `hud_hint`, shown on the headset HUD.
+    """
+    ego_camera = (
+        RealSenseCamera.blueprint(
+            instance_name=EGOCENTRIC_CAMERA,
+            width=640,
+            height=480,
+            fps=30,
+            enable_depth=False,
+            enable_color=True,
+            enable_pointcloud=False,
+            enable_infrared=False,
+            enable_imu=False,
+        )
+        if realsense_ego
+        else TeleopCamera.blueprint(instance_name=EGOCENTRIC_CAMERA)
+    )
     return autoconnect(
         DualArmVideoTeleopModule.blueprint(
-            zero_button="B",
+            zero_button=zero_button,
+            hud_hint=hud_hint,
             # Quest body tracking supplies the operator's elbows when available.
             body_tracking_mode="optional",
         ),
-        TeleopCamera.blueprint(instance_name=EGOCENTRIC_CAMERA),
+        ego_camera,
         TeleopCamera.blueprint(instance_name=LEFT_WRIST_CAMERA),
         TeleopCamera.blueprint(instance_name=RIGHT_WRIST_CAMERA),
         DualOpenYamCoordinator.blueprint(
@@ -148,3 +174,4 @@ def build_dual_openyam_webxr(
 
 
 teleop_webxr_dual_openyam = autoconnect(build_dual_openyam_webxr())
+teleop_webxr_dual_openyam_realsense = autoconnect(build_dual_openyam_webxr(realsense_ego=True))

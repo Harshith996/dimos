@@ -24,6 +24,7 @@ from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_hardware,
     dual_openyam_model_config,
+    dual_openyam_transport_hardware,
 )
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
@@ -37,7 +38,13 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
         type="trajectory",
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         priority=priority,
-        params={"start_position_tolerance": 0.05},
+        params={
+            "start_position_tolerance": 0.05,
+            "goal_tolerance": math.radians(0.5),
+            "goal_time_tolerance": 2.0,
+            "tracking_gain": 0.5,
+            "max_tracking_correction": math.radians(1.0),
+        },
     )
 
 
@@ -46,6 +53,7 @@ class DualOpenYamCoordinatorConfig(ControlCoordinatorConfig):
 
     left_can_port: str | None = None
     right_can_port: str | None = None
+    use_transport_hardware: bool = False
 
 
 class DualOpenYamCoordinator(TeleopControlCoordinator):
@@ -54,12 +62,16 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
     config: DualOpenYamCoordinatorConfig
 
     def _setup_from_config(self) -> None:
-        self.config.hardware = [
-            dual_openyam_hardware(
+        if self.config.use_transport_hardware:
+            if self.config.left_can_port is not None or self.config.right_can_port is not None:
+                raise ValueError("Transport-backed Dual OpenYAM cannot also use CAN ports")
+            hardware = dual_openyam_transport_hardware()
+        else:
+            hardware = dual_openyam_hardware(
                 left_can_port=self.config.left_can_port,
                 right_can_port=self.config.right_can_port,
             )
-        ]
+        self.config.hardware = [hardware]
         # Resolve assets at startup, using the same bounds as the planning model.
         component = self.config.hardware[0]
         assert component.limits is not None

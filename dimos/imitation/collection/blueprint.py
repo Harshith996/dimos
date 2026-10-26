@@ -22,13 +22,21 @@ shutdown. DataPrep reads that DB afterwards.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
-from dimos.constants import RECORDINGS_DIR
+from dimos.constants import DATASETS_DIR, RECORDINGS_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.lerobot_export import LeRobotExportModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
+from dimos.robot.manipulators.dual_openyam.collection import (
+    DUAL_OPENYAM_COLLECTION_STREAMS,
+    LEROBOT_DATAPREP_CONFIG,
+    DualOpenYamCollectionRecorder,
+)
 from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
@@ -38,6 +46,12 @@ from dimos.teleop.webxr.blueprints import (
 def _session_db(robot: str) -> str:
     """Timestamped session DB path under RECORDINGS_DIR, namespaced by robot."""
     return str(RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
+
+
+def _session_paths(robot: str) -> tuple[str, Path]:
+    """One run's session DB and the LeRobot dataset directory built from it."""
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+    return str(RECORDINGS_DIR / f"session_{robot}_{stamp}.db"), DATASETS_DIR / f"{robot}_{stamp}"
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:
@@ -77,4 +91,36 @@ learning_collect_webxr_piper = autoconnect(
     EpisodeMonitorModule.blueprint(task="Teleoperate the Piper"),
     teleop_webxr_piper,
     *_camera_if_real(),
+)
+
+
+# Dual OpenYAM with its three headset cameras. B and Y start, save, and discard
+# episodes, so the arms' zero-pose reset moves from B to A. Every saved episode
+# rebuilds the LeRobot dataset from the session recording. The exporter is
+# listed first so it stops last, after the recorder has flushed.
+DUAL_OPENYAM_HUD_HINT = "B start/save · Y discard · A zero pose · grip to drive"
+
+
+def _build_dual_openyam_collection(*, realsense_ego: bool = False) -> Blueprint:
+    session_db, dataset = _session_paths("dual_openyam")
+    return autoconnect(
+        LeRobotExportModule.blueprint(
+            source=session_db,
+            dataprep_config=LEROBOT_DATAPREP_CONFIG,
+            dataset_path=dataset,
+        ),
+        DualOpenYamCollectionRecorder.blueprint(
+            db_path=session_db,
+            poseless_streams=list(DUAL_OPENYAM_COLLECTION_STREAMS),
+        ),
+        EpisodeMonitorModule.blueprint(task="Teleoperate the Dual OpenYAM"),
+        build_dual_openyam_webxr(
+            zero_button="A", hud_hint=DUAL_OPENYAM_HUD_HINT, realsense_ego=realsense_ego
+        ),
+    )
+
+
+learning_collect_webxr_dual_openyam = autoconnect(_build_dual_openyam_collection())
+learning_collect_webxr_dual_openyam_realsense = autoconnect(
+    _build_dual_openyam_collection(realsense_ego=True)
 )

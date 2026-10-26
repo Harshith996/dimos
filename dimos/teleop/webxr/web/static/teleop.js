@@ -35,18 +35,16 @@ let panels = [];
 let panelsPlaced = false;
 const panelAnchorMatrix = new Float32Array(16);
 const gripHeld = { left: false, right: false };
-const hudModelMatrix = new Float32Array(16);
-const hudLocalMatrix = new Float32Array(16);
 
 // Offsets from the level anchor in meters (x right, y up, z forward is
 // negative). yawDeg turns a side panel in toward the operator; tiltDeg leans a
 // raised panel's face down toward them. height is the image height.
 const PANEL_LAYOUT = {
-    // Egocentric view: large, centered above the workspace.
-    center: { x: 0.0, y: 0.38, z: -1.6, yawDeg: 0, tiltDeg: 10, height: 0.62 },
-    // Wrist views: smaller, beside their arm.
-    left: { x: -1.0, y: 0.24, z: -1.45, yawDeg: 34, tiltDeg: 6, height: 0.42 },
-    right: { x: 1.0, y: 0.24, z: -1.45, yawDeg: -34, tiltDeg: 6, height: 0.42 },
+    // Egocentric view: large, centered above the workspace and within easy view.
+    center: { x: 0.0, y: 0.38, z: -1.2, yawDeg: 0, tiltDeg: 10, height: 0.68 },
+    // Wrist views: slightly smaller, close beside their arm.
+    left: { x: -0.82, y: 0.24, z: -1.1, yawDeg: 34, tiltDeg: 6, height: 0.46 },
+    right: { x: 0.82, y: 0.24, z: -1.1, yawDeg: -34, tiltDeg: 6, height: 0.46 },
 };
 const PANEL_BORDER_METERS = 0.012;
 const PANEL_DEFAULT_ASPECT = 16 / 9;
@@ -63,34 +61,91 @@ const BORDER_COLORS = {
 };
 const PANEL_BLANK_COLOR = [0.03, 0.05, 0.08, 0.75];
 
-// Collection HUD state. The panel is anchored below the initial headset pose
-// and remains fixed in the local-floor scene.
+// Collection HUD: a compact card below the center panel with a dotted status
+// glyph, a large state line (READY / REC 00:07), the operator hint from the
+// server config, the task label, take counters, and dataset export progress.
+// It is placed with the camera panels and redrawn only when its text changes.
 let episodeStatus = null;
 let episodeStatusReceivedAtMs = 0;
+let exportStatus = null;
 let hudOffline = false;
 let hudCanvas = null;
 let hudContext = null;
 let hudTexture = null;
 let hudDirty = false;
-let hudElapsedSecond = -1;
-let hudPlaced = false;
+let hudDrawnKey = null;
+const hudLocalMatrix = new Float32Array(16);
+const hudModelMatrix = new Float32Array(16);
 
-const HUD_WIDTH_PX = 2048;
-const HUD_HEIGHT_PX = 256;
-const HUD_WIDTH_METERS = 1.08;
+const HUD_WIDTH_PX = 1024;
+const HUD_HEIGHT_PX = 384;
+const HUD_WIDTH_METERS = 0.62;
 const HUD_HEIGHT_METERS = HUD_WIDTH_METERS * HUD_HEIGHT_PX / HUD_WIDTH_PX;
-const HUD_OFFSET_Y = -0.6;
-const HUD_OFFSET_Z = -1.2;
+// Below the center panel, leaning up toward the operator.
+const HUD_LAYOUT = { x: 0.0, y: -0.2, z: -1.05, yawDeg: 0, tiltDeg: -8 };
+const HUD_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+const HUD_COLORS = {
+    text: '#f4f7fb',
+    dim: '#9fb0c3',
+    ready: '#f5a623',
+    recording: '#ff3b30',
+    saved: '#39d353',
+    failed: '#ff3b30',
+    offline: '#8a939e',
+};
+// How long a SAVED / DISCARDED outcome stays on the state line before READY.
+const HUD_OUTCOME_MS = 4000;
 
 // UI elements
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const canvas = document.getElementById('canvas');
+const datasetLabelForm = document.getElementById('datasetLabelForm');
+const datasetLabelInput = document.getElementById('datasetLabel');
+const datasetLabelBtn = document.getElementById('datasetLabelBtn');
+const datasetLabelStatus = document.getElementById('datasetLabelStatus');
+let selectedDatasetSuffix = null;
 
 function setStatus(msg) {
     statusEl.textContent = msg;
 }
+
+function setDatasetLabelStatus(message, isError = false) {
+    datasetLabelStatus.textContent = message;
+    datasetLabelStatus.classList.toggle('error', isError);
+}
+
+datasetLabelForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const label = datasetLabelInput.value.trim();
+    if (!label) {
+        setDatasetLabelStatus('Enter a collection label first.', true);
+        datasetLabelInput.focus();
+        return;
+    }
+
+    datasetLabelInput.disabled = true;
+    datasetLabelBtn.disabled = true;
+    setDatasetLabelStatus('Saving label...');
+    try {
+        const response = await fetch('/teleop/dataset-label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+        selectedDatasetSuffix = result.suffix;
+        datasetLabelInput.value = result.suffix;
+        setDatasetLabelStatus(`Dataset folder will end in _${result.suffix}`);
+    } catch (error) {
+        setDatasetLabelStatus(error?.message || String(error), true);
+    } finally {
+        datasetLabelInput.disabled = false;
+        datasetLabelBtn.disabled = false;
+    }
+});
 
 async function loadWebXRClientConfig() {
     const response = await fetch('/teleop/config', { cache: 'no-store' });
@@ -329,17 +384,6 @@ function uploadPanelFrames() {
     }
 }
 
-function setModelMatrix(matrix, halfWidth, halfHeight, x, y, z) {
-    matrix.fill(0);
-    matrix[0] = halfWidth;
-    matrix[5] = halfHeight;
-    matrix[10] = 1;
-    matrix[12] = x;
-    matrix[13] = y;
-    matrix[14] = z;
-    matrix[15] = 1;
-}
-
 // Column-major T(x, y, z) * Ry(yaw) * Rx(tilt) * S(halfWidth, halfHeight, 1).
 // Positive yaw turns the quad's face toward +x; positive tilt leans it down.
 function setPanelMatrix(matrix, halfWidth, halfHeight, x, y, z, yawDeg, tiltDeg) {
@@ -398,6 +442,7 @@ function placeCameraPanels(pose) {
     setLevelAnchorMatrix(panelAnchorMatrix, yaw, m[12], m[13], m[14]);
     panelsPlaced = true;
     for (const panel of panels) updatePanelMatrices(panel);
+    multiplyMatrices(hudModelMatrix, panelAnchorMatrix, hudLocalMatrix);
 }
 
 function updatePanelMatrices(panel) {
@@ -487,11 +532,15 @@ function renderCameraPanels(view, viewport) {
 function handleServerMessage(data) {
     try {
         const message = JSON.parse(data);
-        if (message.type !== 'episode_status') return;
-        episodeStatus = message;
-        episodeStatusReceivedAtMs = performance.now();
-        hudOffline = false;
-        hudDirty = true;
+        if (message.type === 'episode_status') {
+            episodeStatus = message;
+            episodeStatusReceivedAtMs = performance.now();
+            hudOffline = false;
+            hudDirty = true;
+        } else if (message.type === 'export_status') {
+            exportStatus = message;
+            hudDirty = true;
+        }
     } catch (error) {
         console.warn('Ignoring invalid server message', error);
     }
@@ -502,58 +551,20 @@ function initCollectionHud() {
     hudCanvas.width = HUD_WIDTH_PX;
     hudCanvas.height = HUD_HEIGHT_PX;
     hudContext = hudCanvas.getContext('2d');
-
     hudTexture = createTexture();
-    setModelMatrix(
+    hudDrawnKey = null;
+    setPanelMatrix(
         hudLocalMatrix,
         HUD_WIDTH_METERS * 0.5,
         HUD_HEIGHT_METERS * 0.5,
-        0,
-        HUD_OFFSET_Y,
-        HUD_OFFSET_Z,
+        HUD_LAYOUT.x, HUD_LAYOUT.y, HUD_LAYOUT.z, HUD_LAYOUT.yawDeg, HUD_LAYOUT.tiltDeg,
     );
 }
 
-function placeCollectionHud(pose) {
-    multiplyMatrices(hudModelMatrix, pose.transform.matrix, hudLocalMatrix);
-    hudPlaced = true;
-}
-
-function drawHudSection(
-    context,
-    x,
-    width,
-    label,
-    value,
-    color,
-    dotColor = null,
-) {
-    if (x > 24) {
-        context.fillStyle = 'rgba(178, 196, 219, 0.22)';
-        context.fillRect(x, 36, 2, HUD_HEIGHT_PX - 72);
-    }
-
-    const left = x + 28;
-    context.fillStyle = '#c0cfdf';
-    context.font = '700 27px sans-serif';
-    context.fillText(label, left, 78);
-
-    let valueLeft = left;
-    if (dotColor) {
-        context.fillStyle = dotColor;
-        context.beginPath();
-        context.arc(left + 10, 159, 10, 0, Math.PI * 2);
-        context.fill();
-        valueLeft += 34;
-    }
-    context.fillStyle = color;
-    const font = 'ui-monospace, SFMono-Regular, Menlo, monospace';
-    context.font = `600 43px ${font}`;
-    const availableWidth = x + width - valueLeft - 24;
-    const measuredWidth = context.measureText(value).width;
-    const fontSize = Math.min(43, 43 * availableWidth / measuredWidth);
-    context.font = `600 ${fontSize}px ${font}`;
-    context.fillText(value, valueLeft, 174);
+// The HUD shows whenever a collection stack reports episodes, or the server
+// configured an operator hint.
+function hudVisible() {
+    return episodeStatus !== null || Boolean(webXRClientConfig?.hud_hint);
 }
 
 function collectionElapsedSeconds() {
@@ -568,65 +579,136 @@ function formatElapsed(seconds) {
     return `${minutes}:${remainder}`;
 }
 
+function hudState() {
+    if (hudOffline) return { label: 'OFFLINE', color: HUD_COLORS.offline };
+    if (!episodeStatus) return { label: 'TELEOP', color: HUD_COLORS.dim };
+    if (episodeStatus.state === 'recording') {
+        return {
+            label: `REC ${formatElapsed(collectionElapsedSeconds())}`,
+            color: HUD_COLORS.recording,
+        };
+    }
+    const recent = performance.now() - episodeStatusReceivedAtMs < HUD_OUTCOME_MS;
+    if (recent && episodeStatus.last_event === 'save') {
+        return { label: 'SAVED', color: HUD_COLORS.saved };
+    }
+    if (recent && episodeStatus.last_event === 'discard') {
+        return { label: 'DISCARDED', color: HUD_COLORS.ready };
+    }
+    return { label: 'READY', color: HUD_COLORS.ready };
+}
+
+function exportLine() {
+    if (!exportStatus) return { text: '', color: HUD_COLORS.dim };
+    const name = exportStatus.dataset.split('/').filter(Boolean).pop() ?? '';
+    switch (exportStatus.state) {
+        case 'exporting':
+            return { text: `LEROBOT EXPORTING ${name}`, color: HUD_COLORS.ready };
+        case 'done':
+            return { text: `LEROBOT ${exportStatus.episodes} EP OK  ${name}`, color: HUD_COLORS.saved };
+        case 'failed':
+            return { text: `LEROBOT FAILED  ${exportStatus.error ?? ''}`, color: HUD_COLORS.failed };
+        default:
+            return { text: `LEROBOT ${name}`, color: HUD_COLORS.dim };
+    }
+}
+
+// Fit text to a width by trimming it with an ellipsis.
+function fitText(context, text, maxWidth) {
+    if (context.measureText(text).width <= maxWidth) return text;
+    let trimmed = text;
+    while (trimmed.length > 1 && context.measureText(`${trimmed}...`).width > maxWidth) {
+        trimmed = trimmed.slice(0, -1);
+    }
+    return `${trimmed}...`;
+}
+
+// A 5x5 dotted ring like the reference HUD; the center dot blinks while recording.
+function drawHudGlyph(context, x, y, size, color, centerOn) {
+    const cell = size / 5;
+    const radius = cell * 0.32;
+    context.fillStyle = color;
+    for (let row = 0; row < 5; row++) {
+        for (let col = 0; col < 5; col++) {
+            const edge = row === 0 || row === 4 || col === 0 || col === 4;
+            const center = row === 2 && col === 2;
+            if (!edge && !center) continue;
+            if (center && !centerOn) continue;
+            context.globalAlpha = edge ? 0.8 : 1.0;
+            context.beginPath();
+            context.arc(x + col * cell + cell / 2, y + row * cell + cell / 2, radius, 0, Math.PI * 2);
+            context.fill();
+        }
+    }
+    context.globalAlpha = 1.0;
+}
+
 function updateHudTexture() {
-    if (!episodeStatus || !hudContext) return;
-    const elapsed = collectionElapsedSeconds();
-    if (!hudDirty && elapsed === hudElapsedSecond) return;
+    if (!hudContext || !hudVisible()) return;
+    const state = hudState();
+    const recording = episodeStatus?.state === 'recording';
+    const centerOn = !recording || collectionElapsedSeconds() % 2 === 0;
+    const exportInfo = exportLine();
+    const key = [state.label, exportInfo.text, centerOn, hudOffline].join('|');
+    if (!hudDirty && key === hudDrawnKey) return;
     hudDirty = false;
-    hudElapsedSecond = elapsed;
+    hudDrawnKey = key;
 
-    const saved = episodeStatus.episodes_saved;
-    const discarded = episodeStatus.episodes_discarded;
-    const recording = episodeStatus.state === 'recording';
-    const state = hudOffline ? 'OFFLINE' : recording ? 'RECORDING' : 'READY';
-    const stateColor = hudOffline ? '#f6b94d' : recording ? '#ff6b6b' : '#63d6a3';
-    const lastEvent = episodeStatus.last_event === 'init' ? 'NONE' : episodeStatus.last_event.toUpperCase();
-    const sections = [
-        [400, 'STATE', state, '#f4f7fb', stateColor],
-        [220, 'TAKE', String(saved + discarded + 1).padStart(3, '0'), '#f4f7fb'],
-        [280, 'ELAPSED', hudOffline ? '--:--' : formatElapsed(elapsed), '#f4f7fb'],
-        [260, 'SAVED', String(saved).padStart(3, '0'), '#8de2bd'],
-        [320, 'DISCARDED', String(discarded).padStart(3, '0'), '#f7c66d'],
-        [568, 'LAST ACTION', lastEvent, '#f4f7fb'],
-    ];
+    const context = hudContext;
+    context.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
+    context.beginPath();
+    context.roundRect(8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 28);
+    context.fillStyle = 'rgba(4, 9, 17, 0.86)';
+    context.fill();
+    context.strokeStyle = 'rgba(188, 210, 235, 0.3)';
+    context.lineWidth = 3;
+    context.stroke();
 
-    hudContext.clearRect(0, 0, HUD_WIDTH_PX, HUD_HEIGHT_PX);
-    hudContext.beginPath();
-    hudContext.roundRect(8, 8, HUD_WIDTH_PX - 16, HUD_HEIGHT_PX - 16, 34);
-    hudContext.fillStyle = 'rgba(4, 9, 17, 0.88)';
-    hudContext.fill();
-    hudContext.strokeStyle = 'rgba(188, 210, 235, 0.35)';
-    hudContext.lineWidth = 3;
-    hudContext.stroke();
+    drawHudGlyph(context, 44, 48, 120, state.color, centerOn);
 
-    let x = 0;
-    for (const [width, label, value, color, dotColor] of sections) {
-        drawHudSection(hudContext, x, width, label, value, color, dotColor);
-        x += width;
+    const left = 200;
+    const maxWidth = HUD_WIDTH_PX - left - 40;
+    context.fillStyle = state.color;
+    context.font = `700 78px ${HUD_FONT}`;
+    context.fillText(fitText(context, state.label, maxWidth), left, 118);
+
+    const hint = (webXRClientConfig?.hud_hint ?? '').toUpperCase();
+    if (hint) {
+        context.fillStyle = HUD_COLORS.dim;
+        context.font = `500 28px ${HUD_FONT}`;
+        context.fillText(fitText(context, hint, maxWidth), left, 162);
+    }
+
+    if (episodeStatus) {
+        const task = (episodeStatus.task_label ?? '').toUpperCase();
+        context.fillStyle = HUD_COLORS.text;
+        context.font = `600 34px ${HUD_FONT}`;
+        context.fillText(fitText(context, `TASK  ${task}`, maxWidth), left, 218);
+
+        const saved = episodeStatus.episodes_saved;
+        const discarded = episodeStatus.episodes_discarded;
+        context.fillStyle = HUD_COLORS.dim;
+        context.font = `500 30px ${HUD_FONT}`;
+        context.fillText(
+            `KEPT ${saved}   DISCARDED ${discarded}   TAKE ${saved + discarded + 1}`, left, 272,
+        );
+    }
+
+    if (exportInfo.text) {
+        context.fillStyle = exportInfo.color;
+        context.font = `500 30px ${HUD_FONT}`;
+        context.fillText(fitText(context, exportInfo.text, maxWidth), left, 326);
     }
 
     gl.bindTexture(gl.TEXTURE_2D, hudTexture);
-    gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.RGBA,
-        gl.RGBA,
-        gl.UNSIGNED_BYTE,
-        hudCanvas,
-    );
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hudCanvas);
 }
 
 function renderCollectionHud(view, viewport) {
-    if (!episodeStatus || !hudPlaced) return;
+    if (!panelsPlaced || !hudVisible() || hudDrawnKey === null) return;
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    renderTexturedQuad(
-        view,
-        viewport,
-        hudTexture,
-        hudModelMatrix,
-        view.transform.inverse.matrix,
-    );
+    renderTexturedQuad(view, viewport, hudTexture, hudModelMatrix, view.transform.inverse.matrix);
     gl.disable(gl.BLEND);
 }
 
@@ -780,7 +862,6 @@ function onXRFrame(time, frame) {
     const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
         if (!panelsPlaced) placeCameraPanels(pose);
-        if (!hudPlaced) placeCollectionHud(pose);
         for (const view of pose.views) {
             const viewport = glLayer.getViewport(view);
             renderCameraPanels(view, viewport);
@@ -814,7 +895,6 @@ async function startWebXRSession(clientConfig) {
         }
 
         xrSession = session;
-        hudPlaced = false;
         panelsPlaced = false;
         lastSendTime = 0;
 
@@ -835,7 +915,6 @@ async function startWebXRSession(clientConfig) {
             handSelectActive.clear();
             gripHeld.left = false;
             gripHeld.right = false;
-            hudPlaced = false;
             panelsPlaced = false;
             xrSession = null;
             window.disconnect();
@@ -868,6 +947,14 @@ async function startWebXRSession(clientConfig) {
 window.connect = async function() {
     try {
         connectBtn.disabled = true;
+
+        if (
+            webXRClientConfig?.dataset_label_enabled
+            && datasetLabelInput.value.trim()
+            && datasetLabelInput.value.trim() !== selectedDatasetSuffix
+        ) {
+            throw new Error('Press Set label or Enter before connecting.');
+        }
 
         // Check WebXR support
         if (!navigator.xr) {
@@ -934,6 +1021,15 @@ window.addEventListener('load', async () => {
 
     try {
         webXRClientConfig = await loadWebXRClientConfig();
+        if (webXRClientConfig.dataset_label_enabled) {
+            datasetLabelForm.classList.remove('hidden');
+            datasetLabelInput.maxLength = webXRClientConfig.dataset_suffix_max_length * 2;
+            if (webXRClientConfig.dataset_suffix) {
+                selectedDatasetSuffix = webXRClientConfig.dataset_suffix;
+                datasetLabelInput.value = selectedDatasetSuffix;
+                setDatasetLabelStatus(`Dataset folder will end in _${selectedDatasetSuffix}`);
+            }
+        }
         await Promise.all(webXRClientConfig.session_modes.map(async (mode) => {
             const supported = await navigator.xr.isSessionSupported(mode).catch(() => false);
             sessionModeSupport.set(mode, supported);

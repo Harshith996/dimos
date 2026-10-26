@@ -16,8 +16,13 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.constants import DATASETS_DIR
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.blueprint import (
+    learning_collect_webxr_dual_openyam,
+    learning_collect_webxr_dual_openyam_realsense,
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
 )
@@ -25,17 +30,38 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModule,
     EpisodeMonitorModuleConfig,
 )
+from dimos.imitation.collection.lerobot_export import LeRobotExportModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
+    EGOCENTRIC_CAMERA,
+    LEFT_WRIST_CAMERA,
+    RIGHT_WRIST_CAMERA,
+)
+from dimos.robot.manipulators.dual_openyam.collection import (
+    DUAL_OPENYAM_CAMERA_STREAMS,
+    LEROBOT_DATAPREP_CONFIG,
+    DualOpenYamCollectionRecorder,
+)
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
+from dimos.teleop.webxr.camera import TeleopCamera
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
+DUAL_OPENYAM_COLLECTION_BLUEPRINTS = [
+    learning_collect_webxr_dual_openyam,
+    learning_collect_webxr_dual_openyam_realsense,
+]
 
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper, unitree_g1_teleop],
+    [
+        learning_collect_webxr_xarm7,
+        learning_collect_webxr_piper,
+        *DUAL_OPENYAM_COLLECTION_BLUEPRINTS,
+        unitree_g1_teleop,
+    ],
 )
 def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint) -> None:
     monitor = next(
@@ -82,10 +108,14 @@ def test_episode_monitor_stops_after_input_producers(blueprint: Blueprint) -> No
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
+    [
+        learning_collect_webxr_xarm7,
+        learning_collect_webxr_piper,
+        *DUAL_OPENYAM_COLLECTION_BLUEPRINTS,
+    ],
 )
 def test_collection_status_is_wired_to_webxr_hud(blueprint: Blueprint) -> None:
-    hud = next(atom for atom in blueprint.blueprints if atom.module is ArmTeleopModule)
+    hud = next(atom for atom in blueprint.blueprints if issubclass(atom.module, ArmTeleopModule))
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
@@ -111,3 +141,100 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
     assert not [port for _instance, port in streams if port.endswith("_joints")]
+
+
+@pytest.mark.parametrize("blueprint", DUAL_OPENYAM_COLLECTION_BLUEPRINTS)
+def test_dual_openyam_recorder_captures_every_camera_panel(blueprint: Blueprint) -> None:
+    recorder = blueprint.active_blueprints[1]
+    assert recorder.module is DualOpenYamCollectionRecorder
+    assert blueprint.active_blueprints[2].module is EpisodeMonitorModule
+    assert recorder.kwargs["poseless_streams"] == [
+        *DUAL_OPENYAM_CAMERA_STREAMS,
+        AGGREGATE,
+        "coordinator_joint_command",
+        "status",
+    ]
+
+    camera_streams = {
+        blueprint.remapping_map[(camera, "color_image")]
+        for camera in (EGOCENTRIC_CAMERA, LEFT_WRIST_CAMERA, RIGHT_WRIST_CAMERA)
+    }
+    recorder_ports = {stream.name for stream in recorder.streams if stream.direction == "in"}
+    assert camera_streams == set(DUAL_OPENYAM_CAMERA_STREAMS)
+    assert camera_streams <= recorder_ports
+
+    streams = _joint_streams(blueprint)
+    assert streams[(recorder.name, AGGREGATE)] == AGGREGATE
+    assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
+    assert streams[(recorder.name, "coordinator_joint_command")] == "coordinator_joint_command"
+    assert streams[("ControlCoordinator", "coordinator_joint_command")] == (
+        "coordinator_joint_command"
+    )
+
+
+@pytest.mark.parametrize("blueprint", DUAL_OPENYAM_COLLECTION_BLUEPRINTS)
+def test_dual_openyam_zero_reset_keeps_clear_of_the_episode_buttons(blueprint: Blueprint) -> None:
+    teleop = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ArmTeleopModule)
+    )
+    monitor = next(
+        atom for atom in blueprint.active_blueprints if atom.module is EpisodeMonitorModule
+    )
+    episode_buttons = set(EpisodeMonitorModuleConfig(**monitor.kwargs).button_map.values())
+
+    assert teleop.kwargs["zero_button"] == "A"
+    assert teleop.kwargs["zero_button"] not in episode_buttons
+    assert teleop.kwargs["body_tracking_mode"] == "optional"
+
+
+@pytest.mark.parametrize("blueprint", DUAL_OPENYAM_COLLECTION_BLUEPRINTS)
+def test_dual_openyam_exports_the_session_it_records(blueprint: Blueprint) -> None:
+    exporter, recorder = blueprint.active_blueprints[:2]
+    assert exporter.module is LeRobotExportModule
+    assert exporter.kwargs["source"] == recorder.kwargs["db_path"]
+    assert exporter.kwargs["dataprep_config"] == LEROBOT_DATAPREP_CONFIG
+    assert exporter.kwargs["dataset_path"].parent == DATASETS_DIR
+    assert exporter.kwargs["dataset_path"].name.startswith("dual_openyam_")
+
+    teleop = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ArmTeleopModule)
+    )
+    status = next(stream for stream in exporter.streams if stream.name == "status")
+    export_status = next(stream for stream in teleop.streams if stream.name == "export_status")
+    assert status.direction == "in"
+    assert export_status.direction == "in"
+    assert "B" in teleop.kwargs["hud_hint"] and "Y" in teleop.kwargs["hud_hint"]
+
+
+def test_realsense_collection_accepts_camera_and_arm_selectors() -> None:
+    blueprint = learning_collect_webxr_dual_openyam_realsense
+    cameras = {
+        atom.name: atom
+        for atom in blueprint.active_blueprints
+        if atom.name in {EGOCENTRIC_CAMERA, LEFT_WRIST_CAMERA, RIGHT_WRIST_CAMERA}
+    }
+    assert cameras[EGOCENTRIC_CAMERA].module is RealSenseCamera
+    assert cameras[LEFT_WRIST_CAMERA].module is TeleopCamera
+    assert cameras[RIGHT_WRIST_CAMERA].module is TeleopCamera
+
+    parsed = BlueprintConfigParser(blueprint).parse(
+        [
+            "--left-can-port",
+            "004600304845501820303750",
+            "--right-can-port",
+            "004600644845501820303750",
+            "--egocentric-camera.serial-number",
+            "327122073401",
+            "--left-wrist-camera.device",
+            "1",
+            "--right-wrist-camera.device",
+            "0",
+        ],
+        environ={},
+    )
+    coordinator = parsed.module_kwargs("ControlCoordinator")
+    assert coordinator["left_can_port"] == "004600304845501820303750"
+    assert coordinator["right_can_port"] == "004600644845501820303750"
+    assert parsed.module_kwargs(EGOCENTRIC_CAMERA)["serial_number"] == "327122073401"
+    assert parsed.module_kwargs(LEFT_WRIST_CAMERA)["device"] == 1
+    assert parsed.module_kwargs(RIGHT_WRIST_CAMERA)["device"] == 0

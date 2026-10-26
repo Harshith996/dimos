@@ -15,12 +15,21 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, FiniteFloat
 
 EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
 RecordingState: TypeAlias = Literal["idle", "recording"]
+ExportState: TypeAlias = Literal["idle", "exporting", "done", "failed"]
+DATASET_SUFFIX_MAX_LENGTH = 64
+
+
+def normalize_dataset_suffix(value: str) -> str:
+    """Turn an operator-entered collection label into a safe folder suffix."""
+    suffix = re.sub(r"[^A-Za-z0-9]+", "-", value.strip()).strip("-").lower()
+    return suffix[:DATASET_SUFFIX_MAX_LENGTH].rstrip("-")
 
 
 class EpisodeStatus(BaseModel):
@@ -56,3 +65,20 @@ class EpisodeStatus(BaseModel):
         schema["properties"]["schema_version"] = {"type": "integer", "const": 1}
         schema["required"].append("schema_version")
         return schema
+
+
+class ExportStatus(BaseModel):
+    """Progress of the dataset export that follows saved episodes."""
+
+    ts: FiniteFloat
+    state: ExportState
+    dataset: str
+    episodes: int = 0  # episodes in the dataset after the last successful export
+    error: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(self.model_dump(mode="json"), allow_nan=False)
+
+    @classmethod
+    def from_json(cls, data: str) -> ExportStatus:
+        return cls.model_validate_json(data)

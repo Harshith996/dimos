@@ -66,7 +66,7 @@ def _push_jpeg(
     panel: int = 0,
     max_width: int = 0,
 ) -> None:
-    """JPEG-encode a camera frame and push it to the connected headset client.
+    """JPEG-encode a camera frame and push it to connected camera clients.
 
     Called from auto-bound handlers on the module loop; their latest-only
     mailbox drops frames that arrive while an earlier one is still encoding.
@@ -209,6 +209,10 @@ class ArmTeleopModule(WebXRTeleopModule):
 
     def _move_to_zero(self) -> None:
         if self._manipulation is None:
+            return
+        reset = self._manipulation.reset()
+        if not reset.succeeded:
+            logger.error("Could not reset manipulation before moving to zero", error=reset.message)
             return
         targets = {
             group.id: JointState(

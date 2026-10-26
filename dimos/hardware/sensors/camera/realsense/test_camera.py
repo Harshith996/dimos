@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -64,3 +66,29 @@ def test_ports_match_registry() -> None:
     registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
     # The registry files a #[tf] port under inputs, as it subscribes too.
     assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)
+
+
+@pytest.mark.parametrize(
+    ("platform", "executable", "build_command"),
+    [
+        ("darwin", "target/release/realsense_native", "bash build-macos.sh"),
+        ("linux", "result/bin/realsense_native", "nix build -L path:."),
+    ],
+)
+def test_platform_build_defaults(platform, executable, build_command, monkeypatch):
+    monkeypatch.setattr(sys, "platform", platform)
+
+    config = RealSenseCameraConfig()
+
+    assert config.executable == executable
+    assert config.build_command == build_command
+
+
+@pytest.mark.parametrize("build_command", [None, "custom-build"])
+def test_macos_preserves_explicit_build_settings(build_command, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    config = RealSenseCameraConfig(executable="custom_native", build_command=build_command)
+
+    assert config.executable == "custom_native"
+    assert config.build_command == build_command

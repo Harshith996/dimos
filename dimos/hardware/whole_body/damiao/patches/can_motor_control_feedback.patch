@@ -1,0 +1,74 @@
+diff --git a/crates/damiao-codec/src/codec.rs b/crates/damiao-codec/src/codec.rs
+index 7110ff9..9ae4f3f 100644
+--- a/crates/damiao-codec/src/codec.rs
++++ b/crates/damiao-codec/src/codec.rs
+@@ -215,15 +215,18 @@ impl MotorCodec for DamiaoCodec {
+         if frame.flags.contains(FrameFlags::REMOTE_REQUEST) {
+             return Ok(None);
+         }
+-        // Parameter traffic is not a state frame. In particular, a 0x55 write
+-        // acknowledgement must never update motor state.
+-        if frame.id == 0x7FF || (frame.payload()[2] == 0x33 || frame.payload()[2] == 0x55) {
+-            return Ok(None);
+-        }
+         if frame.len != 8 {
+             // Damiao always uses 8 bytes; a different length is not a Damiao state frame.
+             return Ok(None);
+         }
++        // Parameter replies start with the motor's 11-bit CAN ID, little-endian.
++        // A state frame's third byte is position data and may also be 0x33/0x55.
++        let p = frame.payload();
++        let parameter_motor_id = u16::from_le_bytes([p[0], p[1]]);
++        let parameter_reply = parameter_motor_id <= 0x7FF && matches!(p[2], 0x33 | 0x55);
++        if frame.id == 0x7FF || parameter_reply {
++            return Ok(None);
++        }
+         let byte0 = frame.payload()[0];
+         let reported_id = byte0 & 0x0f;
+         // Limits: the codec doesn't have a per-recv_id motor-type registry in
+@@ -636,5 +639,45 @@ mod tests {
+         assert_eq!(c.decode_control_mode_readback(&write_ack, m).unwrap(), None);
+     }
+ 
++    #[test]
++    fn position_bytes_are_not_parameter_opcodes() {
++        let c = DamiaoCodec::new();
++        for low_byte in [0x33, 0x55] {
++            // Captured from a real OpenYAM gripper on CAN 0x18.
++            let frame =
++                CanFrame::classical(0x18, &[0x08, 0x62, low_byte, 0x7f, 0xf7, 0xff, 27, 24])
++                    .unwrap();
++            let Some(Event::State {
++                motor_id,
++                q,
++                t_mos,
++                t_rotor,
++                ..
++            }) = c.decode(&frame).unwrap()
++            else {
++                panic!("position byte {low_byte:#x} was discarded");
++            };
++            assert_eq!(motor_id, 0x18);
++            let expected_q =
++                f64::from(u16::from_be_bytes([0x62, low_byte])) * 25.0 / 65535.0 - 12.5;
++            assert!((q - expected_q).abs() < 1e-6);
++            assert_eq!((t_mos, t_rotor), (27, 24));
++        }
++    }
++
++    #[test]
++    fn parameter_write_ack_does_not_update_state() {
++        let c = DamiaoCodec::new();
++        let ack = CanFrame::classical(0x18, &[0x08, 0, 0x55, 0x0A, 4, 0, 0, 0]).unwrap();
++        assert!(c.decode(&ack).unwrap().is_none());
++    }
++
++    #[test]
++    fn short_frame_is_ignored_without_indexing_payload() {
++        let c = DamiaoCodec::new();
++        let frame = CanFrame::classical(0x18, &[0x08]).unwrap();
++        assert!(c.decode(&frame).unwrap().is_none());
++    }
++
+     extern crate alloc;
+ }

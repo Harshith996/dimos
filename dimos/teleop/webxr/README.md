@@ -39,6 +39,13 @@ dimos --can-port a1zcan run teleop-webxr-a1z
 Open `https://<host-ip>:8443/teleop` in a WebXR-capable headset browser. Accept
 the certificate, then tap Connect.
 
+To watch the live cameras from an ordinary browser, open
+`https://<host-ip>:8443/cameras` and accept the certificate. For example, use
+the robot computer's Tailscale IP when viewing remotely. This page receives
+the same JPEG camera frames as the headset but has its own view-only WebSocket;
+it does not take the headset's control connection or send robot commands. The
+camera page is available to anyone who can reach the WebXR server port.
+
 For hand teleop, remove the controllers. Pinch the thumb and index finger on
 the selected hand to engage it, move the wrist to control the arm, then pinch
 again to disengage. Pinch the thumb and middle finger to close the gripper;
@@ -114,6 +121,12 @@ Panel borders show state: a wrist panel turns green while that controller's
 grip is held, the center panel turns red while an episode is recording, and a
 panel goes gray when its camera has not delivered a frame for two seconds. A
 panel without a camera shows a dark blank.
+
+A compact HUD card sits below the center panel whenever a collection stack
+publishes episode status or the module is configured with a `hud_hint` (one
+line of operator guidance such as the button map). It shows the recording
+state with a blinking `REC` timer, the hint, the task label, take counters,
+and dataset export progress from `export_status`.
 
 `VideoArmTeleopModule` and `Go2TeleopModule` fill the center panel from
 `color_image`. `DualArmVideoTeleopModule` adds `egocentric_image`,

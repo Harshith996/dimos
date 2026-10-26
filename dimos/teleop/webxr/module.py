@@ -34,17 +34,22 @@ from typing import Any, ClassVar, Literal, TypeVar
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode import (
+    DATASET_SUFFIX_MAX_LENGTH,
+    EpisodeStatus,
+    ExportStatus,
+    normalize_dataset_suffix,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.String import String
@@ -60,6 +65,10 @@ logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 BUTTON_DEBOUNCE_S = 0.05
+
+
+class DatasetLabelRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=128)
 
 
 async def _ws_send_text(ws: WebSocket, data: str) -> None:
@@ -108,6 +117,8 @@ class WebXRTeleopConfig(ModuleConfig):
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
+    # One line of operator guidance for the headset HUD, e.g. the button map.
+    hud_hint: str | None = None
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
     zero_button: str | None = None
 
@@ -141,7 +152,9 @@ class WebXRTeleopModule(Module):
     teleop_buttons: Out[Buttons]
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
+    dataset_suffix: Out[String]
     status: In[String]
+    export_status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -181,9 +194,17 @@ class WebXRTeleopModule(Module):
         # _clients_lock guards add/discard/snapshot of the set across the
         # uvicorn thread and the RX subscriber thread.
         self._connected_clients: set[WebSocket] = set()
+        self._viewer_clients: set[WebSocket] = set()
         self._clients_lock = threading.Lock()
+        # Starlette rejects overlapping sends once a socket's buffer fills.
+        # Serialize sends per client and let video frames be dropped while an
+        # earlier send is still in flight so camera backpressure cannot stall
+        # teleoperation status updates.
+        self._send_locks: dict[WebSocket, asyncio.Lock] = {}
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
+        self._latest_export_status: ExportStatus | None = None
+        self._selected_dataset_suffix: str | None = None
         self._body_report_started_at: float | None = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
@@ -202,6 +223,33 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/config")
         async def teleop_config() -> dict[str, Any]:
             return self._webxr_client_config()
+
+        @self._web_server.app.post("/teleop/dataset-label")
+        async def set_dataset_label(request: DatasetLabelRequest) -> dict[str, str]:
+            if not self._dataset_label_enabled():
+                raise HTTPException(status_code=404, detail="Dataset labeling is unavailable")
+            suffix = normalize_dataset_suffix(request.label)
+            if not suffix:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Use at least one letter or number in the dataset label",
+                )
+            with self._lock:
+                status = self._latest_episode_status
+                if status is not None and (
+                    status.state == "recording" or status.episodes_saved > 0
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="The dataset label is locked after recording begins",
+                    )
+                self._selected_dataset_suffix = suffix
+            self.dataset_suffix.publish(String(suffix))
+            return {"suffix": suffix}
+
+        @self._web_server.app.get("/cameras", response_class=HTMLResponse)
+        async def camera_viewer() -> HTMLResponse:
+            return HTMLResponse(content=(STATIC_DIR / "cameras.html").read_text())
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -236,6 +284,25 @@ class WebXRTeleopModule(Module):
             finally:
                 self._client_disconnected(ws)
 
+        @self._web_server.app.websocket("/cameras/ws")
+        async def camera_viewer_endpoint(ws: WebSocket) -> None:
+            await ws.accept()
+            self._ws_loop = asyncio.get_running_loop()
+            with self._clients_lock:
+                self._viewer_clients.add(ws)
+            try:
+                while True:
+                    message = await ws.receive()
+                    if message["type"] == "websocket.disconnect":
+                        break
+                    # Viewer messages are never dispatched as robot input.
+            except WebSocketDisconnect:
+                pass
+            finally:
+                self._send_locks.pop(ws, None)
+                with self._clients_lock:
+                    self._viewer_clients.discard(ws)
+
     def _webxr_client_config(self) -> dict[str, Any]:
         required_features = ["local-floor"]
         optional_features = ["hand-tracking"]
@@ -257,7 +324,16 @@ class WebXRTeleopModule(Module):
             "camera_panels": [
                 {"name": panel.name, "slot": panel.slot} for panel in self.camera_panels
             ],
+            "hud_hint": self.config.hud_hint,
+            "dataset_label_enabled": self._dataset_label_enabled(),
+            "dataset_suffix": self._selected_dataset_suffix,
+            "dataset_suffix_max_length": DATASET_SUFFIX_MAX_LENGTH,
         }
+
+    def _dataset_label_enabled(self) -> bool:
+        return (
+            self.export_status.connection is not None or self.export_status._transport is not None
+        )
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
         fingerprint = data[:8]
@@ -324,11 +400,15 @@ class WebXRTeleopModule(Module):
             self._reset_controller_state()
         with self._lock:
             status = self._latest_episode_status
+            export = self._latest_export_status
         if status is not None:
             self._broadcast_text(self._encode_episode_status(status))
+        if export is not None:
+            self._broadcast_text(self._encode_export_status(export))
         return True
 
     def _client_disconnected(self, ws: WebSocket) -> None:
+        self._send_locks.pop(ws, None)
         with self._clients_lock:
             was_connected = ws in self._connected_clients
             self._connected_clients.discard(ws)
@@ -337,24 +417,49 @@ class WebXRTeleopModule(Module):
 
     def _has_clients(self) -> bool:
         with self._clients_lock:
-            return bool(self._connected_clients)
+            return bool(self._connected_clients or self._viewer_clients)
 
     def _broadcast_text(self, data: str) -> None:
         """Schedule a text message for the active WebXR client."""
         self._broadcast(lambda ws: _ws_send_text(ws, data))
 
     def _broadcast_bytes(self, data: bytes) -> None:
-        """Schedule a binary message (a tagged camera frame) for the active WebXR client."""
-        self._broadcast(lambda ws: _ws_send_bytes(ws, data))
+        """Send a tagged camera frame to the control client and camera viewers.
 
-    def _broadcast(self, send: Callable[[WebSocket], Coroutine[Any, Any, None]]) -> None:
+        A frame is dropped for a client whose previous send is still in flight.
+        """
+        self._broadcast(lambda ws: _ws_send_bytes(ws, data), include_viewers=True, droppable=True)
+
+    async def _send_to_client(
+        self,
+        ws: WebSocket,
+        send: Callable[[WebSocket], Coroutine[Any, Any, None]],
+        droppable: bool,
+    ) -> None:
+        lock = self._send_locks.setdefault(ws, asyncio.Lock())
+        if droppable and lock.locked():
+            return
+        async with lock:
+            await send(ws)
+
+    def _broadcast(
+        self,
+        send: Callable[[WebSocket], Coroutine[Any, Any, None]],
+        *,
+        include_viewers: bool = False,
+        droppable: bool = False,
+    ) -> None:
         loop = self._ws_loop
         if loop is None:
             return
         with self._clients_lock:
-            clients = tuple(self._connected_clients)
+            clients = (
+                tuple(self._connected_clients | self._viewer_clients)
+                if include_viewers
+                else tuple(self._connected_clients)
+            )
         for ws in clients:
-            asyncio.run_coroutine_threadsafe(send(ws), loop)
+            asyncio.run_coroutine_threadsafe(self._send_to_client(ws, send, droppable), loop)
 
     def _on_episode_status(self, message: String) -> None:
         try:
@@ -375,11 +480,31 @@ class WebXRTeleopModule(Module):
         )
         return json.dumps(payload, separators=(",", ":"))
 
+    def _on_export_status(self, message: String) -> None:
+        try:
+            status = ExportStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid export status JSON", exc_info=True)
+            return
+        with self._lock:
+            self._latest_export_status = status
+        self._broadcast_text(self._encode_export_status(status))
+
+    @staticmethod
+    def _encode_export_status(status: ExportStatus) -> str:
+        payload = status.model_dump(mode="json")
+        payload["type"] = "export_status"
+        return json.dumps(payload, separators=(",", ":"))
+
     @rpc
     def build(self) -> None:
         super().build()
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
+        if self.export_status.connection is not None or self.export_status._transport is not None:
+            self.register_disposable(
+                Disposable(self.export_status.subscribe(self._on_export_status))
+            )
 
     @rpc
     def start(self) -> None:

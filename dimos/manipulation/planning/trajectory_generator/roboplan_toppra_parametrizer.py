@@ -47,6 +47,9 @@ class _GroupParametrizer:
     has_continuous_dofs: bool
 
 
+_POSITION_LIMIT_ROUNDOFF_TOLERANCE = 1e-12
+
+
 class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
     """Convert selected-joint paths with a finalized RoboPlan scene."""
 
@@ -226,6 +229,21 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             ]
         canonical_positions = [
             [float(position[index]) for index in output_indices] for position in collapsed_positions
+        ]
+        lower_limits, upper_limits = joint_space.position_limits()
+        canonical_positions = [
+            np.where(
+                (position < lower_limits)
+                & (position >= lower_limits - _POSITION_LIMIT_ROUNDOFF_TOLERANCE),
+                lower_limits,
+                np.where(
+                    (position > upper_limits)
+                    & (position <= upper_limits + _POSITION_LIMIT_ROUNDOFF_TOLERANCE),
+                    upper_limits,
+                    position,
+                ),
+            )
+            for position in (np.asarray(values) for values in canonical_positions)
         ]
         lifted_positions = joint_space.lifted_positions(
             [joint_space.normalize_positions(position) for position in canonical_positions]

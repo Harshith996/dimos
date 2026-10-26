@@ -520,13 +520,17 @@ class ManipulationModule(Module):
         return to IDLE with the error cleared, from whatever state the failure
         left behind.
 
-        The exception is a stop the coordinator could not confirm. Clearing that
-        FAULT would discard the one signal saying the arm may still be moving,
-        and hand back a module that accepts a new motion into it.
+        The exception is a stop the coordinator could not confirm. A trajectory
+        FAULT is recoverable here because the trajectory task has already
+        cleared its active motion before reporting that terminal state; its
+        reset RPC still refuses to reset if execution is active.
         """
         result = self.cancel()
-        if result.status in UNCONFIRMED_STOP:
+        if result.status is ExecutionStatus.UNCERTAIN:
             return CommandResult(CommandStatus.FAILED, result.message)
+        trajectory_reset = self._execution_manager.reset()
+        if trajectory_reset.status in UNCONFIRMED_STOP:
+            return CommandResult(CommandStatus.FAILED, trajectory_reset.message)
         cancelled = result.status is not ExecutionStatus.NO_EXECUTION
         with self._lock:
             self._state = ManipulationState.IDLE

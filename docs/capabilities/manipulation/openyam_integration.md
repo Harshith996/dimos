@@ -96,6 +96,33 @@ dimos run teleop-webxr-dual-openyam \
 See the [WebXR README](/dimos/teleop/webxr/README.md) for the panel layout,
 border colors, and uplink limits.
 
+#### RealSense RGB overhead camera on macOS
+
+The `teleop-webxr-dual-openyam-realsense` blueprint reads the overhead camera's
+RGB stream through the existing native RealSense module. The wrist cameras still
+use their OpenCV devices. Build the native module once as your normal user:
+
+```bash
+brew install librealsense
+bash dimos/hardware/sensors/camera/realsense/rust/build-macos.sh
+```
+
+On macOS 12+, librealsense needs elevated USB access. Start this blueprint from
+the repository root with the virtual environment's `dimos` executable under
+`sudo`; use the serial reported by `sudo rs-enumerate-devices -s`:
+
+```bash
+sudo .venv/bin/dimos run teleop-webxr-dual-openyam-realsense \
+  --left-can-port <LEFT-USB-SERIAL> \
+  --right-can-port <RIGHT-USB-SERIAL> \
+  --egocentric-camera.serial-number <REALSENSE-SDK-SERIAL> \
+  --left-wrist-camera.device <LEFT-OPENCV-INDEX> \
+  --right-wrist-camera.device <RIGHT-OPENCV-INDEX>
+```
+
+The overhead stream defaults to 640×480 RGB8 at 30 fps. Camera indices can
+change when devices are reconnected; verify the two wrist feeds before running.
+
 ### Arm posture
 
 With body tracking enabled in the headset browser (Meta Quest Browser 32 and
@@ -108,6 +135,58 @@ teleop is hand-pose only. The weighting lives in the teleop blueprint
 (`hint_position_cost`); see the [WebXR README](/dimos/teleop/webxr/README.md)
 for the mechanism.
 
+### Record episodes
+
+`learning-collect-webxr-dual-openyam` adds the episode monitor, a recorder
+that captures all three cameras, measured joint state, post-arbitration joint
+targets, and episode markers, plus an exporter that rebuilds a LeRobot dataset
+after every saved episode. The LeRobot `observation.state` feature contains
+measured positions; `action` contains the absolute position targets sent to the
+arm and gripper hardware. Press B
+to start a take and B again to save it, or Y to discard it; the zero-pose reset
+is on A in this blueprint. The headset HUD shows a blinking `REC` timer while
+recording and the export result afterwards.
+
+```bash
+dimos run learning-collect-webxr-dual-openyam
+# recording:  recordings/session_dual_openyam_<ts>.db
+# dataset:    datasets/dual_openyam_<ts>   (rebuilt on every save)
+```
+
+For a RealSense overhead camera, use
+`learning-collect-webxr-dual-openyam-realsense` with the same CAN selectors,
+RealSense serial number, and wrist device indices as the teleop-only blueprint:
+
+```bash
+sudo .venv/bin/dimos run learning-collect-webxr-dual-openyam-realsense \
+  --left-can-port <LEFT-USB-SERIAL> \
+  --right-can-port <RIGHT-USB-SERIAL> \
+  --egocentric-camera.serial-number <REALSENSE-SDK-SERIAL> \
+  --left-wrist-camera.device <LEFT-OPENCV-INDEX> \
+  --right-wrist-camera.device <RIGHT-OPENCV-INDEX>
+```
+
+The `teleop-webxr-dual-openyam-realsense` blueprint provides camera viewing and
+arm control. Select the `learning-collect-...` blueprint to enable the
+collection label, recording HUD, episode controls, and automatic LeRobot export.
+
+Give a collection run a short label with `--dataset-suffix`. Use letters,
+numbers, hyphens, or underscores; the timestamp remains in the name so separate
+runs never overwrite one another:
+
+```bash
+dimos run learning-collect-webxr-dual-openyam --dataset-suffix pick-red-cube
+# dataset: datasets/dual_openyam_<ts>_pick-red-cube
+```
+
+The Quest `/teleop` page also shows a **Collection label** field before the
+Connect button. Enter a label and press Enter or **Set label** before recording;
+spaces and punctuation are converted to hyphens. The label locks when recording
+begins so every saved take in the session stays in one dataset folder.
+
+See the [imitation learning guide](/dimos/imitation/README.md) for the full
+collection workflow.
+
 ## Hardware topology
 
 | Motor | Send ID | Reply ID | Type |
@@ -119,6 +198,28 @@ for the mechanism.
 The bus uses classical CAN at 1 Mbit/s. Opening the gripper decreases motor
 position. The arm and gripper are exposed together as one whole-body hardware
 component.
+
+## can-motor-control 0.0.8 feedback decoder
+
+Version 0.0.8 can discard valid motor feedback when the low byte of the
+reported position equals `0x33` or `0x55`. It mistakes that position byte for
+a parameter response opcode, so an otherwise responsive gripper can fail
+startup calibration with "did not receive fresh feedback before starting".
+
+The local fix checks the parameter response's motor-ID header as well as
+its opcode. Build and install it into this checkout's virtual environment:
+
+```bash
+bash scripts/install_can_motor_control_feedback_fix.sh
+```
+
+This builds the pinned v0.0.8 source from
+[dimensionalOS/can-motor-control](https://github.com/dimensionalOS/can-motor-control)
+with the patch saved under `dimos/hardware/whole_body/damiao/patches/`, runs
+the Rust motor-control and codec tests, and installs the wheel into `.venv`.
+Rerun it if the environment is rebuilt or the dependency is reinstalled.
+The installer does not access the robot. Use `.venv/bin/dimos` to run the stack
+after installing the fix.
 
 ## Safety
 

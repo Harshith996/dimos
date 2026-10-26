@@ -17,9 +17,10 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
@@ -76,6 +77,16 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     depth_trunc_m: float = 5.0
     camera_info_fps: float = 1.0
     serial_number: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _platform_build_defaults(cls, values: Any) -> Any:
+        # Keep literal Nix defaults discoverable by bin/native-modules in CI.
+        if sys.platform == "darwin" and isinstance(values, dict):
+            values = dict(values)
+            values.setdefault("executable", "target/release/realsense_native")
+            values.setdefault("build_command", "bash build-macos.sh")
+        return values
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()

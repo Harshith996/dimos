@@ -75,6 +75,11 @@ def dual_openyam_mock_hardware() -> HardwareComponent:
     )
 
 
+def dual_openyam_transport_hardware() -> HardwareComponent:
+    """Build a transport-backed component for a simulator or robot-side bridge."""
+    return _hardware_component("transport_lcm", {})
+
+
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],

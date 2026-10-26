@@ -25,7 +25,14 @@ from reactivex.observable import Observable
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+
+logger = setup_logger()
+
+# Consecutive failed reads before the device is closed and reopened.
+REOPEN_AFTER_FAILED_READS = 30
+FAILED_READ_BACKOFF_S = 0.1
 
 
 def _parse_camera_device(value: Any) -> Any:
@@ -86,10 +93,18 @@ class Webcam(CameraHardware):
         return backpressure(create(subscribe))
 
     def start(self):  # type: ignore[no-untyped-def]
-        import cv2
-
         if self._capture_thread and self._capture_thread.is_alive():
             return
+
+        self._capture = self._open_capture()  # type: ignore[assignment]
+
+        # Clear stop event and start the capture thread
+        self._stop_event.clear()
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)  # type: ignore[assignment]
+        self._capture_thread.start()  # type: ignore[attr-defined]
+
+    def _open_capture(self) -> Any:
+        import cv2
 
         # Device paths otherwise let FFmpeg open the camera, which cannot apply
         # the requested capture dimensions and frame rate through set().
@@ -97,18 +112,20 @@ class Webcam(CameraHardware):
         backend = cv2.CAP_ANY
         if sys.platform == "linux" and isinstance(device, str) and device.startswith("/dev/"):
             backend = cv2.CAP_V4L2
-        self._capture = cv2.VideoCapture(device, backend)  # type: ignore[assignment]
-        if not self._capture.isOpened():  # type: ignore[attr-defined]
+        capture = cv2.VideoCapture(device, backend)
+        if not capture.isOpened():
             raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
+        return capture
 
-        # Set camera properties
-        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)  # type: ignore[attr-defined]
-        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)  # type: ignore[attr-defined]
-
-        # Clear stop event and start the capture thread
-        self._stop_event.clear()
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)  # type: ignore[assignment]
-        self._capture_thread.start()  # type: ignore[attr-defined]
+    def _reopen_capture(self) -> None:
+        if self._capture:
+            self._capture.release()
+        try:
+            self._capture = self._open_capture()
+        except RuntimeError:
+            logger.warning("Camera reopen failed; retrying", camera=self.config.camera_index)
 
     def stop(self) -> None:
         """Stop capturing frames"""
@@ -167,8 +184,28 @@ class Webcam(CameraHardware):
         frame_interval = 0.0 if self.config.fps <= 0 else 1.0 / self.config.fps
         next_frame_time = time.time()
 
+        failed_reads = 0
         while self._capture and not self._stop_event.is_set():
-            image = self.capture_frame()
+            try:
+                image = self.capture_frame()
+            except RuntimeError:
+                # USB cameras drop reads under bus contention; one failure must
+                # not end the stream for the rest of the run.
+                failed_reads += 1
+                if failed_reads == 1:
+                    logger.warning("Camera read failed; retrying", camera=self.config.camera_index)
+                if failed_reads % REOPEN_AFTER_FAILED_READS == 0:
+                    logger.warning("Reopening camera", camera=self.config.camera_index)
+                    self._reopen_capture()
+                if self._stop_event.wait(timeout=FAILED_READ_BACKOFF_S):
+                    break
+                next_frame_time = time.time()
+                continue
+            if failed_reads:
+                logger.info(
+                    "Camera recovered", camera=self.config.camera_index, failed_reads=failed_reads
+                )
+                failed_reads = 0
 
             # Emit the image to the observer only if not stopping
             if self._observer and not self._stop_event.is_set():

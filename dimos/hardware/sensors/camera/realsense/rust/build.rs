@@ -21,7 +21,7 @@ fn main() {
     for path in lib.link_paths {
         let dir = path
             .ancestors()
-            .find(|d| d.join("librealsense2.so").exists())
+            .find(|d| d.join("librealsense2.so").exists() || d.join("librealsense2.dylib").exists())
             .unwrap_or(&path);
         println!("cargo:rustc-link-search=native={}", dir.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());

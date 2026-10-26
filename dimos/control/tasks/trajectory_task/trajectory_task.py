@@ -58,6 +58,10 @@ def joint_trajectory_task(
     priority: int = 10,
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
+    goal_tolerance: float | None = None,
+    goal_time_tolerance: float = 2.0,
+    tracking_gain: float = 0.0,
+    max_tracking_correction: float = 0.0,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
@@ -66,6 +70,12 @@ def joint_trajectory_task(
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
     if velocity_limits is not None:
         params["velocity_limits"] = dict(velocity_limits)
+    if goal_tolerance is not None:
+        params["goal_tolerance"] = goal_tolerance
+        params["goal_time_tolerance"] = goal_time_tolerance
+    if tracking_gain > 0.0:
+        params["tracking_gain"] = tracking_gain
+        params["max_tracking_correction"] = max_tracking_correction
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
@@ -152,6 +162,11 @@ class JointTrajectoryTaskConfig:
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    goal_tolerance: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+    goal_time_tolerance: float = Field(default=2.0, ge=0.0, allow_inf_nan=False)
+    tracking_gain: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    max_tracking_correction: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    joint_position_limits: dict[str, tuple[float | None, float | None]] | None = None
 
 
 @dataclass
@@ -190,6 +205,10 @@ class JointTrajectoryTask(BaseControlTask):
         Args:
             config: Task configuration
         """
+        if config.tracking_gain > 0.0 and (
+            config.goal_tolerance is None or config.max_tracking_correction <= 0.0
+        ):
+            raise ValueError("Tracking feedback requires a goal tolerance and correction limit")
         self._name = JOINT_TRAJECTORY_TASK_NAME
         self._config = config
         self._joint_names = frozenset(config.joint_names)
@@ -204,6 +223,7 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
+        self._fault_error: str = ""
 
         configured_limits = config.velocity_limits
         if configured_limits is None:
@@ -266,6 +286,7 @@ class JointTrajectoryTask(BaseControlTask):
 
         output_names = [name for name in self._joint_names_list if name in self._motions]
         all_complete = bool(self._motions)
+        timed_out_joint: str | None = None
         for joint_name, (run, index) in list(self._motions.items()):
             if run.start_time is None:
                 run.start_time = state.t_now
@@ -275,6 +296,32 @@ class JointTrajectoryTask(BaseControlTask):
             elapsed = max(0.0, state.t_now - run.start_time)
             self._last_elapsed = max(self._last_elapsed, elapsed)
             desired = run.trajectory.sample(elapsed)[0][index]
+            measured = state.joints.get_position(joint_name)
+            valid_measured = measured is not None and math.isfinite(measured)
+            final_position = run.trajectory.points[-1].positions[index]
+            nominal_complete = elapsed >= run.trajectory.duration
+            goal_tolerance = self._config.goal_tolerance
+            goal_reached = (
+                valid_measured
+                and goal_tolerance is not None
+                and abs(measured - final_position) <= goal_tolerance
+            )
+            target = desired
+            if (
+                self._config.tracking_gain > 0.0
+                and valid_measured
+                and not (nominal_complete and goal_reached)
+            ):
+                correction = self._config.tracking_gain * (desired - measured)
+                correction_limit = self._config.max_tracking_correction
+                target += max(-correction_limit, min(correction_limit, correction))
+                limits = (self._config.joint_position_limits or {}).get(joint_name)
+                if limits is not None:
+                    lower, upper = limits
+                    if lower is not None:
+                        target = max(lower, target)
+                    if upper is not None:
+                        target = min(upper, target)
             current = self._commanded_positions.get(joint_name)
             if current is None:
                 current = state.joints.get_position(joint_name)
@@ -282,19 +329,31 @@ class JointTrajectoryTask(BaseControlTask):
                     all_complete = False
                     continue
             max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
-            delta = max(-max_delta, min(max_delta, desired - current))
+            delta = max(-max_delta, min(max_delta, target - current))
             commanded = current + delta
             self._commanded_positions[joint_name] = commanded
 
-            final_position = run.trajectory.points[-1].positions[index]
-            nominal_complete = elapsed >= run.trajectory.duration
             reached = math.isclose(commanded, final_position, abs_tol=1e-9)
-            if nominal_complete and reached:
-                del self._motions[joint_name]
+            if nominal_complete:
+                if reached and (goal_tolerance is None or goal_reached):
+                    del self._motions[joint_name]
+                elif elapsed >= run.trajectory.duration + self._config.goal_time_tolerance:
+                    timed_out_joint = joint_name
+                    measured_text = "unavailable" if measured is None else f"{measured:.4f}"
+                    self._fault_error = (
+                        f"Joint {joint_name} missed target {final_position:.4f} rad; "
+                        f"measured {measured_text} rad"
+                    )
+                    all_complete = False
+                else:
+                    all_complete = False
             else:
                 all_complete = False
 
-        if all_complete and not self._motions and self._state == TrajectoryState.EXECUTING:
+        if timed_out_joint is not None:
+            self._state = TrajectoryState.FAULT
+            logger.error(self._fault_error)
+        elif all_complete and not self._motions and self._state == TrajectoryState.EXECUTING:
             self._state = TrajectoryState.COMPLETED
             self._trajectory = None
             self._pending_start = False
@@ -308,6 +367,9 @@ class JointTrajectoryTask(BaseControlTask):
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
+        if timed_out_joint is not None:
+            self._clear_active_trajectory()
+            return output
         # Emit the final command, then forget joints we no longer control.
         # Another task may move them before the next execution.
         self._commanded_positions = {
@@ -422,12 +484,20 @@ class JointTrajectoryTask(BaseControlTask):
         first_positions = list(trajectory.points[0].positions)
         anchored = False
         if len(trajectory.points) > 1:
+            reference_positions = self.get_reference_positions(current_positions)
             for index, (joint_name, planned_position) in enumerate(
                 zip(trajectory.joint_names, first_positions, strict=True)
             ):
-                commanded_position = self._commanded_positions.get(joint_name)
-                if commanded_position is not None:
-                    first_positions[index] = commanded_position
+                if joint_name in self._commanded_positions:
+                    reference_position = reference_positions.get(joint_name)
+                    if reference_position is None:
+                        return TrajectoryExecutionResult(
+                            TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+                            f"Current position for joint '{joint_name}' is unavailable",
+                        )
+                    # compute() adds feedback to this reference. Reusing the
+                    # motor command here would apply its feedback offset twice.
+                    first_positions[index] = reference_position
                     anchored = True
                     continue
                 current_position = current_positions.get(joint_name)
@@ -466,6 +536,7 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory = trajectory
         self._last_duration = trajectory.duration
         self._last_elapsed = 0.0
+        self._fault_error = ""
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
@@ -499,12 +570,47 @@ class JointTrajectoryTask(BaseControlTask):
             return False
         self._state = TrajectoryState.IDLE
         self._clear_active_trajectory()
+        self._fault_error = ""
         logger.info(f"Trajectory {self._name} reset to IDLE")
         return True
 
     def get_state(self) -> TrajectoryState:
         """Get current state."""
         return self._state
+
+    def get_commanded_positions(self) -> dict[str, float]:
+        """Return the latest per-joint position commands emitted by this task."""
+        return dict(self._commanded_positions)
+
+    def get_reference_positions(self, current_positions: Mapping[str, float]) -> dict[str, float]:
+        """Return trajectory start references that reproduce the latest commands.
+
+        These are references before tracking feedback, suitable for anchoring
+        a replacement trajectory or rate-limiting its waypoints. They derive
+        from the actual commands after velocity and position limits, rather
+        than from the previous trajectory's potentially unreachable targets.
+        Continuity assumes the supplied measurements stay fixed until compute().
+
+        With feedback enabled, omit joints without a finite measured position.
+        Completed, cancelled and preempted joints have no stored command and
+        are omitted too; a new trajectory must start from their measured pose.
+        """
+        gain = self._config.tracking_gain
+        if gain == 0.0:
+            return self.get_commanded_positions()
+        correction_limit = self._config.max_tracking_correction
+        references = {}
+        for joint_name, commanded in self._commanded_positions.items():
+            measured = current_positions.get(joint_name)
+            if measured is None or not math.isfinite(measured):
+                continue
+            # Invert command = reference + clamp(gain * (reference - measured)).
+            # This also handles saturated feedback and rate-limited commands.
+            correction = (gain / (1.0 + gain)) * (commanded - measured)
+            references[joint_name] = commanded - max(
+                -correction_limit, min(correction_limit, correction)
+            )
+        return references
 
     def get_progress(self, t_now: float) -> float:
         """Get execution progress (0.0 to 1.0).
@@ -554,6 +660,7 @@ class JointTrajectoryTask(BaseControlTask):
             progress=1.0 if completed else 0.0,
             time_elapsed=self._last_duration if completed else self._last_elapsed,
             time_remaining=0.0,
+            error=self._fault_error,
         )
 
 
@@ -566,6 +673,10 @@ class JointTrajectoryTaskParams(BaseConfig):
         allow_inf_nan=False,
     )
     velocity_limits: dict[str, float] | None = None
+    goal_tolerance: float | None = Field(default=None, ge=0.0, allow_inf_nan=False)
+    goal_time_tolerance: float = Field(default=2.0, ge=0.0, allow_inf_nan=False)
+    tracking_gain: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    max_tracking_correction: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -574,11 +685,33 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
         )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
+    position_limits: dict[str, tuple[float | None, float | None]] = {}
+    if params.tracking_gain > 0.0:
+        for connected in hardware.values():
+            limits = connected.get_limits()
+            if limits is None:
+                continue
+            for name, lower, upper in zip(
+                connected.joint_names,
+                limits.position_lower,
+                limits.position_upper,
+                strict=True,
+            ):
+                if name in cfg.joint_names:
+                    position_limits[name] = (lower, upper)
+        missing = set(cfg.joint_names) - position_limits.keys()
+        if missing:
+            raise ValueError(f"Tracking feedback requires joint limits for {sorted(missing)}")
     return JointTrajectoryTask(
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
+            goal_tolerance=params.goal_tolerance,
+            goal_time_tolerance=params.goal_time_tolerance,
+            tracking_gain=params.tracking_gain,
+            max_tracking_correction=params.max_tracking_correction,
+            joint_position_limits=position_limits,
         ),
     )
