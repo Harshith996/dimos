@@ -443,6 +443,43 @@ def test_pick_checks_the_descent_from_the_approach_goal_before_moving(
     manipulation.execute.assert_called_once_with(blocking=True, plan_id=PLANNED.plan.plan_id)
 
 
+def test_approach_only_stops_at_the_pregrasp_with_the_gripper_open(
+    module: PickAndPlaceModule,
+) -> None:
+    """A grasp finished by hand: the arm goes to the pre-grasp with the descent checked,
+    the jaws stay open, and the report says how far and which way to advance."""
+    manipulation: Any = module._manipulation
+    box_filter: Any = module._box_filter
+
+    result = module.pick_object("cup-1", approach_only=True)
+
+    assert result.message == (
+        "At the pregrasp for cup-1 with arm/tool, gripper open: "
+        "advance 10 cm along the grasp axis to grasp."
+    )
+    assert _motion_calls(manipulation) == [
+        "set_gripper_position",
+        "plan_to_poses",
+        "plan_linear",
+        "execute",
+    ]
+    manipulation.move_linear.assert_not_called()
+    (opened,) = manipulation.set_gripper_position.call_args_list
+    assert opened.args[0] == module.config.grasp_verification.open_position
+    assert not module._holding_object
+    box_filter.clear_box.assert_called_once_with(TARGET_BOX)
+    assert result.metadata["object_id"] == "cup-1"
+    assert result.metadata["planning_group"] == "arm/tool"
+    assert result.metadata["approach_m"] == pytest.approx(0.1)
+    assert result.metadata["approach_dir"] == pytest.approx([0.0, 0.0, -1.0])
+    grasp = result.metadata["grasp"]
+    assert grasp["frame_id"] == "world"
+    assert grasp["position"] == pytest.approx([0.1, 0.0, 0.2])
+    assert grasp["orientation"] == pytest.approx(
+        Quaternion.from_euler(Vector3(-math.pi, 0.0, 0.0)).to_list()
+    )
+
+
 def test_pick_skips_a_candidate_whose_descent_cannot_be_planned(
     module: PickAndPlaceModule,
 ) -> None:

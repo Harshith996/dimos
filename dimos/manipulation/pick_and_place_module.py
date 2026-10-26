@@ -232,6 +232,7 @@ class PickAndPlaceModule(Module):
         object_id: str,
         planning_group: PlanningGroupID | None = None,
         auxiliary_groups: list[str] | None = None,
+        approach_only: bool = False,
     ) -> SkillResult:
         """Generate ranked grasps and pick one object from the latest scan.
 
@@ -242,6 +243,9 @@ class PickAndPlaceModule(Module):
                 pre-grasp pose. Pass ["moving_base"] when the object is beyond the
                 arm's reach and the base may drive. The descent onto the object and
                 the lift are arm-only either way.
+            approach_only: Stop at the pre-grasp pose with the gripper open, the descent
+                planned but not driven, and report how far and which way to advance: for
+                a grasp finished by hand. Nothing is picked.
         """
         if self._holding_object:
             return SkillResult(
@@ -323,7 +327,9 @@ class PickAndPlaceModule(Module):
         if scene_box is not None:
             self._leave_out(Pose(position=scene_box.center), scene_box.size, scene_frame)
         try:
-            return self._pick_from(candidates, object_id, box, group, auxiliary, sphere)
+            return self._pick_from(
+                candidates, object_id, box, group, auxiliary, sphere, approach_only
+            )
         finally:
             if not self._holding_object:
                 self._clear_target_box()
@@ -336,6 +342,7 @@ class PickAndPlaceModule(Module):
         group: PlanningGroupID,
         auxiliary: Sequence[PlanningGroupID] = (),
         sphere: ReachSphere | None = None,
+        approach_only: bool = False,
     ) -> SkillResult:
         """Open the gripper and try the ranked grasps in order until one holds the object.
 
@@ -347,6 +354,8 @@ class PickAndPlaceModule(Module):
             auxiliary: Groups the planner may move as well on the way to each
                 pre-grasp pose; never on the straight legs at the object.
             sphere: The group's reach, when known; candidates beyond it are not planned.
+            approach_only: Stop at the first pre-grasp reached, jaws open, instead of
+                grasping; the report says how to finish by hand.
         """
         if not_open := self._open_gripper(group, "before grasping"):
             return not_open
@@ -368,7 +377,11 @@ class PickAndPlaceModule(Module):
                 continue
             blocked = self._approach(
                 pregrasp, grasp, group, auxiliary, "the descent from the pre-grasp pose"
-            ) or self._servo(pregrasp, grasp, group)
+            )
+            if blocked is None and approach_only:
+                return self._at_pregrasp(object_id, group, pregrasp, grasp)
+            if blocked is None:
+                blocked = self._servo(pregrasp, grasp, group)
             if isinstance(blocked, PlanResult):
                 # The planner found no path to this candidate, or no descent from
                 # its pre-grasp; the next one may differ. A motion that stopped
@@ -422,6 +435,40 @@ class PickAndPlaceModule(Module):
         return SkillResult(
             f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
             f"for object {object_id}; last planner result {last_plan}."
+        )
+
+    def _at_pregrasp(
+        self,
+        object_id: str,
+        group: PlanningGroupID,
+        pregrasp: PoseStamped,
+        grasp: PoseStamped,
+    ) -> SkillResult:
+        """Report the arm waiting at a pre-grasp, jaws open, for a grasp finished by hand.
+
+        Args:
+            object_id: ID of the object the pre-grasp is above, for the report.
+            group: The group whose tool tip is at ``pregrasp``.
+            pregrasp: Where the tip is, in the planning frame.
+            grasp: Where it would close on the object: straight ahead along the tool's
+                approach axis, which is the way to advance.
+        """
+        approach = grasp.position - pregrasp.position
+        distance = pregrasp.position.distance(grasp.position)
+        return SkillResult(
+            f"At the pregrasp for {object_id} with {group}, gripper open: advance "
+            f"{100.0 * distance:.0f} cm along the grasp axis to grasp.",
+            metadata={
+                "object_id": object_id,
+                "planning_group": group,
+                "approach_m": distance,
+                "approach_dir": (approach / distance).to_list(),
+                "grasp": {
+                    "frame_id": grasp.frame_id,
+                    "position": grasp.position.to_list(),
+                    "orientation": grasp.orientation.to_list(),
+                },
+            },
         )
 
     @rpc
