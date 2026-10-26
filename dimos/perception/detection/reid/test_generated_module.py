@@ -14,19 +14,15 @@
 
 from contextlib import ExitStack
 from copy import deepcopy
-from threading import Event
+from unittest.mock import PropertyMock
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 from reactivex.subject import Subject
 
-from dimos.core.transport import LCMTransport
 from dimos.message_utils import camera_info, image as image_utils
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.person_tracker import (
     PersonTracker,
@@ -59,9 +55,7 @@ def test_alignment_retains_float_matching_and_filters_empty_arrays(align, second
         name="person",
         ts=0.0,
     )
-    packet = decode(
-        encode(ImageDetections2D(second, [box]).to_ros_detection2d_array()), Detection2DArray
-    )
+    packet = ImageDetections2D(second, [box]).to_ros_detection2d_array()
     received = []
     with ExitStack() as cleanup:
         images, detections = Subject(), Subject()
@@ -81,7 +75,7 @@ def test_alignment_retains_float_matching_and_filters_empty_arrays(align, second
         assert len(received) == (1 if seconds == 0 else 2)
 
 
-def test_person_target_composition_keeps_detection_source_stamp():
+def test_person_target_composition_keeps_detection_source_stamp(mocker):
     header = Header(frame_id="camera_optical", stamp=Time(sec=1700000000, nanosec=123456789))
     image = image_utils.from_array(
         np.zeros((32, 32, 3), dtype=np.uint8), encoding="rgb8", header=header
@@ -97,31 +91,19 @@ def test_person_target_composition_keeps_detection_source_stamp():
     )
     camera = camera_info.from_intrinsics(10, 10, 16, 16, 32, 32, header=header)
     with ExitStack() as cleanup:
-        tf_wire = LCMTransport("tracking_tf", TFMessage, url="memq://")
-        cleanup.callback(tf_wire.stop)
-        target_wire = LCMTransport("tracking_target", PoseStamped, url="memq://")
-        cleanup.callback(target_wire.stop)
         module = PersonTracker(cameraInfo=camera)
         cleanup.callback(module.stop)
-        module.tf.transport = tf_wire
-        module.target.transport = target_wire
-        buffer = module.tfbuffer
-        cleanup.callback(buffer.dispose)
+        publish = mocker.patch.object(module.target, "publish")
         mount = frames_to_edge_transforms([("camera_link", "world", (1, 2, 3), (0, 0, 0))])[0]
         mount.header.stamp = Time(sec=1699999999, nanosec=123456789)
-        buffer.receive_transform(mount)
-        received = []
-        ready = Event()
-
-        def receive(value):
-            received.append(value)
-            ready.set()
-
-        cleanup.callback(target_wire.subscribe(receive))
+        mocker.patch.object(
+            PersonTracker,
+            "tfbuffer",
+            new_callable=PropertyMock,
+            return_value=mocker.Mock(get=mocker.Mock(return_value=mount)),
+        )
         module.track(ImageDetections2D(image, [box]))
-        assert ready.wait(2)
-        assert len(received) == 1
-        target = received[0]
+        target = publish.call_args.args[0]
         assert target.header.frame_id == "world"
         assert target.header.stamp == image.header.stamp
         position = target.pose.position

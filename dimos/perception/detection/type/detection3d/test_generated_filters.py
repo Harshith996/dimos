@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import numpy as np
 import pytest
 
@@ -72,7 +71,7 @@ def test_filters_preserve_custom_point_records(make_filter):
             name="target",
             ts=0.0,
         ),
-        cdr_decode(cdr_encode(cloud), PointCloud2),
+        cloud,
         CameraInfo(
             header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
             height=0,
@@ -89,7 +88,6 @@ def test_filters_preserve_custom_point_records(make_filter):
         transform,
     )
     assert result is not None
-    result = cdr_decode(cdr_encode(result), PointCloud2)
     assert result.header == cloud.header
     assert result.fields == cloud.fields
     records = pointcloud.view(result).reshape(-1)
