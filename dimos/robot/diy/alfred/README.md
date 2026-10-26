@@ -103,8 +103,10 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
 - **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
   may then be a base move plus an arm move, executed together; the descent and lift stay the
   arm's. The base follows its segment through the coordinator's relative planar task on wheel
-  odometry. Measured plant gains (`alfred_posedomain.json`, yaw 2.85x the command) must be in
-  that task's `command_gains` for it to track; without them a yaw segment aborts.
+  odometry, rebased to where the run started (the Pi's own count runs since its driver booted).
+  The task commands through `command_gains`, 1/K per axis of the measured plant
+  (`alfred_posedomain.json`: yaw 2.85x the command, translation 0.77x); without them a yaw
+  segment aborts, so a checkout without the artifact runs uncompensated with a warning.
 - The planner's obstacle map is the D455's self-filtered cloud voxelised at 5 cm within 1.5 m of
   the camera, cleared aggressively (`grace_depth` 0.05, `graze_cos` 0.3): a table the robot
   drove past used to stay in the map under the bench. Open fingers sit 4.4 cm a side outside

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, cast
@@ -33,6 +34,7 @@ from dimos.core.coordination.blueprints import Blueprint, TransportSpec
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import transport_topic
+from dimos.hardware.drive_trains.flowbase.config import FLOWBASE_MAX_LINEAR_CMD_M_S
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig, GraspGenXModule
@@ -67,6 +69,7 @@ from dimos.robot.diy.alfred.alfred_model import (
     ALFRED_PLANAR_BASE,
     ALFRED_V1_MODEL,
     alfred_arm_joints,
+    alfred_base_command_gains,
     alfred_follower_artifact,
     alfred_model_config,
     alfred_planar_joint_names,
@@ -84,6 +87,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     OPENARM_RIGHT_CAN_ENV,
     AlfredNavCoordinator,
     _openarm_hardware_from_env,
+    alfred_coordinator_tasks,
     alfred_full,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
@@ -611,3 +615,35 @@ def test_the_split_stacks_run_no_rerun_bridge(stack: Blueprint) -> None:
     """The Desktop reads zenoh itself; the bridge only cost the Orin memory (the OOM above)."""
     modules = {atom.module for atom in stack.blueprints}
     assert not ({RerunBridgeModule, RerunWebSocketServer} & modules)
+
+
+def test_the_base_task_commands_through_the_inverse_of_the_measured_plant() -> None:
+    """The FlowBase yaws 2.85x and translates 0.77x what it is told; fed the plan's rates as
+    they are, a turn ran away from the task's feedback and aborted. The gains are 1/K per
+    axis from the artifact, and the physical limit times the gain stays under the firmware's
+    cap so a fast diagonal is not clipped off its heading."""
+    plan = _tasks(alfred_full)[BASE_TRAJECTORY_TASK_NAME]
+    gains = plan.params["command_gains"]
+    assert gains == pytest.approx((1.30, 1.30, 0.35), abs=0.05)
+    assert gains == alfred_base_command_gains()
+    artifact = json.loads(Path(ALFRED_FOLLOWER_ARTIFACT).read_text())
+    for gain, axis in zip(gains, ("vx", "vy", "wz"), strict=True):
+        assert gain == pytest.approx(1.0 / artifact["plant"][axis]["K"], rel=1e-6)
+    assert plan.params["max_linear"] * max(gains[:2]) <= FLOWBASE_MAX_LINEAR_CMD_M_S + 1e-9
+    assert plan.params["max_linear"] <= math.hypot(*ALFRED_PLANAR_BASE.velocity_limits[:2])
+    assert plan.params["max_angular"] == ALFRED_PLANAR_BASE.velocity_limits[2]
+
+
+def test_the_base_task_runs_uncompensated_until_alfred_has_a_plant_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing = tmp_path / "alfred_posedomain.json"
+    monkeypatch.setattr(alfred_model, "ALFRED_FOLLOWER_ARTIFACT", str(missing))
+    assert alfred_model.alfred_base_command_gains() == (1.0, 1.0, 1.0)
+    plan = {task.name: task for task in alfred_coordinator_tasks(arms=False, follower=False)}[
+        BASE_TRAJECTORY_TASK_NAME
+    ]
+    assert plan.params["command_gains"] == (1.0, 1.0, 1.0)
+    assert plan.params["max_linear"] == pytest.approx(
+        math.hypot(*ALFRED_PLANAR_BASE.velocity_limits[:2])
+    )

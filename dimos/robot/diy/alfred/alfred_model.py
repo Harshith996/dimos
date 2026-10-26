@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.control.benchmarking.tuning import TuningConfig
 from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_task import (
     DEFAULT_ARTIFACT_PATH as _GO2_FOLLOWER_ARTIFACT,
 )
@@ -73,6 +74,26 @@ def alfred_follower_artifact() -> str:
         expected=ALFRED_FOLLOWER_ARTIFACT,
     )
     return _GO2_FOLLOWER_ARTIFACT
+
+
+def alfred_base_command_gains() -> tuple[float, float, float]:
+    """The planar base task's ``command_gains``: 1/K per axis (vx, vy, wz) of the measured
+    plant, which the artifact's ``feedforward`` section stores as K_vx/K_vy/K_wz.
+
+    The FlowBase translates 0.77x and yaws 2.85x what it is told; fed the plan's
+    velocities as they are, a turn runs away from kp=1 feedback and aborts. Unity, with
+    a warning, when the artifact is missing: the task then runs uncompensated.
+    """
+    if not Path(ALFRED_FOLLOWER_ARTIFACT).exists():
+        logger.warning(
+            "Alfred has no tuned artifact; a plan's base segment runs uncompensated and a "
+            "turn will overshoot its trajectory and abort. Restore it from the branch it "
+            "was characterized on before letting the base drive.",
+            expected=ALFRED_FOLLOWER_ARTIFACT,
+        )
+        return (1.0, 1.0, 1.0)
+    feedforward = TuningConfig.from_json(ALFRED_FOLLOWER_ARTIFACT).feedforward
+    return (feedforward.K_vx, feedforward.K_vy, feedforward.K_wz)
 
 
 ALFRED_DESCRIPTION_ROOT = LfsPath("alfred_description")

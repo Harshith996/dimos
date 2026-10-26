@@ -48,6 +48,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.drive_trains.flowbase.config import FLOWBASE_MAX_LINEAR_CMD_M_S
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -68,6 +69,7 @@ from dimos.robot.diy.alfred.alfred_model import (
     ALFRED_PLANAR_BASE,
     ALFRED_V1_MODEL,
     alfred_arm_joints,
+    alfred_base_command_gains,
     alfred_follower_artifact,
     alfred_planar_model_config,
     alfred_rerun_urdf,
@@ -193,6 +195,10 @@ def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> lis
                 )
             ),
         ]
+    # 1/K of Alfred's measured plant (or unity with a warning): the base yaws 2.85x and
+    # translates 0.77x what it is told, and fed the plan's rates as they are a turn runs
+    # away from the task's feedback and aborts.
+    command_gains = alfred_base_command_gains()
     tasks += [
         TaskConfig(
             name=BASE_VELOCITY_TASK_NAME,
@@ -211,9 +217,15 @@ def alfred_coordinator_tasks(*, arms: bool = True, follower: bool = True) -> lis
                 # The planner works in base_link: its base segment is a motion from where
                 # the robot stands, laid down from the odometry pose when it starts.
                 "relative": True,
-                # The planner limits x and y separately, so a diagonal may exceed either.
-                "max_linear": math.hypot(_BASE_VX_LIMIT, _BASE_VY_LIMIT),
+                # The planner limits x and y separately, so a diagonal may exceed either;
+                # and what the base is told is the limit times the gain, which must stay
+                # under the firmware's cap or a fast diagonal is clipped off its heading.
+                "max_linear": min(
+                    math.hypot(_BASE_VX_LIMIT, _BASE_VY_LIMIT),
+                    FLOWBASE_MAX_LINEAR_CMD_M_S / max(command_gains[0], command_gains[1]),
+                ),
                 "max_angular": _BASE_WZ_LIMIT,
+                "command_gains": command_gains,
             },
         ),
     ]
