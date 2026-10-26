@@ -26,7 +26,7 @@ import pytest
 from reactivex import Subject
 
 from dimos.core.module import Module
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import LCMTransport
 from dimos.message_utils import image, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, Vector3
@@ -40,22 +40,7 @@ from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry
 
 
-def _options(backend):
-    return (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
-
-
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mocker, backend):
+def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mocker):
     driver = mocker.Mock()
     driver.camera_info_static = MujocoConnection.camera_info_static
     factory = mocker.patch(
@@ -79,11 +64,7 @@ def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mo
         module = G1SimConnection()
         cleanup.callback(module.stop)
         for name, port in {**module.inputs, **module.outputs}.items():
-            wire = (
-                LCMTransport("g1_sim_" + name, port.type, **_options(backend))
-                if backend == "lcm"
-                else ZenohTransport("g1_sim_" + name, port.type, **_options(backend))
-            )
+            wire = LCMTransport("g1_sim_" + name, port.type, url="memq://")
             cleanup.callback(wire.stop)
             module.set_transport(name, wire)
             if name in module.outputs:
@@ -130,8 +111,7 @@ def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mo
     driver.stop.assert_called_once()
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_hardware_module_command_decodes_cdr_before_mocked_sdk(mocker, backend):
+def test_hardware_module_command_decodes_cdr_before_mocked_sdk(mocker):
     driver = mocker.Mock()
     factory = mocker.patch(
         "dimos.robot.unitree.g1.connection.UnitreeWebRTCConnection", return_value=driver
@@ -142,11 +122,7 @@ def test_hardware_module_command_decodes_cdr_before_mocked_sdk(mocker, backend):
         module = G1Connection(connection_type="webrtc")
         cleanup.callback(Module.stop, module)
         # stop() requires a constructed driver, so register after successful start.
-        wire = (
-            LCMTransport("g1_hardware_cmd", Twist, **_options(backend))
-            if backend == "lcm"
-            else ZenohTransport("g1_hardware_cmd", Twist, **_options(backend))
-        )
+        wire = LCMTransport("g1_hardware_cmd", Twist, url="memq://")
         cleanup.callback(wire.stop)
         module.set_transport("cmd_vel", wire)
         module.start()

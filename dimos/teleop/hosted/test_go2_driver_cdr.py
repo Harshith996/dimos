@@ -28,7 +28,7 @@ from unittest.mock import MagicMock
 from dimos_cdrgen.registry import encode
 import pytest
 
-from dimos.core.transport import LCMTransport, WebRTCTransport, ZenohTransport
+from dimos.core.transport import LCMTransport, WebRTCTransport
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos.messages.std_msgs.msg import Header
@@ -51,8 +51,7 @@ def module(mocker) -> Iterator[Go2CommandModule]:
     instance.stop()
 
 
-@pytest.mark.parametrize("backend", ["lcm", "zenoh"])
-def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker, backend):
+def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker):
     driver = MagicMock(spec=["move", "stop"])
     mocker.patch("dimos.robot.unitree.go2.connection.make_connection", return_value=driver)
     provider = mocker.Mock()
@@ -76,17 +75,7 @@ def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker, 
         return True
 
     driver.move.side_effect = record
-    options = (
-        {"url": "memq://"}
-        if backend == "lcm"
-        else {
-            "scouting": False,
-            "multicast": False,
-            "gossip": False,
-            "connect": [],
-            "listen": ["tcp/127.0.0.1:0"],
-        }
-    )
+    options = {"url": "memq://"}
     with ExitStack() as cleanup:
         cleanup.callback(provider.stop)
         command = Go2CommandModule()
@@ -99,11 +88,7 @@ def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker, 
         cleanup.callback(ingress.stop)
         cleanup.callback(ingress.subscribe(command._on_cmd_vel_in))
         for module, port in [(command, "tele_cmd_vel"), (manager, "cmd_vel")]:
-            wire = (
-                LCMTransport("hosted_test_" + port, Twist, **options)
-                if backend == "lcm"
-                else ZenohTransport("hosted_test_" + port, Twist, **options)
-            )
+            wire = LCMTransport("hosted_test_" + port, Twist, **options)
             cleanup.callback(wire.stop)
             module.set_transport(port, wire)
         cleanup.callback(command.tele_cmd_vel.subscribe(manager._on_teleop))

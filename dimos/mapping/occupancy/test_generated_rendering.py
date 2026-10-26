@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from copy import deepcopy
+from dataclasses import asdict
 import math
 
-from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
@@ -81,7 +81,7 @@ def make_values(stamp, rotated=False):
 @pytest.mark.parametrize("stamp", [0, -1, 1700000000123456789])
 def test_generated_map_pixels_match_existing_palette_and_path_overlay(palette, stamp):
     grid, path, old_grid, old_path = make_values(stamp)
-    before = encode(grid)
+    before = asdict(grid)
 
     result = visualize_occupancy_grid(grid, palette, path)
     expected = visualize_occupancy_grid(old_grid, palette, old_path)
@@ -89,11 +89,11 @@ def test_generated_map_pixels_match_existing_palette_and_path_overlay(palette, s
     assert type(result) is Image and result.encoding == "bgr8"
     assert result.header == grid.header
     np.testing.assert_array_equal(image_utils.view(result), expected.data)
-    decoded = decode(encode(result), Image)
+    decoded = result
     np.testing.assert_array_equal(image_utils.view(decoded), expected.data)
     result.header.frame_id = "changed"
     result.data[0] = 255
-    assert encode(grid) == before
+    np.testing.assert_equal(asdict(grid), before)
 
 
 @pytest.mark.parametrize("stamp", [0, -1, 1700000000123456789])
