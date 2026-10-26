@@ -1,9 +1,8 @@
 # Convert an existing recording to CDR
 
-Conversion is an explicit offline command. It never starts a robot, downloads data,
-or negotiates an old runtime wire format. Install this proposal's DimOS package;
-built-in generated messages are included in it. The historical LCM decoder comes from the retained `dimos-lcm>=0.1.6`
-dependency while runtime migration is incomplete.
+The offline converter reads historical LCM recordings and writes generated CDR
+messages. DimOS includes the generated message types and the historical LCM
+decoder required for conversion.
 
 Use your existing local MCAP or memory SQLite file and choose a **new** output name:
 
@@ -67,13 +66,4 @@ No class named by a recording is imported or instantiated. Declared CDR input mu
 match the installed full schema. Untrusted native-format recordings are not a
 sandboxed input format; use recordings from trusted producers.
 
-Open `converted.mcap` as a local file in Foxglove.
-Foxglove may require your existing desktop installation or signed-in browser;
-conversion does not create accounts or upload a recording. Viewer and human
-acceptance remain separate from successful data conversion.
-
-The focused regression suite runs without data downloads or hardware:
-
-```sh
-uv run pytest --noconftest --import-mode=importlib -o addopts='' -q dimos/memory/test_convert_recording.py dimos/memory/test_recording_migration.py
-```
+Open `converted.mcap` as a local file in Foxglove to inspect the converted messages.
