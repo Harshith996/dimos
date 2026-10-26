@@ -19,7 +19,8 @@ object localization for the bench.
 
 Layered on alfred-full. The D455 streams colour for the camera panel and a decimated depth cloud
 at 5 Hz; the robot's own returns are self-filtered out, what is left is voxelised into a second,
-short-range map and handed to the ManipulationModule as ``voxel_map``. ``PerceptionLocalize``
+short-range map in ``odom`` (so a drive leaves the bench where it is) and handed to the
+ManipulationModule as ``voxel_map``, re-expressed in its ``base_link``. ``PerceptionLocalize``
 (SigLIP + OWLv2 + EdgeTAM, the perception stack's localize) embeds the colour feed and answers
 ``localize`` / ``localize_boxes`` with verified 3D instances lifted through the aligned depth, in
 the planner's frame, so a found object is a place the arm can be sent. The venv's torch has no
@@ -44,7 +45,7 @@ from dimos.perception.experimental.object_scene_registration import ObjectSceneR
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.perception.localize.types import LocalizeParams
 from dimos.robot.diy.alfred.alfred_model import ALFRED_SELF_FILTER_MODEL
-from dimos.robot.diy.alfred.blueprints.alfred_full import BASE_FRAME, alfred_full
+from dimos.robot.diy.alfred.blueprints.alfred_full import BASE_FRAME, ODOM_FRAME, alfred_full
 from dimos.robot.diy.alfred.config import ALFRED_HARDWARE
 from dimos.robot.diy.alfred.gripper import (
     OPENARM_V10_GRASP_FRAME_TO_TCP,
@@ -170,16 +171,19 @@ def alfred_perception_modules(
             # the default 1 cm an open finger in view became a voxel right where the grasp goes.
             padding_m=SELF_FILTER_PADDING_M,
         ),
-        # Kept in the planner's frame, the robot's own: the map rides with the base, so what was
-        # seen before a drive sits wrong until the camera sees it again (ray tracing clears it).
-        # Fine for arm work from a standstill, which is what this map is for.
+        # Built in odom, on wheel odometry (good to a cm over a few metres): the bench stays
+        # where it is when the base drives. Pinned to base_link, a whole-body pick that moved
+        # the base 0.5 m and 0.9 rad left every voxel in the wrong place relative to the robot;
+        # the planner refused all plans (COLLISION_AT_START) until the camera re-saw the bench
+        # (2026-10-25). The box filter below hands it to the planner in base_link.
         RayTracingVoxelMap.blueprint(
             instance_name=MANIP_VOXEL_MAP,
             voxel_size=MANIP_VOXEL_M,
             max_range=MANIP_MAP_RANGE_M,
-            world_frame=BASE_FRAME,
-            # base_link -> camera is AlfredMountTf's 5 Hz rigid chain; at the default 0.1 s
-            # most clouds found no edge close enough to their stamp and were dropped.
+            world_frame=ODOM_FRAME,
+            # odom -> camera is odom -> base_link (the odometry relay, ~47 Hz) and AlfredMountTf's
+            # 5 Hz rigid base_link -> camera; at the default 0.1 s most clouds found no mount
+            # edge close enough to their stamp and were dropped.
             tf_match_tolerance_s=MOUNT_TF_TOLERANCE_S,
             # Clearing has to reach the bench. The defaults spare every voxel within 20 cm of
             # a return (the whole object layer on the top) and never clear a miss on a surface
@@ -199,9 +203,15 @@ def alfred_perception_modules(
                 (MANIP_VOXEL_MAP, "local_map_fine", "manip_local_map_fine"),
             ]
         ),
-        # Lets a pick leave the object it is picking out of the map; its output is the
+        # Re-expresses the odom map in the planner's frame at each map's stamp (the planner
+        # drops a map in any other frame) and lets a pick leave the object it is picking out
+        # of it; a pick's box is in the planning frame, which is this one. Its output is the
         # ManipulationModule's `voxel_map` input.
-        PointCloudBoxFilter.blueprint().remappings(
+        PointCloudBoxFilter.blueprint(
+            target_frame=BASE_FRAME,
+            tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
+            tf_forward_tolerance_s=MOUNT_TF_TOLERANCE_S,
+        ).remappings(
             [
                 (PointCloudBoxFilter, "cloud", "manip_global_map"),
                 (PointCloudBoxFilter, "filtered_cloud", "voxel_map"),
@@ -223,6 +233,9 @@ def alfred_perception_modules(
         # (OWLv2 + EdgeTAM on the GPU), one top-down grasp per object, and PickAndPlace
         # running pregrasp, grasp, close and retreat through the planner and the arms' gripper
         # tasks. The scene's merged cloud is renamed: the camera's own `pointcloud` feeds the map.
+        # The objects stay in base_link, unlike the map: PickAndPlaceModule hands an object's
+        # cloud to the grasp generator as it is and requires the grasps in its planning frame,
+        # so a scene in odom would fail every pick. A scan is good until the base moves.
         ObjectSceneRegistrationModule.blueprint(
             target_frame=BASE_FRAME,
             detector_backend="owlv2",

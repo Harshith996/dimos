@@ -21,12 +21,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 import math
 from threading import RLock
+import time
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -36,6 +39,21 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
 logger = setup_logger()
+
+# A missing transform drops every cloud until it shows up: say so, not at the clouds' rate.
+MISSING_TRANSFORM_WARN_INTERVAL_S = 5.0
+
+
+class PointCloudBoxFilterConfig(ModuleConfig):
+    # The frame the filtered cloud is sent in. None passes each cloud on in its own
+    # frame; a frame re-expresses the cloud through tf at the cloud's stamp, so a map
+    # built in a fixed frame reaches a consumer that plans in a moving one. A box with
+    # no frame of its own is then in this frame.
+    target_frame: str | None = None
+    # How far from the cloud's stamp the transform into target_frame may be, and how
+    # long to wait for one still in flight; a cloud with no transform is dropped.
+    tf_tolerance_s: float = Field(default=0.1, ge=0.0)
+    tf_forward_tolerance_s: float = Field(default=0.2, ge=0.0)
 
 
 @dataclass(frozen=True)
@@ -55,7 +73,8 @@ class Box:
 
 
 def inside_boxes(
-    points: NDArray[np.floating], boxes: Iterable[tuple[NDArray[np.float64], NDArray[np.float64]]]
+    points: NDArray[np.floating[Any]],
+    boxes: Iterable[tuple[NDArray[np.float64], NDArray[np.float64]]],
 ) -> NDArray[np.bool_]:
     """Which points lie inside any of the boxes.
 
@@ -77,8 +96,11 @@ class PointCloudBoxFilter(Module):
 
     A box is fixed in the cloud's frame or rides on another frame from tf.
     Changing the boxes re-sends the last cloud at once, so a consumer sees
-    the change before the next cloud arrives.
+    the change before the next cloud arrives. With a ``target_frame`` the
+    cloud is re-expressed in that frame first, and the boxes are placed in it.
     """
+
+    config: PointCloudBoxFilterConfig
 
     cloud: In[PointCloud2]
     tf: In[TFMessage]
@@ -89,6 +111,8 @@ class PointCloudBoxFilter(Module):
         self._lock = RLock()
         self._boxes: dict[str, Box] = {}
         self._last_cloud: PointCloud2 | None = None
+        self._dropped_since_warning = 0
+        self._missing_warned_at: float | None = None
 
     @rpc
     def start(self) -> None:
@@ -129,34 +153,90 @@ class PointCloudBoxFilter(Module):
     def _on_cloud(self, cloud: PointCloud2) -> None:
         with self._lock:
             self._last_cloud = cloud
-            self.filtered_cloud.publish(self._filtered(cloud))
+            self._send(cloud)
 
     def _resend(self) -> None:
         if self._last_cloud is not None:
-            self.filtered_cloud.publish(self._filtered(self._last_cloud))
+            self._send(self._last_cloud)
 
-    def _filtered(self, cloud: PointCloud2) -> PointCloud2:
-        points = cloud.points_f32()
-        boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, cloud))]
-        if not boxes or not len(points):
+    def _send(self, cloud: PointCloud2) -> None:
+        filtered = self._filtered(cloud)
+        if filtered is not None:
+            self.filtered_cloud.publish(filtered)
+
+    def _filtered(self, cloud: PointCloud2) -> PointCloud2 | None:
+        """The cloud in the target frame without the boxed points; None when it cannot be placed."""
+        expressed = self._expressed(cloud)
+        if expressed is None:
+            return None
+        frame_id, points = expressed
+        boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, frame_id))]
+        if frame_id == cloud.frame_id and (not boxes or not len(points)):
             return cloud
-        keep = ~inside_boxes(points, boxes)
-        filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
+        keep = ~inside_boxes(points, boxes) if boxes and len(points) else None
+        filtered = PointCloud2.from_numpy(
+            points if keep is None else points[keep], frame_id=frame_id, timestamp=cloud.ts
+        )
+        filtered.seq = cloud.seq
         for name, values in cloud.pointcloud_tensor.point.items():
-            filtered.pointcloud_tensor.point[name] = values[keep]
+            if name != "positions":
+                filtered.pointcloud_tensor.point[name] = values if keep is None else values[keep]
         return filtered
 
+    def _expressed(self, cloud: PointCloud2) -> tuple[str, NDArray[np.float32]] | None:
+        """The cloud's frame and positions in the target frame; None when there is no transform."""
+        points = cloud.points_f32()
+        target = self.config.target_frame
+        if target is None or target == cloud.frame_id:
+            return cloud.frame_id, points
+        if not len(points):
+            # Nothing to move: an empty cloud is empty in every frame.
+            return target, points
+        transform = self.tfbuffer.get(
+            target,
+            cloud.frame_id,
+            cloud.ts,
+            self.config.tf_tolerance_s,
+            forward_tolerance=self.config.tf_forward_tolerance_s,
+            warn=False,
+        )
+        if transform is None:
+            self._dropped(cloud, target)
+            return None
+        matrix = transform.to_matrix()
+        moved = points @ matrix[:3, :3].T + matrix[:3, 3]
+        return target, np.asarray(moved, dtype=np.float32)
+
+    def _dropped(self, cloud: PointCloud2, target: str) -> None:
+        self._dropped_since_warning += 1
+        now = time.monotonic()
+        if (
+            self._missing_warned_at is not None
+            and now - self._missing_warned_at < MISSING_TRANSFORM_WARN_INTERVAL_S
+        ):
+            return
+        logger.warning(
+            "No transform from %s to %s within %.2f s of stamp %.3f; dropped %d cloud(s)",
+            target,
+            cloud.frame_id,
+            self.config.tf_tolerance_s,
+            cloud.ts,
+            self._dropped_since_warning,
+        )
+        self._missing_warned_at = now
+        self._dropped_since_warning = 0
+
     def _placed(
-        self, box: Box, cloud: PointCloud2
+        self, box: Box, frame_id: str
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
-        """The box's pose in the cloud's frame and its edge lengths; None while its frame is unknown."""
+        """The box's pose in ``frame_id`` and its edge lengths; None while the box's frame is unknown."""
         pose = pose_to_matrix(box.pose)
-        if box.frame_id is not None and box.frame_id != cloud.frame_id:
-            transform = self.tfbuffer.get(cloud.frame_id, box.frame_id, warn=False)
+        if box.frame_id is not None and box.frame_id != frame_id:
+            transform = self.tfbuffer.get(frame_id, box.frame_id, warn=False)
             if transform is None:
                 logger.warning(
                     "No transform from %s to %s yet; box points stay in the cloud",
-                    cloud.frame_id,
+                    frame_id,
                     box.frame_id,
                 )
                 return None

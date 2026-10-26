@@ -83,6 +83,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
     BASE_TRAJECTORY_TASK_NAME,
     BASE_VELOCITY_TASK_NAME,
     NAV_FOLLOWER_TASK_NAME,
+    ODOM_FRAME,
     OPENARM_LEFT_CAN_ENV,
     OPENARM_RIGHT_CAN_ENV,
     AlfredNavCoordinator,
@@ -92,6 +93,7 @@ from dimos.robot.diy.alfred.blueprints.alfred_full import (
 )
 from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
     MANIP_VOXEL_MAP,
+    MOUNT_TF_TOLERANCE_S,
     alfred_full_perception,
     alfred_perception_modules,
 )
@@ -321,12 +323,20 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         for atom in _atoms(alfred_full_perception, RayTracingVoxelMap)
         if atom.kwargs.get("instance_name") == MANIP_VOXEL_MAP
     )
-    assert manip_map.kwargs["world_frame"] == BASE_FRAME, "the planner's frame, not odom"
+    assert manip_map.kwargs["world_frame"] == ODOM_FRAME, "a drive must not move the bench"
+    assert manip_map.kwargs["tf_match_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, "a 5 Hz mount edge"
     assert manip_map.kwargs["max_range"] <= 1.5, "the bench, not the floor beyond it"
     assert manip_map.kwargs["grace_depth"] <= 0.05 and manip_map.kwargs["graze_cos"] <= 0.3, (
         "clearing must reach a bench seen at 25-54 degrees"
     )
     assert manip_map.kwargs["global_emit_every"] >= 5, "the planner rebuilds its octree per map"
+    (box_filter,) = _atoms(alfred_full_perception, PointCloudBoxFilter)
+    assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the planner drops any other frame"
+    assert box_filter.kwargs["tf_tolerance_s"] >= MOUNT_TF_TOLERANCE_S, (
+        "odom -> base_link lands at 47 Hz; the map's stamp is a 5 Hz camera's"
+    )
+    (planner,) = _atoms(alfred_full_perception, ManipulationModule)
+    assert planner.kwargs["world_frame"] == box_filter.kwargs["target_frame"]
     (self_filter,) = _atoms(alfred_full_perception, RoboPlanPointCloudSelfFilter)
     assert self_filter.kwargs["padding_m"] >= 0.044, "an open finger is 4.4 cm outside the model"
     (camera,) = _atoms(alfred_full_perception, RealSenseCamera)
@@ -352,7 +362,10 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         for atom in f.blueprints
         if atom.module is ObjectSceneRegistrationModule
     )
+    # PickAndPlaceModule hands the scene's clouds to the grasp generator as they are and
+    # requires the grasps in its planning frame: the scene cannot move to odom with the map.
     assert scene.kwargs["target_frame"] == BASE_FRAME, "objects where the arm plans"
+    assert pick_planning_frame(alfred_perception_modules(gpu=True)) == scene.kwargs["target_frame"]
     assert scene.kwargs["detector_confidence"] < 0.6, "OWLv2 scores 0.3-0.6 on this bench"
     assert scene.kwargs["detect_on_request"] is True, "a scan, not a stream"
     pick = next(
@@ -370,6 +383,13 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
         for fragment in alfred_perception_modules(gpu=False)
         for atom in fragment.blueprints
     ), "on a CPU-only torch localize would peg the box"
+
+
+def pick_planning_frame(fragments: tuple[Any, ...]) -> str:
+    (pick,) = [
+        atom for f in fragments for atom in f.blueprints if atom.module is PickAndPlaceModule
+    ]
+    return cast("str", pick.kwargs["planning_frame"])
 
 
 def test_the_bench_stack_runs_without_the_lidar() -> None:

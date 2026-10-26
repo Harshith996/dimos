@@ -99,7 +99,9 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   face nearly at the bench edge), or let GraspGenX propose a side grasp. The pick refuses an
   out-of-reach object at once and says by how much.
 - **Scan again after the base moves.** Objects are registered in `base_link`; a drive leaves
-  them where the robot was.
+  them where the robot was (a whole-body pick that drove 0.5 m put them 50 cm off). The pick
+  pipeline hands an object's cloud to the grasp generator as it is and wants the grasps in its
+  planning frame, so the scene cannot follow the map into `odom` until it re-expresses them.
 - **"Let the base drive"** gives the planner `moving_base` as an auxiliary group: the pregrasp
   may then be a base move plus an arm move, executed together; the descent and lift stay the
   arm's. The base follows its segment through the coordinator's relative planar task on wheel
@@ -109,8 +111,12 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   segment aborts, so a checkout without the artifact runs uncompensated with a warning.
 - The planner's obstacle map is the D455's self-filtered cloud voxelised at 5 cm within 1.5 m of
   the camera, cleared aggressively (`grace_depth` 0.05, `graze_cos` 0.3): a table the robot
-  drove past used to stay in the map under the bench. Open fingers sit 4.4 cm a side outside
-  the self-filter model (its fingers are fixed closed), covered by 5 cm of padding.
+  drove past used to stay in the map under the bench. The map is built in `odom` on wheel
+  odometry and re-expressed in `base_link` for the planner at each map's stamp (the box filter
+  does it; the planner drops a map in any other frame), so the bench stays put when the base
+  drives: pinned to `base_link` it rode along, and after a whole-body pick every plan was
+  COLLISION_AT_START until the camera had re-seen the bench. Open fingers sit 4.4 cm a side
+  outside the self-filter model (its fingers are fixed closed), covered by 5 cm of padding.
 
 ## How the base is shared
 
