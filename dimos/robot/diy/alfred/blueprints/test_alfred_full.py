@@ -317,6 +317,17 @@ def test_alfred_full_perception_feeds_the_planner_a_filtered_d455_map() -> None:
     remaps = alfred_full_perception.remapping_map
     assert remaps[(MANIP_VOXEL_MAP, "lidar")] == "filtered_pointcloud"
     assert remaps[(MANIP_VOXEL_MAP, "global_map")] == "manip_global_map"
+    nav_map_outputs = (
+        "global_map",
+        "local_map",
+        "local_map_fine",
+        "region_bounds",
+        "seed_map",
+        "seed_bounds",
+        "map_regions",
+    )
+    for port in nav_map_outputs:
+        assert remaps[(MANIP_VOXEL_MAP, port)] == f"manip_{port}", f"{port} is the nav map's"
     assert remaps[(PointCloudBoxFilter.name, "cloud")] == "manip_global_map"
     assert remaps[(PointCloudBoxFilter.name, "filtered_cloud")] == "voxel_map"
     manip_map = next(

@@ -213,6 +213,13 @@ def alfred_perception_modules(
                 (MANIP_VOXEL_MAP, "global_map", "manip_global_map"),
                 (MANIP_VOXEL_MAP, "local_map", "manip_local_map"),
                 (MANIP_VOXEL_MAP, "local_map_fine", "manip_local_map_fine"),
+                # Beside the nav map, its region_bounds pair with the nav local_map by stamp in
+                # MLSPlannerNative, which keeps only the latest: this map's 5 Hz bounds would
+                # displace the nav map's and drop its updates.
+                (MANIP_VOXEL_MAP, "region_bounds", "manip_region_bounds"),
+                (MANIP_VOXEL_MAP, "seed_map", "manip_seed_map"),
+                (MANIP_VOXEL_MAP, "seed_bounds", "manip_seed_bounds"),
+                (MANIP_VOXEL_MAP, "map_regions", "manip_map_regions"),
             ]
         ),
         # Re-expresses the odom map in the planner's frame at each map's stamp (the planner
