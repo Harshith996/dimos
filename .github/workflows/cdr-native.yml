@@ -42,6 +42,7 @@ jobs:
             dimos/message_utils/test_geometry.py \
             dimos/message_utils/test_pointcloud.py \
             dimos/message_utils/test_pointcloud_colors.py \
+            dimos/message_utils/test_occupancy.py \
             dimos/protocol/tf/test_buffer.py
       - name: Test native SDK
         run: |
