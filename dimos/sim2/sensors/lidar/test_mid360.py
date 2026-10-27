@@ -36,7 +36,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import FrameMetadata, StreamDescriptor
+from dimos.sim2.messages import FrameMetadata, StateFrame, StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.imu.spec import Imu
@@ -202,8 +202,10 @@ def history(tmp_path, request):
             if writer.episode_id != episode:
                 writer.set_episode(episode)
             writer.publish_observation(
-                {"state": state, "wall_time": [1000 + t + wall_jitter]},
-                FrameMetadata(0, episode, round(t / timestep), 0, t),
+                StateFrame(
+                    FrameMetadata(0, episode, round(t / timestep), 0, t),
+                    {"state": state, "wall_time": np.array([1000 + t + wall_jitter])},
+                )
             )
 
         yield reader, writer, publish
@@ -615,8 +617,7 @@ def test_pointlio_tracks_a_driven_stage_using_only_raw_lidar_and_imu(
         sim = coordinator.get_instance(SimulationModule)
         lidar = coordinator.get_instance("stage_lidar")
         assert ready.wait(30), f"Point-LIO did not initialize: {lidar.sensor_status()}"
-        descriptor = StreamDescriptor.from_dict(sim.describe()["robots"]["stage"])
-        client = stack.enter_context(SimRobotClient(descriptor, writable=True))
+        client = stack.enter_context(SimRobotClient(world=sim, robot_id="stage"))
         before = sim.status()
         first_imu, first_scan, first_image = len(imu_times), len(raw_times), len(camera_ages)
         started = time.monotonic()
