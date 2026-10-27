@@ -59,7 +59,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 # Bumped when the request or response format changes.
 PROTOCOL_VERSION = 1
 MAX_POINTS = 200_000
-SERVED_GRASPS = 400
+# Sampled per call; GRASPGENX_SERVED_GRASPS overrides it for latency tests.
+SERVED_GRASPS = int(os.environ.get("GRASPGENX_SERVED_GRASPS", "1000"))
 
 
 def xarm_config() -> GraspGenXConfig:

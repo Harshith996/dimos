@@ -61,7 +61,9 @@ class GraspProposalsConfig(ModuleConfig):
     # Least depth below the object's top a heuristic grasp goes, metres.
     grasp_depth: float = Field(default=0.02, ge=0.0)
     # How many of a proposer's best grasps are checked for reach; the listed ones come from these.
+    # GraspGenX's are all checked (up to graspgenx_check_count): its best are often unreachable.
     check_count: int = Field(default=30, gt=0)
+    graspgenx_check_count: int = Field(default=1000, gt=0)
     # A shared GraspGenX server (graspgenx_runtime.server) for proposer "graspgenx" when no
     # GraspGenX module is in the stack, e.g. GRASPPROPOSALS__GRASPGENX_URL=http://host:8701.
     # Empty: no server. The seed makes the same cloud give the same grasps; None leaves it unseeded.
@@ -89,8 +91,8 @@ class GraspProposals(Module):
         self,
         object_id: str,
         proposer: str = "heuristic",
-        count: int = 5,
-        max_tilt: float = 180.0,
+        count: int = 20,
+        max_tilt: float = 90.0,
     ) -> str:
         """Grasp poses for an object localize reported: the best ones IK reaches, best first.
 
@@ -98,10 +100,12 @@ class GraspProposals(Module):
         across its narrow side; one or two grasps, instant. Suits small box-like objects. An
         open container wider than the jaws (a bin, a tray) is grasped on its walls instead:
         straight down, jaws across one wall, a little below its rim, long walls first.
-        proposer "graspgenx": a learned model's grasps from any direction, ranked by its
-        confidence; suits other shapes, rims and handles. Its grasps are checked against what
-        the camera saw around the object: those whose gripper would hit it, or go below the
-        table, are dropped and counted. Both read only the surfaces the camera saw.
+        proposer "graspgenx": a learned model's grasps from many directions, ranked by its
+        confidence; suits other shapes, rims and handles. Of its samples, those approaching
+        more than max_tilt from straight down, or whose gripper would go below the table, are
+        dropped and counted; every one left is checked for reach, and those that would touch
+        what the camera saw around the object are marked, not dropped. Both read only the
+        surfaces the camera saw.
 
         Each grasp gives the tool centre point (TCP) position and orientation to pass to
         arm.move_pose, the direction the gripper approaches along, a pre-grasp pose back
@@ -113,9 +117,10 @@ class GraspProposals(Module):
         Args:
             object_id: The id localize printed for the object.
             proposer: "heuristic" or "graspgenx".
-            count: How many reachable grasps to list at most.
+            count: How many reachable grasps to list at most, best first.
             max_tilt: Drop grasps whose approach is more than this many degrees from straight
-                down (0 keeps only top-down ones).
+                down: 90 (the default) drops approaches from below the horizontal, 0 keeps only
+                top-down ones.
         """
         cloud = self._localize.object_cloud(object_id)
         if cloud is None:
@@ -195,9 +200,16 @@ class GraspProposals(Module):
                     low = grasp_filters.below_support(poses, support, gripper)
                     dropped.append(f"{int((low & keep).sum())} below the table (z {support:.3f})")
                     keep &= ~low
+                # Touching what the camera saw is marked, not dropped: the scene cloud holds
+                # parts of the object the segmentation missed (a bin's walls), so a grasp on
+                # them reads as a collision. The agent decides.
                 hit = grasp_filters.colliding(poses, points, gripper, self.config.collision_m)
-                dropped.append(f"{int((hit & keep).sum())} colliding with the scene seen around it")
-                keep &= ~hit
+                candidates = [
+                    GraspCandidate(c.pose, c.score, _join(c.note, "touches the seen scene"))
+                    if h
+                    else c
+                    for c, h in zip(candidates, hit, strict=True)
+                ]
         kept = [c for c, k in zip(candidates, keep, strict=True) if k]
         return kept, ("dropped " + ", ".join(dropped)) if dropped else "", caveat
 
@@ -211,7 +223,8 @@ class GraspProposals(Module):
         dropped: str = "",
         caveat: str = "",
     ) -> str:
-        checked = proposals.candidates[: self.config.check_count]
+        limit = self.config.graspgenx_check_count if proposer == "graspgenx" else self.config.check_count
+        checked = proposals.candidates[:limit]
         grasps = [
             PoseStamped(
                 frame_id=proposals.header.frame_id,
@@ -237,7 +250,15 @@ class GraspProposals(Module):
         header = (
             f"{proposer}: {len(proposals.candidates)} grasp(s) for {object_id}"
             + (f" after the checks ({dropped})" if dropped else "")
-            + f", the best {n} checked, {len(reachable)} reachable; cloud of {len(points)} "
+            + (f", the best {n} checked" if n < len(proposals.candidates) else "")
+            + f", {len(reachable)} reachable"
+            + (
+                f" ({sum('touches the seen scene' in checked[i].note for i in reachable)} of them "
+                "touch the seen scene)"
+                if proposer == "graspgenx"
+                else ""
+            )
+            + f"; cloud of {len(points)} "
             f"points, surfaces seen from z {bottom:.3f} to {top:.3f}."
         )
         if caveat:
@@ -287,6 +308,10 @@ def _jaw_width(
     if near.sum() < 5:
         return None  # e.g. a container's wall the camera saw only edge-on
     return float(np.quantile(along_jaw[near], 0.98) - np.quantile(along_jaw[near], 0.02))
+
+
+def _join(note: str, more: str) -> str:
+    return f"{note}; {more}" if note else more
 
 
 def _xyz(v: Vector3) -> str:
