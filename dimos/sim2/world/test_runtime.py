@@ -131,7 +131,7 @@ def test_startup_wait_keeps_feedback_live_then_releases_once(worlds, clients, wo
     current = client.read()
     assert world.tick == 0
     assert current.metadata.sequence > before.metadata.sequence
-    np.testing.assert_array_equal(current.values["position"], before.values["position"])
+    np.testing.assert_array_equal(current.joints.position, before.joints.position)
     client.write_motors(MotorCommandArray(q=[0.1, 850], kp=[10, 0], kd=[1, 0]), observed=current)
     world.step()
     assert world.tick == 1
@@ -176,7 +176,7 @@ def test_post_step_snapshot_and_derived_robot_pose_are_the_same_tick(worlds, cli
     world.step()
     sample = client.read()
     assert world.data.qpos[qpos] > 0
-    assert sample.values["root_position"][0] == pytest.approx(world.data.qpos[qpos])
+    assert sample.odom.position.x == pytest.approx(world.data.qpos[qpos])
     assert sample.metadata.sim_time == world.data.time
 
 
@@ -190,19 +190,19 @@ def test_scene_edit_preserves_robot_pose_and_motor_enable(worlds, clients, disab
             observed=client.read(),
         )
         world.step()
-    position = client.read().values["position"].copy()
+    position = client.read().joints.position.copy()
     assert position[0] == pytest.approx(0.4, abs=0.03)
     if disabled:
         client.disable(observed=client.read())
         world.step()
-        position = client.read().values["position"].copy()
+        position = client.read().joints.position.copy()
 
     state = world.set_scene_state(SceneUpdate(poses={"box": Pose(2, 0, 0.3)}))
-    assert client.read().values["position"] == pytest.approx(position)
+    assert client.read().joints.position == pytest.approx(position)
     world.step()
 
     assert state.entities["box"].pose.position.to_tuple() == pytest.approx((2, 0, 0.3))
-    assert client.read().values["position"][0] == pytest.approx(position[0], abs=0.002)
+    assert client.read().joints.position[0] == pytest.approx(position[0], abs=0.002)
     assert world.robots["left"].idle_position[0] == pytest.approx(position[0])
     assert world.robots["left"].enabled is not disabled
     assert world.robots["left"].applied_action_sequence == 0

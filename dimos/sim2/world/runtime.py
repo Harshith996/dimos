@@ -29,9 +29,17 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Imu import Imu as ImuMessage
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.messages import (
     FrameMetadata,
     MotorFrame,
+    RobotFeedback,
+    StateFrame,
     StreamDescriptor,
     robot_descriptor,
 )
@@ -47,7 +55,7 @@ STATE = mujoco.mjtState.mjSTATE_INTEGRATION
 @dataclass
 class RobotBinding:
     config: RobotConfig
-    channel: SimStream
+    channel: SimStream[RobotFeedback]
     qpos: NDArray[np.int32]
     dofs: NDArray[np.int32]
     actuators: NDArray[np.int64]
@@ -130,7 +138,7 @@ class SimulationRuntime:
             control_decimation=self._snapshot_stride,
             observation_slots=snapshot_slots,
         )
-        self.snapshots = SimStream.create(self.snapshot_descriptor)
+        self.snapshots: SimStream[StateFrame] = SimStream.create(self.snapshot_descriptor)
         try:
             for robot_id, instance in config.robots.items():
                 definition = instance.config
@@ -389,7 +397,15 @@ class SimulationRuntime:
         action = b.action
         q = self.data.qpos[b.qpos]
         dq = self.data.qvel[b.dofs]
-        if (
+        damping = b.channel.damping
+        if damping is not None:
+            # A damping stop survives command expiry and scene resets until restart.
+            b.command_active = True
+            b.applied_action_sequence = 0
+            enabled = True
+            target, velocity = q, np.zeros_like(dq)
+            kp, kd, ff = np.zeros_like(q), damping, np.zeros_like(q)
+        elif (
             action is not None
             and action.metadata.episode_id == self.generation
             and time.monotonic() <= float(action.values["expires_at"][0])
@@ -436,18 +452,14 @@ class SimulationRuntime:
         meta = FrameMetadata(0, self.generation, self.tick, 0, float(self.data.time))
         timestamp = self._clock_origin + float(self.data.time)
         for b in self.robots.values():
-            values: dict[str, Any] = {
-                "position": (self.data.qpos[b.qpos] - b.offset) / b.scale,
-                "velocity": self.data.qvel[b.dofs] / b.scale,
-                "effort": self.data.qfrc_actuator[b.dofs],
-                "enabled": [int(b.enabled)],
-                "wall_time": [timestamp],
-                "monotonic_time": [time.monotonic()],
-                "root_position": self.data.xpos[b.root],
-                "root_quaternion": self.data.xquat[b.root],
-                "root_linear_velocity": self.data.cvel[b.root, 3:],
-                "root_angular_velocity": self.data.cvel[b.root, :3],
-            }
+            joints = JointState(
+                name=list(b.channel.descriptor.joint_names),
+                position=((self.data.qpos[b.qpos] - b.offset) / b.scale).tolist(),
+                velocity=(self.data.qvel[b.dofs] / b.scale).tolist(),
+                effort=self.data.qfrc_actuator[b.dofs].tolist(),
+                ts=timestamp,
+            )
+            imu = None
             if b.imu is not None:
                 g, a, r = b.imu
                 gyro, accel, quat = (
@@ -455,27 +467,46 @@ class SimulationRuntime:
                     self.data.sensordata[a : a + 3],
                     self.data.sensordata[r : r + 4],
                 )
-                values.update(
-                    imu_quaternion=quat,
-                    imu_gyroscope=gyro,
-                    imu_accelerometer=accel,
-                    imu_rpy=Rotation.from_quat(quat, scalar_first=True).as_euler("xyz"),
+                w, x, y, z = quat
+                imu = ImuMessage(
+                    orientation=Quaternion(x, y, z, w),
+                    angular_velocity=Vector3(*gyro),
+                    linear_acceleration=Vector3(*accel),
+                    frame_id=b.channel.descriptor.control_imu or "",
+                    ts=timestamp,
                 )
+            pose = self._body_pose(b.root)
             b.channel.publish_observation(
-                values,
-                FrameMetadata(
-                    0,
-                    self.generation,
-                    self.tick,
-                    0,
-                    float(self.data.time),
-                    b.applied_action_sequence,
-                ),
+                RobotFeedback(
+                    metadata=FrameMetadata(
+                        0,
+                        self.generation,
+                        self.tick,
+                        0,
+                        float(self.data.time),
+                        b.applied_action_sequence,
+                    ),
+                    joints=joints,
+                    imu=imu,
+                    odom=PoseStamped(
+                        position=pose.position,
+                        orientation=pose.orientation,
+                        frame_id="world",
+                        ts=timestamp,
+                    ),
+                    base_velocity=Twist(
+                        Vector3(*self.data.cvel[b.root, 3:]),
+                        Vector3(*self.data.cvel[b.root, :3]),
+                    ),
+                    monotonic_time=time.monotonic(),
+                    enabled=b.enabled,
+                    estopped=b.channel.damping is not None,
+                )
             )
         if force_snapshot or self.tick % self._snapshot_stride == 0:
             mujoco.mj_getState(self.model, self.data, self.state, STATE)
             self.snapshots.publish_observation(
-                {"state": self.state, "wall_time": [timestamp]}, meta
+                StateFrame(meta, {"state": self.state.copy(), "wall_time": np.array([timestamp])})
             )
 
     def _require_live(self) -> None:
@@ -488,7 +519,11 @@ class SimulationRuntime:
         if self._closed:
             return
         self._closed = True
-        for channel in [*(b.channel for b in self.robots.values()), self.snapshots]:
+        channels: list[SimStream[RobotFeedback] | SimStream[StateFrame]] = [
+            *(b.channel for b in self.robots.values()),
+            self.snapshots,
+        ]
+        for channel in channels:
             channel.set_lifecycle("closed")
             channel.close()
 

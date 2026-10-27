@@ -37,16 +37,20 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.connection import G1Config, G1Connection, G1LocomotionSpec
 from dimos.robot.unitree.g1.controllers.groot.coordinator import G1GrootCoordinator
+from dimos.robot.unitree.g1.devices.motors import G1MotorDevice
+from dimos.robot.unitree.g1.devices.safety import DAMPING_KD
 from dimos.robot.unitree.g1.model.simulation import G1
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.messages import StreamDescriptor
-from dimos.sim2.module import SimulationModule
+from dimos.sim2.module import SimulationModule, SimulationSpec
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 from dimos.sim2.world.scene import scene_path
@@ -75,7 +79,7 @@ def load_g1_blueprint(monkeypatch, mocker):
 def test_g1_does_not_restamp_a_queued_motor_command(mocker):
     connection = G1Connection(controller="groot")
     client = mocker.create_autospec(SimRobotClient, instance=True)
-    mocker.patch.object(connection, "_sim", client)
+    mocker.patch.object(connection, "_motors", client)
     values = {
         f"{name}/{field}": 0.0
         for name in connection._names
@@ -84,11 +88,103 @@ def test_g1_does_not_restamp_a_queued_motor_command(mocker):
     stamp = time.time() - 0.1
     try:
         connection.write(values, source_ts=stamp)
-        command = client.write_motors.call_args.args[0]
+        command = client.write.call_args.args[0]
         assert command.timestamp == stamp
         assert len(command.q) == len(connection._names)
     finally:
         connection.stop()
+
+
+@pytest.mark.parametrize("simulated", [False, True])
+def test_motor_devices_publish_the_same_messages_and_latch_the_same_stop(mocker, simulated):
+    with ExitStack() as stack:
+        robot = G1Connection(
+            controller="groot",
+            instance_name="robot",
+            g=GlobalConfig(simulation="mujoco" if simulated else ""),
+        )
+        stack.callback(robot.stop)
+        world = mocker.Mock(spec=SimulationSpec)
+        mocker.patch.object(robot, "_simulation", world)
+        device_type = SimRobotClient if simulated else G1MotorDevice
+        device = mocker.create_autospec(device_type, instance=True)
+        factory = mocker.patch(
+            f"dimos.robot.unitree.g1.connection.{device_type.__name__}", return_value=device
+        )
+        joints_out = mocker.patch.object(robot.motor_states, "publish")
+        imu_out = mocker.patch.object(robot.imu, "publish")
+        robot.connect()
+        options = factory.call_args.kwargs
+        acquired = time.time() - 0.05
+        joints = JointState(
+            name=robot._names,
+            position=[0.1] * 29,
+            velocity=[0.0] * 29,
+            effort=[0.0] * 29,
+            ts=acquired,
+        )
+        imu = Imu(ts=acquired)
+        options["publish_joints"](joints)
+        options["publish_imu"](imu)
+
+        joints_out.assert_called_once_with(joints)
+        imu_out.assert_called_once_with(imu)
+        assert joints.ts == imu.ts == robot.status().last_state_time == acquired
+        assert joints.frame_id == imu.frame_id == robot.frame_id
+        device.start.assert_called_once_with()
+        robot.halt()
+        device.set_estop.assert_called_once_with(True)
+        with pytest.raises(RuntimeError, match="latched"):
+            robot.move(Twist())
+
+
+@pytest.mark.parametrize("invalid", ["nonfinite", "incomplete", "stopped"])
+def test_direct_motor_feedback_keeps_validation_and_shutdown_guards(mocker, invalid):
+    with ExitStack() as stack:
+        robot = G1Connection(controller="groot")
+        stack.callback(robot.stop)
+        published = mocker.patch.object(robot.motor_states, "publish")
+        acquired = time.time()
+        sample = JointState(
+            name=robot._names,
+            position=[0.1] * 29,
+            velocity=[0.0] * 29,
+            effort=[0.0] * 29,
+            ts=acquired,
+        )
+        robot._receive_joints(sample)
+        published.assert_called_once_with(sample)
+        published.reset_mock()
+
+        if invalid == "nonfinite":
+            sample.effort[0] = float("nan")
+        elif invalid == "incomplete":
+            sample.velocity = []
+        else:
+            robot.stop()
+        robot._receive_joints(sample)
+
+        published.assert_not_called()
+        assert robot.status().last_state_time == acquired
+
+
+def test_sim_motor_device_is_selected_by_world_and_robot_id(mocker):
+    with ExitStack() as stack:
+        robot = G1Connection(
+            controller="groot", instance_name="fleet/g1", g=GlobalConfig(simulation="mujoco")
+        )
+        stack.callback(robot.stop)
+        world = mocker.Mock(spec=SimulationSpec)
+        mocker.patch.object(robot, "_simulation", world)
+        factory = mocker.patch("dimos.robot.unitree.g1.connection.SimRobotClient", autospec=True)
+        robot.connect()
+
+        options = factory.call_args.kwargs
+        assert options["world"] is world
+        assert options["robot_id"] == "fleet/g1"
+        assert options["joint_names"] == robot._names
+        assert options["damping"] == DAMPING_KD
+        world.describe.assert_not_called()
 
 
 def _stream_key(blueprint, module, port):
@@ -321,7 +417,7 @@ def test_real_policy_moves_robot_through_public_connection(walking_stack, record
         nonlocal last_applied
         sequence = frame.metadata.applied_action_sequence
         if sequence != last_applied and sequence in commands:
-            latency.append(float(frame.values["monotonic_time"][0]) - commands.pop(sequence))
+            latency.append(frame.monotonic_time - commands.pop(sequence))
             last_applied = sequence
 
     def on_costmap(grid):
