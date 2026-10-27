@@ -20,6 +20,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
@@ -31,7 +32,12 @@ from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     teleop_webxr_dual_openyam_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.collection import DualOpenYamCollectionRecorder
+from dimos.robot.manipulators.dual_openyam.collection import (
+    DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
+    DualOpenYamCollectionRecorder,
+    DualOpenYamCollectionTeleopModule,
+    scale_controller_pose,
+)
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -77,7 +83,20 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
     )
 
 
-def test_collection_graph_only_swaps_the_teleop_tasks_and_zero_button() -> None:
+def test_controller_pose_scale_keeps_orientation_and_stamp() -> None:
+    pose = PoseStamped(
+        position=[0.4, -0.2, 0.8], orientation=[0.0, 0.0, 0.7071, 0.7071], ts=12.5, frame_id="right"
+    )
+    scaled = scale_controller_pose(pose, 0.5)
+
+    assert (scaled.position.x, scaled.position.y, scaled.position.z) == (0.2, -0.1, 0.4)
+    assert scaled.orientation == pose.orientation
+    assert (scaled.ts, scaled.frame_id) == (12.5, "right")
+    assert 0.0 < DUAL_OPENYAM_COLLECTION_MOTION_SCALE <= 1.0
+    assert issubclass(DualOpenYamCollectionTeleopModule, ArmTeleopModule)
+
+
+def test_collection_graph_only_swaps_the_teleop_tasks_module_and_zero_button() -> None:
     stock = teleop_webxr_dual_openyam
     ours = teleop_webxr_dual_openyam_collection
 
@@ -85,7 +104,7 @@ def test_collection_graph_only_swaps_the_teleop_tasks_and_zero_button() -> None:
     assert len(ours.blueprints) == len(stock.blueprints)
     for a, b in zip(ours.blueprints, stock.blueprints, strict=True):
         if b.module is ArmTeleopModule:
-            assert a.module is ArmTeleopModule
+            assert a.module is DualOpenYamCollectionTeleopModule
             assert a.kwargs == {**b.kwargs, "zero_button": DUAL_OPENYAM_COLLECTION_ZERO_BUTTON}
         elif b.module is DualOpenYamCoordinator:
             assert a.module is b.module
