@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Leave the points inside named boxes out of a point cloud."""
+"""Leave the points inside named boxes, or outside a crop, out of a point cloud."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -73,6 +73,21 @@ class PointCloudBoxFilterConfig(ModuleConfig):
     # origin, as an octree bins) and the cloud carries one point per covered cell, at its centre.
     # None moves the points as they are.
     target_voxel_m: float | None = Field(default=None, gt=0.0)
+    # An inclusion crop: the corners of an axis-aligned box in the frame the cloud is sent in
+    # (target_frame, or the cloud's own), metres. Only the points inside it go on; with
+    # target_voxel_m it picks the voxels by their centres before they are re-rasterized, so a
+    # voxel inside may cover a cell up to one edge past it. None for both keeps the whole cloud.
+    crop_min: tuple[float, float, float] | None = None
+    crop_max: tuple[float, float, float] | None = None
+
+    @model_validator(mode="after")
+    def _crop_is_a_box(self) -> PointCloudBoxFilterConfig:
+        if (self.crop_min is None) != (self.crop_max is None):
+            raise ValueError("crop_min and crop_max are set together or not at all")
+        if self.crop_min is not None and self.crop_max is not None:
+            if not all(lo < hi for lo, hi in zip(self.crop_min, self.crop_max, strict=True)):
+                raise ValueError("crop_min must be below crop_max on every axis")
+        return self
 
 
 @dataclass(frozen=True)
@@ -107,6 +122,22 @@ def inside_boxes(
         # Each point in the box's own axes, R^T (p - t), written for row vectors.
         local = (np.asarray(points, dtype=np.float64) - pose[:3, 3]) @ pose[:3, :3]
         inside |= np.all(np.abs(local) <= size / 2.0, axis=1)
+    return inside
+
+
+def inside_crop(
+    points: NDArray[np.floating[Any]],
+    crop_min: tuple[float, float, float],
+    crop_max: tuple[float, float, float],
+) -> NDArray[np.bool_]:
+    """Which points lie inside an axis-aligned box, its faces included.
+
+    Args:
+        points: N x 3 positions, metres.
+        crop_min: The box's lowest corner in the points' frame, metres.
+        crop_max: Its highest corner, metres.
+    """
+    inside: NDArray[np.bool_] = np.all((points >= crop_min) & (points <= crop_max), axis=1)
     return inside
 
 
@@ -160,6 +191,9 @@ class PointCloudBoxFilter(Module):
     cloud is re-expressed in that frame first, and the boxes are placed in it; with a
     ``target_voxel_m`` too, a voxel map is re-rasterized onto that frame's grid
     (``rasterize_voxels``) and the boxes leave out the cells whose centres they hold.
+    A ``crop_min`` / ``crop_max`` box in that frame keeps only what lies inside it, cropped
+    before the re-rasterization, so a map that grows without bound reaches the consumer
+    bounded.
     """
 
     config: PointCloudBoxFilterConfig
@@ -231,9 +265,9 @@ class PointCloudBoxFilter(Module):
         expressed = self._expressed(cloud)
         if expressed is None:
             return None
-        frame_id, points, rasterized = expressed
+        frame_id, points, cropped, rasterized = expressed
         boxes = [placed for box in self._boxes.values() if (placed := self._placed(box, frame_id))]
-        if frame_id == cloud.frame_id and (not boxes or not len(points)):
+        if frame_id == cloud.frame_id and cropped is None and (not boxes or not len(points)):
             return cloud
         keep = ~inside_boxes(points, boxes) if boxes and len(points) else None
         filtered = PointCloud2.from_numpy(
@@ -243,19 +277,24 @@ class PointCloudBoxFilter(Module):
         # A cell is none of the cloud's points: their other attributes stay behind.
         for name, values in cloud.pointcloud_tensor.point.items():
             if name != "positions" and not rasterized:
-                filtered.pointcloud_tensor.point[name] = values if keep is None else values[keep]
+                kept = values if cropped is None else values[cropped]
+                filtered.pointcloud_tensor.point[name] = kept if keep is None else kept[keep]
         return filtered
 
-    def _expressed(self, cloud: PointCloud2) -> tuple[str, NDArray[np.float32], bool] | None:
-        """The cloud's frame and positions in the target frame, and whether they are cells
-        re-rasterized from its voxels rather than its own points; None with no transform."""
+    def _expressed(
+        self, cloud: PointCloud2
+    ) -> tuple[str, NDArray[np.float32], NDArray[np.bool_] | None, bool] | None:
+        """The cloud's frame and positions in the target frame, which of its points the crop
+        kept (None without a crop), and whether the positions are cells re-rasterized from its
+        voxels rather than its own points; None with no transform."""
         points = cloud.points_f32()
         target = self.config.target_frame
         if target is None or target == cloud.frame_id:
-            return cloud.frame_id, points, False
+            cropped = self._cropped(points)
+            return cloud.frame_id, _kept(points, cropped), cropped, False
         if not len(points):
             # Nothing to move: an empty cloud is empty in every frame.
-            return target, points, False
+            return target, points, None, False
         transform = self.tfbuffer.get(
             target,
             cloud.frame_id,
@@ -268,10 +307,21 @@ class PointCloudBoxFilter(Module):
             self._dropped(cloud, target)
             return None
         matrix = transform.to_matrix()
-        if self.config.target_voxel_m is not None:
-            return target, rasterize_voxels(points, matrix, self.config.target_voxel_m), True
-        moved = points @ matrix[:3, :3].T + matrix[:3, 3]
-        return target, np.asarray(moved, dtype=np.float32), False
+        voxel_m = self.config.target_voxel_m
+        if voxel_m is not None and self.config.crop_min is None:
+            return target, rasterize_voxels(points, matrix, voxel_m), None, True
+        moved = np.asarray(points @ matrix[:3, :3].T + matrix[:3, 3], dtype=np.float32)
+        cropped = self._cropped(moved)
+        if voxel_m is not None:
+            # The voxels whose centres the crop holds, rasterized from where they are.
+            return target, rasterize_voxels(_kept(points, cropped), matrix, voxel_m), cropped, True
+        return target, _kept(moved, cropped), cropped, False
+
+    def _cropped(self, points: NDArray[np.float32]) -> NDArray[np.bool_] | None:
+        """Which points the crop keeps, in the frame the cloud is sent in; None without one."""
+        if self.config.crop_min is None or self.config.crop_max is None:
+            return None
+        return inside_crop(points, self.config.crop_min, self.config.crop_max)
 
     def _dropped(self, cloud: PointCloud2, target: str) -> None:
         self._dropped_since_warning += 1
@@ -308,3 +358,7 @@ class PointCloudBoxFilter(Module):
                 return None
             pose = transform.to_matrix() @ pose
         return pose, np.asarray(box.size.to_tuple(), dtype=np.float64)
+
+
+def _kept(points: NDArray[np.float32], mask: NDArray[np.bool_] | None) -> NDArray[np.float32]:
+    return points if mask is None else points[mask]

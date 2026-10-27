@@ -332,3 +332,134 @@ def test_re_rasterizing_a_bench_sized_map_takes_milliseconds() -> None:
         took.append(time.perf_counter() - start)
     assert len(centres) == 4096
     assert min(took) < 0.020
+
+
+# A crop in base around the plane's middle, a third of it each way.
+CROP_MIN = (0.2, 0.1, -0.05)
+CROP_MAX = (0.6, 0.5, 0.05)
+
+
+@pytest.fixture
+def cropping() -> Iterator[PointCloudBoxFilter]:
+    """A filter that re-rasterizes a voxel map in ``odom`` onto ``base``'s grid, cropped there."""
+    yield from _module(
+        target_frame="base",
+        tf_forward_tolerance_s=0.0,
+        target_voxel_m=VOXEL_M,
+        crop_min=CROP_MIN,
+        crop_max=CROP_MAX,
+    )
+
+
+@pytest.fixture
+def cropped_in_base() -> Iterator[PointCloudBoxFilter]:
+    """A filter that sends its clouds in ``base``, cropped to a metre-wide box ahead of it."""
+    yield from _module(
+        target_frame="base",
+        tf_forward_tolerance_s=0.0,
+        crop_min=(0.5, -0.5, -0.5),
+        crop_max=(1.5, 0.5, 0.5),
+    )
+
+
+@pytest.fixture
+def cropped_in_place() -> Iterator[PointCloudBoxFilter]:
+    """A filter that crops its clouds in their own frame to the unit cube."""
+    yield from _module(crop_min=(0.0, 0.0, 0.0), crop_max=(1.0, 1.0, 1.0))
+
+
+def test_a_crop_keeps_only_the_points_inside_it_in_the_target_frame(
+    cropped_in_base: PointCloudBoxFilter,
+) -> None:
+    cropped = cropped_in_base
+    sent: list[PointCloud2] = []
+    cropped.filtered_cloud.subscribe(sent.append)
+    # The base stands 1 m along odom x, turned 90 degrees: odom (1, 1, 0) is 1 m ahead of it, and
+    # odom (2, 0, 0), which the crop would hold in odom, is 1 m to its right.
+    _place_base(cropped, Vector3(1.0, 0.0, 0.0), math.pi / 2, ts=1.0)
+
+    _feed(cropped, _cloud([[1.0, 1.0, 0.0], [2.0, 0.0, 0.0], [1.0, 3.0, 0.0]], frame_id="odom"))
+
+    (out,) = sent
+    assert out.frame_id == "base"
+    np.testing.assert_allclose(out.points_f32(), [[1.0, 0.0, 0.0]], atol=1e-6)
+
+
+def test_without_a_target_frame_the_crop_is_in_the_clouds_own_and_keeps_its_attributes(
+    cropped_in_place: PointCloudBoxFilter,
+) -> None:
+    sent: list[PointCloud2] = []
+    cropped_in_place.filtered_cloud.subscribe(sent.append)
+    points = np.asarray([[0.5, 0.5, 0.5], [1.5, 0.5, 0.5], [1.0, 1.0, 1.0]], dtype=np.float32)
+    cloud = PointCloud2.from_numpy(
+        points,
+        frame_id="world",
+        timestamp=1.0,
+        intensities=np.asarray([10.0, 20.0, 30.0], dtype=np.float32),
+    )
+
+    _feed(cropped_in_place, cloud)
+
+    (out,) = sent
+    assert out is not cloud and out.frame_id == "world"
+    np.testing.assert_allclose(out.points_f32(), points[[0, 2]], err_msg="the faces are inside")
+    intensities = out.pointcloud_tensor.point["intensities"].numpy().ravel()
+    np.testing.assert_allclose(intensities, [10.0, 30.0])
+
+
+def test_a_crop_picks_voxels_by_their_centres_before_they_are_re_rasterized(
+    cropping: PointCloudBoxFilter,
+) -> None:
+    sent: list[PointCloud2] = []
+    cropping.filtered_cloud.subscribe(sent.append)
+    _place_base(cropping, TURNED_AT, TURNED_YAW, ts=1.0)
+    centres = ((_plane() + 0.5) * VOXEL_M).astype(np.float32)
+    base_from_odom = np.linalg.inv(_odom_from_base(TURNED_AT, TURNED_YAW))
+
+    _feed(cropping, _voxels(_plane()))
+
+    out = sent[-1].points_f32()
+    in_base = centres @ base_from_odom[:3, :3].T + base_from_odom[:3, 3]
+    inside = box_filter.inside_crop(in_base, CROP_MIN, CROP_MAX)
+    assert 0 < inside.sum() < len(centres) / 4, "the crop cuts the plane"
+    np.testing.assert_array_equal(
+        out, rasterize_voxels(centres[inside], base_from_odom, VOXEL_M), "the voxels inside, whole"
+    )
+    # Cropped after the re-rasterization, no cell's centre would lie outside the crop.
+    outside = ~box_filter.inside_crop(out, CROP_MIN, CROP_MAX)
+    assert outside.any(), "a voxel inside covers cells past the crop's faces"
+    edge = np.full(3, VOXEL_M)
+    assert np.all((out > np.subtract(CROP_MIN, edge)) & (out < np.add(CROP_MAX, edge))), (
+        "but none more than one edge past them"
+    )
+
+
+def test_a_box_leaves_its_cells_out_of_a_cropped_map(cropping: PointCloudBoxFilter) -> None:
+    sent: list[PointCloud2] = []
+    cropping.filtered_cloud.subscribe(sent.append)
+    _place_base(cropping, TURNED_AT, TURNED_YAW, ts=1.0)
+    _feed(cropping, _voxels(_plane()))
+    whole = sent[-1].points_f32()
+    # 10 cm across in base, straddling the crop's +x face.
+    box = Pose(position=Vector3(CROP_MAX[0], 0.3, 0.0))
+
+    cropping.set_box("held", box, Vector3(0.1, 0.1, 0.1))
+
+    inside = inside_boxes(whole, [(pose_to_matrix(box), np.full(3, 0.1))])
+    assert inside.sum() >= 4, "the box covers some of the cropped map's cells"
+    np.testing.assert_array_equal(sent[-1].points_f32(), whole[~inside])
+
+
+@pytest.mark.parametrize(
+    "crop",
+    [
+        {"crop_min": (0.0, 0.0, 0.0)},
+        {"crop_max": (1.0, 1.0, 1.0)},
+        {"crop_min": (0.0, 0.0, 1.0), "crop_max": (1.0, 1.0, 1.0)},
+        {"crop_min": (0.0, math.nan, 0.0), "crop_max": (1.0, 1.0, 1.0)},
+    ],
+    ids=["min-only", "max-only", "flat", "nan"],
+)
+def test_a_crop_is_a_box_with_volume(crop: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="crop_m"):
+        PointCloudBoxFilter(**crop)

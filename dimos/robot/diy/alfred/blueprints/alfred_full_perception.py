@@ -104,6 +104,21 @@ ALFRED_ARM_REACH = {
     for side in ("left", "right")
 }
 
+# The arm planner's map, cropped in base_link to where the arms reach with the base helping: kept
+# in odom, the map remembers everything the camera saw as the base drove round the room, and at
+# 200148 points the planner refused every map and planned on one hours stale (2026-10-26).
+# From alfred_v1.urdf, the shoulders (openarm_*_link1) are at x 0.14, y +-0.155, and 0.95-1.45 m
+# up over the lift's range; each arm reaches OPENARM_REACH_M + OPENARM_WRIST_TO_TIP_M = 0.63 m
+# to the fingertips, so on their own x -0.49..0.77, y -0.78..0.78, z 0.32..2.07. A whole-body
+# plan drives the base too: 0.8 m more ahead, where the camera stops seeing the bench anyway (1.5 m
+# from it, 1.53 m ahead at bench height); 0.5 m more to either side. Down to the floor the base
+# drives over; behind, the arms' own reach, past the base's 0.37 m footprint. Only the voxels
+# whose centres fall inside are re-rasterized: at 2 cm a crop with floor and a bench across it
+# holds ~22k cells, and walled in on all four sides as well ~110k, still under the planner's
+# 200k MAX_OCTREE_POINTS (test_alfred_full).
+MANIP_MAP_CROP_MIN = (-0.5, -1.3, 0.0)
+MANIP_MAP_CROP_MAX = (1.6, 1.3, 2.1)
+
 D455_WIDTH, D455_HEIGHT, D455_FPS = 848, 480, 15
 D455_POINTCLOUD_FPS = 5.0
 # Every third pixel each way keeps ~45k points a cloud: the self filter and the second voxel
@@ -208,7 +223,9 @@ def alfred_perception_modules(
         # where it is when the base drives. Pinned to base_link, a whole-body pick that moved
         # the base 0.5 m and 0.9 rad left every voxel in the wrong place relative to the robot;
         # the planner refused all plans (COLLISION_AT_START) until the camera re-saw the bench
-        # (2026-10-25). The box filter below hands it to the planner in base_link.
+        # (2026-10-25). The box filter below hands it to the planner in base_link, cropped: the
+        # mapper forgets nothing by distance (region_m and region_percentile only shape what it
+        # sends on, not what it keeps), so the map grows with the room the base drives through.
         RayTracingVoxelMap.blueprint(
             instance_name=MANIP_VOXEL_MAP,
             voxel_size=MANIP_VOXEL_M,
@@ -250,9 +267,9 @@ def alfred_perception_modules(
             ]
         ),
         # Re-expresses the odom map in the planner's frame at each map's stamp (the planner
-        # drops a map in any other frame) and lets a pick leave the object it is picking out
-        # of it; a pick's box is in the planning frame, which is this one. Its output goes on
-        # to the map self filter below.
+        # drops a map in any other frame), crops it to the arms' reach around the robot, and
+        # lets a pick leave the object it is picking out of it; a pick's box is in the planning
+        # frame, which is this one. Its output goes on to the map self filter below.
         PointCloudBoxFilter.blueprint(
             target_frame=BASE_FRAME,
             tf_tolerance_s=MOUNT_TF_TOLERANCE_S,
@@ -263,6 +280,8 @@ def alfred_perception_modules(
             # the map's own 0.4% (60 s of the bench replayed, 2026-10-25). The planner gets ~4000
             # cells for ~3500 voxels, and the filter spends 4 ms a map on it.
             target_voxel_m=MANIP_VOXEL_M,
+            crop_min=MANIP_MAP_CROP_MIN,
+            crop_max=MANIP_MAP_CROP_MAX,
         ).remappings(
             [
                 (PointCloudBoxFilter, "cloud", "manip_global_map"),

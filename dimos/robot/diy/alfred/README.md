@@ -176,13 +176,19 @@ angled), a pregrasp 10 cm above it through the planner, a straight descent, clos
   filter re-rasterizes each voxel onto the octree's own `base_link` cells (`target_voxel_m`): moving
   one centre per voxel left holes once the base had turned since the run started (17% of the bench
   top empty at 42 degrees, 6% at 15), and now 0.1% is empty at any yaw, under the map's own 0.4%,
-  for ~4000 cells a map instead of ~3500. Open fingers sit 4.4 cm a side outside the self-filter
-  model (its fingers are fixed closed), covered by 5 cm of padding at any voxel size. A second self
-  filter on the same model (`ManipMapSelfFilter`) then carves the robot, as it stands at each map's
-  stamp, out of the planner's map with 20 mm of padding (17.3 mm, half a 2 cm cell's diagonal, so
-  every cell the robot touches goes, plus 3 mm), so a plan never starts in collision with the map:
-  a hand hovering just over the remembered bench edge, whose 2 cm layer reaches 1.7 cm above the
-  real top, overlapped two cells, and every plan failed COLLISION_AT_START (2026-10-26).
+  for ~4000 cells a map instead of ~3500. In `odom` the map also keeps everything the camera saw
+  as the base drove round the room (the mapper forgets nothing by distance), and at 200148 points
+  the planner refused every map and planned on one hours stale (2026-10-26), so the box filter
+  crops it in `base_link` to the arms' reach with the base helping, x -0.5..1.6, y -1.3..1.3,
+  z 0..2.1 m (`MANIP_MAP_CROP_MIN`/`_MAX`), before it re-rasterizes: a floor and a bench across all
+  of that is ~22k cells, walled in on four sides as well ~110k, under the planner's 200k. Open
+  fingers sit 4.4 cm a side outside the self-filter model (its fingers are fixed closed), covered
+  by 5 cm of padding at any voxel size. A second self filter on the same model
+  (`ManipMapSelfFilter`) then carves the robot, as it stands at each map's stamp, out of the
+  planner's map with 20 mm of padding (17.3 mm, half a 2 cm cell's diagonal, so every cell the
+  robot touches goes, plus 3 mm), so a plan never starts in collision with the map: a hand
+  hovering just over the remembered bench edge, whose 2 cm layer reaches 1.7 cm above the real
+  top, overlapped two cells, and every plan failed COLLISION_AT_START (2026-10-26).
 
 ## How the base is shared
 

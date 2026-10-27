@@ -24,6 +24,7 @@ from typing import Any, cast
 import xml.etree.ElementTree as ElementTree
 
 import numpy as np
+from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
@@ -41,10 +42,15 @@ from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig, Gras
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS
 from dimos.manipulation.planning.utils.roboplan_point_cloud_self_filter import (
     RoboPlanPointCloudSelfFilter,
 )
-from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
+from dimos.mapping.pointclouds.box_filter import (
+    PointCloudBoxFilter,
+    inside_crop,
+    rasterize_voxels,
+)
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -104,9 +110,13 @@ from dimos.robot.diy.alfred.blueprints.alfred_full_perception import (
     D455_POINTCLOUD_FPS,
     D455_WIDTH,
     DEPTH_TRUNC_M,
+    MANIP_MAP_CROP_MAX,
+    MANIP_MAP_CROP_MIN,
     MANIP_MAP_SELF_FILTER,
     MANIP_VOXEL_MAP,
     MOUNT_TF_TOLERANCE_S,
+    OPENARM_REACH_M,
+    OPENARM_WRIST_TO_TIP_M,
     SCENE_DETECTOR_CONFIDENCE,
     PerceptionDevice,
     alfred_full_perception,
@@ -503,6 +513,123 @@ def test_the_planner_map_has_the_robot_carved_out(stack: Blueprint) -> None:
     for tolerance in ("state_tolerance_s", "tf_tolerance_s", "tf_forward_tolerance_s"):
         assert carve.kwargs[tolerance] == camera_filter.kwargs[tolerance], tolerance
     assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the model's root: no tf to wait on"
+
+
+@pytest.mark.parametrize(
+    "stack",
+    [
+        pytest.param(alfred_full_perception, id="alfred-full-perception"),
+        pytest.param(alfred_manipulation, id="alfred-manipulation"),
+        pytest.param(alfred_manipulation_heuristic, id="alfred-manipulation-heuristic"),
+        pytest.param(alfred_manipulation_sim, id="alfred-manipulation-sim"),
+    ],
+)
+def test_the_planner_map_is_cropped_to_the_arms_reach(stack: Blueprint) -> None:
+    """The map is kept in odom and remembers everything the camera saw as the base drove round
+    the room: at 200148 points the planner refused every map and planned on one hours stale
+    (2026-10-26). The box filter crops it around the robot, in the planner's frame."""
+    (box_filter,) = _atoms(stack, PointCloudBoxFilter)
+    assert box_filter.kwargs["target_frame"] == BASE_FRAME, "the crop moves with the robot"
+    assert box_filter.kwargs["crop_min"] == MANIP_MAP_CROP_MIN
+    assert box_filter.kwargs["crop_max"] == MANIP_MAP_CROP_MAX
+    (planner,) = _atoms(stack, ManipulationModule)
+    assert box_filter.kwargs["target_voxel_m"] == planner.kwargs["voxel_map_resolution"]
+    assert _wired(stack, box_filter.name, "cloud") == _wired(stack, MANIP_VOXEL_MAP, "global_map")
+
+
+# Where a whole-body pick may leave the base in odom: turned, and off the voxel grid.
+_ROOM_BASE_AT = (0.3137, -0.1171, 0.0)
+_ROOM_BASE_YAW_DEG = 42.0
+
+
+def _room(walls: bool) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """A 2 cm odom map holding all a crop could: a 10 m square of floor, already more voxels than
+    the planner takes, a bench top 0.75 m up across the crop's front, and with ``walls`` a wall
+    just inside each side of the crop, floor to top (the robot in a crop-sized room). Returns
+    the voxel centres in odom and base_link's pose there."""
+    odom_from_base = np.eye(4)
+    odom_from_base[:3, :3] = Rotation.from_euler("z", _ROOM_BASE_YAW_DEG, degrees=True).as_matrix()
+    odom_from_base[:3, 3] = _ROOM_BASE_AT
+    i, j = np.meshgrid(np.arange(-250, 250), np.arange(-250, 250), indexing="ij")
+    floor = np.stack((i.ravel(), j.ravel(), np.zeros(i.size, dtype=np.int64)), axis=1)
+    lo = np.asarray(MANIP_MAP_CROP_MIN) + MANIP_VOXEL_M / 2
+    hi = np.asarray(MANIP_MAP_CROP_MAX) - MANIP_VOXEL_M / 2
+
+    def sheet(axis: int, at: float, a: tuple[float, float], b: tuple[float, float]) -> Any:
+        """Points every half voxel over a rectangle across the other two axes."""
+        u, v = np.meshgrid(
+            np.arange(*a, MANIP_VOXEL_M / 2), np.arange(*b, MANIP_VOXEL_M / 2), indexing="ij"
+        )
+        return np.insert(np.stack((u.ravel(), v.ravel()), axis=1), axis, at, axis=1)
+
+    sheets = [sheet(2, 0.75, (0.4, hi[0]), (lo[1], hi[1]))]
+    if walls:
+        for x in (lo[0], hi[0]):
+            sheets.append(sheet(0, x, (lo[1], hi[1]), (0.0, hi[2])))
+        for y in (lo[1], hi[1]):
+            sheets.append(sheet(1, y, (lo[0], hi[0]), (0.0, hi[2])))
+    in_odom = np.concatenate(sheets) @ odom_from_base[:3, :3].T + odom_from_base[:3, 3]
+    surfaces = np.floor(in_odom / MANIP_VOXEL_M).astype(np.int64)
+    keys = np.unique(np.concatenate((floor, surfaces)), axis=0)
+    return (keys + 0.5) * MANIP_VOXEL_M, odom_from_base
+
+
+@pytest.mark.parametrize(
+    ("walls", "share"),
+    [pytest.param(False, 0.25, id="floor-and-bench"), pytest.param(True, 0.6, id="walled-in")],
+)
+def test_a_full_crop_reaches_the_planner_well_under_its_limit(walls: bool, share: float) -> None:
+    """Whatever the room, the planner gets what the crop holds, re-rasterized: a floor and a
+    bench at 2 cm are ~22k cells, and boxed in by four walls as well ~110k (the 2 x 2 x 2
+    lattice puts a turned wall's voxel in 1.5 cells)."""
+    centres, odom_from_base = _room(walls)
+    base_from_odom = np.linalg.inv(odom_from_base)
+    in_base = centres @ base_from_odom[:3, :3].T + base_from_odom[:3, 3]
+    kept = centres[inside_crop(in_base, MANIP_MAP_CROP_MIN, MANIP_MAP_CROP_MAX)]
+    cells = rasterize_voxels(kept, base_from_odom, MANIP_VOXEL_M)
+    assert len(centres) > MAX_OCTREE_POINTS, "the room alone is over the limit"
+    assert len(cells) < share * MAX_OCTREE_POINTS, f"{len(cells)} cells"
+
+
+def _link_origin(root: ElementTree.Element, link: str, lift_m: float) -> NDArray[np.float64]:
+    """A link's origin in the urdf's root, the lift at ``lift_m`` and the other joints at zero
+    (a revolute joint turns its child about the child's own origin, so it moves no origin)."""
+    joints = {
+        joint.find("child").attrib["link"]: joint  # type: ignore[union-attr]
+        for joint in root.findall("joint")
+    }
+    pose = np.eye(4)
+    while link in joints:
+        joint = joints[link]
+        origin = joint.find("origin")
+        step = np.eye(4)
+        if origin is not None:
+            rpy = [float(v) for v in origin.attrib.get("rpy", "0 0 0").split()]
+            step[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+            step[:3, 3] = [float(v) for v in origin.attrib.get("xyz", "0 0 0").split()]
+        if joint.attrib["type"] == "prismatic":
+            axis = joint.find("axis").attrib["xyz"]  # type: ignore[union-attr]
+            step[:3, 3] += step[:3, :3] @ np.multiply([float(v) for v in axis.split()], lift_m)
+        pose = step @ pose
+        link = joint.find("parent").attrib["link"]  # type: ignore[union-attr]
+    assert link == BASE_FRAME
+    return pose[:3, 3]
+
+
+@needs_lfs
+def test_the_planner_map_crop_holds_both_arms_reach_with_the_base_helping() -> None:
+    """Each shoulder, over the lift's range, with its reach to the fingertips around it: all of
+    it inside the crop, with 0.8 m of base drive ahead and 0.5 m to either side."""
+    root = ElementTree.fromstring(ALFRED_V1_MODEL.load().xml)
+    reach = OPENARM_REACH_M + OPENARM_WRIST_TO_TIP_M
+    crop_min, crop_max = np.asarray(MANIP_MAP_CROP_MIN), np.asarray(MANIP_MAP_CROP_MAX)
+    for side in ("left", "right"):
+        for lift in (ALFRED_LIFT_LOWER_M, ALFRED_LIFT_UPPER_M):
+            shoulder = _link_origin(root, f"openarm_{side}_link1", lift)
+            assert np.all(crop_min <= shoulder - reach), (side, lift, shoulder)
+            assert np.all(shoulder + reach <= crop_max), (side, lift, shoulder)
+            assert shoulder[0] + reach + 0.8 <= crop_max[0], "the base drives to the bench"
+            assert abs(shoulder[1]) + reach + 0.5 <= min(-crop_min[1], crop_max[1])
 
 
 def test_the_bench_stack_runs_without_the_lidar() -> None:
