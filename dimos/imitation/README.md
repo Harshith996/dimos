@@ -42,10 +42,11 @@ episode monitor's `command` RPC, since the leaders have no buttons.
 
 | Button | Action |
 | --- | --- |
-| **Grip** (middle finger) | **Hold to engage**: the arm tracks the controller only while held. A two-arm task (dual OpenYAM) needs both grips; releasing either stops both arms |
+| **Grip** (middle-finger button) | **Hold to engage**: the arm tracks that controller only while held; each arm has its own grip |
 | **Trigger** (index finger) | **Gripper**: analog close while that hand is engaged |
-| **B** | **Toggle record** — press to start an episode, press again to save it |
+| **B** | **Toggle record**: press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
+| **A** | **Zero pose** (dual OpenYAM): both arms plan to the zero joint pose; release both grips first |
 
 The headset's forward axis is the robot's +x, fixed where the headset faced when the
 WebXR session started: stand behind the arms facing the workspace and recentre the
