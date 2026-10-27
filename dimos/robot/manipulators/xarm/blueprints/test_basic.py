@@ -27,9 +27,32 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
     coordinator_dual_xarm,
     coordinator_xarm7,
     dual_xarm6_planner_coordinator,
+    xarm6_planner_coordinator,
+    xarm7_planner_coordinator,
 )
 
 pytestmark = pytest.mark.self_hosted
+
+
+@pytest.mark.parametrize(
+    ("blueprint", "dof"), [(xarm6_planner_coordinator, 6), (xarm7_planner_coordinator, 7)]
+)
+def test_single_arm_planner_controls_the_gripper_it_models(blueprint, dof: int) -> None:
+    manipulation_atom = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ManipulationModule)
+    )
+    coordinator_atom = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    model = ManipulationModuleConfig.model_validate(manipulation_atom.kwargs).model
+    hardware = coordinator_atom.kwargs["hardware"]
+
+    assert model.gripper_hardware_id == "arm"
+    assert model.planning_groups[0].tip_link == "link_tcp"
+    assert [component.joints for component in hardware] == [
+        [*(f"joint{i}" for i in range(1, dof + 1)), "arm/gripper"]
+    ]
+    assert {task.type for task in coordinator_atom.kwargs["tasks"]} == {"trajectory", "gripper"}
 
 
 @pytest.mark.parametrize("blueprint", [coordinator_piper_xarm, coordinator_dual_xarm])

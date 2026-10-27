@@ -22,10 +22,16 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 
 
-def mujoco_if_sim(sim_path: str | Path, dof: int) -> tuple[Blueprint, ...]:
+def mujoco_if_sim(sim_path: str | Path, arm_dof: int) -> tuple[Blueprint, ...]:
+    """The MujocoSimModule for ``sim_path``, only in simulation.
+
+    ``arm_dof`` counts the arm joints alone. The sim treats the next actuated
+    joint in the MJCF as the gripper, so a hardware joint list that includes
+    the gripper must not be passed through as the count.
+    """
     if not global_config.simulation:
         return ()
 
     from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=dof),)
+    return (MujocoSimModule.blueprint(address=str(sim_path), headless=False, dof=arm_dof),)

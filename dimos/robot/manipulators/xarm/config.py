@@ -87,31 +87,44 @@ _XARM_REPO = RobotDescriptionSource(url=XARM_ROS2_REPO, ref=XARM_ROS2_REF)
 XARM_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "xarm_device.urdf.xacro"
 XARM_DUAL_MODEL_PATH = _XARM_REPO / "xarm_description" / "urdf" / "dual_xarm_device.urdf.xacro"
 XARM_PACKAGE_PATHS: dict[str, Path] = {"xarm_description": _XARM_REPO / "xarm_description"}
+XARM6_DOF = 6
+XARM7_DOF = 7
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
-# The sim scene stands the arm on a pedestal: xarm7.xml mounts link_base at
-# z=0.12. Place the planning model to match, or the planner solves poses 12cm
-# below the arm it is driving and every grasp closes on air.
-XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+# The same tool-down pose on the xArm6, which has no upper-arm roll and bends
+# its elbow the other way.
+XARM6_SIM_HOME = [0.0, -0.247, -0.909, 0.0, 1.15644, 0.0]
+XARM_SIM_HOME = {XARM6_DOF: XARM6_SIM_HOME, XARM7_DOF: XARM7_SIM_HOME}
+# Both sim scenes stand the arm on a pedestal: xarm6.xml and xarm7.xml mount
+# link_base at z=0.12. Place the planning model to match, or the planner solves
+# poses 12cm below the arm it is driving and every grasp closes on air.
+XARM_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
 
 
-def make_xarm7_sim_robot_config(
+def xarm_flange_link(dof: int) -> str:
+    """The last arm link, which carries the gripper and a wrist camera."""
+    return f"link{dof}"
+
+
+def make_xarm_sim_robot_config(
+    dof: int,
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
     """Build the sim planning model.
 
     Pass ``base_pose`` for a scene that mounts ``link_base`` somewhere other than
-    the pedestal ``data/xarm7`` uses, and ``tf_extra_links`` when a consumer needs
-    more than the tip transform.
+    the pedestal ``data/xarm6`` and ``data/xarm7`` use, and ``tf_extra_links``
+    when a consumer needs more than the tip transform.
     """
-    return make_xarm7_model_config(
+    return make_xarm_model_config(
+        dof,
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,
-        tf_extra_links=["link7"] if tf_extra_links is None else tf_extra_links,
-        home_joints=XARM7_SIM_HOME,
+        base_pose=XARM_SIM_BASE_POSE if base_pose is None else base_pose,
+        tf_extra_links=[xarm_flange_link(dof)] if tf_extra_links is None else tf_extra_links,
+        home_joints=XARM_SIM_HOME[dof],
         pre_grasp_offset=0.05,
     )
 
@@ -166,29 +179,28 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
     )
 
 
-def make_xarm7_sim_hardware(
-    address: str | Path | None = None, *, home_joints: list[float] | None = None
+def make_xarm_sim_hardware(
+    dof: int, address: str | Path | None = None, *, home_joints: list[float] | None = None
 ) -> HardwareComponent:
-    """The simulated xArm7; without ``address`` it attaches to the blueprint's MujocoSimModule."""
-    selected_home = XARM7_SIM_HOME if home_joints is None else home_joints
+    """The simulated xArm; without ``address`` it attaches to the blueprint's MujocoSimModule."""
     return make_xarm_hardware(
         "arm",
-        7,
+        dof,
         adapter_type="sim_mujoco",
         address=address,
         gripper=True,
-        home_joints=selected_home,
+        home_joints=XARM_SIM_HOME[dof] if home_joints is None else home_joints,
     )
 
 
-def make_xarm7_sim_module_kwargs(address: str | Path) -> dict[str, Any]:
+def make_xarm_sim_module_kwargs(dof: int, address: str | Path) -> dict[str, Any]:
     return {
         "address": address,
         "headless": False,
-        "dof": 7,
+        "dof": dof,
         "camera_name": "wrist_camera",
-        "base_frame_id": "link7",
-        "reset_joint_positions": XARM7_SIM_HOME,
+        "base_frame_id": xarm_flange_link(dof),
+        "reset_joint_positions": XARM_SIM_HOME[dof],
     }
 
 
@@ -238,7 +250,8 @@ def make_xarm_hardware(
     )
 
 
-def xarm7_hardware(
+def xarm_hardware(
+    dof: int,
     hw_id: str = "arm",
     *,
     gripper: bool = False,
@@ -247,11 +260,11 @@ def xarm7_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    """The xArm7; in simulation it attaches to the blueprint's MujocoSimModule."""
+    """An xArm of ``dof`` joints; in simulation it attaches to the blueprint's MujocoSimModule."""
     if global_config.simulation:
         return make_xarm_hardware(
             hw_id,
-            7,
+            dof,
             adapter_type="sim_mujoco",
             gripper=gripper,
             home_joints=home_joints,
@@ -259,7 +272,7 @@ def xarm7_hardware(
         )
     return make_xarm_hardware(
         hw_id,
-        7,
+        dof,
         adapter_type="xarm",
         address=address,
         gripper=gripper,
@@ -269,35 +282,12 @@ def xarm7_hardware(
     )
 
 
-def xarm6_hardware(
-    hw_id: str = "arm",
-    *,
-    gripper: bool = False,
-    mock_without_address: bool = False,
-    address: str | None = None,
-    home_joints: list[float] | None = None,
-    canonical_joint_names: list[str] | None = None,
-) -> HardwareComponent:
-    """The xArm6; in simulation it attaches to the blueprint's MujocoSimModule."""
-    if global_config.simulation:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            adapter_type="sim_mujoco",
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    return make_xarm_hardware(
-        hw_id,
-        6,
-        adapter_type="xarm",
-        address=address,
-        gripper=gripper,
-        home_joints=home_joints,
-        canonical_joint_names=canonical_joint_names,
-        mock_without_address=mock_without_address,
-    )
+def xarm7_hardware(hw_id: str = "arm", **kwargs: Any) -> HardwareComponent:
+    return xarm_hardware(XARM7_DOF, hw_id, **kwargs)
+
+
+def xarm6_hardware(hw_id: str = "arm", **kwargs: Any) -> HardwareComponent:
+    return xarm_hardware(XARM6_DOF, hw_id, **kwargs)
 
 
 def make_xarm_model_config(

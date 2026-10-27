@@ -36,7 +36,7 @@ uv run dimos run lite6-planner-coordinator
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `a1z-planner-coordinator`, `openarm-planner-coordinator` and `dual-openyam-planner-coordinator`, adding `--visualization.backend viser`.
+* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `xarm6-planner-coordinator`, `a1z-planner-coordinator`, `openarm-planner-coordinator` and `dual-openyam-planner-coordinator`, adding `--visualization.backend viser`.
 * The single OpenYAM blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`. Add `--visualization.backend viser` to the last two.
 
 Expected result: each blueprint starts without an arm and the model moves in Viser.
@@ -63,6 +63,8 @@ app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 ```
 
 Expected result: the scan finds six objects, the pick returns "Pick complete", the place returns "Place complete", and Viser shows the arm lifting the can and setting it down. Restart the blueprint before another pick. `xarm-grasp-graspgenx` is the same check with learned grasps, and needs a CUDA 12.8 GPU.
+
+Repeat with `xarm6-grasp` and `XARM6_GRASP_PROMPTS`: the scan finds three objects on `data/xarm6`'s table and the pick lifts the cup, near x=0.50 y=0.00.
 
 ## 3.4 Agentic xArm in MuJoCo
 

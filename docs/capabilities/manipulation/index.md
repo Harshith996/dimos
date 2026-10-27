@@ -509,10 +509,12 @@ planner is locked for its whole native call.
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
+| `xarm6-planner-coordinator` | XArm6 planner with coordinator integration |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `r1pro-planar-preview` | R1 Pro planar-base, torso, and bimanual planning preview with fake hardware |
 | [`xarm-grasp`](/docs/capabilities/manipulation/xarm-grasp.md) | XArm7 grasping stack, on hardware or in MuJoCo |
+| [`xarm6-grasp`](/docs/capabilities/manipulation/xarm-grasp.md) | XArm6 grasping stack, on hardware or in MuJoCo |
 | `xarm-grasp-agent` | The grasping stack + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
 | [`xarm-perception-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 simulation perception stack + LLM agent |
@@ -524,7 +526,7 @@ planner is locked for its whole native call.
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | N |
 | [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | N |
 | Piper | 6 | Y | Y | N |
-| XArm6 | 6 | Y | Y | N |
+| XArm6 | 6 | Y | Y | Y |
 | XArm7 | 7 | Y | Y | Y |
 
 ## Adding a Custom Arm

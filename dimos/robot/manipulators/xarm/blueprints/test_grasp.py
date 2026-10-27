@@ -25,12 +25,20 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
+from dimos.robot.manipulators.xarm.blueprints.grasp import (
+    xarm6_grasp,
+    xarm6_grasp_graspgenx,
+    xarm_grasp,
+    xarm_grasp_graspgenx,
+)
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
+
+_GRASP_BLUEPRINTS = [xarm_grasp, xarm_grasp_graspgenx, xarm6_grasp, xarm6_grasp_graspgenx]
 
 
 def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
@@ -44,7 +52,7 @@ def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", _GRASP_BLUEPRINTS)
 def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> None:
     topics = _topics(blueprint)
     planner_map = topics[ManipulationModule, "voxel_map"]
@@ -62,7 +70,7 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     }
 
 
-@pytest.mark.parametrize("blueprint", [xarm_grasp, xarm_grasp_graspgenx])
+@pytest.mark.parametrize("blueprint", _GRASP_BLUEPRINTS)
 def test_pick_and_place_finds_the_box_filter(blueprint: Blueprint) -> None:
     providers = [
         atom.module
@@ -71,3 +79,26 @@ def test_pick_and_place_finds_the_box_filter(blueprint: Blueprint) -> None:
     ]
 
     assert providers == [PointCloudBoxFilter]
+
+
+@pytest.mark.parametrize(
+    ("blueprint", "dof"),
+    [(xarm_grasp, 7), (xarm_grasp_graspgenx, 7), (xarm6_grasp, 6), (xarm6_grasp_graspgenx, 6)],
+)
+def test_each_arm_plans_its_own_joints_and_hangs_the_camera_off_its_flange(
+    blueprint: Blueprint, dof: int
+) -> None:
+    manipulation = next(
+        atom.kwargs for atom in blueprint.active_blueprints if atom.module is ManipulationModule
+    )
+    pick_and_place = next(
+        atom.kwargs for atom in blueprint.active_blueprints if atom.module is PickAndPlaceModule
+    )
+    model = manipulation["model"]
+
+    assert model.joint_names == [f"joint{i}" for i in range(1, dof + 1)]
+    assert model.tf_extra_links == [f"link{dof}"]
+    assert [(tf.frame_id, tf.child_frame_id) for tf in manipulation["static_transforms"]] == [
+        (f"link{dof}", "camera_link")
+    ]
+    assert pick_and_place["robot"] is model

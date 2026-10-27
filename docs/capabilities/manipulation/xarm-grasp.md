@@ -1,23 +1,34 @@
 # xArm Grasping
 
-Two blueprints, differing only in which grasp provider they compose. Both carry
-the control coordinator, the wrist camera, scene registration and
-pick-and-place; both run on the real arm by default and switch to the MuJoCo
-room scene with `--simulation`:
+Two blueprints per arm, differing only in which grasp provider they compose.
+All carry the control coordinator, the wrist camera, scene registration and
+pick-and-place; all run on the real arm by default and switch to MuJoCo with
+`--simulation`:
 
-| Blueprint | Grasps |
-|---|---|
-| `xarm-grasp` | one top-down heuristic grasp, score 1.0 |
-| `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
+| Blueprint | Arm | Grasps |
+|---|---|---|
+| `xarm-grasp` | xArm7 | one top-down heuristic grasp, score 1.0 |
+| `xarm-grasp-graspgenx` | xArm7 | up to 500 ranked learned grasps |
+| `xarm6-grasp` | xArm6 | one top-down heuristic grasp, score 1.0 |
+| `xarm6-grasp-graspgenx` | xArm6 | up to 500 ranked learned grasps |
 
 ```bash
 dimos run xarm-grasp-graspgenx --controlcoordinator.addresses '{"arm": "192.168.1.x"}'  # hardware
 dimos run xarm-grasp-graspgenx --simulation mujoco                                       # the room scene
+dimos run xarm6-grasp --simulation mujoco                                                # data/xarm6's table
 ```
 
 On hardware the arm needs its address, from the flag above or a saved config file (see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration)). With `--simulation` a saved address is ignored and everything runs in MuJoCo.
-`xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
-top; drive those with `dimos agent-send "..."`.
+Each blueprint has an `-agent` variant (`xarm-grasp-agent`, `xarm6-grasp-graspgenx-agent`, ...)
+that adds an MCP agent over the top; drive those with `dimos agent-send "..."`.
+
+The xArm6 stacks are the xArm7 ones with the six-joint planning model, the wrist
+camera hung off `link6` instead of `link7`, and `data/xarm6/scene.xml` in
+simulation: the same table as `data/xarm7`, with an apple, an orange and a cup
+on it. The apple and the orange are wider than the gripper opens, so the cup is
+the pick target; `XARM6_GRASP_PROMPTS` names the three. From the scan pose the
+cup is a white disc, so its prompt is `white ball` and, as in the room scene,
+objects are picked by position rather than label.
 
 GraspGenX requires Linux x86_64, a CUDA 12.8-compatible GPU, and `uv >=0.9.25`.
 The first launch prepares its isolated Python 3.12 environment and downloads the

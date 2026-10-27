@@ -86,9 +86,9 @@ def _clear(checker: GraspContactChecker, grasp: Pose, target: NDArray, *scene: N
 
 
 def _xarm(closing_steps: int = 4) -> GraspContactChecker:
-    from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
+    from dimos.robot.manipulators.xarm.config import XARM7_DOF, make_xarm_sim_robot_config
 
-    config = make_xarm7_sim_robot_config()
+    config = make_xarm_sim_robot_config(XARM7_DOF)
     assert config.gripper is not None
     gripper = config.gripper.model_copy(update={"closing_steps": closing_steps})
     return GraspContactChecker(config.model_copy(update={"gripper": gripper}), "manipulator")

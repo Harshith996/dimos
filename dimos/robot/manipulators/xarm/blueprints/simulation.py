@@ -30,19 +30,20 @@ from dimos.robot.manipulators.common.blueprints import (
 )
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.config import (
+    XARM7_DOF,
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
-    make_xarm7_sim_hardware,
-    make_xarm7_sim_module_kwargs,
-    make_xarm7_sim_robot_config,
+    make_xarm_sim_hardware,
+    make_xarm_sim_module_kwargs,
+    make_xarm_sim_robot_config,
 )
 from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-_xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_hw = make_xarm7_sim_hardware()
-_xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
+_xarm7_sim_model = make_xarm_sim_robot_config(XARM7_DOF)
+_xarm7_sim_hw = make_xarm_sim_hardware(XARM7_DOF)
+_xarm7_sim_kwargs = make_xarm_sim_module_kwargs(XARM7_DOF, XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
