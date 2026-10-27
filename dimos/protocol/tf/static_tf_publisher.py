@@ -33,9 +33,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
@@ -46,7 +44,7 @@ FrameSpec = tuple[str, str | None, tuple[float, float, float], tuple[float, floa
 
 
 def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[TransformStamped]:
-    """Build a ``parent -> child`` TransformStamped for each non-root edge of a frame tree.
+    """Build a ``parent -> child`` Transform for each non-root edge of a frame tree.
 
     This is the static mount tree (the rigid sensor offsets); a tf buffer composes
     these edges to answer any ``world <- frame`` query once odometry supplies the
@@ -58,11 +56,10 @@ def frames_to_edge_transforms(frames: list[FrameSpec]) -> list[TransformStamped]
             continue
         transforms.append(
             TransformStamped(
-                header=Header(frame_id=parent, stamp=Time(sec=0, nanosec=0)),
+                header=message_time.header_now(parent),
                 child_frame_id=name,
                 transform=Transform(
-                    translation=Vector3(x=translation[0], y=translation[1], z=translation[2]),
-                    rotation=geometry.quaternion_from_euler(*rpy),
+                    translation=Vector3(*translation), rotation=geometry.quaternion_from_euler(*rpy)
                 ),
             )
         )
@@ -107,10 +104,10 @@ class StaticTfPublisher(Module):
     async def _publish_loop(self) -> None:
         period = 1.0 / self.config.publish_hz
         while self._running:
-            now = message_time.time_from_nanoseconds(time.time_ns())
+            now = time.time()
             for transform in self._transforms:
-                transform.header.stamp = now
-            self.tf.publish(TFMessage(transforms=self._transforms))
+                transform.header.stamp = message_time.time_from_seconds(now)
+            self.tf.publish(TFMessage(transforms=list(self._transforms)))
             await asyncio.sleep(period)
 
     @rpc

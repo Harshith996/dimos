@@ -463,8 +463,8 @@ def path_to_svg(path: Path, size_px: int = 400, margin_px: int = 20) -> str:
 
     sp = Space()
     sp.add(Polyline(msg=path, color="#000000", width=_REF_WIDTH))
-    sp.add(VisualPoint(msg=path.poses[0], color=_START_COLOR, radius=_MARKER_RADIUS))
-    sp.add(VisualPoint(msg=path.poses[-1], color=_END_COLOR, radius=_MARKER_RADIUS))
+    sp.add(VisualPoint(msg=path.poses[0].pose, color=_START_COLOR, radius=_MARKER_RADIUS))
+    sp.add(VisualPoint(msg=path.poses[-1].pose, color=_END_COLOR, radius=_MARKER_RADIUS))
     return sp.to_svg()
 
 

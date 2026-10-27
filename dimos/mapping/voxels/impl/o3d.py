@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
@@ -71,7 +72,7 @@ class O3dVoxels:
     def add_frame(self, frame: PointCloud2) -> None:
         import open3d.core as o3c  # type: ignore[import-untyped]
 
-        pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
+        pcd = ensure_tensor_pcd(pointcloud.to_open3d(frame), self._dev)
         if pcd.is_empty():
             return
 

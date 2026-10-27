@@ -17,15 +17,12 @@ from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 
 
 def make_path_mask(
-    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
-    path: Path | CdrPath,
+    occupancy_grid: OccupancyGrid,
+    path: Path,
     robot_width: float,
     pose_index: int = 0,
     max_length: float = float("inf"),
@@ -60,8 +57,8 @@ def make_path_mask(
     cumulative_length = 0.0
     for i in range(pose_index, len(poses) - 1):
         first, second = poses[i], poses[i + 1]
-        pos1 = first.pose.position if isinstance(first, CdrPoseStamped) else first.position
-        pos2 = second.pose.position if isinstance(second, CdrPoseStamped) else second.position
+        pos1 = first.pose.position
+        pos2 = second.pose.position
 
         segment_length = np.sqrt(
             (pos2.x - pos1.x) ** 2 + (pos2.y - pos1.y) ** 2 + (pos2.z - pos1.z) ** 2

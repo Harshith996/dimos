@@ -85,7 +85,7 @@ if __name__ == "__main__":
     ModuleCoordinator.build(camera_demo).loop()
 ```
 
-Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
+The runtime graph supplies generated message types to the Rerun bridge. Supported types, such as `Image`, render with the shared conversion functions in `dimos.visualization.rerun.cdr`. The stream topic determines the Rerun entity path. For custom rendering, configure `visual_override` or return a Rerun archetype.
 
 ## Performance Tuning
 

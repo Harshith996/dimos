@@ -13,39 +13,23 @@
 # limitations under the License.
 
 from collections import deque
-from typing import overload
+from collections.abc import Sequence
 
 import numpy as np
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
-from dimos.message_utils import occupancy
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.message_utils import occupancy as occupancy_utils
+from dimos.messages.geometry_msgs.msg import Point, Vector3
+
+VectorLike = Sequence[float]
+from dimos.message_utils.occupancy import CostValues
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
-def _world_point(
-    costmap: OccupancyGrid | CdrOccupancyGrid, coordinates: tuple[int, int]
-) -> Point | Vector3:
-    if isinstance(costmap, CdrOccupancyGrid):
-        return occupancy.grid_to_world(costmap, coordinates)
-    return costmap.grid_to_world(coordinates)
+def _world_point(costmap: OccupancyGrid, coordinates: tuple[int, int]) -> Point:
+    return occupancy_utils.grid_to_world(costmap, coordinates)
 
 
-@overload
-def find_safe_goal(
-    costmap: CdrOccupancyGrid,
-    goal: Point | VectorLike,
-    algorithm: str = "bfs",
-    cost_threshold: int = 50,
-    min_clearance: float = 0.3,
-    max_search_distance: float = 5.0,
-    connectivity_check_radius: int = 3,
-) -> Point | None: ...
-
-
-@overload
 def find_safe_goal(
     costmap: OccupancyGrid,
     goal: Point | VectorLike,
@@ -54,18 +38,7 @@ def find_safe_goal(
     min_clearance: float = 0.3,
     max_search_distance: float = 5.0,
     connectivity_check_radius: int = 3,
-) -> Vector3 | None: ...
-
-
-def find_safe_goal(
-    costmap: OccupancyGrid | CdrOccupancyGrid,
-    goal: Point | VectorLike,
-    algorithm: str = "bfs",
-    cost_threshold: int = 50,
-    min_clearance: float = 0.3,
-    max_search_distance: float = 5.0,
-    connectivity_check_radius: int = 3,
-) -> Vector3 | Point | None:
+) -> Point | None:
     """
     Find a safe goal position when the original goal is in collision or too close to obstacles.
 
@@ -105,13 +78,13 @@ def find_safe_goal(
 
 
 def _find_safe_goal_bfs(
-    costmap: OccupancyGrid | CdrOccupancyGrid,
+    costmap: OccupancyGrid,
     goal: Point | VectorLike,
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Vector3 | Point | None:
+) -> Point | None:
     """
     BFS-based search for nearest safe goal position.
     This guarantees finding the closest valid position.
@@ -127,7 +100,13 @@ def _find_safe_goal_bfs(
     """
 
     # Convert goal to grid coordinates
-    point = goal if isinstance(goal, Point) else Vector3(goal)
+    point = (
+        goal
+        if isinstance(goal, (Point, Vector3))
+        else goal
+        if isinstance(goal, (Point, Vector3))
+        else Point(goal[0], goal[1], goal[2] if len(goal) > 2 else 0.0)
+    )
     x, y = _grid_coordinates(costmap, point)
     gx, gy = int(x), int(y)
 
@@ -173,13 +152,13 @@ def _find_safe_goal_bfs(
 
 
 def _find_safe_goal_bfs_contiguous(
-    costmap: OccupancyGrid | CdrOccupancyGrid,
+    costmap: OccupancyGrid,
     goal: Point | VectorLike,
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Vector3 | Point | None:
+) -> Point | None:
     """
     BFS-based search for nearest safe goal position, only following passable cells.
     Unlike regular BFS, this only expands through cells with occupancy < 100,
@@ -196,7 +175,13 @@ def _find_safe_goal_bfs_contiguous(
     """
 
     # Convert goal to grid coordinates
-    point = goal if isinstance(goal, Point) else Vector3(goal)
+    point = (
+        goal
+        if isinstance(goal, (Point, Vector3))
+        else goal
+        if isinstance(goal, (Point, Vector3))
+        else Point(goal[0], goal[1], goal[2] if len(goal) > 2 else 0.0)
+    )
     x, y = _grid_coordinates(costmap, point)
     gx, gy = int(x), int(y)
     cells = _grid_values(costmap)
@@ -245,7 +230,7 @@ def _find_safe_goal_bfs_contiguous(
 
 
 def _is_position_safe(
-    costmap: OccupancyGrid | CdrOccupancyGrid,
+    costmap: OccupancyGrid,
     x: int,
     y: int,
     cost_threshold: int,

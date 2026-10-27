@@ -222,18 +222,17 @@ def from_compressed(message: CompressedImage) -> Image:
 def brightness(message: Image) -> float:
     """Sample mean pixel intensity in [0, 1] for 8/16-bit image encodings.
 
-    Respect row padding and endian. Floating-point depth has no normalized
-    intensity scale and is rejected rather than treated as a color image.
+    Respect row padding and endian. As in the original image API, floating-point
+    depth uses the 8-bit intensity denominator and is not rescaled by depth range.
     """
     pixels = view(message)
-    if pixels.dtype.kind != "u":
-        raise ValueError("brightness requires unsigned integer pixels")
+    maximum = 65535.0 if message.encoding in ("mono16", "16UC1", "16SC1") else 255.0
     stride = max(1, max(message.height, message.width) // 256)
-    return float(pixels[::stride, ::stride].mean() / np.iinfo(pixels.dtype).max)
+    return float(pixels[::stride, ::stride].mean() / maximum)
 
 
 def sharpness(message: Image) -> float:
-    """Laplacian variance of an 8-bit visual image, downsampled to 160 pixels wide."""
+    """Return the original normalized Laplacian score, downsampled to 160 pixels wide."""
 
     pixels = view(message)
     codes = {
@@ -242,21 +241,24 @@ def sharpness(message: Image) -> float:
         "rgba8": cv2.COLOR_RGBA2GRAY,
         "bgra8": cv2.COLOR_BGRA2GRAY,
     }
-    if message.encoding == "mono8":
+    if message.encoding in ("mono8", "mono16", "32FC1"):
         gray = pixels
     elif message.encoding in codes:
         gray = cv2.cvtColor(pixels, codes[message.encoding])
     else:
-        raise ValueError("Sharpness requires an 8-bit visual image encoding")
+        raise ValueError("Sharpness requires a visual image or mono8, mono16, or 32FC1")
     if gray.size == 0:
         raise ValueError("Sharpness requires a nonempty image")
     if message.width > 160:
         gray = cv2.resize(
             gray,
-            (160, max(1, round(message.height * 160 / message.width))),
+            (160, int(message.height * (160.0 / message.width))),
             interpolation=cv2.INTER_AREA,
         )
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    variance = cv2.Laplacian(gray, cv2.CV_32F).var()
+    if variance <= 0:
+        return 0.0
+    return float(np.clip((np.log10(variance + 1) - 1.0) / 3.0, 0.0, 1.0))
 
 
 def to_bgr(message: Image) -> NDArray[np.uint8]:

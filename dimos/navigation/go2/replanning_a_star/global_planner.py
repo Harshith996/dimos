@@ -24,7 +24,11 @@ from reactivex.disposable import CompositeDisposable
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.message_utils import geometry, occupancy, time as message_time
+from dimos.message_utils import (
+    geometry,
+    occupancy as occupancy_utils,
+    time as message_time,
+)
 from dimos.message_utils.occupancy import CostValues
 from dimos.messages.geometry_msgs.msg import Point, PoseStamped, Twist
 from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
@@ -404,14 +408,14 @@ class GlobalPlanner(Resource):
         the raw binary costmap (actually observed obstacle points) stay
         blocked.
         """
-        binary_values = occupancy.view(binary)
-        cost_values = occupancy.view(costmap).copy()
+        binary_values = occupancy_utils.view(binary)
+        cost_values = occupancy_utils.view(costmap).copy()
         if binary_values.shape != cost_values.shape or binary.info.origin != costmap.info.origin:
             # A newer map update raced in between building the two grids;
             # skip clearing rather than misalign cells.
             return
 
-        center = occupancy.world_to_grid(costmap, robot_pos)
+        center = occupancy_utils.world_to_grid(costmap, robot_pos)
         center_x, center_y = int(center[0]), int(center[1])
         cells = int(self._robot_rotation_diameter / 2 / costmap.info.resolution) + 1
 
@@ -432,7 +436,7 @@ class GlobalPlanner(Resource):
     def _find_safe_goal(self, goal: Point) -> Point | None:
         costmap = self._navigation_map.binary_costmap
 
-        if occupancy.cell_value(costmap, goal) == CostValues.UNKNOWN:
+        if occupancy_utils.cell_value(costmap, goal) == CostValues.UNKNOWN:
             return goal
 
         safe_goal = find_safe_goal(

@@ -20,11 +20,10 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.message_utils import occupancy, time as message_time
+from dimos.message_utils import occupancy as occupancy_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import _USE_CPP, min_cost_astar
 
 
@@ -47,15 +46,15 @@ def test_generated_astar_routes_around_obstacles_and_retains_exact_metadata(
             w=math.cos(math.pi / 4) if rotated else 1,
         ),
     )
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(stamp)),
         resolution=0.5,
         origin=origin,
     )
     before = deepcopy(grid)
-    start = occupancy.grid_to_world(grid, (1.25, 1.25))
-    goal = occupancy.grid_to_world(grid, (5.25, 1.25))
+    start = occupancy_utils.grid_to_world(grid, (1.25, 1.25))
+    goal = occupancy_utils.grid_to_world(grid, (5.25, 1.25))
 
     result = min_cost_astar(grid, goal, start, use_cpp=use_cpp)
 
@@ -63,7 +62,7 @@ def test_generated_astar_routes_around_obstacles_and_retains_exact_metadata(
     assert result.header == grid.header
     assert all(p.header == grid.header and p.pose.orientation.w == 1 for p in result.poses)
     coordinates = [
-        tuple(round(v) for v in occupancy.world_to_grid(grid, p.pose.position))
+        tuple(round(v) for v in occupancy_utils.world_to_grid(grid, p.pose.position))
         for p in result.poses
     ]
     assert coordinates[0] == (1, 1)
@@ -81,7 +80,7 @@ def test_generated_astar_routes_around_obstacles_and_retains_exact_metadata(
 @pytest.mark.parametrize("use_cpp", [False, True])
 def test_generated_astar_unknown_penalty_and_unreachable_outside_goal(use_cpp):
     cells = np.array([[0, -1, 0]], dtype=np.int8)
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(0)),
         resolution=1,
@@ -97,16 +96,21 @@ def test_generated_astar_unknown_penalty_and_unreachable_outside_goal(use_cpp):
 def test_generated_and_existing_astar_share_identical_cell_route(use_cpp):
     cells = np.zeros((7, 7), dtype=np.int8)
     cells[:5, 3] = 100
-    generated = occupancy.from_array(
+    generated = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(-1)),
         resolution=0.5,
     )
-    legacy = LegacyGrid(cells, resolution=0.5, frame_id="map", ts=0)
+    legacy = occupancy_utils.from_array(
+        np.asarray(cells, dtype=np.int8),
+        header=Header(stamp=message_time.time_from_seconds(0), frame_id="map"),
+        resolution=0.5,
+        origin=None,
+    )
     old = min_cost_astar(legacy, (2.5, 0.5), (0.5, 0.5), use_cpp=use_cpp)
     new = min_cost_astar(generated, (2.5, 0.5), (0.5, 0.5), use_cpp=use_cpp)
     assert old is not None and new is not None
-    assert [(p.x, p.y, p.z) for p in old.poses] == [
+    assert [(p.pose.position.x, p.pose.position.y, p.pose.position.z) for p in old.poses] == [
         (p.pose.position.x, p.pose.position.y, p.pose.position.z) for p in new.poses
     ]
 
@@ -119,14 +123,24 @@ def test_navigation_costmap_generation_matches_existing_math_and_preserves_metad
     cells = np.zeros((10, 10), dtype=np.int8)
     cells[4:7, 4:7] = 100
     cells[0, :] = -1
-    generated = occupancy.from_array(
+    generated = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(-1)),
         resolution=0.5,
     )
     generated.info.map_load_time = message_time.time_from_nanoseconds(17)
-    old = make_navigation_map(LegacyGrid(cells, resolution=0.5), 0.5, strategy, gradient_strategy)
+    old = make_navigation_map(
+        occupancy_utils.from_array(
+            np.asarray(cells, dtype=np.int8),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            resolution=0.5,
+            origin=None,
+        ),
+        0.5,
+        strategy,
+        gradient_strategy,
+    )
     new = make_navigation_map(generated, 0.5, strategy, gradient_strategy)
     assert new.header == generated.header and new.info == generated.info
-    np.testing.assert_array_equal(occupancy.view(new), old.grid)
-    np.testing.assert_array_equal(occupancy.view(generated), cells)
+    np.testing.assert_array_equal(occupancy_utils.view(new), occupancy_utils.view(old))
+    np.testing.assert_array_equal(occupancy_utils.view(generated), cells)

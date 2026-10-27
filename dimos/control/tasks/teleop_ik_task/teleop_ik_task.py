@@ -276,7 +276,7 @@ class TeleopIKTask(PoseTargetIKTask):
                 targets[binding.target_frame] = PoseStamped(
                     header=Header(
                         stamp=message_time.time_from_seconds(time.time()),
-                        frame_id=self._teleop_config.robot_model.base_pose.frame_id,
+                        frame_id=self._teleop_config.robot_model.base_pose.header.frame_id,
                     ),
                     pose=Pose(
                         position=geometry.point_from_array(

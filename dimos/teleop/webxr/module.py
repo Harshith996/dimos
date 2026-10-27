@@ -51,6 +51,7 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.sensor_msgs.msg import Joy
 from dimos.messages.std_msgs.msg import Header, String, UInt32
+from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -77,12 +78,6 @@ async def _ws_send_text(ws: WebSocket, data: str) -> None:
         # The receive loop removes disconnected clients. Outbound status
         # updates should not disrupt teleoperation while that happens.
         pass
-
-
-def validate_cdr_payload(data: bytes) -> None:
-    """Require plain XCDR1 at the WebXR command input boundary."""
-    if len(data) < 4 or data[:2] not in (b"\x00\x00", b"\x00\x01"):
-        raise ValueError("Expected standalone XCDR1 encapsulation")
 
 
 @dataclass

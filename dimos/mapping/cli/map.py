@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from copy import deepcopy
-from importlib import resources
 from itertools import chain
 import math
 from pathlib import Path
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
     from dimos.messages.geometry_msgs.msg import TransformStamped
-    from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
@@ -40,18 +39,6 @@ MARKER_STEM = 1.0
 
 # Conventional world frames tried in order when --frame isn't given.
 _WORLD_FRAMES = ("world", "map", "odom")
-
-
-def _camera_info_static() -> CameraInfo:
-    """Load the packaged calibration without importing a robot connection."""
-    from dimos.message_utils import camera_info as camera_info_utils, time as message_time
-    from dimos.messages.std_msgs.msg import Header
-
-    source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
-    with resources.as_file(source) as path:
-        return camera_info_utils.from_yaml(
-            path, header=Header(stamp=message_time.time_from_seconds(0), frame_id="camera_optical")
-        )
 
 
 def _detect_world(tf_buf: Any, cloud_frame: str, ts: float) -> str | None:
@@ -497,6 +484,7 @@ def main(
     from dimos.messages.std_msgs.msg import Header
     from dimos.navigation.go2.loop_closure.pgo import PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
+    from dimos.robot.unitree.go2.calibration import front_camera_calibration
     from dimos.visualization.rerun.init import rerun_init
 
     db_path = resolve_dataset(dataset)
@@ -709,7 +697,7 @@ def main(
                 header=Header(stamp=message_time.time_from_seconds(0), frame_id="camera_optical"),
             )
             if camera_info
-            else _camera_info_static()
+            else front_camera_calibration()
         )
         xf = DetectMarkers(
             camera_info=cam_info,

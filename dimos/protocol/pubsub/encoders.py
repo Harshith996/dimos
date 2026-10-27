@@ -17,10 +17,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 import pickle
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
-from dimos.protocol.pubsub.codec import MessageDescriptor
+from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,21 +113,75 @@ class MessageTopic(Protocol):
 class MessageEncoderMixin(PubSubEncoderMixin[MessageTopic, Any, bytes]):
     """Apply the topic's bound codec without changing transport behavior."""
 
-    def subscribe(
-        self, topic: MessageTopic, callback: Callable[[Any, MessageTopic], None]
+    def subscribe_all(
+        self,
+        callback: Callable[[Any, MessageTopic], Any],
+        *,
+        message_types: Mapping[str, type] | None = None,
+        **kwargs: Any,
     ) -> Callable[[], None]:
-        descriptor = topic.message
-        if descriptor is not None and descriptor.encoding == "lcm":
-            warmup = getattr(descriptor.message_type, "lcm_warmup", None)
-            if warmup is not None:
-                warmup()
+        """Read declared topics as generated messages and unknown topics as bytes.
 
-        return super().subscribe(topic, callback)
+        CDR does not identify its schema. Callers supply canonical channel names
+        and registered types rather than guessing a decoder from payload bytes.
+        """
+        declarations = message_types if message_types is not None else {}
+        descriptors: dict[str, MessageDescriptor[Any]] = {
+            name: describe_message(kind) for name, kind in declarations.items()
+        }
+
+        def descriptor_for(name: str) -> MessageDescriptor[Any] | None:
+            kind = declarations.get(name)
+            if kind is None:
+                return None
+            cached = descriptors.get(name)
+            if cached is not None:
+                if cached.message_type is not kind:
+                    raise TypeError(f"Message type changed for subscribed channel {name!r}")
+                return cached
+            resolved: MessageDescriptor[Any] = describe_message(kind)
+            descriptors[name] = resolved
+            return resolved
+
+        keyed = kwargs.get("keyed")
+        if keyed:
+            converted = {}
+            for name, key in keyed.items():
+                descriptor = descriptor_for(name) or descriptor_for("dimos/" + name)
+                if descriptor is None:
+                    raise TypeError(f"Keyed topic {name!r} requires an explicit message type")
+                converted[name] = lambda payload, key=key, codec=descriptor.codec: key(
+                    codec.decode(payload)
+                )
+            kwargs["keyed"] = converted
+
+        def receive(payload: bytes, topic: MessageTopic) -> None:
+            name = getattr(topic, "topic", str(topic))
+            descriptor = descriptor_for(name)
+            if descriptor is None:
+                callback(payload, topic)
+                return
+            if (
+                topic.message is not None
+                and topic.message.message_type is not descriptor.message_type
+            ):
+                return
+            try:
+                value = descriptor.codec.decode(payload)
+            except ValueError:
+                return
+            topic_factory: Any = type(topic)
+            typed_topic = topic_factory(name, message_type=descriptor.message_type)
+            callback(value, typed_topic)
+
+        return super().subscribe_all(receive, **kwargs)  # type: ignore[misc,no-any-return]
 
     def decode_received(
         self, payload: bytes, declared: MessageTopic, received: MessageTopic
     ) -> Any:
         descriptor = declared.message
+        if descriptor is None:
+            return payload
         actual = received.message
         if descriptor is not None and descriptor.encoding == "cdr":
             if (

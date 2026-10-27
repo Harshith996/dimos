@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from functools import partial
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -26,7 +27,7 @@ import rerun as rr
 from dimos.message_utils import pointcloud
 from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
 from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
+from dimos.visualization.rerun.bridge import RerunEntry, keyed_by, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -70,7 +71,7 @@ def surface_points(
     )
 
 
-@keyed_by_seq
+@keyed_by(attrgetter("region_id"))
 def render_surface_region(
     msg: PointCloudRegion,
     voxel_size: float,
@@ -153,7 +154,7 @@ def render_node_edges(msg: LineSegments3D) -> Archetype:
     return _weighted_lines(points, weights)
 
 
-@keyed_by_seq
+@keyed_by(attrgetter("region_id"))
 def render_edge_region(msg: LineSegments3DRegion) -> RerunMulti:
     """One keyed cell of weighted edge corridors, including empty clears."""
     return [
