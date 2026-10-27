@@ -90,9 +90,11 @@ DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
     frame_id="world",
     child_frame_id="camera_link",
 )
+# State and the 100 Hz joint targets (the action for training), the cameras and tf.
 DUAL_OPENYAM_RECORD_TOPICS = ",".join(
     [
         "coordinator_joint_state",
+        "coordinator_joint_command",
         "color_image",
         "depth_image",
         "camera_info",

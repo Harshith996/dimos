@@ -122,6 +122,7 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
 
 
 def test_recorded_stream_names_are_valid_identifiers() -> None:
+    assert "coordinator_joint_command" in DUAL_OPENYAM_RECORD_TOPICS.split(",")
     for name in DUAL_OPENYAM_RECORD_TOPICS.split(","):
         validate_identifier(name)
 
