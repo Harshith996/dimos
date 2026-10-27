@@ -41,7 +41,6 @@ from dimos.message_utils import geometry, pointcloud, time as message_time
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
-from dimos.visualization.rerun.cdr import register_colormap_annotation
 
 if TYPE_CHECKING:
     from dimos.messages.geometry_msgs.msg import TransformStamped
@@ -111,7 +110,6 @@ def _init_recording(name: str, out: Path | None) -> None:
             collapse_panels=True,
         )
     )
-    register_colormap_annotation("turbo")
     rr.log(FITNESS_SERIES, rr.SeriesLines(names=["fitness"]), static=True)
 
 

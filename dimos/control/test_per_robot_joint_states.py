@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import threading
+import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
@@ -31,8 +33,9 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.testing.waiting import wait_until as wait_for_condition
 
 
@@ -49,16 +52,16 @@ RIGHT_POSITIONS = [0.21, 0.22, 0.23]
 
 
 class DualArmCoordinator(ControlCoordinator):
-    left_arm_joints: Out[CdrJointState]
-    right_arm_joints: Out[CdrJointState]
+    left_arm_joints: Out[JointState]
+    right_arm_joints: Out[JointState]
 
 
 class LeftOnlyCoordinator(ControlCoordinator):
-    left_arm_joints: Out[CdrJointState]
+    left_arm_joints: Out[JointState]
 
 
 class TeleopStyleCoordinator(DualArmCoordinator):
-    left_arm_command: In[CdrJointState]
+    left_arm_command: In[JointState]
 
 
 def _component(hardware_id: str, joints: list[str], positions: list[float]) -> HardwareComponent:
@@ -267,16 +270,18 @@ class TestTickLoopMessages:
         assert list(left_msg.position) == [0.1, 0.2]
         assert list(left_msg.velocity) == [1.1, 1.2]
         assert list(left_msg.effort) == [2.1, 2.2]
-        assert left_msg.frame_id == "left_arm"
+        assert left_msg.header.frame_id == "left_arm"
 
         right_msg = by_id["right_arm"]
         assert list(right_msg.position) == [0.3, 0.4, 0.5]
         assert list(right_msg.velocity) == [1.3, 1.4, 1.5]
         assert list(right_msg.effort) == [2.3, 2.4, 2.5]
-        assert right_msg.frame_id == "right_arm"
+        assert right_msg.header.frame_id == "right_arm"
 
-        assert left_msg.ts == merged[0].ts
-        assert right_msg.ts == merged[0].ts
+        assert message_time.to_seconds(left_msg.header.stamp) == message_time.to_seconds(
+            merged[0].header.stamp
+        )
+        assert right_msg.header.stamp == merged[0].header.stamp
 
     def test_hardware_is_read_once_per_tick(self):
         published: list[tuple[str, JointState]] = []
@@ -373,11 +378,19 @@ class TestPostPivotPattern:
         right = OutTap(coordinator.right_arm_joints)
         coordinator.start()
 
-        commands.emit(JointState(name=LEFT_JOINTS, position=[0.4, 0.5]))
+        commands.emit(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=LEFT_JOINTS,
+                position=np.asarray([0.4, 0.5], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
 
         trajectory = coordinator.get_task("joint_trajectory")._trajectory
         assert trajectory is not None
-        assert trajectory.points[-1].positions == [0.4, 0.5]
+        assert list(trajectory.points[-1].positions) == [0.4, 0.5]
         wait_until(lambda: bool(left.count and right.count), timeout=5.0)
         assert list(left.latest().name) == LEFT_JOINTS
         assert list(right.latest().name) == RIGHT_JOINTS

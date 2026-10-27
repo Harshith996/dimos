@@ -24,9 +24,6 @@ from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 
 
 def make_path(points, stamp):
@@ -72,15 +69,20 @@ def test_generated_resampling_keeps_exact_metadata_and_matches_existing_numerics
     source = make_path(points, stamp)
     before = deepcopy(source)
     quaternion = Quaternion(x=0, y=0, z=math.sin(goal_yaw / 2), w=math.cos(goal_yaw / 2))
-    goal = Pose(position=Point(x=0.8, y=0.4, z=0), orientation=quaternion)
-    legacy = LegacyPath(
-        frame_id="map",
+    goal = Pose(position=Point(0.8, 0.4, 0.0), orientation=quaternion)
+    legacy = Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
         poses=[
-            LegacyStamped(frame_id="map", position=[x, y, 0], orientation=[0, 0, 0, 1])
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
+                pose=Pose(position=Point(x, y, 0), orientation=Quaternion(0, 0, 0, 1)),
+            )
             for x, y in points
         ],
     )
-    legacy_goal = LegacyPose(0.8, 0.4, 0, 0, 0, quaternion.z, quaternion.w)
+    legacy_goal = Pose(
+        position=Point(0.8, 0.4, 0), orientation=Quaternion(0, 0, quaternion.z, quaternion.w)
+    )
 
     result = method(source, goal, 0.1)
     expected = method(legacy, legacy_goal, 0.1)
@@ -92,13 +94,13 @@ def test_generated_resampling_keeps_exact_metadata_and_matches_existing_numerics
         values(result),
         [
             [
-                p.position.x,
-                p.position.y,
-                p.position.z,
-                p.orientation.x,
-                p.orientation.y,
-                p.orientation.z,
-                p.orientation.w,
+                p.pose.position.x,
+                p.pose.position.y,
+                p.pose.position.z,
+                p.pose.orientation.x,
+                p.pose.orientation.y,
+                p.pose.orientation.z,
+                p.pose.orientation.w,
             ]
             for p in expected.poses
         ],

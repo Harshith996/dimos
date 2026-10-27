@@ -21,6 +21,8 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.messages.geometry_msgs.msg import Vector3
+
 pytest.importorskip("dimos_voxel_ray_tracing")
 
 

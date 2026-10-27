@@ -12,26 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from copy import deepcopy
 import heapq
-from typing import overload
 
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils import occupancy
+from dimos.message_utils import occupancy as occupancy_utils
+from dimos.message_utils.occupancy import CostValues
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
-    PoseStamped as CdrPoseStamped,
-    Quaternion as CdrQuaternion,
+    PoseStamped,
+    Quaternion,
+    Vector3,
 )
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding
@@ -90,78 +87,44 @@ def _reconstruct_path(
 
 def _reconstruct_path_from_coords(
     path_coords: list[tuple[int, int]],
-    costmap: OccupancyGrid | CdrOccupancyGrid,
-) -> Path | CdrPath:
-    if isinstance(costmap, CdrOccupancyGrid):
-        return CdrPath(
-            header=deepcopy(costmap.header),
-            poses=[
-                CdrPoseStamped(
-                    header=deepcopy(costmap.header),
-                    pose=Pose(
-                        position=occupancy.grid_to_world(costmap, point),
-                        orientation=CdrQuaternion(x=0, y=0, z=0, w=1),
-                    ),
-                )
-                for point in path_coords
-            ],
-        )
-    waypoints = []
-    for coordinate in path_coords:
-        point = costmap.grid_to_world(coordinate)
-        waypoints.append(
+    costmap: OccupancyGrid,
+) -> Path:
+    return Path(
+        header=deepcopy(costmap.header),
+        poses=[
             PoseStamped(
-                frame_id=costmap.frame_id,
-                position=[point.x, point.y, 0.0],
-                orientation=Quaternion(0, 0, 0, 1),
+                header=deepcopy(costmap.header),
+                pose=Pose(
+                    position=occupancy_utils.grid_to_world(costmap, point),
+                    orientation=Quaternion(x=0, y=0, z=0, w=1),
+                ),
             )
-        )
-    return Path(frame_id=costmap.frame_id, poses=waypoints)
+            for point in path_coords
+        ],
+    )
 
 
-def _cell(costmap: OccupancyGrid | CdrOccupancyGrid, value: Point | VectorLike) -> tuple[int, int]:
-    vector = Vector3((value.x, value.y, value.z)) if isinstance(value, Point) else Vector3(value)
-    if isinstance(costmap, CdrOccupancyGrid):
-        x, y = occupancy.world_to_grid(costmap, Point(x=vector.x, y=vector.y, z=vector.z))
-    else:
-        coordinates = costmap.world_to_grid(vector)
-        x, y = coordinates.x, coordinates.y
+def _cell(costmap: OccupancyGrid, value: Point | Sequence[float]) -> tuple[int, int]:
+    vector = (
+        value
+        if isinstance(value, (Point, Vector3))
+        else Point(value[0], value[1], value[2] if len(value) > 2 else 0.0)
+    )
+    x, y = occupancy_utils.world_to_grid(costmap, Point(x=vector.x, y=vector.y, z=vector.z))
     return int(x), int(y)
 
 
-@overload
-def min_cost_astar(
-    costmap: CdrOccupancyGrid,
-    goal: Point | VectorLike,
-    start: Point | VectorLike = (0.0, 0.0),
-    cost_threshold: int = 100,
-    unknown_penalty: float = 0.8,
-    use_cpp: bool = True,
-) -> CdrPath | None: ...
-
-
-@overload
 def min_cost_astar(
     costmap: OccupancyGrid,
-    goal: Point | VectorLike,
-    start: Point | VectorLike = (0.0, 0.0),
+    goal: Point | Sequence[float],
+    start: Point | Sequence[float] = (0.0, 0.0),
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
     use_cpp: bool = True,
-) -> Path | None: ...
-
-
-def min_cost_astar(
-    costmap: OccupancyGrid | CdrOccupancyGrid,
-    goal: Point | VectorLike,
-    start: Point | VectorLike = (0.0, 0.0),
-    cost_threshold: int = 100,
-    unknown_penalty: float = 0.8,
-    use_cpp: bool = True,
-) -> Path | CdrPath | None:
+) -> Path | None:
     start_tuple = _cell(costmap, start)
     goal_tuple = _cell(costmap, goal)
-    cells = occupancy.view(costmap) if isinstance(costmap, CdrOccupancyGrid) else costmap.grid
+    cells = occupancy_utils.view(costmap)
     height, width = cells.shape
     if not (0 <= goal_tuple[0] < width and 0 <= goal_tuple[1] < height):
         return None

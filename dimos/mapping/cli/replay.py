@@ -184,20 +184,20 @@ def main(
     """Dump a recording to .rrd (lidar clouds + camera frames) and open it in rerun."""
     import rerun as rr
 
-    from dimos.mapping.cli.map import _camera_info_static
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import throttle
     from dimos.messages.geometry_msgs.msg import PoseStamped
     from dimos.messages.nav_msgs.msg import Odometry
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos.robot.unitree.go2.calibration import front_camera_calibration
     from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, image_archetype
 
     src_path = resolve_dataset(dataset)
     store = open_store(src_path)
     if out is None:
         out = Path.cwd() / f"{src_path.stem}.rrd"
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     with store:
         # Resolve which streams to voxelize: all PointCloud2 streams, or the

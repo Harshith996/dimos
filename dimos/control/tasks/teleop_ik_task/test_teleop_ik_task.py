@@ -20,6 +20,7 @@ import threading
 import time
 from typing import cast
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -36,18 +37,16 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import (
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.message_utils import time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
-    Pose as CdrPose,
-    PoseStamped as CdrPoseStamped,
-    Quaternion as CdrQuaternion,
+    Pose,
+    PoseStamped,
+    Quaternion,
 )
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.messages.std_msgs.msg import Header, UInt32
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.assets.model import RobotModel
 from dimos.teleop.webxr.controller_types import Buttons, Hand
@@ -84,16 +83,20 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
     solver = mocker.Mock(spec=PinkPoseTargetSolver)
     solver.frame_poses.return_value = {
         "left_tool": PoseStamped(
-            position=Vector3(1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(1.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         ),
         "right_tool": PoseStamped(
-            position=Vector3(-1.0, 0.0, 0.0),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            pose=Pose(position=Point(-1.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         ),
     }
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["robot/left", "robot/right"],
+        position=np.asarray([0.01, -0.01], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     return solver
 
@@ -134,8 +137,8 @@ def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
 
 def _pose(x: float) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, 0.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        pose=Pose(position=Point(x, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
 
 
@@ -194,7 +197,7 @@ def test_single_binding_tracks_relative_controller_motion(mocker: MockerFixture)
 
     assert output is not None
     target = solver.step.call_args.args[0]["right_tool"]
-    assert target.position.x == pytest.approx(-0.8)
+    assert target.pose.position.x == pytest.approx(-0.8)
 
 
 def test_bimanual_task_requires_both_hands_and_releases_atomically(
@@ -238,14 +241,24 @@ def test_deadman_reengagement_reseeds_command_from_feedback(
     )
     task.on_teleop_buttons(_buttons(left=True), 1.0)
     task.on_left_cartesian_command(_pose(0.1), 1.0)
-    solver.step.return_value = JointState(name=["robot/left", "robot/right"], position=[0.1, -0.1])
+    solver.step.return_value = JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["robot/left", "robot/right"],
+        position=np.asarray([0.1, -0.1], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     assert task.compute(_state()) is not None
 
     task.on_teleop_buttons(_buttons(), 1.1)
     task.on_teleop_buttons(_buttons(left=True), 1.2)
     task.on_left_cartesian_command(_pose(0.2), 1.2)
     solver.step.return_value = JointState(
-        name=["robot/left", "robot/right"], position=[0.01, -0.01]
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["robot/left", "robot/right"],
+        position=np.asarray([0.01, -0.01], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
     )
     assert task.compute(_state(1.2)) is not None
 
@@ -447,7 +460,7 @@ def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(mocker):
         coordinator = TeleopControlCoordinator(rpc_transport=MemqRPC)
         ready = threading.Event()
         for stream, output, message_type in [
-            ("right_cartesian_command", "right_controller_output", CdrPoseStamped),
+            ("right_cartesian_command", "right_controller_output", PoseStamped),
             ("teleop_buttons", "teleop_buttons", UInt32),
         ]:
             assert module.outputs[output].type is coordinator.inputs[stream].type is message_type
@@ -476,7 +489,7 @@ def test_webxr_cdr_output_reaches_registered_ik_task_without_hardware(mocker):
         assert ready.wait(5), "second pose command did not arrive"
         assert task.compute(_state(time.monotonic())) is not None
         target = solver.step.call_args.args[0]["right_tool"]
-        assert target.position.x == pytest.approx(-0.8)
+        assert target.pose.position.x == pytest.approx(-0.8)
         ready.clear()
         module._publish_buttons(Buttons())
         assert ready.wait(5), "deadman release did not arrive"
@@ -488,21 +501,21 @@ def test_generated_pose_target_is_copied_before_ik_mutation(mocker):
     solver = _solver(mocker)
     task = TeleopIKTask("teleop", _config((_binding("right", "right_tool"),)), solver=solver)
     task.on_teleop_buttons(UInt32(_buttons(right=True).data), 1.0)
-    pose = CdrPoseStamped(
+    pose = PoseStamped(
         Header(Time(0, 1), "world"),
-        CdrPose(Point(0.5, 0.0, 0.0), CdrQuaternion(0.0, 0.0, 0.0, 1.0)),
+        Pose(Point(0.5, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
     assert task.on_right_cartesian_command(pose, 1.0)
     pose.pose.position.x = 100.0
     assert task.compute(_state()) is not None
     task.on_right_cartesian_command(
-        CdrPoseStamped(
+        PoseStamped(
             Header(Time(0, 2), "world"),
-            CdrPose(Point(0.7, 0.0, 0.0), CdrQuaternion(0.0, 0.0, 0.0, 1.0)),
+            Pose(Point(0.7, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
         ),
         1.1,
     )
     assert task.compute(_state(1.1)) is not None
     target = solver.step.call_args.args[0]["right_tool"]
-    assert target.position.x == pytest.approx(-0.8)
+    assert target.pose.position.x == pytest.approx(-0.8)
     assert pose.header.stamp == Time(0, 1)

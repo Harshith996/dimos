@@ -16,7 +16,6 @@
 
 from collections import deque
 from functools import reduce
-import subprocess
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -31,7 +30,7 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.types.timestamped import TimestampedData, to_human_readable
+from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
 
@@ -59,49 +58,42 @@ class TFLookup(Protocol):
     ) -> TransformStamped | None: ...
 
 
-class TBuffer:
-    """Adapt generated TF values to the existing float-seconds time-series store."""
-
+class TBuffer(InMemoryStore[TransformStamped]):
     def __init__(self, buffer_size: float = 10.0) -> None:
+        super().__init__(timestamp_key=lambda item: message_time.to_seconds(item.header.stamp))
         self.buffer_size = buffer_size
-        self._store: InMemoryStore[TimestampedData[TransformStamped]] = InMemoryStore()
-
-    def __len__(self) -> int:
-        return len(self._store)
 
     def add(self, transform: TransformStamped) -> None:
-        stamp = message_time.to_seconds(transform.header.stamp)
-        self._store.save(TimestampedData(transform, stamp))
-        self._store.prune_old(stamp - self.buffer_size)
-
-    def first(self) -> TransformStamped | None:
-        item = self._store.first()
-        return item.value if item is not None else None
-
-    def last(self) -> TransformStamped | None:
-        item = self._store.last()
-        return item.value if item is not None else None
+        self.save(transform)
+        self.prune_old(message_time.to_seconds(transform.header.stamp) - self.buffer_size)
 
     def get(
         self, time_point: float | None = None, time_tolerance: float = 1.0
     ) -> TransformStamped | None:
         if time_point is None:
             return self.last()
-        item = self._store.find_closest(time_point, time_tolerance)
-        return item.value if item is not None else None
+        return self.find_closest(time_point, time_tolerance)
 
     def __str__(self) -> str:
         if len(self) == 0:
             return "TBuffer(empty)"
-        first = self.first()
-        time_range = self._store.time_range()
-        if time_range is not None and first is not None:
-            start, end = time_range
-            frames = f"{first.header.frame_id} -> {first.child_frame_id}"
+
+        first_item = self.first()
+        time_range = self.time_range()
+        if time_range and first_item:
+            start_time = to_human_readable(time_range[0])
+            end_time = to_human_readable(time_range[1])
+            duration = time_range[1] - time_range[0]
+
+            frame_str = f"{first_item.header.frame_id} -> {first_item.child_frame_id}"
+
             return (
-                f"TBuffer({frames}, {len(self)} msgs, {end - start:.2f}s "
-                f"[{to_human_readable(start)} - {to_human_readable(end)}])"
+                f"TBuffer("
+                f"{frame_str}, "
+                f"{len(self)} msgs, "
+                f"{duration:.2f}s [{start_time} - {end_time}])"
             )
+
         return f"TBuffer({len(self)} msgs)"
 
 
@@ -153,17 +145,14 @@ class MultiTBuffer:
     ) -> TransformStamped | None:
         if parent_frame == child_frame:
             return TransformStamped(
-                header=Header(
-                    frame_id=parent_frame,
-                    stamp=message_time.time_from_seconds(
+                Header(
+                    message_time.time_from_seconds(
                         time_point if time_point is not None else time.time()
                     ),
+                    parent_frame,
                 ),
-                child_frame_id=child_frame,
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                child_frame,
+                Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
             )
 
         # No explicit tolerance means "anything still buffered" — the buffer
@@ -307,6 +296,8 @@ class MultiTBuffer:
             return None
 
     def graph(self) -> str:
+        import subprocess
+
         def connection_str(connection: tuple[str, str]) -> str:
             (frame_from, frame_to) = connection
             return f"{frame_from} -> {frame_to}"

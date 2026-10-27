@@ -380,3 +380,8 @@ def relative_pose_transform(first: Pose, second: Pose) -> Transform:
         ),
         rotation=quaternion_product(rotation, second.orientation),
     )
+
+
+def pose_value(message: Pose | PoseStamped) -> Pose:
+    """Read the pose value from a generated pose or stamped pose."""
+    return message.pose if isinstance(message, PoseStamped) else message

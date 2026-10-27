@@ -15,11 +15,9 @@
 import numpy as np
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPose
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.profile import decode_ceilings
 
@@ -143,12 +141,20 @@ def test_generated_profile_matches_existing_float_computation():
     for pose, delta in zip(path.poses, [0, 200000000, 700000000], strict=True):
         pose.header.stamp = message_time.time_from_nanoseconds(base + delta)
     ceilings = decode_ceilings(path, MIN_SPEED, MAX_SPEED)
-    legacy = LegacyPath(
+    legacy = Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
         poses=[
-            LegacyPose(
-                ts=message_time.to_seconds(p.header.stamp), position=[p.pose.position.x, 0, 0]
+            PoseStamped(
+                header=Header(
+                    stamp=message_time.time_from_seconds(message_time.to_seconds(p.header.stamp)),
+                    frame_id="",
+                ),
+                pose=Pose(
+                    position=Point(p.pose.position.x, 0, 0),
+                    orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             )
             for p in path.poses
-        ]
+        ],
     )
     np.testing.assert_array_equal(ceilings, decode_ceilings(legacy, MIN_SPEED, MAX_SPEED))

@@ -35,8 +35,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPoseStamped
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.visualization.rerun.cdr import generated_archetypes, path_archetype
 
@@ -194,11 +192,13 @@ def test_generated_path_rendering_retains_geometry_frame_and_exact_fields():
     assert fields["header"]["stamp"]["nanosec"] == 123456789
     assert fields["poses"][0]["pose"]["position"] == {"x": 1, "y": 2, "z": 3}
     assert path_at_true_height(path).strips.as_arrow_array().to_pylist() == [[[1.0, 2.0, 3.0]]]
-    legacy = LegacyPath(
-        ts=0,
-        frame_id="map",
+    legacy = Path(
+        header=Header(stamp=message_time.time_from_seconds(0), frame_id="map"),
         poses=[
-            LegacyPoseStamped(position=[1, 2, 3], orientation=[0, 0, 0, 1], ts=0, frame_id="map")
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0), frame_id="map"),
+                pose=Pose(position=Point(1, 2, 3), orientation=Quaternion(0, 0, 0, 1)),
+            )
         ],
     )
     assert path_at_true_height(legacy).strips.as_arrow_array().to_pylist() == [[[1.0, 2.0, 3.0]]]

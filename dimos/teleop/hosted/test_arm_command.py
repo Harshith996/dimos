@@ -37,7 +37,7 @@ from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,
-    PoseStamped as CdrPoseStamped,
+    PoseStamped,
     Quaternion,
     Twist,
     TwistStamped,
@@ -45,7 +45,6 @@ from dimos.messages.geometry_msgs.msg import (
 )
 from dimos.messages.sensor_msgs.msg import Joy
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.webxr.controller_types import Hand, WebXRControllerState
 from dimos.utils.testing.waiting import wait_until
@@ -85,7 +84,7 @@ def _command_frame(channel, message):
 
 
 def _pose_bytes(frame_id: str, ts: float | None = None) -> bytes:
-    message = CdrPoseStamped(
+    message = PoseStamped(
         Header(message_time.time_from_seconds(time.time() if ts is None else ts), frame_id),
         Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
@@ -380,7 +379,7 @@ def test_cdr_pose_output_preserves_exact_header_through_legacy_math(module, mock
     )
     module._on_cmd_raw(_command_frame("joy", controller))
     for nanoseconds in [1, 1001]:
-        message = CdrPoseStamped(
+        message = PoseStamped(
             Header(Time(1_789_654_321, nanoseconds), "right"),
             Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
@@ -389,10 +388,10 @@ def test_cdr_pose_output_preserves_exact_header_through_legacy_math(module, mock
     assert module.right_controller_output.publish.call_count == 2
     output = module.right_controller_output.publish.call_args.args[0]
     assert output.header == Header(Time(1_789_654_321, 1001), "right")
-    assert type(output) is CdrPoseStamped
+    assert type(output) is PoseStamped
 
 
 def test_legacy_fingerprint_payload_is_not_an_implicit_command_fallback(module):
-    module._on_cmd_raw(PoseStamped(ts=time.time(), frame_id="right").lcm_encode())
+    module._on_cmd_raw(b"legacy LCM payload")
     assert module._current_poses[Hand.RIGHT] is None
     module.right_controller_output.publish.assert_not_called()

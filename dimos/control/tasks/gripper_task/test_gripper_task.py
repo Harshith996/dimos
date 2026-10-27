@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import pytest
 from pytest_mock import MockerFixture
 
@@ -26,8 +27,7 @@ from dimos.control.tasks.gripper_task.gripper_task import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
-from dimos.messages.std_msgs.msg import Float32 as CdrFloat32
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.messages.std_msgs.msg import Float32
 
 
 def _task() -> GripperControlTask:
@@ -50,13 +50,13 @@ def test_normalized_and_native_commands_share_the_joint_path() -> None:
     assert task.set_normalized([0.5])
     output = task.compute(_state())
     assert output is not None
-    assert output.positions == [425.0]
+    assert list(output.positions) == [425.0]
     assert output.mode is ControlMode.SERVO_POSITION
 
     assert task.set_position([612.0])
     output = task.compute(_state())
     assert output is not None
-    assert output.positions == [612.0]
+    assert list(output.positions) == [612.0]
 
 
 @pytest.mark.parametrize("bad", [[9999.0], [float("nan")], []])
@@ -66,7 +66,7 @@ def test_invalid_command_does_not_replace_the_latched_target(bad: list[float]) -
     assert task.set_position(bad) is False
     output = task.compute(_state())
     assert output is not None
-    assert output.positions == [100.0]
+    assert list(output.positions) == [100.0]
 
 
 def test_measured_normalized_value_is_not_clamped() -> None:
@@ -76,23 +76,19 @@ def test_measured_normalized_value_is_not_clamped() -> None:
 
 
 @pytest.mark.parametrize(("opening", "expected"), [(0.0, 0.0), (0.5, 425.0), (1.0, 850.0)])
-@pytest.mark.parametrize("message_type", [Float32, CdrFloat32])
-def test_stream_input_routes_through_normalized_command(
-    opening: float, expected: float, message_type
-) -> None:
+def test_stream_input_routes_through_normalized_command(opening: float, expected: float) -> None:
     task = _task()
-    assert task.on_gripper_command(message_type(data=opening), 0.0)
+    assert task.on_gripper_command(Float32(data=opening), 0.0)
     output = task.compute(_state())
     assert output is not None
-    assert output.positions == [expected]
+    assert list(output.positions) == [expected]
 
 
 @pytest.mark.parametrize("opening", [-0.1, 1.1, float("nan")])
-@pytest.mark.parametrize("message_type", [Float32, CdrFloat32])
-def test_stream_input_rejects_invalid_normalized_opening(opening: float, message_type) -> None:
+def test_stream_input_rejects_invalid_normalized_opening(opening: float) -> None:
     task = _task()
 
-    assert task.on_gripper_command(message_type(data=opening), 0.0) is False
+    assert task.on_gripper_command(Float32(data=opening), 0.0) is False
     assert task.compute(_state()) is None
 
 

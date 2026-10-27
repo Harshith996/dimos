@@ -14,16 +14,17 @@
 
 from dimos.mapping.occupancy.gradient import GradientStrategy, gradient, voronoi_gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.mapping.occupancy.operations import _GridT, overlay_occupied, smooth_occupied
+from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.mapping.occupancy.types import NavigationStrategy
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
 def make_navigation_map(
-    occupancy_grid: _GridT,
+    occupancy_grid: OccupancyGrid,
     robot_width: float,
     strategy: NavigationStrategy,
     gradient_strategy: GradientStrategy,
-) -> _GridT:
+) -> OccupancyGrid:
     half_width = robot_width / 2
     gradient_distance = 1.5
 

@@ -21,9 +21,8 @@ from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 class PackedVoxels:
@@ -60,7 +59,9 @@ class PackedVoxels:
         return (vox + np.float32(0.5)) * np.float32(self._voxel_size)
 
     def add_frame(self, frame: PointCloud2) -> None:
-        self.add_points(frame.points_f32(), frame.ts)
+        self.add_points(
+            pointcloud.xyz(frame).astype(np.float32), message_time.to_seconds(frame.header.stamp)
+        )
 
     def add_points(self, pts: NDArray[np.float32], timestamp: float | None = None) -> None:
         if not len(pts):
@@ -93,7 +94,7 @@ class PackedVoxels:
             self._ts = np.insert(self._ts, pos, np.nan if timestamp is None else timestamp)
             self._raw = np.insert(self._raw, pos, new)
 
-    def reproject(self, place: Callable[[CdrCloud], CdrCloud]) -> None:
+    def reproject(self, place: Callable[[PointCloud2], PointCloud2]) -> None:
         """Move every voxel to where `place` puts its stamped original position."""
         if not self.stamped:
             raise RuntimeError("reproject needs a stamped store")

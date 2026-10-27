@@ -24,12 +24,11 @@ from typing import (
     TypeVar,
     cast,
 )
+from weakref import WeakKeyDictionary
 
-from dimos_cdrgen.registry import message_types
 import numpy as np
 
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
@@ -196,15 +195,11 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
         self._started = False
 
 
-class ROSTransport(PubSubTransport[DimosMsg]):
+class ROSTransport(PubSubTransport[Any]):
     _ros: DimosROS | None = None
 
-    def __init__(self, topic: str, msg_type: type[DimosMsg], **kwargs: Any) -> None:
-        # Generated values require a canonical registry identity and a ROS type adapter.
-        if hasattr(msg_type, "__msgtype__"):
-            name = getattr(msg_type, "__msgtype__", None)
-            if not isinstance(name, str) or message_types().get(name) is not msg_type:
-                raise TypeError("ROS transport requires a registry-owned generated message class")
+    def __init__(self, topic: str, msg_type: type[Any], **kwargs: Any) -> None:
+        describe_message(msg_type)
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
@@ -214,16 +209,16 @@ class ROSTransport(PubSubTransport[DimosMsg]):
     def __reduce__(self) -> tuple[Any, ...]:
         return (ROSTransport, (self.topic.topic, self.topic.msg_type))
 
-    def broadcast(self, _: Stream[DimosMsg] | None, msg: DimosMsg) -> None:
-        if not isinstance(msg, self.topic.msg_type):
-            raise TypeError("Message does not match the ROS transport declared type")
+    def broadcast(self, _: Stream[Any] | None, msg: Any) -> None:
+        if type(msg) is not self.topic.msg_type:
+            raise TypeError("Message does not match the declared type")
         if self._ros is None:
             self.start()
             assert self._ros is not None  # for type narrowing
         self._ros.publish(self.topic, msg)
 
     def subscribe(
-        self, callback: Callable[[DimosMsg], Any], selfstream: Stream[DimosMsg] | None = None
+        self, callback: Callable[[Any], Any], selfstream: Stream[Any] | None = None
     ) -> Callable[[], None]:
         if self._ros is None:
             self.start()
@@ -311,7 +306,7 @@ class WebRTCTransport(PubSubTransport[M]):
 
     * **Raw bytes** (``msg_type=None``): messages pass through as ``bytes``.
     * **Typed messages**: bind a shared codec from ``msg_type``. Generated
-      messages use raw CDR; legacy messages keep their LCM wire format.
+      messages use raw CDR. One declared message type is allowed per channel.
       Peers must agree on the schema; remote schema validation is deferred.
 
     The transport itself holds no connection: the picklable ``config``
@@ -324,6 +319,8 @@ class WebRTCTransport(PubSubTransport[M]):
     _config_cls: type[ProviderConfig]
     _config: ProviderConfig
     _started: bool = False
+    _channel_types: WeakKeyDictionary[Any, dict[str, type]] = WeakKeyDictionary()
+    _channel_types_lock = threading.Lock()
 
     def __init__(
         self,
@@ -377,7 +374,17 @@ class WebRTCTransport(PubSubTransport[M]):
     def start(self) -> None:
         with self._init_lock:
             if self._pubsub is None:
-                self._pubsub = WebRTCPubSub(provider=self._config.provider())
+                provider = self._config.provider()
+                if self._msg_type is not None:
+                    with self._channel_types_lock:
+                        declared = self._channel_types.setdefault(provider, {})
+                        previous = declared.get(self.topic)
+                        if previous is not None and previous is not self._msg_type:
+                            raise TypeError(
+                                f"WebRTC channel {self.topic!r} already declares {describe_message(previous).name}; cannot bind {describe_message(self._msg_type).name}"
+                            )
+                        declared[self.topic] = self._msg_type
+                self._pubsub = WebRTCPubSub(provider=provider)
             self._pubsub.start()
             self._started = True
 
