@@ -67,8 +67,9 @@ export const runLink: Command = async ({ paths, startGateway }) => {
 [process.ts](process.ts) finds, starts and stops the gateway from outside it:
 
 - `gatewayState(paths, timeoutMs)` returns `running`, `other_build`, `stopped`, `stale_socket` or `not_answering`.
-- `ensureGateway(paths, command, env)` spawns the gateway detached when nothing answers and waits until it does. It
-  throws when the gateway that answers is another build. `CommandContext.startGateway` calls it.
+- `ensureGateway(paths, command, env)` spawns the gateway detached when nothing answers and waits until it serves its
+  Lifecycle object. It throws when the gateway exits first, does not serve within 60 s, or is another build.
+  `CommandContext.startGateway` calls it.
 - `stopGateway(paths)` stops the gateway through `LifecycleContract`, which stays at version 1, so it also stops a
   gateway of another build.
 

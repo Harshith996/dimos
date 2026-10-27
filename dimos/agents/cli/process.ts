@@ -1,4 +1,5 @@
 import type { AgentPaths } from "../gateway/config/paths.ts";
+import type { ChildProcess } from "node:child_process";
 import type { GatewayProcess } from "../shared/protocol/lifecycle/contract.ts";
 import type { Client } from "../sdk/main.ts";
 import type { Ref } from "@earendil-works/chord";
@@ -26,7 +27,7 @@ export type LaunchState =
   /** A process accepts connections on the socket but held no Lifecycle in time: a gateway still opening its store, or a hung one. */
   | { readonly kind: "not_answering" };
 
-const START_ATTEMPTS = 100;
+const START_TIMEOUT_MS = 60_000;
 
 const START_POLL_MS = 50;
 
@@ -105,24 +106,37 @@ export async function gatewayState(paths: AgentPaths, timeoutMs: number): Promis
   }
 }
 
-async function waitUntilReachable(socket: string): Promise<boolean> {
-  for (let attempt = 0; attempt < START_ATTEMPTS; attempt++) {
-    if (await reachable(socket, 500)) return true;
+/**
+ * Polls until the gateway serves its Lifecycle object, since a gateway binds the socket before it opens its store and
+ * exits when opening fails. Throws the restart hint for another build, and `failure` after 60 s, once `spawned` has
+ * exited, or once a socket that accepted connections is gone.
+ */
+async function waitUntilServing(paths: AgentPaths, spawned: ChildProcess | null, failure: string): Promise<void> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  let accepted = false;
+  for (;;) {
+    const state = await gatewayState(paths, 500);
+    switch (state.kind) {
+      case "running":
+        return;
+      case "other_build":
+        throw new Error(refusalText({ code: "other_build", gatewayBuild: state.process.build.build }));
+      case "not_answering":
+        accepted = true;
+        break;
+      case "stopped":
+      case "stale_socket":
+        if (accepted) throw new Error(failure);
+    }
+    const exited = spawned !== null && (spawned.exitCode !== null || spawned.signalCode !== null);
+    if (exited || Date.now() > deadline) throw new Error(failure);
     await delay(START_POLL_MS);
   }
-  return false;
-}
-
-/** Throws the restart hint when the gateway that answers is another build. */
-async function refuseOtherBuild(paths: AgentPaths): Promise<void> {
-  const state = await gatewayState(paths, 500);
-  if (state.kind === "other_build")
-    throw new Error(refusalText({ code: "other_build", gatewayBuild: state.process.build.build }));
 }
 
 /**
  * Starts the gateway detached when none answers, under a `<socket>.starting` lock directory (older than 30 s: removed),
- * then waits until it answers. A gateway that already answers must be this build. `command` is how this process
+ * then waits until it serves. A gateway that already answers must be this build. `command` is how this process
  * re-runs itself, e.g. `[node, dist/cli.js, "gateway"]`.
  */
 export async function ensureGateway(
@@ -130,7 +144,8 @@ export async function ensureGateway(
   command: readonly string[],
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  if (await reachable(paths.socket, 500)) return refuseOtherBuild(paths);
+  const held = `The gateway on ${paths.socket} did not answer; read ${paths.logFile}, or find what holds the socket with \`ss -xlp\`.`;
+  if (await reachable(paths.socket, 500)) return waitUntilServing(paths, null, held);
   const lock = `${paths.socket}.starting`;
   const lockAge = await stat(lock).then(
     (info) => Date.now() - info.mtimeMs,
@@ -142,19 +157,23 @@ export async function ensureGateway(
     await mkdir(lock, { mode: 0o700 });
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-    if (await waitUntilReachable(paths.socket)) return refuseOtherBuild(paths);
-    throw new Error(
+    return waitUntilServing(
+      paths,
+      null,
       `Another terminal is starting the gateway and it did not answer; inspect ${lock} and ${paths.logFile}.`,
     );
   }
   try {
-    if (await reachable(paths.socket, 500)) return refuseOtherBuild(paths);
+    if (await reachable(paths.socket, 500)) return await waitUntilServing(paths, null, held);
     const [executable, ...args] = command;
     if (executable === undefined) throw new Error("No command to start the gateway with");
-    spawn(executable, args, { detached: true, stdio: "ignore", env }).unref();
-    if (!(await waitUntilReachable(paths.socket))) {
-      throw new Error(`The gateway did not start; run \`dimos agent gateway\` to see why, or read ${paths.logFile}.`);
-    }
+    const gateway = spawn(executable, args, { detached: true, stdio: "ignore", env });
+    gateway.unref();
+    await waitUntilServing(
+      paths,
+      gateway,
+      `The gateway did not start; run \`dimos agent gateway\` to see why, or read ${paths.logFile}.`,
+    );
   } finally {
     await rmdir(lock).catch(() => {});
   }
