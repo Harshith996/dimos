@@ -37,6 +37,13 @@ The trajectory task owns `joint1` through `joint6`. A separate
 
 ## Select physical hardware
 
+Use a shared driver release containing the
+[per-motor feedback decoding fix](https://github.com/dimensionalOS/can-motor-control/pull/4)
+before physical commissioning. The existing 0.0.8 release decodes every
+Damiao model with DM4340 feedback ranges. B601 mixes DM4340 and DM4310,
+so that release mis-scales wrist and gripper velocity and torque feedback.
+The fix belongs in the shared driver, not in B601-specific rescaling.
+
 Complete Seeed's assembly, motor ID, and zero-position procedure first.
 Pass `--can-port` after the blueprint name. It selects a SocketCAN interface
 on Linux, or a native gs_usb adapter serial number on macOS, through
