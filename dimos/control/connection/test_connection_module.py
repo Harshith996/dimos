@@ -133,6 +133,20 @@ def writes(r: Rig) -> list[dict[str, float]]:
     return list(r.module.writes)
 
 
+def test_callback_feedback_does_not_start_a_polling_thread(rig, mocker):
+    mocker.patch.object(MockConnectionModule, "poll_state", False)
+    read = mocker.patch.object(MockConnectionModule, "read_state")
+    r = rig()
+    message = JointState(name=["mock/joint1"], position=[0.25], ts=123.0)
+    r.module.joint_state.publish(message)
+    r.module.note_state_received(message.ts)
+
+    assert r.sent("joint_state") == [message]
+    assert r.module.status().last_state_time == 123.0
+    assert r.module._state_thread is None
+    read.assert_not_called()
+
+
 class BodyAndBaseConfig(MockConnectionConfig):
     """A two-joint body held by stiffness and damping, on a base, with an IMU."""
 

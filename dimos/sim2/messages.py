@@ -28,6 +28,10 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.spec import RobotInstance
 
 Lifecycle = Literal["starting", "ready", "faulted", "closed"]
@@ -106,8 +110,26 @@ class FrameMetadata:
 
 @dataclass(frozen=True)
 class StateFrame:
+    """Internal MuJoCo world snapshot, consumed only by sensor workers."""
+
     metadata: FrameMetadata
     values: dict[str, NDArray[np.float64]]
+    lifecycle: Lifecycle = "ready"
+    reset_at: float = 0.0
+
+
+@dataclass(frozen=True)
+class RobotFeedback:
+    """One physics acquisition. Odometry is simulator truth, not an estimator."""
+
+    metadata: FrameMetadata
+    joints: JointState
+    imu: Imu | None
+    odom: PoseStamped
+    base_velocity: Twist
+    monotonic_time: float
+    enabled: bool
+    estopped: bool = False
     lifecycle: Lifecycle = "ready"
     reset_at: float = 0.0
 

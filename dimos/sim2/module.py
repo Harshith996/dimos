@@ -31,6 +31,7 @@ import mujoco
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.spec import WorldConfig
 from dimos.sim2.world.evidence import run_record, write_record
 from dimos.sim2.world.runtime import SimulationRuntime
@@ -43,6 +44,8 @@ logger = setup_logger()
 
 class SimulationSpec(Spec, Protocol):
     def describe(self) -> dict[str, Any]: ...
+
+    def describe_robot(self, robot_id: str) -> StreamDescriptor: ...
 
 
 class SimulationModuleConfig(ModuleConfig):
@@ -112,6 +115,12 @@ class SimulationModule(Module):
                 },
                 "run_record": str(self._record_path) if self._record_path else None,
             }
+
+    @rpc
+    def describe_robot(self, robot_id: str) -> StreamDescriptor:
+        """Internal client discovery for a robot in this running world."""
+        with self._lifecycle_lock:
+            return self._require_runtime().robots[robot_id].channel.descriptor
 
     @rpc
     def describe_run(self) -> dict[str, Any]:

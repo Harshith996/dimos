@@ -375,10 +375,15 @@ class G1MotorDevice:
                     self._low_cmd.mode_machine = actual
 
     def _snapshot_motor_imu(self) -> G1LowStateSnapshot | None:
-        """Return the latest real motor/IMU sample, or None before first LowState."""
+        """Return one fresh motor/IMU sample, or None before feedback or after timeout."""
         with self._lock:
             ls = self._low_state
-            if ls is None:
+            if (
+                ls is None
+                or self._last_feedback_at is None
+                or time.perf_counter() - self._last_feedback_at
+                > self.config.feedback_timeout_seconds
+            ):
                 return None
             return G1LowStateSnapshot(
                 positions=[float(ls.motor_state[i].q) for i in range(_NUM_MOTORS)],
