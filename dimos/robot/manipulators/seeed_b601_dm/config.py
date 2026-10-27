@@ -25,20 +25,20 @@ from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 
-B601_SOURCE = RobotDescriptionSource(
+B601_DM_SOURCE = RobotDescriptionSource(
     url="https://github.com/Seeed-Projects/reBot-DevArm",
     ref="8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af",
 )
-B601_MODEL = RobotModel.from_file(
-    B601_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf",
+B601_DM_MODEL = RobotModel.from_file(
+    B601_DM_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf",
 ).with_fixed_joints("finger_left", "finger_right")
-B601_ARM_JOINTS = tuple(f"joint{index}" for index in range(1, 7))
-B601_GRIPPER_JOINT = "arm/gripper"
-B601_JOINTS = (*B601_ARM_JOINTS, B601_GRIPPER_JOINT)
-B601_HARDWARE_ID = "b601"
+B601_DM_ARM_JOINTS = tuple(f"joint{index}" for index in range(1, 7))
+B601_DM_GRIPPER_JOINT = "arm/gripper"
+B601_DM_JOINTS = (*B601_DM_ARM_JOINTS, B601_DM_GRIPPER_JOINT)
+B601_DM_HARDWARE_ID = "b601_dm"
 
 
-def b601_hardware(
+def b601_dm_hardware(
     *,
     can_port: str | None = None,
     gripper_opening_direction: Literal["increasing_position", "decreasing_position"] | None = None,
@@ -57,16 +57,16 @@ def b601_hardware(
             raise ValueError("B601 gripper current must be in (0, 1] per-unit")
         adapter_kwargs = {
             "runtime_config": DamiaoRuntimeConfig(
-                bus_devices={"b601": can_port}, gravity_comp=False
+                bus_devices={"b601_dm": can_port}, gravity_comp=False
             ),
             "gripper_opening_direction": gripper_opening_direction,
             "gripper_current": gripper_current,
         }
     return HardwareComponent(
-        hardware_id=B601_HARDWARE_ID,
+        hardware_id=B601_DM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,
-        joints=list(B601_JOINTS),
-        adapter_type="mock_whole_body" if can_port is None else "seeed_b601",
+        joints=list(B601_DM_JOINTS),
+        adapter_type="mock_whole_body" if can_port is None else "seeed_b601_dm",
         auto_enable=True,
         limits=JointLimits(
             position_lower=[*([None] * 6), 0.0],

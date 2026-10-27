@@ -13,5 +13,5 @@
 # limitations under the License.
 
 ADAPTER_FACTORIES = {
-    "seeed_b601": "dimos.hardware.whole_body.seeed_b601.adapter:SeeedB601Adapter",
+    "seeed_b601_dm": "dimos.hardware.whole_body.seeed_b601_dm.adapter:SeeedB601DMAdapter",
 }

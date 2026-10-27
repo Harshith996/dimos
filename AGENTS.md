@@ -376,8 +376,8 @@ name as unsupported. Read the Damiao section of
 
 | Rule | Enforcement |
 | --- | --- |
-| B601 shares the Damiao driver and lifecycle rather than a vendor SDK stack | `dimos/hardware/whole_body/seeed_b601/test_adapter.py::test_b601_reuses_shared_driver_and_lifecycle` |
-| B601 4340P motors use the shared DM4340 profile | `dimos/hardware/whole_body/seeed_b601/test_adapter.py::test_official_4340p_uses_equivalent_4340_driver_profile` |
+| B601 shares the Damiao driver and lifecycle rather than a vendor SDK stack | `dimos/hardware/whole_body/seeed_b601_dm/test_adapter.py::test_b601_dm_reuses_shared_driver_and_lifecycle` |
+| B601 4340P motors use the shared DM4340 profile | `dimos/hardware/whole_body/seeed_b601_dm/test_adapter.py::test_official_4340p_uses_equivalent_4340_driver_profile` |
 
 ---
 

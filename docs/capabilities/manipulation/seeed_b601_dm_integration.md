@@ -1,5 +1,9 @@
 # Seeed B601-DM integration
 
+The B601 family has DM (Damiao) and RS (RobStride) versions. This integration
+supports B601-DM only. The `seeed_b601_dm` adapter and
+`coordinator-seeed-b601-dm` blueprint must not be used for B601-RS.
+
 B601-DM uses the same `DamiaoWholeBodyAdapter` and `can-motor-control`
 stack as OpenYAM and OpenArm. The robot adapter declares one six-axis arm
 and one gripper on one CAN bus. It adds no motor codec, lifecycle loop,
@@ -27,12 +31,12 @@ Mechanical joint limits come from Seeed's pinned DM robot model.
 
 ## Run with mock hardware
 
-Run `dimos run coordinator-seeed-b601` with the `control` extra installed.
+Run `dimos run coordinator-seeed-b601-dm` with the `control` extra installed.
 Without a CAN selector, the coordinator uses in-memory hardware.
 No model checkout or hardware connection occurs at import time.
 
 The trajectory task owns `joint1` through `joint6`. A separate
-`b601_gripper` task owns `arm/gripper`. Gripper opening is normalized:
+`b601_dm_gripper` task owns `arm/gripper`. Gripper opening is normalized:
 `0` is closed and `1` is open. Arm positions use radians.
 
 ## Select physical hardware
@@ -47,7 +51,7 @@ The fix belongs in the shared driver, not in B601-specific rescaling.
 Complete Seeed's assembly, motor ID, and zero-position procedure first.
 Pass `--can-port` after the blueprint name. It selects a SocketCAN interface
 on Linux, or a native gs_usb adapter serial number on macOS, through
-`DamiaoRuntimeConfig.bus_devices["b601"]`.
+`DamiaoRuntimeConfig.bus_devices["b601_dm"]`.
 See [CAN setup](/docs/capabilities/manipulation/openyam_integration.md#can-transport)
 for the shared transport configuration.
 

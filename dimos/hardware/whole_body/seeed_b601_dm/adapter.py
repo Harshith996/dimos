@@ -27,23 +27,23 @@ from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.seeed_b601.config import (
-    B601_ARM_JOINTS,
-    B601_GRIPPER_JOINT,
-    B601_MODEL,
+from dimos.robot.manipulators.seeed_b601_dm.config import (
+    B601_DM_ARM_JOINTS,
+    B601_DM_GRIPPER_JOINT,
+    B601_DM_MODEL,
 )
 
 
-class SeeedB601Adapter(DamiaoWholeBodyAdapter):
+class SeeedB601DMAdapter(DamiaoWholeBodyAdapter):
     """Six arm motors and a gripper on a shared native CAN bus.
 
     DM4340 and DM4340P use the same driver profile: position +/-12.5 rad,
     velocity +/-10 rad/s, torque +/-28 Nm. They share the DM4340 enum.
     """
 
-    arm_joints = {"arm": B601_ARM_JOINTS}
-    gripper_joints = {"gripper": B601_GRIPPER_JOINT}
-    bus_names = ("b601",)
+    arm_joints = {"arm": B601_DM_ARM_JOINTS}
+    gripper_joints = {"gripper": B601_DM_GRIPPER_JOINT}
+    bus_names = ("b601_dm",)
     kinematic_joint_names = arm_joints["arm"]
 
     def __init__(
@@ -54,7 +54,7 @@ class SeeedB601Adapter(DamiaoWholeBodyAdapter):
         gripper_current: float,
         runtime_config: DamiaoRuntimeConfig | Mapping[str, Any] | None = None,
         dof: int | None = None,
-        hardware_id: str = "b601",
+        hardware_id: str = "b601_dm",
         domain_id: int = 0,
     ) -> None:
         if gripper_opening_direction not in ("increasing_position", "decreasing_position"):
@@ -73,7 +73,7 @@ class SeeedB601Adapter(DamiaoWholeBodyAdapter):
 
     @property
     def kinematic_model(self) -> RobotModel:
-        return B601_MODEL
+        return B601_DM_MODEL
 
     def get_limits(self) -> JointLimits:
         return JointLimits(
@@ -95,11 +95,11 @@ class SeeedB601Adapter(DamiaoWholeBodyAdapter):
         ]
         return (
             can_motor_control.Robot.builder()
-            .add_bus("b601", self._make_can_bus("b601"), damiao.DamiaoCodec())
-            .add_arm("arm", bus="b601", motors=motors)
+            .add_bus("b601_dm", self._make_can_bus("b601_dm"), damiao.DamiaoCodec())
+            .add_arm("arm", bus="b601_dm", motors=motors)
             .add_gripper(
                 "gripper",
-                bus="b601",
+                bus="b601_dm",
                 motor=can_motor_control.MotorSpec("gripper", damiao.MotorType.DM4310, 0x07, 0x17),
                 opening_direction=self._gripper_opening_direction,
                 default_current=self._gripper_current,

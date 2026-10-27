@@ -16,21 +16,21 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.robot.manipulators.seeed_b601.config import (
-    B601_ARM_JOINTS,
-    B601_GRIPPER_JOINT,
-    B601_HARDWARE_ID,
+from dimos.robot.manipulators.seeed_b601_dm.config import (
+    B601_DM_ARM_JOINTS,
+    B601_DM_GRIPPER_JOINT,
+    B601_DM_HARDWARE_ID,
 )
-from dimos.robot.manipulators.seeed_b601.coordinator import B601Coordinator
+from dimos.robot.manipulators.seeed_b601_dm.coordinator import B601DMCoordinator
 
-coordinator_seeed_b601 = B601Coordinator.blueprint(
+coordinator_seeed_b601_dm = B601DMCoordinator.blueprint(
     instance_name="ControlCoordinator",
     tasks=[
-        joint_trajectory_task(list(B601_ARM_JOINTS)),
+        joint_trajectory_task(list(B601_DM_ARM_JOINTS)),
         TaskConfig(
-            name=f"{B601_HARDWARE_ID}_gripper",
+            name=f"{B601_DM_HARDWARE_ID}_gripper",
             type="gripper",
-            joint_names=[B601_GRIPPER_JOINT],
+            joint_names=[B601_DM_GRIPPER_JOINT],
             priority=20,
         ),
     ],

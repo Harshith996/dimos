@@ -33,7 +33,7 @@ Use `HardwareType.WHOLE_BODY`, `WholeBodyConfig`, and the whole-body registry.
 Configure devices through `DamiaoRuntimeConfig.bus_devices`, not `address`.
 Keep model checkout lazy and pin it to an immutable upstream commit.
 
-Follow [the B601 example](/docs/capabilities/manipulation/seeed_b601_integration.md)
+Follow [the B601 example](/docs/capabilities/manipulation/seeed_b601_dm_integration.md)
 for a six-axis arm with a gripper, or
 [the OpenArm integration](/docs/capabilities/manipulation/openarm_integration.md)
 for multiple buses. Verify gripper direction and current for the actual

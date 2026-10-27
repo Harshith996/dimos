@@ -22,13 +22,13 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.registry import whole_body_adapter_registry
-from dimos.robot.manipulators.seeed_b601.blueprints.basic import coordinator_seeed_b601
-from dimos.robot.manipulators.seeed_b601.config import (
-    B601_JOINTS,
-    B601_SOURCE,
-    b601_hardware,
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import coordinator_seeed_b601_dm
+from dimos.robot.manipulators.seeed_b601_dm.config import (
+    B601_DM_JOINTS,
+    B601_DM_SOURCE,
+    b601_dm_hardware,
 )
-from dimos.robot.manipulators.seeed_b601.coordinator import B601Coordinator
+from dimos.robot.manipulators.seeed_b601_dm.coordinator import B601DMCoordinator
 
 
 def test_mock_blueprint_imports_without_motor_sdk_or_asset_checkout() -> None:
@@ -40,9 +40,9 @@ def test_mock_blueprint_imports_without_motor_sdk_or_asset_checkout() -> None:
 import sys
 sys.modules['can_motor_control'] = None
 sys.modules['motorbridge'] = None
-from dimos.robot.manipulators.seeed_b601.blueprints.basic import coordinator_seeed_b601
-from dimos.robot.manipulators.seeed_b601.config import b601_hardware
-assert b601_hardware().adapter_type == 'mock_whole_body'
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import coordinator_seeed_b601_dm
+from dimos.robot.manipulators.seeed_b601_dm.config import b601_dm_hardware
+assert b601_dm_hardware().adapter_type == 'mock_whole_body'
 """,
         ],
         capture_output=True,
@@ -53,7 +53,7 @@ assert b601_hardware().adapter_type == 'mock_whole_body'
 
 
 def test_mock_gripper_command_holds_arm_state() -> None:
-    component = b601_hardware()
+    component = b601_dm_hardware()
     adapter = whole_body_adapter_registry.create(component.adapter_type, dof=7)
     try:
         assert adapter.connect()
@@ -73,41 +73,41 @@ def test_mock_gripper_command_holds_arm_state() -> None:
 
 
 def test_physical_component_uses_common_runtime_config() -> None:
-    component = b601_hardware(
+    component = b601_dm_hardware(
         can_port="test-can",
         gripper_opening_direction="increasing_position",
         gripper_current=0.1,
     )
-    assert component.adapter_type == "seeed_b601"
+    assert component.adapter_type == "seeed_b601_dm"
     assert component.address is None
-    assert component.joints == list(B601_JOINTS)
+    assert component.joints == list(B601_DM_JOINTS)
     runtime = component.adapter_kwargs["runtime_config"]
     assert isinstance(runtime, DamiaoRuntimeConfig)
-    assert runtime.bus_devices == {"b601": "test-can"}
+    assert runtime.bus_devices == {"b601_dm": "test-can"}
     assert not runtime.gravity_comp
-    assert B601_SOURCE.ref == "8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af"
+    assert B601_DM_SOURCE.ref == "8494bdfa91f4e3712bb7e7743e7bbcc63b01b9af"
 
 
 def test_physical_requires_explicit_gripper_settings() -> None:
     with pytest.raises(ValueError, match="requires gripper"):
-        b601_hardware(can_port="test-can")
+        b601_dm_hardware(can_port="test-can")
     with pytest.raises(ValueError, match="must not be empty"):
-        b601_hardware(can_port="")
+        b601_dm_hardware(can_port="")
 
 
 def test_coordinator_uses_mock_and_registers_both_tasks() -> None:
-    parsed = BlueprintConfigParser(coordinator_seeed_b601).parse([], environ={})
-    coordinator = B601Coordinator(**parsed.module_kwargs("ControlCoordinator"))
+    parsed = BlueprintConfigParser(coordinator_seeed_b601_dm).parse([], environ={})
+    coordinator = B601DMCoordinator(**parsed.module_kwargs("ControlCoordinator"))
     try:
         coordinator._setup_from_config()
-        assert list(coordinator._hardware["b601"].read_state()) == list(B601_JOINTS)
-        assert list(coordinator._tasks) == ["joint_trajectory", "b601_gripper"]
+        assert list(coordinator._hardware["b601_dm"].read_state()) == list(B601_DM_JOINTS)
+        assert list(coordinator._tasks) == ["joint_trajectory", "b601_dm_gripper"]
     finally:
         coordinator.stop()
 
 
 def test_cli_exposes_common_can_and_explicit_gripper_settings() -> None:
-    parsed = BlueprintConfigParser(coordinator_seeed_b601).parse(
+    parsed = BlueprintConfigParser(coordinator_seeed_b601_dm).parse(
         [
             "--can-port",
             "test-can",
