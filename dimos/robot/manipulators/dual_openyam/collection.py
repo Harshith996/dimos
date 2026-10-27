@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Modules for dual OpenYAM data collection: the scaled teleop and the recorder."""
+"""Recorders for dual OpenYAM data collection."""
 
 from dimos.core.stream import In
 from dimos.imitation.collection.recorder import CollectionRecorder
@@ -20,30 +20,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.webxr.controller_types import Buttons, Hand
-from dimos.teleop.webxr.extensions import ArmTeleopModule
-
-DUAL_OPENYAM_COLLECTION_MOTION_SCALE = 0.75
-
-
-def scale_controller_pose(pose: PoseStamped, scale: float) -> PoseStamped:
-    """The same pose with its position scaled about the headset origin."""
-    return PoseStamped(
-        position=pose.position * scale,
-        orientation=pose.orientation,
-        ts=pose.ts,
-        frame_id=pose.frame_id,
-    )
-
-
-class DualOpenYamCollectionTeleopModule(ArmTeleopModule):
-    """ArmTeleopModule whose controller positions are scaled for a slower arm."""
-
-    def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
-        pose = super()._get_output_pose(hand)
-        if pose is None:
-            return None
-        return scale_controller_pose(pose, DUAL_OPENYAM_COLLECTION_MOTION_SCALE)
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 class DualOpenYamCollectionRecorder(CollectionRecorder):
