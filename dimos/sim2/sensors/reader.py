@@ -31,7 +31,9 @@ class WorldReader:
     def __init__(self, description: dict[str, Any]) -> None:
         self.model = mujoco.MjModel.from_binary_path(description["model"])
         self.data = mujoco.MjData(self.model)
-        self.channel = SimStream.attach(StreamDescriptor.from_dict(description["snapshot"]))
+        self.channel: SimStream[StateFrame] = SimStream.attach(
+            StreamDescriptor.from_dict(description["snapshot"])
+        )
         self.sequence = -1
         self.timestamp = 0.0
         self.episode = -1

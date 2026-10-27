@@ -25,23 +25,33 @@ from collections import deque
 from dataclasses import replace
 import threading
 import time
-from typing import Any
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.core.transport import pZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.sim2.messages import FrameMetadata, Lifecycle, MotorFrame, StateFrame, StreamDescriptor
+from dimos.sim2.messages import (
+    FrameMetadata,
+    Lifecycle,
+    MotorFrame,
+    RobotFeedback,
+    StateFrame,
+    StreamDescriptor,
+)
+
+_State = TypeVar("_State", StateFrame, RobotFeedback)
 
 
-class SimStream:
+class SimStream(Generic[_State]):
     def __init__(self, descriptor: StreamDescriptor, *, owner: bool) -> None:
         self.descriptor = descriptor
         self._owner = owner
         self._lock = threading.RLock()
-        self._history: deque[StateFrame] = deque(maxlen=descriptor.observation_slots)
+        self._history: deque[_State] = deque(maxlen=descriptor.observation_slots)
         self._action: MotorFrame | None = None
         self._lifecycle: Lifecycle = "starting"
         self._episode = 0
@@ -50,9 +60,10 @@ class SimStream:
         self._action_sequence = 0
         self._writer: str | None = None
         self._writer_until = 0.0
+        self._damping: NDArray[np.float64] | None = None
         self._token = uuid4().hex
         self._closed = False
-        self._state: pZenohTransport[StateFrame] = pZenohTransport(
+        self._state: pZenohTransport[_State] = pZenohTransport(
             Topic(f"{descriptor.topic}/state", qos=QOS_LATEST_WINS)
         )
         self._commands: pZenohTransport[MotorFrame] = pZenohTransport(
@@ -67,6 +78,7 @@ class SimStream:
                 self._commands.subscribe(self._accept_command)
                 self._rpc.serve_rpc(self._attach, f"{descriptor.topic}/attach")
                 self._rpc.serve_rpc(self._release, f"{descriptor.topic}/release")
+                self._rpc.serve_rpc(self._halt, f"{descriptor.topic}/halt")
             else:
                 self._state.subscribe(self._receive)
         except BaseException:
@@ -74,13 +86,13 @@ class SimStream:
             raise
 
     @classmethod
-    def create(cls, descriptor: StreamDescriptor) -> SimStream:
+    def create(cls, descriptor: StreamDescriptor) -> SimStream[_State]:
         return cls(descriptor, owner=True)
 
     @classmethod
     def attach(
         cls, descriptor: StreamDescriptor, *, writable: bool = False, timeout: float = 30
-    ) -> SimStream:
+    ) -> SimStream[_State]:
         stream = cls(descriptor, owner=False)
         try:
             frames, unsub = stream._rpc.call_sync(
@@ -97,7 +109,7 @@ class SimStream:
             stream.close()
             raise
 
-    def _attach(self, fingerprint: str, writer: str | None) -> tuple[StateFrame, ...]:
+    def _attach(self, fingerprint: str, writer: str | None) -> tuple[_State, ...]:
         with self._lock:
             if fingerprint != self.descriptor.fingerprint:
                 raise ValueError("sim2 stream descriptor mismatch")
@@ -121,6 +133,35 @@ class SimStream:
                 self._writer = None
                 self._action = None
 
+    def _halt(self, writer: str, damping: list[float]) -> None:
+        gains = np.asarray(damping, dtype=np.float64)
+        if (
+            gains.shape != (self.descriptor.dof,)
+            or not np.isfinite(gains).all()
+            or np.any(gains < 0)
+        ):
+            raise ValueError("damping requires one finite nonnegative gain per motor")
+        if any(mode != "effort" for mode in self.descriptor.actuator_modes):
+            raise ValueError("damping requires effort-controlled motors")
+        with self._lock:
+            if writer != self._writer:
+                raise PermissionError("only the command owner can halt this robot")
+            self._damping = gains
+            self._action = None
+
+    def halt(self, damping: list[float]) -> None:
+        if self._writer is None:
+            raise PermissionError("sim2 client is read-only")
+        _, unsub = self._rpc.call_sync(
+            f"{self.descriptor.topic}/halt", ([self._token, damping], {})
+        )
+        unsub()
+
+    @property
+    def damping(self) -> NDArray[np.float64] | None:
+        with self._lock:
+            return None if self._damping is None else self._damping.copy()
+
     @property
     def lifecycle(self) -> Lifecycle:
         return self._lifecycle
@@ -141,9 +182,9 @@ class SimStream:
             self._lifecycle = state
             frame = self._history[-1] if self._history else None
         if frame is not None:
-            self.publish_observation(frame.values, frame.metadata)
+            self.publish_observation(frame)
 
-    def _receive(self, frame: StateFrame) -> None:
+    def _receive(self, frame: _State) -> None:
         with self._lock:
             if self._history and frame.metadata.sequence <= self._history[-1].metadata.sequence:
                 return
@@ -164,6 +205,7 @@ class SimStream:
         with self._lock:
             if (
                 self._closed
+                or self._damping is not None
                 or self._lifecycle != "ready"
                 or frame.writer != self._writer
                 or frame.metadata.episode_id != self._episode
@@ -210,14 +252,14 @@ class SimStream:
         self._commands.broadcast(None, frame)
         return self._action_sequence
 
-    def publish_observation(self, values: dict[str, Any], metadata: FrameMetadata) -> int:
+    def publish_observation(self, observation: _State) -> int:
         with self._lock:
             self._sequence += 1
-            frame = StateFrame(
-                replace(metadata, sequence=self._sequence),
-                {k: np.asarray(v, dtype=np.float64).copy() for k, v in values.items()},
-                self._lifecycle,
-                self._reset_at,
+            frame = replace(
+                observation,
+                metadata=replace(observation.metadata, sequence=self._sequence),
+                lifecycle=self._lifecycle,
+                reset_at=self._reset_at,
             )
             self._receive(frame)
         self._state.broadcast(None, frame)
@@ -227,11 +269,11 @@ class SimStream:
         with self._lock:
             return self._action
 
-    def read_observation(self) -> StateFrame | None:
+    def read_observation(self) -> _State | None:
         with self._lock:
             return self._history[-1] if self._history else None
 
-    def read_observations(self) -> tuple[StateFrame, ...]:
+    def read_observations(self) -> tuple[_State, ...]:
         with self._lock:
             return tuple(self._history)
 
