@@ -22,6 +22,8 @@ export type LaunchState =
   /** A gateway of another build. Its state values carry no schema on the wire, so a shape change would go unnoticed. */
   | { readonly kind: "other_build"; readonly process: GatewayProcess }
   | { readonly kind: "stopped" }
+  /** No socket yet, but `ensureGateway` holds a fresh `<socket>.starting`: a gateway is loading its packages. */
+  | { readonly kind: "starting" }
   /** A socket file with nothing answering, as a killed gateway leaves; `status` reports it instead of hanging. */
   | { readonly kind: "stale_socket" }
   /** A process accepts connections on the socket but held no Lifecycle in time: a gateway still opening its store, or a hung one. */
@@ -38,6 +40,19 @@ const EXIT_WAIT_MS = 30_000;
 async function exists(path: string): Promise<boolean> {
   return stat(path).then(
     () => true,
+    () => false,
+  );
+}
+
+/** The directory `ensureGateway` holds from before it spawns a gateway until that gateway serves. */
+function startLock(paths: AgentPaths): string {
+  return `${paths.socket}.starting`;
+}
+
+/** Whether `ensureGateway` holds the start lock; one older than 30 s was left by a starter that died. */
+async function startLockHeld(lock: string): Promise<boolean> {
+  return stat(lock).then(
+    (info) => Date.now() - info.mtimeMs <= LOCK_STALE_MS,
     () => false,
   );
 }
@@ -93,7 +108,8 @@ async function openLifecycle(paths: AgentPaths, timeoutMs: number): Promise<Life
 
 /** The gateway as seen from outside it, with a bounded connect so a stale socket never hangs the CLI. */
 export async function gatewayState(paths: AgentPaths, timeoutMs: number): Promise<LaunchState> {
-  if (!(await exists(paths.socket))) return { kind: "stopped" };
+  if (!(await exists(paths.socket)))
+    return (await startLockHeld(startLock(paths))) ? { kind: "starting" } : { kind: "stopped" };
   if (!(await reachable(paths.socket, timeoutMs))) return { kind: "stale_socket" };
   const lifecycle = await openLifecycle(paths, timeoutMs);
   if (lifecycle === null) return { kind: "not_answering" };
@@ -125,6 +141,7 @@ async function waitUntilServing(paths: AgentPaths, spawned: ChildProcess | null,
         accepted = true;
         break;
       case "stopped":
+      case "starting":
       case "stale_socket":
         if (accepted) throw new Error(failure);
     }
@@ -146,12 +163,8 @@ export async function ensureGateway(
 ): Promise<void> {
   const held = `The gateway on ${paths.socket} did not answer; read ${paths.logFile}, or find what holds the socket with \`ss -xlp\`.`;
   if (await reachable(paths.socket, 500)) return waitUntilServing(paths, null, held);
-  const lock = `${paths.socket}.starting`;
-  const lockAge = await stat(lock).then(
-    (info) => Date.now() - info.mtimeMs,
-    () => null,
-  );
-  if (lockAge !== null && lockAge > LOCK_STALE_MS) await rm(lock, { recursive: true, force: true });
+  const lock = startLock(paths);
+  if (!(await startLockHeld(lock))) await rm(lock, { recursive: true, force: true });
   await mkdir(dirname(paths.socket), { recursive: true, mode: 0o700 });
   try {
     await mkdir(lock, { mode: 0o700 });
@@ -185,6 +198,8 @@ export async function stopGateway(paths: AgentPaths): Promise<"stopped" | "not_r
   switch (state.kind) {
     case "stopped":
       return "not_running";
+    case "starting":
+      throw new Error(`A gateway is starting (${startLock(paths)}); run \`dimos agent stop\` again once it answers.`);
     case "stale_socket":
       await unlink(paths.socket).catch(() => {});
       return "not_running";

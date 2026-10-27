@@ -48,6 +48,7 @@ export const runStatus: Command = async ({ paths, json }) => {
   if (state.kind !== "running") {
     const words = {
       stopped: "not running",
+      starting: "starting",
       stale_socket: `not running; a stale ${paths.socket} is left`,
       not_answering: `a process holds ${paths.socket} but does not answer`,
     }[state.kind];
