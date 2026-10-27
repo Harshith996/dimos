@@ -58,8 +58,8 @@ dimos run teleop-dual-openyam-leader --port-left /dev/ttyACM0 --port-right /dev/
 ```
 
 Split deployment, leaders with the operator and the follower on the robot
-(zenoh router on the robot, `DIMOS_OPENYAM_ROUTER` defaults to
-`tcp/127.0.0.1:7447`):
+(zenoh router on the robot; the follower dials `tcp/127.0.0.1:7447`, override with
+`--zenoh-connect`; expose Viser with `--manipulationmodule.visualization.host`):
 
 ```bash
 # robot

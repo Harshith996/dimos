@@ -100,7 +100,7 @@ def test_follower_blueprint_dials_the_router_and_takes_can_ports() -> None:
     assert _types(blueprint) == [DualOpenYamCoordinator, ManipulationModule]
     assert blueprint.global_config_overrides["zenoh_connect"] == leader_teleop.DUAL_OPENYAM_ROUTER
     assert leader_teleop.DUAL_OPENYAM_ROUTER == "tcp/127.0.0.1:7447"
-    assert _kwargs(blueprint, ManipulationModule)["visualization"].host == "0.0.0.0"
+    assert _kwargs(blueprint, ManipulationModule)["visualization"].backend == "viser"
     parsed = BlueprintConfigParser(blueprint).parse(
         [
             "--controlcoordinator.left-can-port=follower_l",

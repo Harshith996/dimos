@@ -16,8 +16,6 @@
 
 from __future__ import annotations
 
-import os
-
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -52,8 +50,8 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
     }
 
 
-# Named, not scouted.
-DUAL_OPENYAM_ROUTER = os.environ.get("DIMOS_OPENYAM_ROUTER", "tcp/127.0.0.1:7447")
+# Named, not scouted; the operator machine overrides it with --zenoh-connect.
+DUAL_OPENYAM_ROUTER = "tcp/127.0.0.1:7447"
 
 
 def dual_openyam_leader_tasks() -> list[TaskConfig]:
@@ -110,6 +108,6 @@ teleop_dual_openyam_leader_operator = YamLeaderTeleopModule.blueprint().global_c
     zenoh_mode="client", serve_coordinator_rpc=False
 )
 
-teleop_dual_openyam_leader_follower = _follower(
-    ViserVisualizationConfig(host="0.0.0.0")
-).global_config(zenoh_connect=DUAL_OPENYAM_ROUTER)
+teleop_dual_openyam_leader_follower = _follower(ViserVisualizationConfig()).global_config(
+    zenoh_connect=DUAL_OPENYAM_ROUTER
+)
