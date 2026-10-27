@@ -19,8 +19,8 @@ from typing import Any
 from dimos_cdrgen.registry import encode as encode_cdr
 import pytest
 
+from dimos.messages.geometry_msgs.msg import Vector3
 from dimos.messages.std_msgs.msg import Int32, String
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 from dimos.protocol.pubsub.encoders import MessageEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory, MemoryWithJSONEncoder
@@ -197,7 +197,7 @@ def test_message_encoder_publish_subscribe_and_unsubscribe(message):
     unsubscribe = pubsub.subscribe(topic, lambda value, topic: received.append(value))
     try:
         pubsub.publish(topic, message)
-        expected = message.lcm_encode() if isinstance(message, Vector3) else encode_cdr(message)
+        expected = encode_cdr(message)
         assert wire == [expected]
         assert received == [message]
         assert type(received[0]) is type(message)

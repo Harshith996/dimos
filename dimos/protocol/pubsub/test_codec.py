@@ -18,9 +18,8 @@ import pickle
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Vector3 as CDRVector3
+from dimos.messages.geometry_msgs.msg import Vector3
 from dimos.messages.std_msgs.msg import Int32, String
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, _key_expr_to_topic
@@ -36,20 +35,16 @@ def test_cdr_rejects_invalid_payload_without_fallback(payload):
 
 @pytest.mark.parametrize(
     "declared,message",
-    [(Int32, String("wrong")), (Vector3, CDRVector3(1, 2, 3)), (CDRVector3, Vector3(1, 2, 3))],
+    [(Int32, String("wrong")), (Vector3, String("wrong")), (String, Vector3(1, 2, 3))],
 )
 def test_codec_rejects_wrong_declared_type(declared, message):
     with pytest.raises(TypeError, match="declared type"):
         describe_message(declared).codec.encode(message)
 
 
-def test_unsupported_and_ambiguous_types_fail_at_binding(monkeypatch):
+def test_unsupported_types_fail_at_binding():
     with pytest.raises(TypeError, match="Unsupported"):
         Topic("test", message_type=dict)
-    monkeypatch.setattr(Int32, "lcm_encode", lambda self: b"", raising=False)
-    monkeypatch.setattr(Int32, "lcm_decode", lambda data: None, raising=False)
-    with pytest.raises(TypeError, match="Ambiguous"):
-        Topic("test", message_type=Int32)
 
 
 @pytest.mark.parametrize("topic_type", [Topic, ZenohTopic])
@@ -62,8 +57,8 @@ def test_generic_and_legacy_constructor_names_are_compatible(topic_type):
 
 
 def test_legacy_channel_names_and_plain_cdr_topics():
-    assert str(Topic("test", Vector3)) == "test#geometry_msgs.Vector3"
-    assert ZenohTopic("test", Vector3).key_expr == "test/geometry_msgs.Vector3"
+    assert str(Topic("test", Vector3)) == "test"
+    assert ZenohTopic("test", Vector3).key_expr == "test"
     cdr = Topic("test", message_type=Int32)
     assert str(cdr) == "test"
     assert Topic.from_channel_str(str(cdr), Int32) == cdr
