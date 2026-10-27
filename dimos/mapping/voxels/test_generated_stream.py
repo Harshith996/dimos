@@ -33,7 +33,6 @@ from dimos.message_utils import pointcloud, time as message_time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyCloud
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers
 
@@ -58,7 +57,11 @@ def test_array_input_matches_legacy_voxel_ingestion(carve):
             ([[0.025, 0.025, 0.025], [0.075, 0.025, 0.025]], [[0.025, 0.025, 0.125]])
         ):
             values = np.array(points, dtype=np.float32)
-            old.add_frame(LegacyCloud.from_numpy(values, timestamp=index))
+            old.add_frame(
+                pointcloud.from_xyz(
+                    values, header=Header(stamp=message_time.time_from_seconds(index), frame_id="")
+                )
+            )
             new.add_points(values, timestamp=index)
         assert keys(old.get_global_pointcloud().point["positions"].numpy()) == keys(
             new.get_global_pointcloud().point["positions"].numpy()

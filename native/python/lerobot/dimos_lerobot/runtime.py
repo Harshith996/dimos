@@ -47,9 +47,8 @@ from dimos.imitation.policy.lerobot.module import (
 )
 from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import UInt32
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.messages.std_msgs.msg import Header, UInt32
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -511,21 +510,27 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     ) -> JointTrajectory:
         zeros = [0.0] * len(self.config.joint_names)
         points = [
-            TrajectoryPoint(
-                positions=[float(value) for value in state],
-                velocities=zeros,
-                time_from_start=0.0,
+            JointTrajectoryPoint(
+                positions=np.asarray(state, dtype=np.float64),
+                velocities=np.asarray(zeros, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
             )
         ]
         points.extend(
-            TrajectoryPoint(
-                positions=[float(value) for value in action],
-                velocities=zeros,
-                time_from_start=(index + 1) / self.config.fps,
+            JointTrajectoryPoint(
+                positions=np.asarray(action, dtype=np.float64),
+                velocities=np.asarray(zeros, dtype=np.float64),
+                accelerations=np.array([], dtype=np.float64),
+                effort=np.array([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds((index + 1) / self.config.fps),
             )
             for index, action in enumerate(actions)
         )
-        return JointTrajectory(joint_names=list(self.config.joint_names), points=points)
+        return JointTrajectory(
+            header=Header(message_time.time_from_seconds(0.0), ""), joint_names=list(self.config.joint_names), points=points
+        )
 
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:
         with self._observation_changed:

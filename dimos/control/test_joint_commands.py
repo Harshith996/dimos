@@ -18,6 +18,7 @@ from contextlib import ExitStack
 import threading
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, JointState as JointReading
@@ -25,8 +26,9 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 
 def make_loop(callback):
@@ -73,11 +75,12 @@ def test_intended_subset_matches_dispatch_even_on_failure(mode, result):
     hardware.write_command.assert_called_once_with(values, mode)
     (message,) = messages
     assert message.name == ["arm/joint1", "arm/gripper"]
-    assert message.position == [1.2, 600.0]
-    assert message.velocity == message.effort == []
-    assert (message.ts, message.frame_id) == (123.25, "robot")
-    decoded = JointState.lcm_decode(message.lcm_encode())
-    assert (decoded.name, decoded.position, decoded.ts) == (message.name, message.position, 123.25)
+    assert list(message.position) == [1.2, 600.0]
+    assert list(message.velocity) == list(message.effort) == []
+    assert (message_time.to_seconds(message.header.stamp), message.header.frame_id) == (
+        123.25,
+        "robot",
+    )
 
 
 @pytest.mark.parametrize(
@@ -119,10 +122,10 @@ def test_subscriber_failure_does_not_suppress_measured_state():
         with patch("dimos.control.tick_loop.time.time", side_effect=[100.0, 200.0]):
             with patch("dimos.control.tick_loop.logger.exception") as log_error:
                 tick._tick()
-    assert commands[0].position == [1.2]
-    assert commands[0].ts == 200.0
-    assert measured[0].position == [-99.0]
-    assert measured[0].ts == 100.0
+    assert list(commands[0].position) == [1.2]
+    assert message_time.to_seconds(commands[0].header.stamp) == 200.0
+    assert list(measured[0].position) == [-99.0]
+    assert message_time.to_seconds(measured[0].header.stamp) == 100.0
     hardware.write_command.assert_called_once()
     log_error.assert_called_once()
 
@@ -134,11 +137,19 @@ def test_coordinator_wires_joint_state_command_output(mocker):
     with ExitStack() as cleanup:
         cleanup.callback(coordinator.stop)
         coordinator.start()
-        assert coordinator.coordinator_joint_command.type is CdrJointState
+        assert coordinator.coordinator_joint_command.type is JointState
         callback = tick_cls.call_args.kwargs["publish_command_callback"]
-        callback(JointState(ts=12.5, frame_id="arm", name=["joint1"], position=[1.2]))
+        callback(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(12.5), frame_id="arm"),
+                name=["joint1"],
+                position=np.asarray([1.2], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
         command = publish.call_args.args[0]
-        assert type(command) is CdrJointState
+        assert type(command) is JointState
         assert command.name == ["joint1"]
         assert command.position.tolist() == [1.2]
         assert (command.header.stamp.sec, command.header.stamp.nanosec) == (12, 500000000)

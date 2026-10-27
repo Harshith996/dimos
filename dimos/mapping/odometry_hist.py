@@ -26,15 +26,12 @@ from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.nav_msgs.msg import Odometry, Path
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 from dimos.visualization.rerun.cdr import path_archetype
 
 
-def path_at_true_height(path: Path | LegacyPath) -> Any:
+def path_at_true_height(path: Path) -> Any:
     """The default z lift clears a costmap a bare odometry demo has none of."""
-    if isinstance(path, Path):
-        return path_archetype(path, z_offset=0.0, radii=0.02)
-    return path.to_rerun(z_offset=0.0, radii=0.02)
+    return path_archetype(path, z_offset=0.0, radii=0.02)
 
 
 class OdometryHistConfig(ModuleConfig):

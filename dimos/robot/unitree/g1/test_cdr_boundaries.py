@@ -21,7 +21,6 @@ from functools import partial
 from threading import Condition, Event
 
 import numpy as np
-import open3d as o3d
 import pytest
 from reactivex import Subject
 
@@ -29,15 +28,12 @@ from dimos.core.module import Module
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image, pointcloud
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
-from dimos.msgs.driver import transform_message
-from dimos.msgs.sensor_msgs.Image import Image as DriverImage, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as DriverCloud
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher, mount_transforms
 from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.odometry import Odometry
 
 
 def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mocker):
@@ -70,20 +66,19 @@ def test_simulated_sensor_and_drive_ports_use_cdr_without_launching_simulator(mo
             if name in module.outputs:
                 cleanup.callback(wire.subscribe(partial(receive, name)))
         module.start()
-        pose = Odometry(
-            ts=0.0, frame_id="world", position=[1.0, 2.0, 3.0], orientation=[0, 0, 0, 1]
+        pose = PoseStamped(
+            Header(Time(0, 0), "world"), Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
         )
         odom.on_next(pose)
         points = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
         colors = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float64)
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        pcd.colors = o3d.utility.Vector3dVector(colors)
-        source_cloud = DriverCloud(pcd, ts=0.0)
+        source_cloud = pointcloud.from_xyz_rgb(
+            points, (colors * 255).astype(np.uint8), header=Header(Time(0, 0), "")
+        )
         clouds.on_next(source_cloud)
         pixels = np.full((2, 3, 3), [255, 0, 0], dtype=np.uint8)
         images.on_next(
-            DriverImage(data=pixels, format=ImageFormat.RGB, ts=0.0, frame_id="camera_optical")
+            image.from_array(pixels, encoding="rgb8", header=Header(Time(0, 0), "camera_optical"))
         )
         with condition:
             assert condition.wait_for(lambda: len(received) == 5, timeout=5)
@@ -154,7 +149,9 @@ async def test_mount_publisher_emits_canonical_transforms_with_one_exact_epoch_s
         cleanup.callback(wire.subscribe(receive))
         await asyncio.wait_for(publisher._publish_loop(), timeout=2)
         assert len(received) == 1
-        expected = [transform_message(v, Time(1_789_654_321, 1)) for v in mount_transforms()]
+        expected = mount_transforms()
+        for value in expected:
+            value.header.stamp = Time(1_789_654_321, 1)
         assert received[0].transforms == expected
         snapshot = deepcopy(received[0])
         received[0].transforms[0].header.frame_id = "modified"

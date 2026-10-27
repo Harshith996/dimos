@@ -23,20 +23,18 @@ from reactivex import Observable, Subject
 from dimos.core.global_config import TransportBackend
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.message_utils import camera_info, time as message_time
 from dimos.messages.geometry_msgs.msg import (
-    PoseStamped as CdrPoseStamped,
+    PoseStamped,
     Quaternion,
     Transform,
     TransformStamped,
+    Twist,
     Vector3,
 )
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.dimsim.dimsim_process import DimSimProcess
 from dimos.utils.logging_config import setup_logger
@@ -52,21 +50,19 @@ _FIRST_ODOM_TIMEOUT = 30.0
 
 
 class DimSimConnection:
-    camera_info_static: CameraInfo = CameraInfo.from_fov(
-        fov_deg=_FOV_DEG,
+    camera_info_static: CameraInfo = camera_info.from_fov(
+        fov_degrees=_FOV_DEG,
         width=_WIDTH,
         height=_HEIGHT,
         axis="horizontal",
-        frame_id="camera_optical",
+        header=message_time.header_now("camera_optical"),
     )
 
     def __init__(self, config: DimSimConfig, *, transport: TransportBackend) -> None:
         self.config = config
         self._transport_backend = transport
         self._dimsim_process: DimSimProcess = DimSimProcess(config)
-        self._odom_transport: PubSubTransport[CdrPoseStamped] = make_transport(
-            "/odom", CdrPoseStamped
-        )
+        self._odom_transport: PubSubTransport[PoseStamped] = make_transport("/odom", PoseStamped)
         self._tf_transport: PubSubTransport[TFMessage] = make_transport("/tf", TFMessage)
         self._unsubscribe_odom: Callable[[], None] | None = None
         self._first_odom = threading.Event()
@@ -145,12 +141,12 @@ class DimSimConnection:
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}
 
-    def _handle_odom(self, msg: CdrPoseStamped) -> None:
+    def _handle_odom(self, msg: PoseStamped) -> None:
         self._first_odom.set()
         self._tf_transport.publish(TFMessage(_odom_to_tf(msg)))
 
 
-def _odom_to_tf(odom: CdrPoseStamped) -> list[TransformStamped]:
+def _odom_to_tf(odom: PoseStamped) -> list[TransformStamped]:
     """Keep the existing world/base/camera/lidar mounts with exact source time."""
     stamp = odom.header.stamp
     p, q = odom.pose.position, odom.pose.orientation

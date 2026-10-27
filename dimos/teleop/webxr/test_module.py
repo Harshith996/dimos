@@ -24,6 +24,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+import time
 from typing import Any, cast
 
 from dimos_cdrgen.registry import decode, encode
@@ -43,15 +44,12 @@ from dimos.message_utils import image, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import (
     Point,
-    Pose as CdrPose,
-    PoseStamped as CdrPoseStamped,
+    Pose,
+    PoseStamped,
     Quaternion,
 )
-from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
-from dimos.messages.std_msgs.msg import Header, UInt32
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import Header, String, UInt32
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -69,20 +67,8 @@ from dimos.teleop.webxr.module import STATIC_DIR, WebXRTeleopModule, _ws_send_te
 from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 
 
-def _wire_message(message):
-    header = Header(message_time.time_from_seconds(message.ts), message.frame_id)
-    if isinstance(message, Joy):
-        return CdrJoy(
-            header,
-            np.asarray(message.axes, dtype=np.float32),
-            np.asarray(message.buttons, dtype=np.int32),
-        )
-    p, q = message.position, message.orientation
-    return CdrPoseStamped(header, CdrPose(Point(*p), Quaternion(*q)))
-
-
 def _command_frame(channel, message):
-    generated = _wire_message(message)
+    generated = message
     return encode_data_frame(
         FrameHeader(
             ch=channel,
@@ -240,7 +226,13 @@ def test_build_subscribes_to_episode_status(
 def test_unknown_joy_controller_identity_is_rejected(
     module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
 ) -> None:
-    payload = encode(_wire_message(Joy(ts=1.0, frame_id="unknown", axes=[], buttons=[])))
+    payload = encode(
+        Joy(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="unknown"),
+            axes=np.asarray([], dtype=np.float32),
+            buttons=np.asarray([], dtype=np.int32),
+        )
+    )
 
     with pytest.raises(ValueError, match="Unexpected frame_id"):
         module._on_joy_bytes(payload)
@@ -614,13 +606,12 @@ def test_go2_accepts_pico_six_button_joystick(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
-        ts=1.0,
-        frame_id="left",
-        axes=[0.25, -0.75, 0.0, 0.0],
-        buttons=[0, 0, 0, 0, 0, 0],
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="left"),
+        axes=np.asarray([0.25, -0.75, 0.0, 0.0], dtype=np.float32),
+        buttons=np.asarray([0, 0, 0, 0, 0, 0], dtype=np.int32),
     )
     try:
-        assert module._on_joy_bytes(encode(_wire_message(joy))) is True
+        assert module._on_joy_bytes(encode(joy)) is True
 
         twist = publish.call_args.args[0]
         assert twist.linear.x == pytest.approx(0.75 * module.config.linear_speed)
@@ -636,14 +627,13 @@ def test_go2_rejects_short_controller_packet_safely(
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
     joy = Joy(
-        ts=1.0,
-        frame_id="left",
-        axes=[0.25, -0.75, 0.0, 0.0],
-        buttons=[0, 0, 0, 0, 0],
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="left"),
+        axes=np.asarray([0.25, -0.75, 0.0, 0.0], dtype=np.float32),
+        buttons=np.asarray([0, 0, 0, 0, 0], dtype=np.int32),
     )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
-        assert module._on_joy_bytes(encode(_wire_message(joy))) is False
+        assert module._on_joy_bytes(encode(joy)) is False
 
         assert module._controllers[Hand.LEFT] is None
         publish.assert_called_once()
@@ -660,7 +650,13 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
 ) -> None:
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
-    payload = encode(_wire_message(Joy(ts=1.0, frame_id="left", axes=[], buttons=[])))
+    payload = encode(
+        Joy(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="left"),
+            axes=np.asarray([], dtype=np.float32),
+            buttons=np.asarray([], dtype=np.int32),
+        )
+    )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
         assert module._on_joy_bytes(payload) is False
@@ -697,7 +693,13 @@ def test_go2_unknown_controller_identity_publishes_zero_velocity(
 ) -> None:
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
-    payload = encode(_wire_message(Joy(ts=1.0, frame_id="unknown", axes=[], buttons=[])))
+    payload = encode(
+        Joy(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="unknown"),
+            axes=np.asarray([], dtype=np.float32),
+            buttons=np.asarray([], dtype=np.int32),
+        )
+    )
     module._controllers[Hand.LEFT] = WebXRControllerState(thumbstick=ThumbstickState(y=-1.0))
     try:
         with pytest.raises(ValueError, match="Unexpected frame_id"):
@@ -758,7 +760,10 @@ def test_binary_pose_dispatch_remains_on_existing_decoder(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     body_publish = mocker.patch.object(module.body_tracking, "publish")
-    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+    pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="left"),
+        pose=Pose(position=Point(1.0, 2.0, 3.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
 
     accepted = module._dispatch_binary_message(_command_frame("pose", pose))
 
@@ -780,16 +785,22 @@ def test_unknown_binary_message_is_dropped(
 
 
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:
-    module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
-    module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
+    module._initial_poses[Hand.RIGHT] = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(1.0, 2.0, 3.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
+    module._current_poses[Hand.RIGHT] = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(1.2, 1.5, 4.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
 
     module._set_translation_scale(2.0)
 
     output = module._get_output_pose(Hand.RIGHT)
     assert output is not None
-    assert output.position.x == pytest.approx(0.4)
-    assert output.position.y == pytest.approx(-1.0)
-    assert output.position.z == pytest.approx(2.0)
+    assert output.pose.position.x == pytest.approx(0.4)
+    assert output.pose.position.y == pytest.approx(-1.0)
+    assert output.pose.position.z == pytest.approx(2.0)
 
 
 @pytest.mark.parametrize("translation_scale", [0.0, -1.0, float("inf")])
@@ -805,9 +816,15 @@ def test_translation_scale_must_be_positive_and_finite(
 def test_arm_teleop_publishes_absolute_controller_pose() -> None:
     module = ArmTeleopModule()
     try:
-        pose = PoseStamped(frame_id="left", position=[1.0, 2.0, 3.0])
+        pose = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="left"),
+            pose=Pose(position=Point(1.0, 2.0, 3.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
         module._current_poses[Hand.LEFT] = pose
-        module._initial_poses[Hand.LEFT] = PoseStamped(position=[0.5, 0.5, 0.5])
+        module._initial_poses[Hand.LEFT] = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.5, 0.5, 0.5), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
 
         assert module._get_output_pose(Hand.LEFT) is pose
     finally:
@@ -818,7 +835,10 @@ def test_arm_teleop_publishes_pose_without_face_button_engagement() -> None:
     module = ArmTeleopModule()
     try:
         module._controllers[Hand.RIGHT] = WebXRControllerState(is_left=False)
-        module._current_poses[Hand.RIGHT] = PoseStamped(frame_id="right")
+        module._current_poses[Hand.RIGHT] = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="right"),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
 
         module._handle_engage()
 
@@ -922,8 +942,8 @@ def test_command_schemas_and_static_module_dependencies_are_available(module, mo
     app = _setup_test_app(module, mocker)
     with TestClient(app) as client:
         schemas = client.get("/teleop/schema").json()
-        assert schemas["pose"]["type"] == CdrPoseStamped.__msgtype__
-        assert schemas["joy"]["type"] == CdrJoy.__msgtype__
+        assert schemas["pose"]["type"] == PoseStamped.__msgtype__
+        assert schemas["joy"]["type"] == Joy.__msgtype__
         assert "MSG: std_msgs/Header" in schemas["pose"]["definition"]
         assert "MSG: builtin_interfaces/Time" in schemas["joy"]["definition"]
         for name in ("command_codec.mjs", "webxr_body.mjs"):
@@ -935,12 +955,15 @@ def test_command_schemas_and_static_module_dependencies_are_available(module, mo
     ["legacy", "wrong_type", "wrong_encoding", "truncated", "trailing", "bad_encapsulation"],
 )
 def test_noncanonical_command_frames_do_not_update_controller_state(module, change):
-    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+    pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="left"),
+        pose=Pose(position=Point(1.0, 2.0, 3.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
     frame = _command_frame("pose", pose)
     if change == "legacy":
-        frame = pose.lcm_encode()
+        frame = b"legacy LCM payload"
     elif change in ("wrong_type", "wrong_encoding"):
-        generated = _wire_message(pose)
+        generated = pose
         metadata = {"encoding": "cdr", "type": generated.__msgtype__}
         metadata["type" if change == "wrong_type" else "encoding"] = "wrong"
         frame = encode_data_frame(
@@ -948,7 +971,7 @@ def test_noncanonical_command_frames_do_not_update_controller_state(module, chan
             encode(generated),
         )
     elif change == "bad_encapsulation":
-        generated = _wire_message(pose)
+        generated = pose
         frame = encode_data_frame(
             FrameHeader(
                 ch="pose",
@@ -1043,8 +1066,8 @@ def test_browser_command_encoder_interoperates_with_python(module, mocker, tmp_p
         check=True,
     )
     pose_frame, joy_frame = [bytes(value) for value in json.loads(result.stdout)]
-    pose = decode(decode_data_frame(pose_frame).payload, CdrPoseStamped)
-    joy = decode(decode_data_frame(joy_frame).payload, CdrJoy)
+    pose = decode(decode_data_frame(pose_frame).payload, PoseStamped)
+    joy = decode(decode_data_frame(joy_frame).payload, Joy)
     assert pose.header.stamp.sec == 17
     assert pose.header.stamp.nanosec == 1
     assert pose.pose.position.x == 1.0
@@ -1091,8 +1114,8 @@ def test_control_loop_outputs_canonical_pose_and_buttons_with_exact_source_heade
             cleanup.callback(transport.subscribe(partial(receive, name)))
         cleanup.callback(module._stop_control_loop)
         header = Header(Time(1789654321, 1), "left")
-        pose = CdrPoseStamped(header, CdrPose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)))
-        joy = CdrJoy(
+        pose = PoseStamped(header, Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)))
+        joy = Joy(
             header,
             np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32),
             np.array([0, 0, 0, 0, 1, 0], dtype=np.int32),
@@ -1103,7 +1126,7 @@ def test_control_loop_outputs_canonical_pose_and_buttons_with_exact_source_heade
         with condition:
             assert condition.wait_for(lambda: len(received) == 2, timeout=5)
         value = received["left_controller_output"]
-        assert type(value) is CdrPoseStamped
+        assert type(value) is PoseStamped
         assert value.header == header
         assert value.header.stamp.nanosec == 1
         np.testing.assert_allclose(

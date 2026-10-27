@@ -64,20 +64,20 @@ def main(
     """Dump an AprilTag detection replay to .rrd and open it in rerun."""
     import rerun as rr
 
-    from dimos.mapping.cli.map import _camera_info_static
     from dimos.memory.cli.dataset import open_store, resolve_dataset
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
     from dimos.message_utils import image
     from dimos.messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
+    from dimos.robot.unitree.go2.calibration import front_camera_calibration
     from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype
 
     db_path = resolve_dataset(dataset)
     store = open_store(db_path)
     if out is None:
         out = Path.cwd() / f"{db_path.stem}.rrd"
-    cam_info = _camera_info_static()
+    cam_info = front_camera_calibration()
 
     rr.init("dimos markers", recording_id=db_path.stem)
     rr.save(str(out))

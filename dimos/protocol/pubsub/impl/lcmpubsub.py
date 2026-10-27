@@ -20,7 +20,6 @@ import re
 import threading
 from typing import Any
 
-from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 from dimos.protocol.pubsub.encoders import (
     MessageEncoderMixin,
@@ -72,13 +71,13 @@ class Topic:
         return f"{self.pattern}#{self.message.name}"
 
     @staticmethod
-    def from_channel_str(channel: str, default_lcm_type: type[DimosMsg] | None = None) -> Topic:
+    def from_channel_str(channel: str, default_lcm_type: type[Any] | None = None) -> Topic:
         """Create Topic from channel string.
 
         Channel format: /topic#module.ClassName
         Falls back to default_lcm_type if type cannot be parsed.
         """
-        from dimos.msgs.helpers import resolve_msg_type
+        from dimos.protocol.pubsub.message_types import resolve_message_type
 
         if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
             return Topic(channel, message_type=default_lcm_type)
@@ -87,7 +86,7 @@ class Topic:
             return Topic(topic=channel, lcm_type=default_lcm_type)
 
         topic_str, type_name = channel.rsplit("#", 1)
-        lcm_type = resolve_msg_type(type_name)
+        lcm_type = resolve_message_type(type_name)
         return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
 
 

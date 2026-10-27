@@ -21,7 +21,11 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils import geometry, occupancy, time as message_time
+from dimos.message_utils import (
+    geometry,
+    occupancy as occupancy_utils,
+    time as message_time,
+)
 from dimos.messages.geometry_msgs.msg import (
     Point,
     PointStamped,
@@ -124,12 +128,12 @@ def test_generated_replanning_attempts_reset_only_after_existing_distance_limit(
     "position,expected", [((0, 0), 0), ((1, 0), 100), ((2, 0), -1), ((3, 0), -1), ((-1, 0), -1)]
 )
 def test_generated_world_cell_lookup_preserves_unknown_outside_map(position, expected):
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         np.array([[0, 100, -1]], dtype=np.int8),
         header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(0)),
         resolution=1,
     )
-    assert occupancy.cell_value(grid, Point(x=position[0], y=position[1], z=0)) == expected
+    assert occupancy_utils.cell_value(grid, Point(x=position[0], y=position[1], z=0)) == expected
 
 
 @pytest.fixture
@@ -227,7 +231,7 @@ def test_actual_planner_module_emits_path_velocity_and_stop_over_cdr_memory_port
         cleanup.callback(wires["nav_cmd_vel"].subscribe(receive_command))
         module.start()
         pose = pose_at(x=0.125, y=0.125)
-        costmap = occupancy.from_array(
+        costmap = occupancy_utils.from_array(
             np.zeros((20, 20), dtype=np.int8), header=deepcopy(pose.header), resolution=0.25
         )
         map_ready = Event()

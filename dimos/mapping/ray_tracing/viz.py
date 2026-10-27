@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
+from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from dimos.message_utils import pointcloud
-from dimos.visualization.rerun.bridge import RerunEntry, keyed_by_seq, region_entity
+from dimos.visualization.rerun.bridge import RerunEntry, keyed_by, region_entity
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -63,7 +64,7 @@ def render_voxel_map(
     )
 
 
-@keyed_by_seq
+@keyed_by(attrgetter("region_id"))
 def render_map_region(
     msg: PointCloudRegion,
     voxel_size: float,

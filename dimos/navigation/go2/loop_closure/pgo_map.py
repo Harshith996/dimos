@@ -189,7 +189,10 @@ def main(dataset: str) -> None:
             timestamp=message_time.to_seconds(cloud.header.stamp),
         )
 
-    got, want = pointcloud.xyz(live.global_map()), gold.get_global_pointcloud2().points_f32()
+    got, want = (
+        pointcloud.xyz(live.global_map()),
+        pointcloud.xyz(gold.get_global_pointcloud2()).astype(np.float32),
+    )
     missing = 1 - _within_one_voxel(want, got, 0.05)
     extra = 1 - _within_one_voxel(got, want, 0.05)
     steps = np.array(step_ms)

@@ -44,17 +44,14 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.message_utils import time as message_time
+from dimos.message_utils import geometry
 from dimos.messages.geometry_msgs.msg import (
-    Point as CdrPoint,
-    Pose as CdrPose,
-    PoseStamped as CdrPoseStamped,
-    Quaternion as CdrQuaternion,
+    Pose,
+    PoseStamped,
 )
-from dimos.messages.sensor_msgs.msg import Joy as CdrJoy
+from dimos.messages.sensor_msgs.msg import Joy
 from dimos.messages.std_msgs.msg import Header, String, UInt32
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -81,12 +78,6 @@ async def _ws_send_text(ws: WebSocket, data: str) -> None:
         # The receive loop removes disconnected clients. Outbound status
         # updates should not disrupt teleoperation while that happens.
         pass
-
-
-def validate_cdr_payload(data: bytes) -> None:
-    """Require plain XCDR1 at the WebXR command input boundary."""
-    if len(data) < 4 or data[:2] not in (b"\x00\x00", b"\x00\x01"):
-        raise ValueError("Expected standalone XCDR1 encapsulation")
 
 
 @dataclass
@@ -129,8 +120,8 @@ class WebXRTeleopModule(Module):
     config: WebXRTeleopConfig
 
     # Outputs: delta poses for each controller
-    left_controller_output: Out[CdrPoseStamped]
-    right_controller_output: Out[CdrPoseStamped]
+    left_controller_output: Out[PoseStamped]
+    right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[UInt32]
     button_pressed: Out[UInt32]
     button_released: Out[UInt32]
@@ -166,8 +157,8 @@ class WebXRTeleopModule(Module):
         self._web_server_thread: threading.Thread | None = None
 
         self._command_types: dict[str, type[Any]] = {
-            "pose": CdrPoseStamped,
-            "joy": CdrJoy,
+            "pose": PoseStamped,
+            "joy": Joy,
         }
         self._decoders = {"pose": self._on_pose_bytes, "joy": self._on_joy_bytes}
 
@@ -488,36 +479,23 @@ class WebXRTeleopModule(Module):
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Decode canonical CDR, adapting only at the existing pose-math boundary."""
-        wire = cdr_decode(data, CdrPoseStamped)
-        position, rotation = wire.pose.position, wire.pose.orientation
-        msg = PoseStamped(
-            ts=message_time.to_seconds(wire.header.stamp),
-            frame_id=wire.header.frame_id,
-            position=(position.x, position.y, position.z),
-            orientation=(rotation.x, rotation.y, rotation.z, rotation.w),
-        )
-        hand = self._resolve_hand(msg.frame_id)
+        msg = cdr_decode(data, PoseStamped)
+        hand = self._resolve_hand(msg.header.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
-            self._pose_headers[hand] = deepcopy(wire.header)
+            self._pose_headers[hand] = deepcopy(msg.header)
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode canonical CDR, retaining the internal controller-state API."""
-        wire = cdr_decode(data, CdrJoy)
-        msg = Joy(
-            ts=message_time.to_seconds(wire.header.stamp),
-            frame_id=wire.header.frame_id,
-            axes=wire.axes.tolist(),
-            buttons=wire.buttons.tolist(),
-        )
-        hand = self._resolve_hand(msg.frame_id)
+        msg = cdr_decode(data, Joy)
+        hand = self._resolve_hand(msg.header.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
-                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes)}, buttons={len(msg.buttons)}"
             )
             with self._lock:
                 self._controllers[hand] = None
@@ -652,12 +630,17 @@ class WebXRTeleopModule(Module):
         if current_pose is None or initial_pose is None:
             return None
 
-        delta = current_pose - initial_pose
+        translation = (
+            geometry.vector_array(current_pose.pose.position)
+            - geometry.vector_array(initial_pose.pose.position)
+        ) * self._translation_scale
+        rotation = geometry.quaternion_product(
+            current_pose.pose.orientation,
+            geometry.quaternion_inverse(initial_pose.pose.orientation),
+        )
         return PoseStamped(
-            position=delta.position * self._translation_scale,
-            orientation=delta.orientation,
-            ts=current_pose.ts,
-            frame_id=current_pose.frame_id,
+            header=deepcopy(current_pose.header),
+            pose=Pose(position=geometry.point_from_array(translation), orientation=rotation),
         )
 
     def _set_translation_scale(self, translation_scale: float) -> None:
@@ -668,21 +651,14 @@ class WebXRTeleopModule(Module):
             self._translation_scale = translation_scale
 
     def _output_header(self, hand: Hand, output_msg: PoseStamped) -> Header:
-        source = self._pose_headers.get(hand)
-        if source is not None and message_time.to_seconds(source.stamp) == output_msg.ts:
-            return Header(deepcopy(source.stamp), output_msg.frame_id)
-        return Header(message_time.time_from_seconds(output_msg.ts), output_msg.frame_id)
+        return deepcopy(output_msg.header)
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.
 
         Override to customize output (e.g., convert to Twist, scale values).
         """
-        p, q = output_msg.position, output_msg.orientation
-        message = CdrPoseStamped(
-            self._output_header(hand, output_msg),
-            CdrPose(CdrPoint(*p), CdrQuaternion(*q)),
-        )
+        message = deepcopy(output_msg)
         if hand == Hand.LEFT:
             self.left_controller_output.publish(message)
         else:

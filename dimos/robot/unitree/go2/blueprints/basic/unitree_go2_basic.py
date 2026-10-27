@@ -23,11 +23,13 @@ import numpy as np
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.message_utils import occupancy
-from dimos.msgs.geometry_msgs.Pose import Pose as NumericalPose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as NumericalGrid
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, generated_archetypes
+from dimos.visualization.rerun.cdr import (
+    camera_pinhole,
+    cloud_archetype,
+    generated_archetypes,
+    occupancy_archetype,
+)
 from dimos.visualization.vis_module import vis_module
 
 if TYPE_CHECKING:
@@ -53,15 +55,8 @@ def _convert_global_map(grid: PointCloud2) -> Archetype:
 
 
 def _convert_navigation_costmap(grid: OccupancyGrid) -> Archetype:
-    # Reuse the existing numerical texture renderer behind an explicit value adapter.
-    p, q = grid.info.origin.position, grid.info.origin.orientation
-    numerical = NumericalGrid(
-        grid=occupancy.view(grid),
-        resolution=grid.info.resolution,
-        origin=NumericalPose(p.x, p.y, p.z, q.x, q.y, q.z, q.w),
-        frame_id=grid.header.frame_id,
-    )
-    return numerical.to_rerun(
+    return occupancy_archetype(
+        grid,
         colormap="Accent",
         z_offset=0.015,
         opacity=0.2,

@@ -35,6 +35,8 @@ from dimos.messages.geometry_msgs.msg import (
     PoseStamped,
     PoseWithCovariance,
     Quaternion,
+    Transform,
+    TransformStamped,
     Twist,
     TwistWithCovariance,
     Vector3,
@@ -43,8 +45,6 @@ from dimos.messages.nav_msgs.msg import Odometry
 from dimos.messages.sensor_msgs.msg import CompressedImage
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry_msgs.Transform import Transform as MathTransform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3 as MathVector
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.robot.galaxea.r1pro import lio
@@ -219,10 +219,10 @@ def test_lio_mount_math_preserves_exact_header_and_source_ownership(wires, mocke
         mocker.patch.object(
             module,
             "_lidar_to_base",
-            MathTransform(
-                translation=MathVector(-0.5, 0.25, 0.0),
-                frame_id="lidar",
-                child_frame_id="base_link",
+            TransformStamped(
+                Header(Time(0, 0), "lidar"),
+                "base_link",
+                Transform(Vector3(-0.5, 0.25, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
             ),
             create=True,
         )

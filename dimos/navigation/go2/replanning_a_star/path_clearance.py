@@ -20,14 +20,13 @@ from numpy.typing import NDArray
 from dimos.mapping.occupancy.operations import _grid_values
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.message_utils import geometry
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils.occupancy import CostValues
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 
 
 class PathClearance:
-    _costmap: OccupancyGrid | CdrOccupancyGrid | None = None
-    _last_costmap: OccupancyGrid | CdrOccupancyGrid | None = None
+    _costmap: OccupancyGrid | None = None
+    _last_costmap: OccupancyGrid | None = None
     _path_lookup_distance: float = 3.0
     _max_distance_cache: float = 1.0
     _last_used_shape: tuple[int, ...] | None = None
@@ -35,16 +34,16 @@ class PathClearance:
     _last_used_pose: int | None = None
     _robot_width: float
     _lock: RLock
-    _path: Path | CdrPath
+    _path: Path
     _pose_index: int
 
-    def __init__(self, robot_width: float, path: Path | CdrPath) -> None:
+    def __init__(self, robot_width: float, path: Path) -> None:
         self._robot_width = robot_width
         self._path = path
         self._pose_index = 0
         self._lock = RLock()
 
-    def update_costmap(self, costmap: OccupancyGrid | CdrOccupancyGrid) -> None:
+    def update_costmap(self, costmap: OccupancyGrid) -> None:
         with self._lock:
             self._costmap = costmap
 
@@ -91,10 +90,6 @@ class PathClearance:
         return bool(np.any(_grid_values(costmap)[self.mask] == CostValues.OCCUPIED))
 
     def _pose_distance(self, index1: int, index2: int) -> float:
-        if isinstance(self._path, CdrPath):
-            return geometry.point_distance(
-                self._path.poses[index1].pose.position, self._path.poses[index2].pose.position
-            )
-        p1 = self._path.poses[index1].position
-        p2 = self._path.poses[index2].position
-        return p1.distance(p2)
+        return geometry.point_distance(
+            self._path.poses[index1].pose.position, self._path.poses[index2].pose.position
+        )

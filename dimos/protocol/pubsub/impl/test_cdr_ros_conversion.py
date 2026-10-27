@@ -19,7 +19,6 @@ These tests do not claim a real ROS node installation or discovery acceptance.
 
 from contextlib import ExitStack
 import pickle
-import queue
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -33,10 +32,7 @@ from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos.messages.sensor_msgs.msg import Image, Imu
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.Vector3 import Vector3 as LegacyVector
 from dimos.protocol.pubsub.impl import rospubsub, rospubsub_conversion as conversion
-from dimos.robot.galaxea.r1pro.connection import R1ProConnection
-from dimos.utils.testing.waiting import wait_until
 
 
 @pytest.fixture
@@ -64,11 +60,6 @@ def ros_boundary(mocker, monkeypatch):
         side_effect=lambda data, cls: oracle.deserialize_cdr(data, cls.__msgtype__)
     )
     monkeypatch.setitem(sys.modules, "rclpy.serialization", serialization)
-    mocker.patch.object(
-        conversion,
-        "derive_lcm_type",
-        side_effect=AssertionError("generated values must never use LCM"),
-    )
     return SimpleNamespace(oracle=oracle, serialization=serialization)
 
 
@@ -173,28 +164,13 @@ def test_pickled_ros_transport_preserves_declared_type(ros_boundary):
     assert restored.topic.topic == "/camera" and restored.topic.msg_type is Image
 
 
-def test_explicit_legacy_flat_conversion_stays_separate(mocker):
-    target = SimpleNamespace(
-        get_fields_and_field_types=lambda: {"x": "double", "y": "double", "z": "double"},
-        x=1.0,
-        y=2.0,
-        z=3.0,
-    )
-    serializer = mocker.patch.object(
-        conversion, "_serialization", side_effect=AssertionError("legacy path must not select CDR")
-    )
-    value = conversion.ros_to_dimos(target, LegacyVector)
-    assert (value.x, value.y, value.z) == (1, 2, 3)
-    serializer.assert_not_called()
-
-
 def test_ros_transport_rejects_imposter_before_constructing_runtime(mocker):
     factory = mocker.patch.object(rospubsub, "RawROS")
 
     class Imposter:
         __msgtype__ = Image.__msgtype__
 
-    with pytest.raises(TypeError, match="registry-owned"):
+    with pytest.raises(TypeError, match="Unsupported or ambiguous"):
         ROSTransport("/camera", Imposter)
     factory.assert_not_called()
 
@@ -206,6 +182,11 @@ def test_missing_ros_serialization_reports_runtime_dependency(ros_boundary, monk
 
 
 def test_depth_and_imu_workers_reuse_ros_cdr_preserving_layout_and_ns(ros_boundary):
+    import queue
+
+    from dimos.robot.galaxea.r1pro.connection import R1ProConnection
+    from dimos.utils.testing.waiting import wait_until
+
     image = Image(
         Header(Time(1_700_000_000, 1), "depth"), 2, 2, "16UC1", 1, 6, np.arange(12, dtype=np.uint8)
     )

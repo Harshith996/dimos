@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Inventory legacy runtime imports and typed ports without importing robot modules."""
+"""Reject retired message imports across capabilities, tests, and runnable examples."""
 
 from __future__ import annotations
 
@@ -35,16 +35,36 @@ def qualified(node: ast.expr, imports: dict[str, str]) -> str:
 def legacy(name: str) -> bool:
     if name == "dimos_lcm" or name.startswith("dimos_lcm."):
         return True
-    parts = name.split(".")
-    return len(parts) >= 3 and parts[:2] == ["dimos", "msgs"] and parts[2].endswith("_msgs")
+    return name == "dimos.msgs" or name.startswith("dimos.msgs.")
 
 
-def audit(root: Path) -> dict:
+# These files read historical bytes or implement the external Habitat Python 3.9 ABI.
+# They may import raw LCM classes, but never the retired DimOS wrappers.
+RAW_LCM_BOUNDARIES = {
+    "dimos/memory/codecs/legacy.py",
+    "dimos/memory/codecs/jpeg.py",
+    "dimos/memory/codecs/test_generated_recording.py",
+    "dimos/memory/store/test_mcap.py",
+    "dimos/memory/store/test_mcap_wire.py",
+    "dimos/memory/test_recording_migration.py",
+    "dimos/simulation/habitat/connection.py",
+    "dimos/simulation/habitat/server.py",
+    "dimos/simulation/habitat/test_connection.py",
+    "dimos/web/relay_bridge/gen_lcm_fixtures.py",
+    "dimos/web/test_cockpit.py",
+    "dimos/web/test_codecs.py",
+    "dimos/web/test_lcm_codec.py",
+}
+
+
+def audit(root: Path, scopes: list[str] | None = None) -> dict:
     imports_found = []
     ports = []
-    for path in sorted((root / "dimos").rglob("*.py")):
+    scopes = scopes or ["dimos", "examples", "native/python", "misc", "scripts"]
+    sources = {path for scope in scopes for path in (root / scope).rglob("*.py")}
+    for path in sorted(sources):
         relative = path.relative_to(root)
-        if path.name.startswith(("test_", "demo_", "tool_")) or path.name == "conftest.py":
+        if any(part in {"build", "target", ".venv", "__pycache__"} for part in relative.parts):
             continue
         if relative.parts[:2] == ("dimos", "msgs"):
             continue
@@ -55,7 +75,9 @@ def audit(root: Path) -> dict:
                 for alias in node.names:
                     full = f"{node.module}.{alias.name}"
                     imports[alias.asname or alias.name] = full
-                    if legacy(full):
+                    if legacy(full) and not (
+                        full.startswith("dimos_lcm.") and str(relative) in RAW_LCM_BOUNDARIES
+                    ):
                         imports_found.append(
                             {"file": str(relative), "line": node.lineno, "symbol": full}
                         )
@@ -64,7 +86,9 @@ def audit(root: Path) -> dict:
                     imports[alias.asname or alias.name.split(".")[0]] = (
                         alias.name if alias.asname else alias.name.split(".")[0]
                     )
-                    if legacy(alias.name):
+                    if legacy(alias.name) and not (
+                        alias.name.startswith("dimos_lcm") and str(relative) in RAW_LCM_BOUNDARIES
+                    ):
                         imports_found.append(
                             {"file": str(relative), "line": node.lineno, "symbol": alias.name}
                         )
@@ -95,7 +119,7 @@ def audit(root: Path) -> dict:
                 )
     return {
         "status": "unfinished" if ports or imports_found else "clear",
-        "method": "Static Python import and typed In/Out scan; no runtime graph or hardware imports. Internal driver values are not automatically wire defects.",
+        "method": "Static imports and typed ports in capabilities, tests, demos, and native Python runtimes. Historical raw-LCM boundaries are explicit exceptions. This does not validate native compilation or runtime behavior.",
         "legacy_port_count": len(ports),
         "legacy_import_count": len(imports_found),
         "ports_by_subsystem": dict(sorted(Counter(p["file"].split("/")[1] for p in ports).items())),
@@ -108,11 +132,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--scope", action="append", help="Limit the scan to a capability path.")
     parser.add_argument(
         "--check", action="store_true", help="Fail while any legacy imports or ports remain."
     )
     args = parser.parse_args()
-    report = audit(args.root.resolve())
+    report = audit(args.root.resolve(), args.scope)
     text = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.write_text(text)

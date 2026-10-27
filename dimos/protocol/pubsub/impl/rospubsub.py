@@ -251,7 +251,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
 
 
 class DimosROS(PubSub[ROSTopic, Any]):
-    """ROS PubSub with automatic dimos.msgs ↔ ROS message conversion.
+    """ROS PubSub with automatic generated ↔ ROS message conversion.
 
     Uses ROSTopic (with dimos msg_type) instead of RawROSTopic (with ros_type).
     Automatically converts between dimos and ROS message formats.

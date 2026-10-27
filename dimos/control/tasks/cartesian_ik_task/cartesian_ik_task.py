@@ -32,9 +32,7 @@ from dimos.control.tasks.pose_target_ik import (
     pose_target_value,
     string_tuple_converter,
 )
-from dimos.messages.geometry_msgs.msg import Pose as CdrPose, PoseStamped as CdrPoseStamped
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
@@ -72,9 +70,7 @@ class CartesianIKTask(PoseTargetIKTask):
         with self._lock:
             return self._active and self._target_pose is not None
 
-    def on_cartesian_command(
-        self, pose: Pose | PoseStamped | CdrPose | CdrPoseStamped, t_now: float
-    ) -> bool:
+    def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Accept an absolute target pose and activate tracking."""
         target = pose_target_value(pose)
         with self._lock:

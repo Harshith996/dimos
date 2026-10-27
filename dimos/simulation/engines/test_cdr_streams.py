@@ -22,14 +22,31 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils import image, occupancy, pointcloud
+from dimos.message_utils import (
+    camera_info as calibration_utils,
+    image,
+    occupancy,
+    pointcloud,
+    time as message_time,
+)
 from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry, Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as InternalCameraInfo
-from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import _g1_nav_path
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+    _g1_nav_path,
+    _g1_real_odometry_root,
+)
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
@@ -130,8 +147,14 @@ def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at
         engine = mocker.Mock(spec=MujocoEngine)
         engine.connected = True
         mocker.patch.object(module, "_engine", engine)
-        calibration = InternalCameraInfo.from_intrinsics(
-            width=2, height=2, fx=1, fy=1, cx=0, cy=0, frame_id=module._color_optical_frame
+        calibration = calibration_utils.from_intrinsics(
+            width=2,
+            height=2,
+            fx=1,
+            fy=1,
+            cx=0,
+            cy=0,
+            header=message_time.header_now(module._color_optical_frame),
         )
         mocker.patch.object(module, "_camera_info_base", calibration)
         for name, kind in [
@@ -179,7 +202,7 @@ def test_actual_rgbd_projection_preserves_pixels_source_calibration_and_cloud_at
         direct = module.get_color_camera_info()
         assert direct is not None
         direct.k[0] = 100
-        assert calibration.K[0] == 1
+        assert calibration.k[0] == 1
         assert values["camera_info"].k[0] == 1
         np.testing.assert_array_equal(pixels, np.full((2, 2, 3), [255, 0, 0], dtype=np.uint8))
 
@@ -199,3 +222,20 @@ def test_g1_custom_visualizers_accept_canonical_grid_path_and_pose_values():
     transform = g1_odometry_tf_override(pose)[0][1]
     assert transform.translation.as_arrow_array().to_pylist() == [[1.0, 2.0, 0.0]]
     assert grid.data.tolist() == [-1, 0, 100] and pose.pose.position.z == 3
+
+
+def test_g1_real_root_uses_generated_lio_odometry_pose(mocker):
+    mocker.patch(
+        "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc._g1_pelvis_to_mid360",
+        return_value=np.eye(4),
+    )
+    source = Odometry(
+        Header(Time(17, 1), "odom"),
+        "mid360_link",
+        PoseWithCovariance(
+            Pose(Point(2.0, 3.0, 4.0), Quaternion(0.0, 0.0, 0.0, 1.0)), np.zeros(36)
+        ),
+        TwistWithCovariance(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)), np.zeros(36)),
+    )
+    value = _g1_real_odometry_root(source)
+    assert value.translation.as_arrow_array().to_pylist() == [[2.0, 3.0, 4.0]]

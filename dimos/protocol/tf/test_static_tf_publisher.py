@@ -23,7 +23,8 @@ from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 
-def test_frame_tree_skips_root_and_composes_rotated_mounts():
+def test_frame_tree_skips_root_and_composes_rotated_mounts(monkeypatch):
+    monkeypatch.setattr("dimos.message_utils.time.time.time_ns", lambda: 1_700_000_000_123_456_789)
     edges = frames_to_edge_transforms(
         [
             ("world", None, (0, 0, 0), (0, 0, 0)),
@@ -39,8 +40,8 @@ def test_frame_tree_skips_root_and_composes_rotated_mounts():
     combined = geometry.compose_transforms(*decoded.transforms)
     translation = combined.transform.translation
     assert (translation.x, translation.y, translation.z) == pytest.approx((1, 2, 3))
-    assert combined.header.stamp.sec == 0
-    assert combined.header.stamp.nanosec == 0
+    assert combined.header.stamp.sec == 1_700_000_000
+    assert combined.header.stamp.nanosec == 123_456_789
 
 
 def test_empty_frame_tree_produces_no_edges():

@@ -44,36 +44,31 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig, DepthCameraHardware
-from dimos.message_utils import time as message_time
+from dimos.message_utils import (
+    camera_info as calibration,
+    geometry,
+    image as image_utils,
+    pointcloud,
+    time as message_time,
+)
 from dimos.messages.geometry_msgs.msg import (
-    Point as CdrPoint,
-    Pose as CdrPoseValue,
-    PoseStamped as CdrPose,
-    Quaternion as CdrQuaternion,
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
 )
 from dimos.messages.sensor_msgs.msg import (
-    CameraInfo as CdrCameraInfo,
-    Image as CdrImage,
-    Imu as CdrImu,
-    PointCloud2 as CdrCloud,
+    CameraInfo,
+    Image,
+    Imu,
+    JointState,
+    PointCloud2,
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.driver import (
-    camera_info_message,
-    cloud_message,
-    image_message,
-    imu_message,
-    transform_message,
-)
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -117,17 +112,11 @@ def _pose_matrix(
 
 def _transform_from_matrix(
     matrix: NDArray[np.float64], *, frame_id: str, child_frame_id: str, ts: float
-) -> Transform:
-    return Transform(
-        translation=Vector3(
-            float(matrix[0, 3]),
-            float(matrix[1, 3]),
-            float(matrix[2, 3]),
-        ),
-        rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
-        frame_id=frame_id,
-        child_frame_id=child_frame_id,
-        ts=ts,
+) -> TransformStamped:
+    return TransformStamped(
+        Header(message_time.time_from_seconds(ts), frame_id),
+        child_frame_id,
+        geometry.transform_from_matrix(matrix),
     )
 
 
@@ -148,11 +137,13 @@ def _imu_from_mujoco_wxyz(
 ) -> Imu:
     w, x, y, z = quaternion
     return Imu(
+        header=Header(message_time.time_from_seconds(ts), frame_id),
         orientation=Quaternion(x, y, z, w),
         angular_velocity=Vector3(*gyroscope),
         linear_acceleration=Vector3(*accelerometer),
-        frame_id=frame_id,
-        ts=ts,
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
     )
 
 
@@ -187,11 +178,27 @@ class _WholeBodySimHooks:
             if shm.read_command_mode() == CMD_MODE_PD_TAU:
                 self._latest_pd_pos_target = pos_cmd
             else:
-                engine.write_joint_command(JointState(position=pos_cmd.tolist()))
+                engine.write_joint_command(
+                    JointState(
+                        header=message_time.header_now(),
+                        name=[],
+                        position=np.asarray(pos_cmd, dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    )
+                )
 
         vel_cmd = shm.read_velocity_command(dof)
         if vel_cmd is not None:
-            engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    header=message_time.header_now(),
+                    name=[],
+                    position=np.asarray([], dtype=np.float64),
+                    velocity=np.asarray(vel_cmd, dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                )
+            )
 
         kp_cmd = shm.read_kp_command(dof)
         if kp_cmd is not None:
@@ -216,7 +223,15 @@ class _WholeBodySimHooks:
                 + self._latest_pd_kd * (-dq)
                 + tau_ff
             )
-            engine.write_joint_command(JointState(effort=tau.tolist()))
+            engine.write_joint_command(
+                JointState(
+                    header=message_time.header_now(),
+                    name=[],
+                    position=np.asarray([], dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray(tau, dtype=np.float64),
+                )
+            )
 
         if self._gripper_idx is not None:
             gripper_cmd = shm.read_gripper_command()
@@ -344,16 +359,16 @@ class MujocoSimModule(
     """
 
     config: MujocoSimModuleConfig
-    color_image: Out[CdrImage]
-    depth_image: Out[CdrImage]
-    pointcloud: Out[CdrCloud]
-    camera_info: Out[CdrCameraInfo]
-    depth_camera_info: Out[CdrCameraInfo]
-    imu: Out[CdrImu]
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    pointcloud: Out[PointCloud2]
+    camera_info: Out[CameraInfo]
+    depth_camera_info: Out[CameraInfo]
+    imu: Out[Imu]
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
-    odom: Out[CdrPose]
+    odom: Out[PoseStamped]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -410,20 +425,20 @@ class MujocoSimModule(
         return time.time() if ts is None else ts
 
     @rpc
-    def get_color_camera_info(self) -> CdrCameraInfo | None:
+    def get_color_camera_info(self) -> CameraInfo | None:
         with self._state_lock:
             base = self._camera_info_base
         if base is None:
             return None
-        return camera_info_message(base.with_ts(self._camera_info_ts()))
+        return calibration.with_stamp(base, message_time.time_from_seconds(self._camera_info_ts()))
 
     @rpc
-    def get_depth_camera_info(self) -> CdrCameraInfo | None:
+    def get_depth_camera_info(self) -> CameraInfo | None:
         with self._state_lock:
             base = self._camera_info_base
         if base is None:
             return None
-        return camera_info_message(base.with_ts(self._camera_info_ts()))
+        return calibration.with_stamp(base, message_time.time_from_seconds(self._camera_info_ts()))
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -822,11 +837,11 @@ class MujocoSimModule(
                 self._root_base_qpos_adr + 3 : self._root_base_qpos_adr + 7
             ]  # (w, x, y, z) per MuJoCo convention
             self.odom.publish(
-                CdrPose(
+                PoseStamped(
                     Header(deepcopy(stamp), "world"),
-                    CdrPoseValue(
-                        CdrPoint(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
-                        CdrQuaternion(
+                    Pose(
+                        Point(float(base_pos[0]), float(base_pos[1]), float(base_pos[2])),
+                        Quaternion(
                             float(base_quat[1]),
                             float(base_quat[2]),
                             float(base_quat[3]),
@@ -869,9 +884,7 @@ class MujocoSimModule(
         shm.write_imu(quaternion=quat, gyroscope=gyro, accelerometer=accel)
         # Also publish on the stream port for downstream consumers.
         # MuJoCo reports quaternions as (w,x,y,z); Imu/Quaternion stores (x,y,z,w).
-        imu = imu_message(
-            _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
-        )
+        imu = _imu_from_mujoco_wxyz(quat, gyro, accel, frame_id="pelvis", ts=time.time())
         imu.header.stamp = deepcopy(stamp)
         self.imu.publish(imu)
 
@@ -891,14 +904,14 @@ class MujocoSimModule(
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        camera_info = CameraInfo.from_intrinsics(
+        camera_info = calibration.from_intrinsics(
             fx=fx,
             fy=fy,
             cx=w / 2.0,
             cy=h / 2.0,
             width=w,
             height=h,
-            frame_id=self._color_optical_frame,
+            header=message_time.header_now(self._color_optical_frame),
         )
         with self._state_lock:
             self._camera_info_base = camera_info
@@ -945,22 +958,20 @@ class MujocoSimModule(
                 self._latest_frame_ts = ts
 
             if self.config.enable_color:
-                color_img = Image(
-                    data=frame.rgb,
-                    format=ImageFormat.RGB,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                color_img = image_utils.from_array(
+                    frame.rgb,
+                    encoding="rgb8",
+                    header=Header(message_time.time_from_seconds(ts), self._color_optical_frame),
                 )
-                self.color_image.publish(image_message(color_img))
+                self.color_image.publish(color_img)
 
             if self.config.enable_depth:
-                depth_img = Image(
-                    data=frame.depth,
-                    format=ImageFormat.DEPTH,
-                    frame_id=self._color_optical_frame,
-                    ts=ts,
+                depth_img = image_utils.from_array(
+                    frame.depth,
+                    encoding="32FC1",
+                    header=Header(message_time.time_from_seconds(ts), self._color_optical_frame),
                 )
-                self.depth_image.publish(image_message(depth_img))
+                self.depth_image.publish(depth_img)
 
             self._publish_tf(ts, frame)
 
@@ -983,18 +994,10 @@ class MujocoSimModule(
         if base is None:
             return
         ts = self._camera_info_ts()
-        info = CameraInfo(
-            height=base.height,
-            width=base.width,
-            distortion_model=base.distortion_model,
-            D=base.D,
-            K=base.K,
-            P=base.P,
-            frame_id=base.frame_id,
-            ts=ts,
-        )
-        self.camera_info.publish(camera_info_message(info))
-        self.depth_camera_info.publish(camera_info_message(info))
+        info = calibration.with_stamp(base, message_time.time_from_seconds(ts))
+        depth_info = deepcopy(info)
+        self.camera_info.publish(info)
+        self.depth_camera_info.publish(depth_info)
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None) -> None:
         if frame is None:
@@ -1014,7 +1017,7 @@ class MujocoSimModule(
         self.tf.publish(
             TFMessage(
                 [
-                    transform_message(value)
+                    value
                     for value in (
                         _transform_from_matrix(
                             optical_transform,
@@ -1040,13 +1043,13 @@ class MujocoSimModule(
             )
         )
 
-    def _body_transforms(self) -> list[Transform]:
+    def _body_transforms(self) -> list[TransformStamped]:
         """World poses of ``tracked_bodies``; a name missing from the model is skipped after one warning."""
         engine = self._engine
         if engine is None or not self.config.tracked_bodies:
             return []
         ts = time.time()
-        transforms: list[Transform] = []
+        transforms: list[TransformStamped] = []
         for name in self.config.tracked_bodies:
             pose = engine.get_body_pose(name)
             if pose is None:
@@ -1056,12 +1059,13 @@ class MujocoSimModule(
                 continue
             position, (qx, qy, qz, qw) = pose
             transforms.append(
-                Transform(
-                    translation=Vector3(float(position[0]), float(position[1]), float(position[2])),
-                    rotation=Quaternion(float(qx), float(qy), float(qz), float(qw)),
-                    frame_id="world",
-                    child_frame_id=name,
-                    ts=ts,
+                TransformStamped(
+                    Header(message_time.time_from_seconds(ts), "world"),
+                    name,
+                    Transform(
+                        Vector3(float(position[0]), float(position[1]), float(position[2])),
+                        Quaternion(float(qx), float(qy), float(qz), float(qw)),
+                    ),
                 )
             )
         return transforms
@@ -1081,26 +1085,28 @@ class MujocoSimModule(
         if frame is None:
             return
         try:
-            color_img = Image(
-                data=frame.rgb,
-                format=ImageFormat.RGB,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            color_img = image_utils.from_array(
+                frame.rgb,
+                encoding="rgb8",
+                header=Header(
+                    message_time.time_from_seconds(frame.timestamp), self._color_optical_frame
+                ),
             )
-            depth_img = Image(
-                data=frame.depth,
-                format=ImageFormat.DEPTH,
-                frame_id=self._color_optical_frame,
-                ts=frame.timestamp,
+            depth_img = image_utils.from_array(
+                frame.depth,
+                encoding="32FC1",
+                header=Header(
+                    message_time.time_from_seconds(frame.timestamp), self._color_optical_frame
+                ),
             )
-            pcd = PointCloud2.from_rgbd(
-                color_image=color_img,
-                depth_image=depth_img,
-                camera_info=camera_info,
+            pcd = pointcloud.from_rgbd(
+                color=color_img,
+                depth=depth_img,
+                calibration=camera_info,
                 depth_scale=1.0,
             )
-            pcd = pcd.voxel_downsample(0.005)
-            self.pointcloud.publish(cloud_message(pcd))
+            pcd = pointcloud.voxel_downsample(pcd, 0.005)
+            self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.exception("Pointcloud generation error", error=str(exc))
 
@@ -1127,12 +1133,11 @@ class MujocoSimModule(
             return
 
         try:
-            pcd = PointCloud2.from_numpy(
+            pcd = pointcloud.from_xyz(
                 np.vstack(all_points),
-                frame_id="world",
-                timestamp=latest_ts or time.time(),
+                header=Header(message_time.time_from_seconds(latest_ts or time.time()), "world"),
             )
-            pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
-            self.pointcloud.publish(cloud_message(pcd))
+            pcd = pointcloud.voxel_downsample(pcd, self.config.mujoco_lidar_voxel_size)
+            self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.exception("MuJoCo lidar pointcloud generation error", error=str(exc))
