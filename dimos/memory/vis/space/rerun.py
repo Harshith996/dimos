@@ -21,7 +21,16 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.color import Color
-from dimos.memory.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
+from dimos.memory.vis.space.elements import (
+    Arrow,
+    Box3D,
+    Camera,
+    Point,
+    Polyline,
+    Pose,
+    Text,
+    point_xy,
+)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -198,7 +207,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
         rr.log(
             f"scene/polylines/{i}",
             rr.LineStrips3D(
-                strips=[[[p.x, p.y, 0] for p in el.msg.poses]],
+                strips=[[[*point_xy(p), 0] for p in el.msg.poses]],
                 colors=[_rgba(el)],
                 radii=[el.width / 2],
             ),

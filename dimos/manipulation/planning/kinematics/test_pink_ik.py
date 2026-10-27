@@ -64,6 +64,10 @@ from dimos.manipulation.planning.spec.joint_space import (
 )
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs import msg as geometry_messages
+from dimos.messages.sensor_msgs import msg as sensor_messages
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -111,16 +115,16 @@ class _StreamingTestPinkIK(PinkPoseTargetSolver):
     def step_frame_targets(
         self,
         robot_model: RobotModelConfig,
-        frame_targets: Mapping[str, PoseStamped],
+        frame_targets: Mapping[str, geometry_messages.PoseStamped],
         controlled_joints: list[str],
-        command_state: JointState,
-        measured_state: JointState,
+        command_state: sensor_messages.JointState,
+        measured_state: sensor_messages.JointState,
         max_command_tracking_error_rad: float,
         dt: float | None = None,
         max_joint_velocity_rad_s: float = 5.0,
         joint_velocity_limits_rad_s: Mapping[str, float] | None = None,
         joint_command_filter_cutoff_hz: float | None = None,
-    ) -> JointState:
+    ) -> sensor_messages.JointState:
         result = self._step_frame_targets(
             robot_model=robot_model,
             frame_targets=frame_targets,
@@ -767,7 +771,13 @@ def test_step_frame_targets_weighted_history_attenuates_alternating_increments(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = sensor_messages.JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["joint_a"],
+        position=np.asarray([0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     alpha = 1.0 - np.exp(-2.0 * np.pi * 5.0 * 0.01)
     commands = [initial]
 
@@ -775,7 +785,15 @@ def test_step_frame_targets_weighted_history_attenuates_alternating_increments(
         commands.append(
             ik.step_frame_targets(
                 robot_model=_robot_config(),
-                frame_targets={"tool": PoseStamped()},
+                frame_targets={
+                    "tool": geometry_messages.PoseStamped(
+                        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                        pose=geometry_messages.Pose(
+                            position=geometry_messages.Point(0.0, 0.0, 0.0),
+                            orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                        ),
+                    )
+                },
                 controlled_joints=["joint_a"],
                 command_state=commands[-1],
                 measured_state=initial,
@@ -808,7 +826,13 @@ def test_step_frame_targets_weighted_history_preserves_steady_increment(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = sensor_messages.JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["joint_a"],
+        position=np.asarray([0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     alpha = 1.0 - np.exp(-2.0 * np.pi * 5.0 * 0.01)
     commands = [initial]
 
@@ -816,7 +840,15 @@ def test_step_frame_targets_weighted_history_preserves_steady_increment(
         commands.append(
             ik.step_frame_targets(
                 robot_model=_robot_config(),
-                frame_targets={"tool": PoseStamped()},
+                frame_targets={
+                    "tool": geometry_messages.PoseStamped(
+                        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                        pose=geometry_messages.Pose(
+                            position=geometry_messages.Point(0.0, 0.0, 0.0),
+                            orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                        ),
+                    )
+                },
                 controlled_joints=["joint_a"],
                 command_state=commands[-1],
                 measured_state=initial,
@@ -850,10 +882,24 @@ def test_step_frame_targets_rechecks_tracking_envelope_after_history_filter(
         configuration.update(q)
 
     mocker.patch.object(ik, "_step_configuration", side_effect=apply_increment)
-    initial = JointState(name=["joint_a"], position=[0.0])
+    initial = sensor_messages.JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=["joint_a"],
+        position=np.asarray([0.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     first = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped()},
+        frame_targets={
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.0, 0.0, 0.0),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            )
+        },
         controlled_joints=["joint_a"],
         command_state=initial,
         measured_state=initial,
@@ -865,10 +911,24 @@ def test_step_frame_targets_rechecks_tracking_envelope_after_history_filter(
 
     second = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped()},
+        frame_targets={
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.0, 0.0, 0.0),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            )
+        },
         controlled_joints=["joint_a"],
         command_state=first,
-        measured_state=JointState(name=["joint_a"], position=[-0.1]),
+        measured_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a"],
+            position=np.asarray([-0.1], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=0.15,
         dt=0.01,
         max_joint_velocity_rad_s=100.0,
@@ -892,14 +952,29 @@ def test_step_frame_targets_preserves_controlled_joint_order(
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
         frame_targets={
-            "tool": PoseStamped(
-                position=Vector3(0.1, 0.2, 0.3),
-                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.1, 0.2, 0.3),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             )
         },
         controlled_joints=["joint_c", "joint_a"],
-        command_state=JointState(name=["joint_a", "joint_c"], position=[0.0, 0.0]),
-        measured_state=JointState(name=["joint_a", "joint_c"], position=[0.0, 0.0]),
+        command_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_c"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        measured_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_c"],
+            position=np.asarray([0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         dt=0.02,
     )
@@ -931,18 +1006,36 @@ def test_step_frame_targets_builds_both_frame_tasks_with_tuning(
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
         frame_targets={
-            "tool": PoseStamped(
-                position=Vector3(0.1, 0.2, 0.3),
-                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.1, 0.2, 0.3),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             ),
-            "base": PoseStamped(
-                position=Vector3(),
-                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            "base": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.0, 0.0, 0.0),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             ),
         },
         controlled_joints=["joint_a", "joint_b", "joint_c"],
-        command_state=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        measured_state=JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        command_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        measured_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         dt=0.02,
     )
@@ -1008,21 +1101,39 @@ def test_streaming_reuses_task_stack_across_steps(
     context = _combined_control_context(("tool",), ["joint_a", "joint_b", "joint_c"])
     mocker.patch.object(ik, "_get_control_context", return_value=context)
     create_tasks = mocker.spy(ik, "_create_tasks")
-    first_target = PoseStamped(
-        position=Vector3(0.1, 0.2, 0.3),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    first_target = geometry_messages.PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        pose=geometry_messages.Pose(
+            position=geometry_messages.Point(0.1, 0.2, 0.3),
+            orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
     )
-    second_target = PoseStamped(
-        position=Vector3(0.3, 0.2, 0.1),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    second_target = geometry_messages.PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        pose=geometry_messages.Pose(
+            position=geometry_messages.Point(0.3, 0.2, 0.1),
+            orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
     )
 
     ik.step_frame_targets(
         _robot_config(),
         {"tool": first_target},
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
     )
     assert context.tasks is not None
@@ -1031,8 +1142,20 @@ def test_streaming_reuses_task_stack_across_steps(
         _robot_config(),
         {"tool": second_target},
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.1, 0.2, 0.3]),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.1, 0.2, 0.3], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.1, 0.2, 0.3], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
     )
 
@@ -1052,14 +1175,29 @@ def test_task_hooks_receive_read_only_stack_and_successful_velocity(
     ik.step_frame_targets(
         _robot_config(),
         {
-            "tool": PoseStamped(
-                position=Vector3(0.1, 0.2, 0.3),
-                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.1, 0.2, 0.3),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
             )
         },
         ["joint_a", "joint_b", "joint_c"],
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
-        JointState(name=["joint_a", "joint_b", "joint_c"], position=[0.0, 0.0, 0.0]),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_a", "joint_b", "joint_c"],
+            position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         _TRACKING_ERROR_RAD,
         dt=0.05,
     )
@@ -1082,15 +1220,29 @@ def test_after_solve_hook_is_not_called_when_solver_raises(
     with pytest.raises(RuntimeError, match="no solution"):
         ik.step_frame_targets(
             _robot_config(),
-            {"tool": PoseStamped()},
+            {
+                "tool": geometry_messages.PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                    pose=geometry_messages.Pose(
+                        position=geometry_messages.Point(0.0, 0.0, 0.0),
+                        orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            },
             ["joint_a", "joint_b", "joint_c"],
-            JointState(
+            sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
                 name=["joint_a", "joint_b", "joint_c"],
-                position=[0.0, 0.0, 0.0],
+                position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
-            JointState(
+            sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
                 name=["joint_a", "joint_b", "joint_c"],
-                position=[0.0, 0.0, 0.0],
+                position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
             _TRACKING_ERROR_RAD,
         )
@@ -1136,15 +1288,29 @@ def test_step_frame_targets_normalizes_feedback_and_saturates_commands(
 
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped()},
+        frame_targets={
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.0, 0.0, 0.0),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            )
+        },
         controlled_joints=["joint_a", "joint_b", "joint_c"],
-        command_state=JointState(
+        command_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
             name=["joint_a", "joint_b", "joint_c"],
-            position=[-1.0005, 0.0, 0.0],
+            position=np.asarray([-1.0005, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
         ),
-        measured_state=JointState(
+        measured_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
             name=["joint_a", "joint_b", "joint_c"],
-            position=[-1.0005, 0.0, 0.0],
+            position=np.asarray([-1.0005, 0.0, 0.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
         ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
@@ -1166,10 +1332,30 @@ def test_step_frame_targets_rejects_feedback_beyond_tolerance(
     with pytest.raises(PinkJointLimitError, match="joint_a.*lower limit"):
         ik.step_frame_targets(
             robot_model=_robot_config(),
-            frame_targets={"tool": PoseStamped()},
+            frame_targets={
+                "tool": geometry_messages.PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                    pose=geometry_messages.Pose(
+                        position=geometry_messages.Point(0.0, 0.0, 0.0),
+                        orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            },
             controlled_joints=["joint_a"],
-            command_state=JointState(name=["joint_a"], position=[0.0]),
-            measured_state=JointState(name=["joint_a"], position=[-1.0011]),
+            command_state=sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                name=["joint_a"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            measured_state=sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                name=["joint_a"],
+                position=np.asarray([-1.0011], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         )
 
@@ -1194,10 +1380,30 @@ def test_step_frame_targets_velocity_limits_unbounded_position_joint(
 
     result = ik.step_frame_targets(
         robot_model=_robot_config(),
-        frame_targets={"tool": PoseStamped()},
+        frame_targets={
+            "tool": geometry_messages.PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=geometry_messages.Pose(
+                    position=geometry_messages.Point(0.0, 0.0, 0.0),
+                    orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            )
+        },
         controlled_joints=["joint_b"],
-        command_state=JointState(name=["joint_b"], position=[5.0]),
-        measured_state=JointState(name=["joint_b"], position=[5.0]),
+        command_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_b"],
+            position=np.asarray([5.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+        measured_state=sensor_messages.JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["joint_b"],
+            position=np.asarray([5.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
     )
 
@@ -1241,10 +1447,30 @@ def test_step_frame_targets_rejects_unknown_frame(mocker: MockerFixture, tmp_pat
     with pytest.raises(ValueError, match="missing_frame"):
         _StreamingTestPinkIK(PinkIKConfig()).step_frame_targets(
             robot_model=config,
-            frame_targets={"missing_frame": PoseStamped()},
+            frame_targets={
+                "missing_frame": geometry_messages.PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                    pose=geometry_messages.Pose(
+                        position=geometry_messages.Point(0.0, 0.0, 0.0),
+                        orientation=geometry_messages.Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            },
             controlled_joints=config.joint_names,
-            command_state=JointState(name=config.joint_names, position=[0.0, 0.0, 0.0]),
-            measured_state=JointState(name=config.joint_names, position=[0.0, 0.0, 0.0]),
+            command_state=sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                name=config.joint_names,
+                position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            measured_state=sensor_messages.JointState(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                name=config.joint_names,
+                position=np.asarray([0.0, 0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             max_command_tracking_error_rad=_TRACKING_ERROR_RAD,
         )
 

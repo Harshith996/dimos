@@ -28,6 +28,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Union
 
 from dimos.memory.vis.color import Color, DeferredColor
+from dimos.messages.geometry_msgs.msg import (
+    Point as MessagePoint,
+    PoseStamped as MessagePoseStamped,
+)
+from dimos.messages.nav_msgs.msg import Path as MessagePath
 
 ColorLike = Union[str, Color, DeferredColor]
 
@@ -83,7 +88,7 @@ class Point:
     Rerun: rr.Points3D
     """
 
-    msg: GeoPoint | GeoPose
+    msg: GeoPoint | GeoPose | MessagePoint | MessagePoseStamped
     color: ColorLike = "#e74c3c"
     radius: float = 0.05
     label: str | None = None
@@ -130,7 +135,7 @@ class Polyline:
     Rerun: rr.LineStrips3D
     """
 
-    msg: Path
+    msg: Path | MessagePath
     color: ColorLike = "#3498db"
     width: float = 0.05
     opacity: float = 1.0
@@ -163,3 +168,9 @@ SpaceElement = Union[
     "PointCloud2",  # pass-through, rerun renders full 3D, SVG collapses to occupancy grid
     "Observation[Any]",  # pass-through, renderer decides presentation (covers EmbeddedObservation)
 ]
+
+
+def point_xy(value: GeoPoint | GeoPose | MessagePoint | MessagePoseStamped) -> tuple[float, float]:
+    if isinstance(value, MessagePoseStamped):
+        return value.pose.position.x, value.pose.position.y
+    return value.x, value.y

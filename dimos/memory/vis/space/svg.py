@@ -43,6 +43,7 @@ from dimos.memory.vis.space.elements import (
     Pose,
     SpaceElement,
     Text,
+    point_xy,
 )
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -95,7 +96,8 @@ def _style(el: object) -> tuple[str, float]:
 
 
 def _render_point(el: Point, b: Bounds) -> str:
-    x, y = el.msg.x, _y(el.msg.y)
+    x, raw_y = point_xy(el.msg)
+    y = _y(raw_y)
     r = el.radius
     b.include(x - r, y - r)
     b.include(x + r, y + r)
@@ -151,7 +153,8 @@ def _render_pose(el: Pose, b: Bounds) -> str:
 def _render_polyline(el: Polyline, b: Bounds) -> str:
     pts = []
     for p in el.msg.poses:
-        x, y = p.x, _y(p.y)
+        x, raw_y = point_xy(p)
+        y = _y(raw_y)
         b.include(x, y)
         pts.append(f"{x:.4f},{y:.4f}")
     stroke, alpha = _style(el)

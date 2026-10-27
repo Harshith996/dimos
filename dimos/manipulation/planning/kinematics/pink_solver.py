@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -39,7 +39,6 @@ from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, Joi
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -478,7 +477,17 @@ def _missing_frame_message(model: pinocchio.Model, frame_name: str) -> str:
     return f"Frame '{frame_name}' not found in Pinocchio model. Available frames: {available}"
 
 
-def _seed_positions_for_mapping(seed: JointState, mapping: _JointMapping) -> NDArray[np.float64]:
+class _JointPositionSource(Protocol):
+    @property
+    def name(self) -> Sequence[str]: ...
+
+    @property
+    def position(self) -> Sequence[float] | NDArray[np.float64]: ...
+
+
+def _seed_positions_for_mapping(
+    seed: _JointPositionSource, mapping: _JointMapping
+) -> NDArray[np.float64]:
     if len(seed.name) == len(seed.position) and seed.name:
         positions_by_name = dict(zip(seed.name, seed.position, strict=True))
         values: list[float] = []
