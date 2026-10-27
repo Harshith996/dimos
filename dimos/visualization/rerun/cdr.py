@@ -22,17 +22,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.message_utils.image import (
-    image_from_compressed,
-    image_to_rgb,
-    image_view,
-)
-from dimos.message_utils.pointcloud import pointcloud_rgb, pointcloud_xyz
-from dimos.messages.dimos_msgs.msg import EntityMarkers
+from dimos.message_utils import image, occupancy, pointcloud
+from dimos.messages.dimos_msgs.msg import EntityMarkers, LineSegments3D
 from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import Odometry, Path
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
 from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
 from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos.visualization.rerun.colors import occupancy_lut
 
 if TYPE_CHECKING:
     import rerun as rr
@@ -70,14 +67,14 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
     if isinstance(message, CompressedImage):
         name = message.format.lower()
         if "jxl" in name or ("png" in name and name.startswith("16uc1;")):
-            return image_archetype(image_from_compressed(message))
+            return image_archetype(image.from_compressed(message))
         if "jpeg" in name or "jpg" in name:
             return rr.EncodedImage(contents=bytes(message.data), media_type="image/jpeg")
         if "png" in name:
             return rr.EncodedImage(contents=bytes(message.data), media_type="image/png")
         raise ValueError(f"unsupported compressed image format {message.format!r}")
     if message.encoding in ("16UC1", "32FC1", "mono16"):
-        pixels = image_view(message)
+        pixels = image.view(message)
         pixels = np.ascontiguousarray(pixels, dtype=pixels.dtype.newbyteorder("="))
         if message.encoding != "mono16":
             return rr.DepthImage(pixels, meter=1000.0 if message.encoding == "16UC1" else 1.0)
@@ -89,7 +86,7 @@ def image_archetype(message: Image | CompressedImage) -> rr.Image | rr.DepthImag
             color_model="L",
         )
     return rr.Image(
-        bytes=image_to_rgb(message).tobytes(),
+        bytes=image.to_rgb(message).tobytes(),
         width=message.width,
         height=message.height,
         datatype=np.uint8,
@@ -101,6 +98,7 @@ def cloud_archetype(
     message: PointCloud2,
     *,
     voxel_size: float = 0.05,
+    ui_radius: float = 2.0,
     mode: str = "points",
     bottom_cutoff: float | None = None,
     height_colors: bool = False,
@@ -114,7 +112,7 @@ def cloud_archetype(
     from matplotlib import colormaps
     import rerun as rr
 
-    points, colors = pointcloud_xyz(message), pointcloud_rgb(message)
+    points, colors = pointcloud.xyz(message), pointcloud.rgb(message)
     keep = np.isfinite(points).all(axis=1)
     if bottom_cutoff is not None:
         keep &= points[:, 2] >= bottom_cutoff
@@ -132,7 +130,7 @@ def cloud_archetype(
     return rr.Points3D(
         points,
         colors=colors,
-        radii=rr.components.Radius.ui_points(2.0) if mode == "points" else voxel_size / 2,
+        radii=rr.components.Radius.ui_points(ui_radius) if mode == "points" else voxel_size / 2,
     )
 
 
@@ -171,6 +169,33 @@ def path_archetype(
     return rr.LineStrips3D([points], colors=[color], radii=radii)
 
 
+def detection_boxes(message: Detection3DArray) -> rr.Boxes3D:
+    import rerun as rr
+
+    centers, sizes, rotations, labels = [], [], [], []
+    for detection in message.detections:
+        bbox = detection.bbox
+        center, rotation, size = bbox.center.position, bbox.center.orientation, bbox.size
+        centers.append((center.x, center.y, center.z))
+        sizes.append((size.x / 2.0, size.y / 2.0, size.z / 2.0))
+        rotations.append((rotation.x, rotation.y, rotation.z, rotation.w))
+        marker_id = detection.id.strip()
+        class_id = next(
+            (
+                result.hypothesis.class_id.strip()
+                for result in detection.results
+                if result.hypothesis.class_id.strip()
+            ),
+            "",
+        )
+        labels.append(
+            f"{class_id} id={marker_id}"
+            if marker_id and class_id
+            else class_id or (f"id={marker_id}" if marker_id else "")
+        )
+    return rr.Boxes3D(centers=centers, half_sizes=sizes, quaternions=rotations, labels=labels)
+
+
 def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
     """Render stamped geometry and its exact fields; other domains remain explicit."""
     import rerun as rr
@@ -205,6 +230,12 @@ def generated_archetypes(message: Any, entity: str) -> RerunMulti | None:
         entries = [(entity, path_archetype(message))]
         if message.header.frame_id:
             entries.append((entity, rr.Transform3D(parent_frame=f"tf#/{message.header.frame_id}")))
+    elif type(message) is LineSegments3D:
+        entries = [(entity, lines_archetype(message))]
+    elif type(message) is OccupancyGrid:
+        entries = [(entity, occupancy_archetype(message))]
+    elif type(message) is Detection3DArray:
+        entries = [(entity, detection_boxes(message))]
     elif type(message) is EntityMarkers:
         entries = [(entity, entity_points(message))]
         if message.header.frame_id:
@@ -252,3 +283,114 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     raise TypeError(f"Cannot render {type(value).__name__} as JSON")
+
+
+def occupancy_archetype(
+    message: OccupancyGrid,
+    colormap: str | None = None,
+    z_offset: float = 0,
+    opacity: float = 1.0,
+    cost_range: tuple[int, int] | None = None,
+    background: str | None = None,
+    color_lookup_table: np.ndarray | None = None,
+) -> rr.Mesh3D:
+    """Convert to 3D textured mesh overlay on floor plane.
+
+    Uses a single quad with the occupancy grid as a texture.
+    Much more efficient than per-cell quads (4 vertices vs n_cells*4).
+    """
+    import rerun as rr
+
+    if occupancy.view(message).size == 0:
+        return rr.Mesh3D(vertex_positions=[])
+
+    # Downsample grid before LUT to avoid allocating huge RGBA array
+    max_tex = 256
+    grid = occupancy.view(message)[::-1]  # flip for world coords (view, no copy)
+    if grid.shape[0] > max_tex or grid.shape[1] > max_tex:
+        step_h = max(1, grid.shape[0] // max_tex)
+        step_w = max(1, grid.shape[1] // max_tex)
+        grid = grid[::step_h, ::step_w]
+
+    if color_lookup_table is None:
+        color_lookup_table = occupancy_lut(colormap, opacity, background)
+    rgba = np.ascontiguousarray(color_lookup_table[np.clip(grid + 1, 0, 101)])
+
+    # Apply cost_range filter on downsampled grid
+    if cost_range is not None:
+        out_of_range = ((grid < cost_range[0]) | (grid > cost_range[1])) & (grid != -1)
+        if np.any(out_of_range):
+            bg_rgb = [0, 0, 0]
+            if background is not None:
+                bg = background.lstrip("#")
+                bg_rgb = [int(bg[i : i + 2], 16) for i in (0, 2, 4)]
+            rgba[out_of_range, :3] = bg_rgb
+            rgba[out_of_range, 3] = 255
+
+    # Single quad covering entire grid
+    ox = message.info.origin.position.x
+    oy = message.info.origin.position.y
+    w = message.info.width * message.info.resolution
+    h = message.info.height * message.info.resolution
+
+    vertices = np.array(
+        [
+            [ox, oy, z_offset],  # 0: bottom-left (world)
+            [ox + w, oy, z_offset],  # 1: bottom-right
+            [ox + w, oy + h, z_offset],  # 2: top-right
+            [ox, oy + h, z_offset],  # 3: top-left
+        ],
+        dtype=np.float32,
+    )
+
+    indices = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+
+    # UV coords: Rerun uses top-left origin for textures
+    # Grid row 0 is at world y=oy (bottom), row H-1 at y=oy+h (top)
+    # Texture row 0 = grid row 0, so:
+    #   world bottom (v0,v1) -> texture v=1 (bottom of texture)
+    #   world top (v2,v3) -> texture v=0 (top of texture)
+    texcoords = np.array(
+        [
+            [0.0, 1.0],  # v0: bottom-left world -> bottom-left tex
+            [1.0, 1.0],  # v1: bottom-right world -> bottom-right tex
+            [1.0, 0.0],  # v2: top-right world -> top-right tex
+            [0.0, 0.0],  # v3: top-left world -> top-left tex
+        ],
+        dtype=np.float32,
+    )
+
+    return rr.Mesh3D(
+        vertex_positions=vertices,
+        triangle_indices=indices,
+        vertex_texcoords=texcoords,
+        albedo_texture=rgba,
+    )
+
+
+def lines_archetype(
+    message: LineSegments3D, z_offset: float = 0.0, radii: float = 0.04
+) -> rr.LineStrips3D:
+    """Render generated line endpoints with the established log-weight palette."""
+    import rerun as rr
+
+    if not message.segments:
+        return rr.LineStrips3D([])
+    strips = np.asarray(
+        [
+            [
+                [segment.start.x, segment.start.y, segment.start.z],
+                [segment.end.x, segment.end.y, segment.end.z],
+            ]
+            for segment in message.segments
+        ],
+        dtype=np.float32,
+    )
+    strips[:, :, 2] += z_offset
+    weights = np.asarray([segment.weight for segment in message.segments], dtype=np.float64)
+    log_w = np.log10(np.maximum(weights, 1e-6))
+    lo, hi = float(log_w.min()), float(log_w.max())
+    norm = (log_w - lo) / (hi - lo) if hi > lo else np.zeros_like(log_w)
+    red, green = (255 * norm).astype(np.uint8), (255 * (1.0 - norm)).astype(np.uint8)
+    colors = np.column_stack([red, green, np.full_like(red, 60), np.full_like(red, 220)])
+    return rr.LineStrips3D(strips, colors=colors, radii=radii)
