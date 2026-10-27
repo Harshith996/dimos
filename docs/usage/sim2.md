@@ -175,6 +175,12 @@ Use `writable=False` for a feedback-only client. Exactly one writable client may
 own a robot's actuator set; read-only clients cannot command or halt it. Vendor
 sentinels must be normalized by the vendor integration before writing commands.
 
+G1 selects `G1MotorDevice` for hardware or `SimRobotClient` for simulation. Both
+publish through the same joint/IMU callbacks and accept `write(MotorCommandArray)`
+and `set_estop(True)`. The G1 connection publishes these typed messages directly;
+it does not decode simulator arrays or convert feedback through `ControlValues`.
+Raw MuJoCo world snapshots remain a separate, internal input to sensor workers.
+
 Feedback and command timeouts default to 250 ms and are explicit client settings.
 The runtime rejects expired commands independently of the writer. On expiry it
 holds the measured joint position using the instance's holding gains; it
