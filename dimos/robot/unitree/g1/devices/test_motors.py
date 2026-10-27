@@ -121,6 +121,18 @@ def _command(position=1.0):
     )
 
 
+def test_stale_device_feedback_is_not_published_as_a_new_reading(connection, clock):
+    _feedback(connection)
+    assert connection._snapshot_motor_imu().positions == [0.0] * 29
+
+    clock.now += connection.config.feedback_timeout_seconds + 0.01
+    _feedback(connection)  # The same firmware tick must not refresh acquisition time.
+    assert connection._snapshot_motor_imu() is None
+
+    _feedback(connection, tick=2)
+    assert connection._snapshot_motor_imu().positions == [0.0] * 29
+
+
 def test_soft_start_is_damping_first(connection: G1MotorDevice):
     publisher = _wire(connection, soft_start_seconds=1000.0)
 

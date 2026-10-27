@@ -237,6 +237,8 @@ class ConnectionModule(Module, ABC):
     config: ConnectionConfig
 
     dedicated_worker: ClassVar[bool] = True
+    poll_state: ClassVar[bool] = True
+    """False when the device publishes typed readings through callbacks."""
     odom_frame_id: ClassVar[str] = "odom"
     """The frame a PoseStamped reading is given in. Override on the driver."""
 
@@ -313,7 +315,6 @@ class ConnectionModule(Module, ABC):
         driver must stop that here.
         """
 
-    @abstractmethod
     def read_state(self) -> Values | ControlValues:
         """The robot's latest readings, or an empty dict if nothing new has arrived.
 
@@ -323,7 +324,9 @@ class ConnectionModule(Module, ABC):
         dict here and calls ``publish_state`` from the callback instead.
         Return ControlValues to preserve the device's acquisition timestamp;
         an unstamped dict is stamped when read_state returns.
+        Callback-driven devices set ``poll_state = False`` instead.
         """
+        raise NotImplementedError("polled devices must implement read_state")
 
     @abstractmethod
     def write(self, values: Values, *, source_ts: float | None = None) -> None:
@@ -362,10 +365,11 @@ class ConnectionModule(Module, ABC):
         self.connect()
         self._connected = True
         self._subscriptions = [self._listen(listener) for listener in listeners]
-        self._state_thread = threading.Thread(
-            target=self._state_loop, daemon=True, name=f"{self._label}-state"
-        )
-        self._state_thread.start()
+        if self.poll_state:
+            self._state_thread = threading.Thread(
+                target=self._state_loop, daemon=True, name=f"{self._label}-state"
+            )
+            self._state_thread.start()
 
     @rpc
     def stop(self) -> None:
@@ -446,8 +450,14 @@ class ConnectionModule(Module, ABC):
             return
         for output in self._outputs:
             output.port.publish(output.build(checked, ts=frame.source_ts))
+        self.note_state_received(frame.source_ts)
+
+    def note_state_received(self, timestamp: float) -> None:
+        """Record acquisition time when a driver publishes typed feedback directly."""
+        if not math.isfinite(timestamp):
+            raise ValueError("non-finite acquisition timestamp")
         with self._lock:
-            self._last_state_time = frame.source_ts
+            self._last_state_time = timestamp
 
     def _plan_inputs(self, description: ControlDescription) -> list[_Listener]:
         """One subscription per port spec in the config."""

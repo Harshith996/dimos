@@ -16,10 +16,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 import threading
-import time
 from typing import Any, ClassVar, Literal, Protocol, cast
 
 import numpy as np
@@ -27,14 +27,11 @@ from pydantic import BaseModel, Field, model_validator
 from typing_extensions import Self
 
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
-from dimos.control.contract.convert import JOINT_STATE_FIELDS, imu_to_values, joint_state_to_values
 from dimos.control.contract.description import Limits
 from dimos.control.contract.ports import MotorPort, TwistPort
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -47,11 +44,11 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.g1.controllers.groot.config import G1_GROOT_HOME, G1_GROOT_KD, G1_GROOT_KP
 from dimos.robot.unitree.g1.devices.motors import G1MotorConfig, G1MotorDevice
+from dimos.robot.unitree.g1.devices.safety import DAMPING_KD
 from dimos.robot.unitree.g1.model.config import G1_URDF_PATH
 from dimos.robot.unitree.g1.model.joints import g1_joints
 from dimos.robot.unitree.g1.model.simulation import g1_definition
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.spec import RobotInstance
 from dimos.sim2.world.scene import scene_robot
@@ -113,6 +110,7 @@ class G1Connection(ConnectionModule):
 
     config: G1Config
     default_sim_scene: ClassVar[str] = "logistics.xml"
+    poll_state: ClassVar[bool] = False
     _simulation: SimulationSpec | None
     _locomotion: G1LocomotionSpec | None
 
@@ -129,14 +127,9 @@ class G1Connection(ConnectionModule):
         super().__init__(**kwargs)
         self._simulation = None
         self._locomotion = None
-        self._sim: SimRobotClient | None = None
-        self._motors: G1MotorDevice | None = None
+        self._motors: G1MotorDevice | SimRobotClient | None = None
         self._stock: UnitreeWebRTCConnection | None = None
         self._device_lock = threading.RLock()
-        self._feedback: dict[str, float] = {}
-        self._feedback_at = 0.0
-        self._imu_at = 0.0
-        self._sequence = -1
         self._estopped = False
         self._move_timer: threading.Timer | None = None
         self._names = [f"{self.config.source}/{name}" for name in _JOINTS]
@@ -176,9 +169,21 @@ class G1Connection(ConnectionModule):
             if self._simulation is None:
                 raise RuntimeError("G1 simulated device requires the collected SimulationModule")
             robot_id = self.config.instance_name or self.name
-            descriptor = self._simulation.describe()["robots"][robot_id]
-            self._sim = SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True)
-            self._sim.connect()
+            self._motors = SimRobotClient(
+                world=self._simulation,
+                robot_id=robot_id,
+                joint_names=self._names,
+                frame_id=self.frame_id,
+                publish_joints=self._receive_joints,
+                publish_imu=self._receive_imu,
+                publish_odom=self._receive_odom,
+                publish_fault=self._receive_fault,
+                rate_hz=self.config.motors.publish_rate_hz,
+                feedback_timeout=self.config.motors.feedback_timeout_seconds,
+                command_timeout=self.config.motors.command_timeout_seconds
+                or self.config.deadman_timeout_s,
+                damping=DAMPING_KD,
+            )
         elif self.config.g.simulation:
             raise ValueError("G1Connection only supports real hardware or MuJoCo")
         elif self.config.controller == "stock":
@@ -186,90 +191,70 @@ class G1Connection(ConnectionModule):
                 self.config.ip, aes_128_key=self.config.aes_128_key
             )
             self._stock.start()
+            return
         else:
             self._motors = G1MotorDevice(
                 self.config.motors,
                 publish_joints=self._receive_joints,
                 publish_imu=self._receive_imu,
-                publish_fault=self.g1_fault.publish,
+                publish_fault=self._receive_fault,
             )
-            self._motors.start()
+        self._motors.start()
 
     def _receive_joints(self, msg: JointState) -> None:
+        if any(len(v) != len(self._names) for v in (msg.position, msg.velocity, msg.effort)):
+            self._report("incomplete G1 motor feedback")
+            return
+        if not self._accept_feedback(msg.ts, [*msg.position, *msg.velocity, *msg.effort]):
+            return
         msg.name = self._names
-        with self._device_lock:
-            self._feedback.update(joint_state_to_values(msg, JOINT_STATE_FIELDS))
-            self._feedback_at = msg.ts
+        msg.frame_id = self.frame_id
+        self.motor_states.publish(msg)
+        self.note_state_received(msg.ts)
 
     def _receive_imu(self, msg: Imu) -> None:
-        with self._device_lock:
-            self._feedback.update(imu_to_values(msg, f"{self.config.source}/imu"))
-            self._imu_at = msg.ts
+        if not self._accept_feedback(
+            msg.ts,
+            [
+                *msg.orientation.to_tuple(),
+                *msg.angular_velocity.to_tuple(),
+                *msg.linear_acceleration.to_tuple(),
+            ],
+        ):
+            return
+        msg.frame_id = self.frame_id
+        self.imu.publish(msg)
 
-    def read_state(self) -> dict[str, float] | ControlValues:
+    def _receive_odom(self, pose: PoseStamped) -> None:
+        if not self._accept_feedback(
+            pose.ts, [*pose.position.to_tuple(), *pose.orientation.to_tuple()]
+        ):
+            return
+        self.odom.publish(pose)
+        self.tf.publish(
+            TFMessage(
+                Transform(
+                    translation=pose.position,
+                    rotation=pose.orientation,
+                    frame_id=pose.frame_id,
+                    child_frame_id=self.frame_id,
+                    ts=pose.ts,
+                )
+            )
+        )
+
+    def _accept_feedback(self, timestamp: float, values: Sequence[float]) -> bool:
+        if self._stop_event.is_set():
+            return False
+        if not np.isfinite(timestamp) or not np.isfinite(values).all():
+            self._report("non-finite robot feedback")
+            return False
+        return True
+
+    def _receive_fault(self, fault: String) -> None:
         with self._device_lock:
-            if self._sim is None:
-                acquired = min(self._feedback_at, self._imu_at)
-                if time.time() - acquired > self.config.motors.feedback_timeout_seconds:
-                    return {}
-                return ControlValues(
-                    self.config.source,
-                    acquired,
-                    interface_names=list(self._feedback),
-                    values=list(self._feedback.values()),
-                )
-            frame = self._sim.read()
-            if frame.metadata.sequence == self._sequence:
-                return {}
-            self._sequence = frame.metadata.sequence
-            v = frame.values
-            ts = float(v["wall_time"][0])
-            joints = JointState(
-                name=self._names,
-                position=v["position"].tolist(),
-                velocity=v["velocity"].tolist(),
-                effort=v["effort"].tolist(),
-                ts=ts,
-            )
-            w, x, y, z = v["imu_quaternion"]
-            imu = Imu(
-                orientation=Quaternion(x, y, z, w),
-                angular_velocity=Vector3(*v["imu_gyroscope"]),
-                linear_acceleration=Vector3(*v["imu_accelerometer"]),
-                frame_id=self.frame_id,
-                ts=ts,
-            )
-            w, x, y, z = v["root_quaternion"]
-            pose = PoseStamped(
-                position=Vector3(*v["root_position"]),
-                orientation=Quaternion(x, y, z, w),
-                frame_id="world",
-                ts=ts,
-            )
-            self.odom.publish(pose)
-            self.tf.publish(
-                TFMessage(
-                    Transform(
-                        translation=pose.position,
-                        rotation=pose.orientation,
-                        frame_id="world",
-                        child_frame_id=self.frame_id,
-                        ts=ts,
-                    )
-                )
-            )
-            values = {
-                **joint_state_to_values(joints, JOINT_STATE_FIELDS),
-                **imu_to_values(imu, f"{self.config.source}/imu"),
-            }
-            return ControlValues(
-                self.config.source,
-                ts,
-                frame.metadata.episode_id,
-                frame.metadata.sequence,
-                list(values),
-                list(values.values()),
-            )
+            self._estopped = True
+        self.g1_fault.publish(fault)
 
     def write(self, values: dict[str, float], *, source_ts: float | None = None) -> None:
         if self.config.controller == "stock":
@@ -299,9 +284,7 @@ class G1Connection(ConnectionModule):
         with self._device_lock:
             if self._estopped:
                 raise RuntimeError("G1 emergency stop is latched; restart to recover")
-            if self._sim is not None:
-                self._sim.write_motors(command, observed=self._sim.read())
-            elif self._motors is not None:
+            if self._motors is not None:
                 self._motors.write(command)
             else:
                 raise RuntimeError("G1 motor device is disconnected")
@@ -342,9 +325,8 @@ class G1Connection(ConnectionModule):
 
     def halt(self) -> None:
         with self._device_lock:
-            if self._sim is not None:
-                self._sim.disable(observed=self._sim.read())
-            elif self._motors is not None:
+            if self._motors is not None:
+                self._estopped = True
                 self._motors.set_estop(True)
             elif self._stock is not None:
                 self._stock.move(Twist())
@@ -377,9 +359,6 @@ class G1Connection(ConnectionModule):
             with self._device_lock:
                 if self._move_timer is not None:
                     self._move_timer.cancel()
-                if self._sim is not None:
-                    self._sim.close()
-                    self._sim = None
             if self._motors is not None:
                 self._motors.stop()
             if self._stock is not None:
