@@ -16,11 +16,13 @@ from contextlib import ExitStack
 from dataclasses import replace
 import json
 import multiprocessing
+from queue import Queue
 import subprocess
 import sys
 import threading
 import time
 from typing import ClassVar
+from unittest.mock import Mock
 
 import pytest
 
@@ -58,13 +60,12 @@ class _RobotConnection(Module):
     @rpc
     def start(self):
         super().start()
-        descriptor = self._simulation.describe()["robots"][self.config.instance_name]
-        self._client = SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True)
+        self._client = SimRobotClient(world=self._simulation, robot_id=self.config.instance_name)
         self._client.connect()
 
     @rpc
     def read_position(self):
-        return self._client.read().values["root_position"].tolist()
+        return self._client.read().odom.position.to_tuple()
 
     @rpc
     def stop(self):
@@ -178,8 +179,9 @@ def test_complete_command_and_coherent_feedback(worlds, clients):
     world = worlds()
     client = clients(world, writable=True)
     observed = client.read()
-    assert observed.values["position"] == pytest.approx([0.1, 850])
-    assert observed.values["imu_quaternion"] == pytest.approx([1, 0, 0, 0])
+    assert observed.joints.position == pytest.approx([0.1, 850])
+    assert observed.imu.orientation.to_tuple() == pytest.approx([0, 0, 0, 1])
+    assert observed.joints.ts == observed.imu.ts == observed.odom.ts
     sequence = client.write_motors(command(), observed=observed)
 
     world.step()
@@ -191,7 +193,7 @@ def test_complete_command_and_coherent_feedback(worlds, clients):
     assert feedback.metadata.physics_tick == 1
     assert feedback.metadata.sim_time == pytest.approx(world.config.timestep)
     assert observed.metadata.physics_tick == 0
-    assert observed.values["position"] == pytest.approx([0.1, 850])
+    assert observed.joints.position == pytest.approx([0.1, 850])
 
 
 def test_two_robots_use_independent_channels(world_config, worlds, clients):
@@ -210,7 +212,7 @@ def test_two_robots_use_independent_channels(world_config, worlds, clients):
 
     assert world.data.ctrl[world.robots["left"].actuators[0]] == pytest.approx(1.4)
     assert world.data.ctrl[world.robots["right"].actuators[0]] == pytest.approx(0)
-    assert right.read().values["root_position"] == pytest.approx([0, 2, 0.3])
+    assert right.read().odom.position.to_tuple() == pytest.approx([0, 2, 0.3])
 
 
 def test_position_device_moves_and_preserves_gripper_units(worlds, clients):
@@ -220,7 +222,7 @@ def test_position_device_moves_and_preserves_gripper_units(worlds, clients):
         client.write_positions([0.25, 0], observed=client.read())
         world.step()
 
-    assert client.read().values["position"] == pytest.approx([0.25, 0], abs=0.03)
+    assert client.read().joints.position == pytest.approx([0.25, 0], abs=0.03)
 
 
 def test_control_imu_selection_does_not_redefine_physical_robot(world_config, worlds, clients):
@@ -240,8 +242,8 @@ def test_control_imu_selection_does_not_redefine_physical_robot(world_config, wo
     wrist = clients(world, "right").read()
 
     assert left.config is right.config
-    assert torso.values["imu_quaternion"] == pytest.approx([1, 0, 0, 0])
-    assert wrist.values["imu_quaternion"] == pytest.approx([2**-0.5, 0, 0, 2**-0.5])
+    assert torso.imu.orientation.to_tuple() == pytest.approx([0, 0, 0, 1])
+    assert wrist.imu.orientation.to_tuple() == pytest.approx([0, 0, 2**-0.5, 2**-0.5])
     assert torso.metadata.physics_tick == wrist.metadata.physics_tick
     assert world.robots["right"].channel.descriptor.control_imu == "wrist"
 
@@ -254,7 +256,7 @@ def test_pd_motor_commands_do_not_require_an_imu(world_config, worlds, clients):
     client.write_motors(command(), observed=observed)
     world.step()
 
-    assert "imu_quaternion" not in observed.values
+    assert observed.imu is None
     assert world.data.ctrl[world.robots["left"].actuators] == pytest.approx([1.4, 0.02])
 
 
@@ -278,12 +280,12 @@ def test_initial_state_and_watchdog_gains_are_instance_settings(world_config, wo
     )
     world = worlds(config=replace(world_config, robots={"left": instance, "right": changed}))
     reader = clients(world, "right")
-    assert reader.read().values["position"] == pytest.approx([0.6, 425])
+    assert reader.read().joints.position == pytest.approx([0.6, 425])
     assert instance.config is changed.config
     assert world.robots["right"].hold_kp == pytest.approx([7, 0])
     assert world.robots["right"].hold_kd == pytest.approx([2, 0])
     world.reset()
-    assert reader.read().values["position"] == pytest.approx([0.6, 425])
+    assert reader.read().joints.position == pytest.approx([0.6, 425])
 
 
 @pytest.mark.parametrize(
@@ -363,6 +365,26 @@ def test_stale_feedback_is_not_accepted(worlds, clients, mocker):
         client.write_motors(command(), observed=observed)
 
 
+def test_reset_during_read_does_not_fault_feedback_but_invalidates_its_commands(
+    worlds, clients, mocker
+):
+    world = worlds()
+    client = clients(world, writable=True)
+    read = client._channel.read_observation
+
+    def reset_after_read():
+        frame = read()
+        world.reset()
+        return frame
+
+    mocker.patch.object(client._channel, "read_observation", side_effect=reset_after_read)
+    sample = client.read()
+
+    assert sample.metadata.episode_id < world.generation
+    with pytest.raises(RuntimeError, match="reset"):
+        client.write_motors(command(), observed=sample)
+
+
 def test_foreign_observation_is_not_a_command_basis(worlds, clients):
     world = worlds()
     writer, reader = clients(world, writable=True), clients(world)
@@ -386,13 +408,11 @@ def test_invalid_command_does_not_replace_held_action(worlds, clients, field, va
     assert client.read().metadata.applied_action_sequence == expected
 
 
-def test_mismatched_joint_order_is_rejected_at_attach(worlds):
+def test_mismatched_joint_order_is_rejected_at_attach(worlds, clients):
     world = worlds()
     descriptor = world.robots["left"].channel.descriptor
-    wrong = replace(descriptor, joint_names=tuple(reversed(descriptor.joint_names)))
-    with pytest.raises(ValueError, match="descriptor mismatch"):
-        with SimRobotClient(wrong):
-            pytest.fail("mismatched joint order attached")
+    with pytest.raises(ValueError, match="joint order"):
+        clients(world, joint_names=tuple(reversed(descriptor.joint_names)))
 
 
 def test_faulted_world_cannot_be_reactivated_by_spawn(worlds, clients):
@@ -407,7 +427,7 @@ def test_faulted_world_cannot_be_reactivated_by_spawn(worlds, clients):
     assert world.snapshots.lifecycle == "faulted"
 
 
-def test_close_invalidates_clients_and_restart_has_a_new_generation(worlds, clients):
+def test_close_invalidates_clients_and_restart_has_a_new_generation(worlds, clients, mocker):
     world = worlds(sim_id="restart")
     client = clients(world)
     old = world.robots["left"].channel.descriptor
@@ -415,7 +435,9 @@ def test_close_invalidates_clients_and_restart_has_a_new_generation(worlds, clie
     with pytest.raises(RuntimeError, match="closed"):
         client.read()
     with pytest.raises((RuntimeError, TimeoutError)):
-        closed = SimRobotClient(old)
+        source = mocker.Mock(spec=SimulationSpec)
+        source.describe_robot.return_value = old
+        closed = SimRobotClient(world=source, robot_id="left")
         closed.connect(timeout=0.1)
     replacement = worlds(sim_id="restart")
     new = replacement.robots["left"].channel.descriptor
@@ -427,10 +449,12 @@ def test_close_invalidates_clients_and_restart_has_a_new_generation(worlds, clie
 def _command_in_spawned_process(descriptor, pipe):
     pipe.send("ready")
     pipe.recv()
-    with SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True) as client:
+    source = Mock(spec=SimulationSpec)
+    source.describe_robot.return_value = StreamDescriptor.from_dict(descriptor)
+    with SimRobotClient(world=source, robot_id="left") as client:
         observation = client.read()
         sequence = client.write_motors(command(), observed=observation)
-        pipe.send((sequence, observation.values["position"].tolist()))
+        pipe.send((sequence, list(observation.joints.position)))
         pipe.recv()  # Keep ownership until the parent has applied the command.
     pipe.close()
 
@@ -486,7 +510,9 @@ def test_independent_reader_exit_does_not_stop_the_world(worlds, clients):
             "-c",
             "import json,sys; from dimos.sim2.client import SimRobotClient; "
             "from dimos.sim2.messages import StreamDescriptor; "
-            "client=SimRobotClient(StreamDescriptor.from_dict(json.loads(sys.argv[1])), "
+            "from unittest.mock import Mock; source=Mock(); "
+            "source.describe_robot.return_value=StreamDescriptor.from_dict(json.loads(sys.argv[1])); "
+            "client=SimRobotClient(world=source,robot_id='left',writable=False, "
             "feedback_timeout=10); client.connect(); "
             "print(client.read().metadata.episode_id); client.close()",
             json.dumps(descriptor.to_dict()),
@@ -522,3 +548,122 @@ def test_expired_command_is_not_retimed_when_forwarded(worlds, clients):
     with pytest.raises((RuntimeError, TimeoutError)):
         client.write_motors(queued, observed=client.read())
     assert world.robots["left"].channel.read_action() is None
+
+
+def test_callbacks_publish_typed_readings_with_acquisition_time_and_frame(worlds, clients):
+    world = worlds()
+    joints, imus, poses = Queue(), Queue(), Queue()
+    client = clients(
+        world,
+        writable=True,
+        start=True,
+        frame_id="robot/pelvis",
+        joint_names=("shoulder", "gripper"),
+        publish_joints=joints.put,
+        publish_imu=imus.put,
+        publish_odom=poses.put,
+    )
+    joint, imu, pose = joints.get(timeout=2), imus.get(timeout=2), poses.get(timeout=2)
+
+    assert joint.name == ["shoulder", "gripper"]
+    assert joint.position == pytest.approx([0.1, 850])
+    assert imu.orientation.to_tuple() == (0, 0, 0, 1)
+    assert joint.frame_id == imu.frame_id == "robot/pelvis"
+    assert joint.ts == imu.ts == pose.ts == client.read().joints.ts
+    assert pose.position.to_tuple() == pytest.approx((0, 0, 0.3))
+
+    # Publishing a newer sample must not replace a policy's command basis.
+    basis = client.read()
+    world.step()
+    assert joints.get(timeout=2).ts > joint.ts
+    client.write_motors(command(), observed=basis)
+    world.step()
+    assert client.read().metadata.applied_action_sequence > 0
+
+
+@pytest.fixture
+def motor_world(world_config, worlds):
+    instance = world_config.robots["left"]
+    instance = replace(
+        instance,
+        config=replace(instance.config, joints=instance.config.joints[:1]),
+        initial_positions={"shoulder": 0.1},
+    )
+    return worlds(config=replace(world_config, robots={"left": instance}))
+
+
+def test_damping_stop_latches_in_physics_across_timeouts_and_reset(motor_world, clients, mocker):
+    world = motor_world
+    client = clients(world, writable=True, damping=2.0)
+    client.write_positions([0.4], observed=client.read())
+    delayed = world.robots["left"].channel.read_action()
+    client.set_estop(True)
+    mocker.patch("dimos.sim2.streams.time.monotonic", return_value=time.monotonic() + 1)
+    binding = world.robots["left"]
+    world.data.qvel[binding.dofs] = 1.5
+    binding.channel._accept_command(
+        replace(delayed, metadata=replace(delayed.metadata, sequence=99))
+    )
+    world.step()
+
+    assert world.data.ctrl[binding.actuators] == pytest.approx([-3.0])
+    assert client.read().estopped
+    with pytest.raises(RuntimeError, match="latched"):
+        client.write_positions([0.4], observed=client.read())
+    with pytest.raises(RuntimeError, match="latched"):
+        client.set_estop(False)
+
+    world.reset()
+    world.data.qvel[binding.dofs] = -1.0
+    world.step()
+    assert client.read().estopped
+    assert world.data.ctrl[binding.actuators] == pytest.approx([2.0])
+
+
+def test_damping_stop_does_not_require_fresh_feedback(motor_world, clients, mocker):
+    client = clients(motor_world, writable=True, damping=2.0)
+    mocker.patch("dimos.sim2.client.time.monotonic", return_value=time.monotonic() + 1)
+    with pytest.raises(TimeoutError, match="stale"):
+        client.read()
+    client.set_estop(True)
+    assert motor_world.robots["left"].channel.damping.tolist() == [2.0]
+
+
+def test_feedback_timeout_reports_fault_and_latches_damping(motor_world, clients, mocker):
+    joints, faults = Queue(), Queue()
+    client = clients(
+        motor_world,
+        writable=True,
+        start=True,
+        damping=2.0,
+        publish_joints=joints.put,
+        publish_fault=faults.put,
+    )
+    joints.get(timeout=2)
+    mocker.patch("dimos.sim2.client.time.monotonic", return_value=time.monotonic() + 1)
+    assert "stale" in faults.get(timeout=2).data
+    assert motor_world.robots["left"].channel.damping.tolist() == [2.0]
+    with pytest.raises(RuntimeError, match="latched"):
+        client.set_estop(False)
+
+
+def test_read_only_observer_cannot_damp_robot(motor_world, clients):
+    reader = clients(motor_world, damping=2.0)
+    with pytest.raises(PermissionError, match="read-only"):
+        reader.set_estop(True)
+    assert motor_world.robots["left"].channel.damping is None
+
+
+@pytest.mark.native_e2e
+def test_native_feedback_callbacks_and_damping_rpc(motor_world, clients):
+    joints = Queue()
+    client = clients(motor_world, writable=True, start=True, publish_joints=joints.put, damping=2.0)
+    assert joints.get(timeout=2).position == pytest.approx([0.1])
+    client.set_estop(True)
+    binding = motor_world.robots["left"]
+    motor_world.data.qvel[binding.dofs] = 1.5
+    motor_world.step()
+
+    assert joints.get(timeout=2).position == pytest.approx(motor_world.data.qpos[binding.qpos])
+    assert client.read().estopped
+    assert motor_world.data.ctrl[binding.actuators] == pytest.approx([-3.0])

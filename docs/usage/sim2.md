@@ -136,23 +136,21 @@ device they consume; adding a device cannot rename existing streams.
 
 ## Internal device interface
 
-The world's `describe()` RPC supplies the exact channel descriptor for each
-robot. It includes joint order, physical timestep and world-generation identity.
-Do not reconstruct it from a robot name or reuse it after restarting the world.
+Construct the client with the running world and robot ID. The client discovers
+the endpoint through `describe_robot()` and checks the joint order. Transport
+descriptors stay inside sim2; robot connections do not construct or decode them.
 
 ```python skip
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.sim2.blueprint import simulation
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.spec import WorldConfig
 
 app = ModuleCoordinator.build(simulation(world=WorldConfig(scene_path, robot_instances)))
 try:
     world = app.get_instance(SimulationModule)
-    descriptor = StreamDescriptor.from_dict(world.describe()["robots"]["arm"])
-    with SimRobotClient(descriptor, writable=True) as device:
+    with SimRobotClient(world=world, robot_id="arm") as device:
         observed = device.read()
         device.write_positions(target_positions, observed=observed)
 finally:
@@ -165,13 +163,16 @@ connection/controller refreshes commands in its existing control loop.
 | Client call | Contract |
 | --- | --- |
 | `connect()` / `close()` | Attach/release resources; context-manager equivalent |
-| `read()` | One copied, coherent joint/IMU/base frame with episode/tick/time metadata |
+| `read()` | `RobotFeedback`: `JointState`, optional `Imu`, ground-truth `PoseStamped`, base `Twist`, episode/tick/time metadata |
+| `start()` / `stop()` | Attach and run typed feedback callbacks; stop the publisher and release the connection |
+| `write(MotorCommandArray)` | Forward a timestamped command using current feedback, without restamping it |
 | `write_motors(MotorCommandArray, observed=...)` | Complete finite q/dq/kp/kd/tau arrays in descriptor order |
 | `write_positions(positions, observed=...)` | Native position targets, including declared gripper units |
 | `disable(observed=...)` | Zero effort outputs; native position servos target current position |
+| `set_estop(True)` | Latch configured motor damping until world restart; not cleared by a reset |
 
-Readers are read-only by default. Exactly one writable client may own a robot's
-actuator set; public feedback readers do not acquire that ownership. Vendor
+Use `writable=False` for a feedback-only client. Exactly one writable client may
+own a robot's actuator set; read-only clients cannot command or halt it. Vendor
 sentinels must be normalized by the vendor integration before writing commands.
 
 Feedback and command timeouts default to 250 ms and are explicit client settings.

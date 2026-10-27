@@ -25,6 +25,7 @@ from dimos.core.transport import pZenohTransport
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.sim2.client import SimRobotClient
+from dimos.sim2.module import SimulationSpec
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
@@ -177,12 +178,19 @@ def worlds(world_config):
 
 
 @pytest.fixture
-def clients():
+def clients(mocker):
     with ExitStack() as stack:
 
-        def create(world, robot_id="left", **kwargs):
-            return stack.enter_context(
-                SimRobotClient(world.robots[robot_id].channel.descriptor, **kwargs)
-            )
+        def create(world, robot_id="left", *, start=False, **kwargs):
+            source = mocker.Mock(spec=SimulationSpec)
+            source.describe_robot.side_effect = lambda name: world.robots[name].channel.descriptor
+            kwargs.setdefault("writable", False)
+            client = SimRobotClient(world=source, robot_id=robot_id, **kwargs)
+            stack.callback(client.close)
+            if start:
+                client.start()
+            else:
+                client.connect()
+            return client
 
         yield create
