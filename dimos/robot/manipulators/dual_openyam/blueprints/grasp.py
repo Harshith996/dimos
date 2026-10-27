@@ -178,13 +178,13 @@ def dual_openyam_grasp_view() -> Any:
     )
 
 
+# The scene cloud stays off the bridge: streamed to a remote viewer it saturates the link.
 DUAL_OPENYAM_VIEW_TOPICS = [
     "color_image",
     "overlay_image",
     "camera_info",
     "left_wrist_color_image",
     "right_wrist_color_image",
-    "pointcloud",
     "tf",
     "detections_3d",
 ]
