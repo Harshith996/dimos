@@ -255,7 +255,8 @@ def dual_openyam_grasp_modules(
             detector_backend="moondream",
             segmentation_backend="edgetam",
             detect_on_request=True,
-            distance_threshold=0.08,
+            # Benchmark scenes put objects 9 cm apart; 8 cm merged neighbours into one id.
+            distance_threshold=0.03,
             min_detections_for_permanent=1,
             max_distance=1.5,
             use_aabb=True,
