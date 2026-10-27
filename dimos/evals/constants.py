@@ -18,7 +18,7 @@ from dataclasses import asdict, replace
 import json
 from typing import Literal
 
-from dimos.perception.localize.localize_params import XARM_PARAMS
+from dimos.perception.localize.types import LocalizeParams
 
 # Model providers: API key variable and default upstream base URL, by provider name.
 PROVIDERS: dict[str, tuple[str, str]] = {
@@ -95,8 +95,8 @@ XARM7_GRIPPER_NOTES = (
 )
 
 # Localize in MuJoCo: the wrist camera starts parked, so confirm objects from one view, and
-# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the xarm preset's 0.40.
-SIM_LOCALIZE_PARAMS = replace(XARM_PARAMS, min_views=1, candidate_floor=0.2, accept_score=0.25)
+# robosuite's flat-shaded objects score about 0.3 with OWLv2, under the desk defaults' 0.40.
+SIM_LOCALIZE_PARAMS = replace(LocalizeParams(), min_views=1, candidate_floor=0.2, accept_score=0.25)
 SIM_LOCALIZE_ENV = {"PERCEPTIONLOCALIZE__PARAMS": json.dumps(asdict(SIM_LOCALIZE_PARAMS))}
 
 DIMOS_PYTHON_README = """\
