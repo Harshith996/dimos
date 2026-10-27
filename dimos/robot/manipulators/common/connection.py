@@ -33,7 +33,7 @@ from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import StateFrame, StreamDescriptor
+from dimos.sim2.messages import RobotFeedback
 from dimos.sim2.module import SimulationSpec
 
 
@@ -83,8 +83,9 @@ class ArmConnection(ConnectionModule):
             if self._simulation is None:
                 raise RuntimeError("simulated arm requires the collected SimulationModule")
             robot_id = self.config.instance_name or self.name
-            descriptor = self._simulation.describe()["robots"][robot_id]
-            self._sim = SimRobotClient(StreamDescriptor.from_dict(descriptor), writable=True)
+            self._sim = SimRobotClient(
+                world=self._simulation, robot_id=robot_id, joint_names=self._names
+            )
             self._sim.connect()
         else:
             self._device = adapter_registry.create(
@@ -99,12 +100,12 @@ class ArmConnection(ConnectionModule):
             if self.config.auto_enable and not self._device.activate():
                 raise RuntimeError(f"{self.adapter_type} activation failed")
 
-    def _observe_sim(self) -> StateFrame:
+    def _observe_sim(self) -> RobotFeedback:
         assert self._sim is not None
         frame = self._sim.read()
         if self._episode != frame.metadata.episode_id:
             self._episode = frame.metadata.episode_id
-            self._targets = frame.values["position"].tolist()
+            self._targets = list(frame.joints.position)
             self._velocity_at = None
             self._mode = ControlMode.SERVO_POSITION
         return frame
@@ -116,13 +117,7 @@ class ArmConnection(ConnectionModule):
                 if frame.metadata.sequence == self._sequence:
                     return {}
                 self._sequence = frame.metadata.sequence
-                state = JointState(
-                    name=self._names,
-                    position=frame.values["position"].tolist(),
-                    velocity=frame.values["velocity"].tolist(),
-                    effort=frame.values["effort"].tolist(),
-                    ts=float(frame.values["wall_time"][0]),
-                )
+                state = frame.joints
             elif self._device is not None:
                 state = JointState(
                     name=self._names,
@@ -168,7 +163,7 @@ class ArmConnection(ConnectionModule):
                 if self._sim is not None:
                     assert observed is not None
                     if self._mode != ControlMode.VELOCITY:
-                        self._targets = observed.values["position"].tolist()
+                        self._targets = list(observed.joints.position)
                     for i, velocity in velocities.items():
                         limit = self.description.limits[f"{self._names[i]}/position"]
                         target = self._targets[i] + velocity * dt
@@ -224,7 +219,7 @@ class ArmConnection(ConnectionModule):
         with self._device_lock:
             if self._sim is not None:
                 observed = self._sim.read()
-                self._targets = observed.values["position"].tolist()
+                self._targets = list(observed.joints.position)
                 self._sim.write_positions(self._targets, observed=observed)
             elif self._device is not None:
                 if not self._device.write_stop():

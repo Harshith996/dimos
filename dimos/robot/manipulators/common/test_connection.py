@@ -30,13 +30,15 @@ from dimos.core.global_config import global_config
 from dimos.hardware.manipulators.registry import adapter_registry
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.piper.connection import PiperConnection
 from dimos.robot.manipulators.xarm.connection import XArmConnection
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import FrameMetadata, StateFrame, StreamDescriptor
+from dimos.sim2.messages import FrameMetadata, RobotFeedback
 from dimos.sim2.module import SimulationModule
 from dimos.utils.testing.waiting import wait_until
 
@@ -113,14 +115,20 @@ def test_halt_discards_held_sdk_targets(sdk_connection):
 def simulated_connection(connection, mocker):
     client = mocker.create_autospec(SimRobotClient, instance=True)
     size = len(connection._names)
-    frame = StateFrame(
-        FrameMetadata(1, 0, 1, 1, 0.005),
-        {
-            "position": np.zeros(size),
-            "velocity": np.zeros(size),
-            "effort": np.zeros(size),
-            "wall_time": np.array([123.0]),
-        },
+    frame = RobotFeedback(
+        metadata=FrameMetadata(1, 0, 1, 1, 0.005),
+        joints=JointState(
+            name=connection._names,
+            position=[0.0] * size,
+            velocity=[0.0] * size,
+            effort=[0.0] * size,
+            ts=123.0,
+        ),
+        imu=None,
+        odom=PoseStamped(ts=123.0),
+        base_velocity=Twist(),
+        monotonic_time=0.0,
+        enabled=True,
     )
     client.read.return_value = frame
     mocker.patch.object(connection, "_sim", client)
@@ -191,7 +199,7 @@ def running_arm(request, monkeypatch):
         stack.callback(app.stop)
         world = app.get_instance(SimulationModule)
         client = stack.enter_context(
-            SimRobotClient(StreamDescriptor.from_dict(world.describe()["robots"]["arm_connection"]))
+            SimRobotClient(world=world, robot_id="arm_connection", writable=False)
         )
         yield app, client, dof
 
@@ -202,7 +210,7 @@ def test_native_arm_executes_trajectory(running_arm):
     app, client, dof = running_arm
     controller = app.get_instance(ControlCoordinator)
     wait_until(lambda: len(controller.get_joint_positions()) >= dof, timeout=5)
-    start = client.read().values["position"][:dof].copy()
+    start = np.asarray(client.read().joints.position[:dof])
     target = start.copy()
     target[0] += 0.15
     trajectory = JointTrajectory(
@@ -216,8 +224,8 @@ def test_native_arm_executes_trajectory(running_arm):
     assert np.isfinite(start).all()
     result = controller.execute_trajectory(trajectory)
     assert result.status is TrajectoryExecutionStatus.ACCEPTED
-    wait_until(lambda: abs(client.read().values["position"][0] - target[0]) < 0.025, timeout=5)
-    assert client.read().values["position"][:dof] == pytest.approx(target, abs=0.025)
+    wait_until(lambda: abs(client.read().joints.position[0] - target[0]) < 0.025, timeout=5)
+    assert client.read().joints.position[:dof] == pytest.approx(target, abs=0.025)
     assert app.get_instance(SimulationModule).status()["error"] is None
 
 
@@ -228,8 +236,8 @@ def test_native_gripper_uses_sdk_aperture_units(running_arm):
     controller = app.get_instance(ControlCoordinator)
     wait_until(lambda: "arm/gripper" in controller.get_joint_positions(), timeout=5)
     assert controller.task_invoke("arm_gripper", "set_normalized", {"values": [0.5]})
-    wait_until(lambda: abs(client.read().values["position"][-1] - 425.0) < 25, timeout=5)
-    assert client.read().values["position"][-1] == pytest.approx(425, abs=25)
+    wait_until(lambda: abs(client.read().joints.position[-1] - 425.0) < 25, timeout=5)
+    assert client.read().joints.position[-1] == pytest.approx(425, abs=25)
 
 
 @pytest.mark.self_hosted
