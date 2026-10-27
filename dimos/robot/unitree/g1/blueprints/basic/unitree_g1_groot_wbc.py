@@ -71,7 +71,7 @@ from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.messages.dimos_msgs.msg import MotorCommandArray
 from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import Path as NavPath
+from dimos.messages.nav_msgs.msg import Odometry, Path as NavPath
 from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -417,20 +417,26 @@ def _g1_pelvis_to_mid360() -> Any:
     return _g1_pelvis_mid360_cache[0]
 
 
-def _g1_real_odometry_root(odom: Any) -> Any:
+def _g1_real_odometry_root(odom: Odometry) -> Any:
     """Robot-mesh root: pelvis pose from the LIO's mid360 odometry (rest offset)."""
     import numpy as np
     import rerun as rr
 
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.message_utils import geometry
 
     t_world_mid360 = np.eye(4)
     # The MID-360 is mounted upside down (the URDF doesn't carry the flip):
     # un-roll by Rx(pi) == diag(1, -1, -1).
-    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
-    t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
+    t_world_mid360[:3, :3] = geometry.pose_matrix(odom.pose.pose)[:3, :3] @ np.diag(
+        [1.0, -1.0, -1.0]
+    )
+    t_world_mid360[:3, 3] = (
+        odom.pose.pose.position.x,
+        odom.pose.pose.position.y,
+        odom.pose.pose.position.z,
+    )
     t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
-    q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
+    q = geometry.quaternion_from_matrix(t_world_pelvis[:3, :3])
     return rr.Transform3D(
         translation=t_world_pelvis[:3, 3].tolist(),
         rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),

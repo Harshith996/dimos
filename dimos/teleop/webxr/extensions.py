@@ -26,14 +26,14 @@ import asyncio
 from typing import Any
 
 from fastapi import WebSocket
+import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils import image
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos.message_utils import geometry, image
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Float32
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
@@ -115,8 +115,15 @@ class TwistTeleopModule(WebXRTeleopModule):
         twist = TwistStamped(
             self._output_header(hand, output_msg),
             Twist(
-                Vector3(*(output_msg.position * self.config.linear_scale)),
-                Vector3(*(output_msg.orientation.to_euler() * self.config.angular_scale)),
+                Vector3(
+                    *(geometry.vector_array(output_msg.pose.position) * self.config.linear_scale)
+                ),
+                Vector3(
+                    *(
+                        np.asarray(geometry.quaternion_euler(output_msg.pose.orientation))
+                        * self.config.angular_scale
+                    )
+                ),
             ),
         )
         if hand == Hand.LEFT:

@@ -19,8 +19,9 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -164,17 +165,21 @@ class Observation(Generic[T]):
         if self.pose_tuple is None:
             return None
 
-        return Pose(*self.pose_tuple)
+        return Pose(
+            position=Point(*self.pose_tuple[:3]), orientation=Quaternion(*self.pose_tuple[3:])
+        )
 
     @property
     def pose_stamped(self) -> PoseStamped | None:
         """Typed :class:`PoseStamped` (or None) carrying this observation's ts."""
         if self.pose_tuple is None:
             return None
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         x, y, z, qx, qy, qz, qw = self.pose_tuple
-        return PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        return PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(self.ts), frame_id=""),
+            pose=Pose(position=Point(x, y, z), orientation=Quaternion(qx, qy, qz, qw)),
+        )
 
     @property
     def data(self) -> T:

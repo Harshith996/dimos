@@ -17,11 +17,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Generic, Literal, Protocol, TypeVar, cast
+from typing import Generic, Literal, Protocol, TypeVar
 
 from dimos_cdrgen.registry import decode, encode, message_types
-
-from dimos.msgs.protocol import DimosMsg
 
 T = TypeVar("T")
 
@@ -30,19 +28,6 @@ class MessageCodec(Protocol[T]):
     def encode(self, message: T) -> bytes: ...
 
     def decode(self, payload: bytes) -> T: ...
-
-
-@dataclass(frozen=True)
-class LCMCodec(Generic[T]):
-    message_type: type[T]
-
-    def encode(self, message: T) -> bytes:
-        if not isinstance(message, self.message_type):
-            raise TypeError("Message does not match the declared type")
-        return cast("DimosMsg", message).lcm_encode()
-
-    def decode(self, payload: bytes) -> T:
-        return cast("T", cast("type[DimosMsg]", self.message_type).lcm_decode(payload))
 
 
 @dataclass(frozen=True)
@@ -69,23 +54,7 @@ class MessageDescriptor(Generic[T]):
 
 
 def describe_message(message_type: type[T]) -> MessageDescriptor[T]:
-    legacy = all(
-        callable(getattr(message_type, method, None)) for method in ("lcm_encode", "lcm_decode")
-    )
-    if legacy and not hasattr(message_type, "__msgtype__"):
-        name = getattr(message_type, "msg_name", None)
-        if not isinstance(name, str):
-            raise TypeError("Legacy message type must declare msg_name")
-        return MessageDescriptor(message_type, "lcm", name, LCMCodec(message_type))
-    if not hasattr(message_type, "__msgtype__"):
-        raise TypeError(f"Unsupported message type: {message_type!r}")
     names = [name for name, cls in message_types().items() if cls is message_type]
-    if (names and legacy) or len(names) > 1:
-        raise TypeError("Ambiguous message encoding")
-    if names:
-        return MessageDescriptor(message_type, "cdr", names[0], CDRCodec(message_type))
-    if legacy and isinstance(getattr(message_type, "msg_name", None), str):
-        return MessageDescriptor(
-            message_type, "lcm", cast("Any", message_type).msg_name, LCMCodec(message_type)
-        )
-    raise TypeError(f"Unsupported message type: {message_type!r}")
+    if len(names) != 1:
+        raise TypeError(f"Unsupported or ambiguous generated message type: {message_type!r}")
+    return MessageDescriptor(message_type, "cdr", names[0], CDRCodec(message_type))

@@ -31,13 +31,11 @@ from dimos.mapping.pointclouds.occupancy import (
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.message_utils import occupancy, pointcloud
+from dimos.message_utils import occupancy as occupancy_utils, pointcloud, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyCloud
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.data import get_data
 from dimos.utils.threadpool import get_max_workers
@@ -54,23 +52,27 @@ def test_generated_costmaps_match_existing_math_and_keep_exact_header(source_hea
         [[-1, -1, 0], [-0.5, 0, 0.4], [0, 0, 0.4], [0.5, 0.5, 0], [1, 1, 0.2]], dtype=np.float32
     )
     cloud = pointcloud.from_xyz(points, header=source_header)
-    legacy = LegacyCloud.from_numpy(points, frame_id="lidar", timestamp=0)
+    legacy = pointcloud.from_xyz(
+        points, header=Header(stamp=message_time.time_from_seconds(0), frame_id="lidar")
+    )
 
     actual = algorithm(cloud, resolution=0.25)
     original = algorithm(legacy, resolution=0.25)
     received = actual
 
-    assert type(original) is LegacyGrid
+    assert type(original) is OccupancyGrid
     assert type(actual) is OccupancyGrid
     assert received.header == source_header
     assert received.info.map_load_time == source_header.stamp
-    assert original.ts == legacy.ts
-    assert received.info.resolution == original.resolution
-    assert (received.info.origin.position.x, received.info.origin.position.y) == (
-        original.origin.position.x,
-        original.origin.position.y,
+    assert message_time.to_seconds(original.header.stamp) == message_time.to_seconds(
+        legacy.header.stamp
     )
-    np.testing.assert_array_equal(occupancy.view(received), original.grid)
+    assert received.info.resolution == original.info.resolution
+    assert (received.info.origin.position.x, received.info.origin.position.y) == (
+        original.info.origin.position.x,
+        original.info.origin.position.y,
+    )
+    np.testing.assert_array_equal(occupancy_utils.view(received), occupancy_utils.view(original))
     actual.header.stamp.nanosec = 0
     assert cloud.header == source_header
 
@@ -84,7 +86,7 @@ def test_empty_generated_cloud_retains_source_metadata_and_unknown_map(source_he
     assert actual.header.frame_id == "map"
     assert actual.header.stamp == source_header.stamp
     assert actual.info.map_load_time == source_header.stamp
-    assert occupancy.view(actual).tolist() == [[-1]]
+    assert occupancy_utils.view(actual).tolist() == [[-1]]
 
 
 def test_generated_missing_points_are_ignored_before_rasterization():
@@ -121,12 +123,14 @@ def test_initial_safe_radius_uses_owned_cells_without_changing_metadata(mapper_f
     create, _ = mapper_factory
     module = create(initial_safe_radius_meters=0.25)
     header = Header(frame_id="map", stamp=Time(sec=1700000000, nanosec=123456789))
-    grid = occupancy.from_array(np.full((3, 3), 100, dtype=np.int8), header=header, resolution=0.25)
+    grid = occupancy_utils.from_array(
+        np.full((3, 3), 100, dtype=np.int8), header=header, resolution=0.25
+    )
     original = deepcopy(grid.header)
 
     module._apply_initial_safe_radius(grid)
 
-    assert occupancy.view(grid).tolist() == [[0, 0, 100], [0, 0, 100], [100, 100, 100]]
+    assert occupancy_utils.view(grid).tolist() == [[0, 0, 100], [0, 0, 100], [100, 100, 100]]
     assert grid.header == original
     assert grid.info.map_load_time == original.stamp
 
@@ -211,7 +215,7 @@ def test_generated_real_pointcloud_costmap_matches_existing_golden(
     )
 
     actual = algorithm(cloud)
-    cells = occupancy.view(actual)
+    cells = occupancy_utils.view(actual)
     if grayscale:
         expected = cv2.imread(str(get_data(expected_name)), cv2.IMREAD_GRAYSCALE)
         pixels = (cells + 1).astype(np.uint8)

@@ -16,11 +16,8 @@
 
 import math
 
-from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import Vector3 as CdrVector3
-from dimos.msgs.driver import transform_message
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.g1.g1_tf_publisher import (
     D435_PITCH,
@@ -43,17 +40,12 @@ def _buffer(
     waist_yaw: float = 0.0,
     waist_roll: float = 0.0,
     waist_pitch: float = 0.0,
-    live: Transform | None = None,
+    live: TransformStamped | None = None,
 ) -> MultiTBuffer:
     buffer = MultiTBuffer()
-    buffer.receive_transform(
-        *(
-            transform_message(value)
-            for value in mount_transforms(waist_yaw, waist_roll, waist_pitch)
-        )
-    )
+    buffer.receive_transform(*mount_transforms(waist_yaw, waist_roll, waist_pitch))
     if live is not None:
-        buffer.receive_transform(transform_message(live))
+        buffer.receive_transform(live)
     return buffer
 
 
@@ -70,17 +62,16 @@ def test_mid360_frame_is_upside_down() -> None:
     """The inverted mount points the sensor's z axis at the floor in the base frame."""
     leg = _buffer().get("base_link", "mid360_link")
     assert leg is not None
-    z_axis = geometry.rotate_vector(leg.transform.rotation, CdrVector3(0.0, 0.0, 1.0))
+    z_axis = geometry.rotate_vector(leg.transform.rotation, Vector3(0.0, 0.0, 1.0))
     assert z_axis.z < -0.99
 
 
 def test_flipped_level_sensor_yields_level_base() -> None:
     """A standing robot reports a flipped sensor pose. base_link must come out level, below it."""
-    live = Transform(
-        translation=Vector3(0.0, 0.0, LIDAR_HEIGHT),
-        rotation=torso_to_mid360().rotation,
-        frame_id="world",
-        child_frame_id="mid360_link",
+    live = TransformStamped(
+        message_time.header_now("world"),
+        "mid360_link",
+        Transform(Vector3(0.0, 0.0, LIDAR_HEIGHT), torso_to_mid360().transform.rotation),
     )
     base = _buffer(live=live).get("world", "base_link")
     assert base is not None
@@ -108,11 +99,11 @@ def test_waist_pitch_rotates_base_link_against_the_torso() -> None:
 
 def test_rest_pose_base_to_torso_matches_urdf_offsets() -> None:
     rest = base_to_torso(0.0, 0.0, 0.0)
-    assert abs(rest.translation.x - PELVIS_TORSO_X) < 1e-6
-    assert abs(rest.translation.z - PELVIS_TORSO_Z) < 1e-6
-    assert abs(rest.rotation.euler.x) < 1e-6
-    assert abs(rest.rotation.euler.y) < 1e-6
-    assert abs(rest.rotation.euler.z) < 1e-6
+    assert abs(rest.transform.translation.x - PELVIS_TORSO_X) < 1e-6
+    assert abs(rest.transform.translation.z - PELVIS_TORSO_Z) < 1e-6
+    assert abs(geometry.quaternion_euler(rest.transform.rotation)[0]) < 1e-6
+    assert abs(geometry.quaternion_euler(rest.transform.rotation)[1]) < 1e-6
+    assert abs(geometry.quaternion_euler(rest.transform.rotation)[2]) < 1e-6
 
 
 def test_d435_hangs_off_base_link() -> None:

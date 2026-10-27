@@ -14,6 +14,7 @@
 
 from functools import partial
 import pickle
+from types import SimpleNamespace
 
 import numpy as np
 import rerun as rr
@@ -26,7 +27,6 @@ from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
-from dimos.visualization.rerun.bridge import is_keyed_by_seq
 
 
 def test_goal_placeholder_is_not_drawn() -> None:
@@ -84,9 +84,13 @@ def test_empty_path_keeps_the_last_one_drawn() -> None:
 def test_keyed_renderers_keep_their_flag_through_the_pickle_round_trip() -> None:
     plain = pickle.loads(pickle.dumps(render_map_region))
     bound = pickle.loads(pickle.dumps(partial(render_map_region, voxel_size=0.1)))
-    assert is_keyed_by_seq(plain) and is_keyed_by_seq(bound)
-    assert not is_keyed_by_seq(viz.render_path)
-    assert not is_keyed_by_seq(pickle.loads(pickle.dumps(partial(viz.render_path))))
+    assert plain.message_key(SimpleNamespace(region_id=7)) == 7
+    assert bound.func.message_key(SimpleNamespace(region_id=7)) == 7
+    assert getattr(viz.render_path, "message_key", None) is None
+    assert (
+        getattr(pickle.loads(pickle.dumps(partial(viz.render_path))).func, "message_key", None)
+        is None
+    )
 
 
 def test_bridge_config_pickles_for_the_workers() -> None:

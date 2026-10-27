@@ -14,7 +14,6 @@
 
 import threading
 from threading import Thread
-import time
 from typing import Any
 
 from pydantic import Field
@@ -24,31 +23,19 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.message_utils import time as message_time
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import (
-    Point,
-    Pose,
     PoseStamped,
-    Quaternion as CdrQuaternion,
-    Twist as CdrTwist,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
 )
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.driver import (
-    camera_info_message,
-    cloud_message,
-    image_message,
-    transform_message,
-)
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as DriverPose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.connection import G1ConnectionBase, _driver_twist
+from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -62,7 +49,7 @@ class G1SimConfig(ModuleConfig):
 
 class G1SimConnection(G1ConnectionBase):
     config: G1SimConfig
-    cmd_vel: In[CdrTwist]
+    cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
     color_image: Out[Image]
@@ -86,16 +73,8 @@ class G1SimConnection(G1ConnectionBase):
 
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
-        self.register_disposable(
-            self.connection.lidar_stream().subscribe(
-                lambda value: self.lidar.publish(cloud_message(value))
-            )
-        )
-        self.register_disposable(
-            self.connection.video_stream().subscribe(
-                lambda value: self.color_image.publish(image_message(value))
-            )
-        )
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
         self._camera_info_thread = Thread(
             target=self._publish_camera_info_loop,
@@ -114,69 +93,38 @@ class G1SimConnection(G1ConnectionBase):
 
     def _publish_camera_info_loop(self) -> None:
         assert self.connection is not None
-        info = camera_info_message(self.connection.camera_info_static)
+        info = self.connection.camera_info_static
         while not self._stop_event.is_set():
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
 
-    def _publish_tf(self, msg: DriverPose) -> None:
-        p, q = msg.position, msg.orientation
-        from_pose = PoseStamped(
-            Header(message_time.time_from_seconds(msg.ts), msg.frame_id),
-            Pose(Point(p.x, p.y, p.z), CdrQuaternion(q.x, q.y, q.z, q.w)),
+    def _publish_tf(self, msg: PoseStamped) -> None:
+        self.odom.publish(msg)
+        base_link = geometry.transform_from_pose(msg, child_frame_id="base_link")
+        camera_link = TransformStamped(
+            message_time.header_now("base_link"),
+            "camera_link",
+            Transform(Vector3(0.05, 0.0, 0.6), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
-        self.odom.publish(from_pose)
-
-        base_link = Transform.from_pose("base_link", msg)
-
-        # Publish camera_link and camera_optical transforms
-        camera_link = Transform(
-            translation=Vector3(0.05, 0.0, 0.6),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
+        camera_optical = TransformStamped(
+            message_time.header_now("camera_link"),
+            "camera_optical",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(-0.5, 0.5, -0.5, 0.5)),
         )
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-            ts=time.time(),
+        map_to_world = TransformStamped(
+            message_time.header_now("map"),
+            "world",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
+        self.tf.publish(TFMessage([base_link, camera_link, camera_optical, map_to_world]))
 
-        map_to_world = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-            child_frame_id="world",
-            ts=time.time(),
-        )
-
-        self.tf.publish(
-            TFMessage(
-                [
-                    transform_message(value)
-                    for value in (base_link, camera_link, camera_optical, map_to_world)
-                ]
-            )
-        )
-
-    def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        self._publish_tf(
-            DriverPose(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.position,
-                orientation=msg.orientation,
-            )
-        )
+    def _publish_sim_odom(self, msg: PoseStamped) -> None:
+        self._publish_tf(msg)
 
     @rpc
-    def move(self, twist: Twist | CdrTwist, duration: float = 0.0) -> None:
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         assert self.connection is not None
-        self.connection.move(_driver_twist(twist), duration)
+        self.connection.move(twist, duration)
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:

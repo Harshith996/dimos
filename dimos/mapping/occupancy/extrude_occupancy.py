@@ -16,14 +16,15 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.mapping.occupancy.operations import _grid_values, _GridT
+from dimos.mapping.occupancy.operations import _grid_values
 from dimos.message_utils.occupancy import CostValues
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 # Rectangle type: (x, y, width, height)
 Rect = tuple[int, int, int, int]
 
 
-def identify_convex_shapes(occupancy_grid: _GridT) -> list[Rect]:
+def identify_convex_shapes(occupancy_grid: OccupancyGrid) -> list[Rect]:
     """Identify occupied zones and decompose them into convex rectangles.
 
     This function finds all occupied cells in the occupancy grid and
@@ -167,7 +168,7 @@ def _largest_rect_in_histogram(
 
 
 def generate_mujoco_scene(
-    occupancy_grid: _GridT,
+    occupancy_grid: OccupancyGrid,
 ) -> str:
     """Generate a MuJoCo scene XML from an occupancy grid.
 

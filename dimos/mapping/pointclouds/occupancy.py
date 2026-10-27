@@ -16,23 +16,19 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
-from dimos.message_utils import occupancy, pointcloud
+from dimos.message_utils import occupancy as occupancy_utils, pointcloud
 from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
-from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 @dataclass(frozen=True)
@@ -43,46 +39,27 @@ class OccupancyConfig:
     frame_id: str | None = None
 
 
-def _cloud_points(cloud: PointCloud2 | CdrCloud) -> NDArray[np.float64]:
-    if isinstance(cloud, CdrCloud):
-        points = pointcloud.xyz(cloud)
-        return points[np.isfinite(points).all(axis=1)]
-    points, _ = cloud.as_numpy()
-    return points.astype(np.float64)
-
-
-def _legacy_stamp(cloud: PointCloud2 | CdrCloud) -> float:
-    if isinstance(cloud, CdrCloud):
-        return 0.0  # Generated output uses its original Header, never this float.
-    return cloud.ts if cloud.ts is not None else 0.0
+def _cloud_points(cloud: PointCloud2) -> NDArray[np.float64]:
+    points = pointcloud.xyz(cloud)
+    return points[np.isfinite(points).all(axis=1)]
 
 
 def _grid_message(
-    cloud: PointCloud2 | CdrCloud,
+    cloud: PointCloud2,
     config: OccupancyConfig,
     cells: NDArray[np.int8],
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
-    *,
-    legacy_stamp: float | None = None,
-) -> OccupancyGrid | CdrGrid:
-    if isinstance(cloud, CdrCloud):
-        header = deepcopy(cloud.header)
-        header.frame_id = config.frame_id or header.frame_id
-        return occupancy.from_array(
-            cells,
-            header=header,
-            resolution=config.resolution,
-            origin=Pose(
-                position=Point(x=origin[0], y=origin[1], z=origin[2]),
-                orientation=Quaternion(w=1, x=0, y=0, z=0),
-            ),
-        )
-    return OccupancyGrid(
-        grid=cells,
+) -> OccupancyGrid:
+    header = deepcopy(cloud.header)
+    header.frame_id = config.frame_id or header.frame_id
+    return occupancy_utils.from_array(
+        cells,
+        header=header,
         resolution=config.resolution,
-        origin=LegacyPose(*origin),
-        frame_id=config.frame_id or cloud.frame_id,
-        ts=legacy_stamp,
+        origin=Pose(
+            position=Point(x=origin[0], y=origin[1], z=origin[2]),
+            orientation=Quaternion(w=1, x=0, y=0, z=0),
+        ),
     )
 
 
@@ -103,7 +80,7 @@ class OccupancyFn(Protocol[ConfigT]):
 
 
 # Populated after function definitions below
-OCCUPANCY_ALGOS: dict[str, Callable[..., OccupancyGrid | CdrGrid]] = {}
+OCCUPANCY_ALGOS: dict[str, Callable[..., OccupancyGrid]] = {}
 
 
 @dataclass(frozen=True)
@@ -116,15 +93,7 @@ class HeightCostConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-@overload
-def height_cost_occupancy(cloud: CdrCloud, **kwargs: Any) -> CdrGrid: ...
-
-
-@overload
-def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid: ...
-
-
-def height_cost_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> OccupancyGrid | CdrGrid:
+def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create a costmap based on terrain slope (rate of change of height).
 
     Costs are assigned based on the gradient magnitude of the terrain height.
@@ -141,7 +110,6 @@ def height_cost_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> Occup
     """
     cfg = HeightCostConfig(**kwargs)
     points = _cloud_points(cloud)
-    ts = _legacy_stamp(cloud)
 
     if len(points) == 0:
         return _grid_message(cloud, cfg, np.full((1, 1), -1, dtype=np.int8))
@@ -251,7 +219,7 @@ def height_cost_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> Occup
     else:
         cost = np.full((height, width), -1, dtype=np.int8)
 
-    return _grid_message(cloud, cfg, cost, origin, legacy_stamp=ts)
+    return _grid_message(cloud, cfg, cost, origin)
 
 
 @dataclass(frozen=True)
@@ -264,15 +232,9 @@ class GeneralOccupancyConfig(OccupancyConfig):
 
 
 # can remove, just needs pulling out of unitree type/map.py
-@overload
-def general_occupancy(cloud: CdrCloud, **kwargs: Any) -> CdrGrid: ...
 
 
-@overload
-def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid: ...
-
-
-def general_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> OccupancyGrid | CdrGrid:
+def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create an OccupancyGrid from a PointCloud2 message.
 
     Args:
@@ -367,9 +329,8 @@ def general_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> Occupancy
 
     # Create and return OccupancyGrid
     # Get timestamp from cloud if available
-    ts = _legacy_stamp(cloud)
 
-    return _grid_message(cloud, cfg, grid, origin, legacy_stamp=ts)
+    return _grid_message(cloud, cfg, grid, origin)
 
 
 @dataclass(frozen=True)
@@ -386,15 +347,7 @@ class SimpleOccupancyConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-@overload
-def simple_occupancy(cloud: CdrCloud, **kwargs: Any) -> CdrGrid: ...
-
-
-@overload
-def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid: ...
-
-
-def simple_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> OccupancyGrid | CdrGrid:
+def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create a simple occupancy grid with morphological closing.
 
     Args:
@@ -442,9 +395,7 @@ def simple_occupancy(cloud: PointCloud2 | CdrCloud, **kwargs: Any) -> OccupancyG
         cfg.max_height,
     )
 
-    ts = _legacy_stamp(cloud)
-
-    return _grid_message(cloud, cfg, grid, origin, legacy_stamp=ts)
+    return _grid_message(cloud, cfg, grid, origin)
 
 
 # Populate algorithm registry

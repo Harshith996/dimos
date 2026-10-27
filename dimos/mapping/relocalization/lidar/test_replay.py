@@ -23,6 +23,8 @@ from pytest_mock import MockerFixture
 import rerun as rr
 from scipy.spatial.transform import Rotation
 
+from dimos.messages.geometry_msgs.msg import Vector3
+
 pytest.importorskip("dimos_voxel_ray_tracing")
 
 from dimos.mapping.ray_tracing.utils.loaded_map import LOADED_MAP_STREAM

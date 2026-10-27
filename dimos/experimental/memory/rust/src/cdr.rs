@@ -37,3 +37,29 @@ impl CdrSchema {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_identity_and_definition_are_required() {
+        for (name, data) in [
+            ("acme_msgs.Event", "uint32 count\n"),
+            ("acme_msgs/msg/Event", " "),
+        ] {
+            assert!(CdrSchema {
+                name: name.into(),
+                data: data.into()
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(CdrSchema {
+            name: "acme_msgs/msg/Event".into(),
+            data: "uint32 count\n".into()
+        }
+        .validate()
+        .is_ok());
+    }
+}

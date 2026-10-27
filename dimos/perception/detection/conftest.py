@@ -17,7 +17,6 @@ from contextlib import ExitStack
 from copy import deepcopy
 import functools
 import hashlib
-from importlib import resources
 import json
 import math
 from pathlib import Path
@@ -27,11 +26,9 @@ from dimos_cdrgen.registry import decode as cdr_decode
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.message_utils import camera_info as camera_info_utils, geometry, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
+from dimos.message_utils import geometry, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
 from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
 from dimos.messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.module2D import Detection2DModule
@@ -43,6 +40,7 @@ from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.experimental.moduleDB import ObjectDBModule
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import TF
+from dimos.robot.unitree.go2.calibration import front_camera_calibration
 from dimos.utils.data import get_data
 
 
@@ -54,14 +52,6 @@ def _test_data(name):
 @pytest.fixture(scope="session")
 def detection_assets():
     return _test_data
-
-
-def front_camera_calibration() -> CameraInfo:
-    source = resources.files("dimos.robot.unitree.go2").joinpath("front_camera_720.yaml")
-    with resources.as_file(source) as path:
-        return camera_info_utils.from_yaml(
-            path, header=Header(frame_id="camera_optical", stamp=Time(sec=0, nanosec=0))
-        )
 
 
 def _dispose_module(module):

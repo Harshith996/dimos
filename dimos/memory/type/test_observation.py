@@ -90,3 +90,16 @@ def test_unsupported_message_is_not_silently_treated_as_a_pose():
     header = Header(frame_id="odom", stamp=message_time.time_from_nanoseconds(0))
     with pytest.raises(TypeError, match="Cannot coerce"):
         Observation(pose=header, _data="unchanged")
+
+
+def test_pose_accessors_return_generated_values_with_exact_storage_coordinates():
+    observation = Observation(ts=12.25, pose_tuple=(1.0, -2.0, 3.0, 0.0, 0.0, 0.0, 1.0))
+    pose = observation.pose
+    stamped = observation.pose_stamped
+    assert isinstance(pose, Pose)
+    assert isinstance(stamped, PoseStamped)
+    assert (pose.position.x, pose.position.y, pose.position.z) == (1.0, -2.0, 3.0)
+    assert stamped.pose == pose
+    assert (stamped.header.stamp.sec, stamped.header.stamp.nanosec) == (12, 250000000)
+    pose.position.x = 100.0
+    assert observation.pose_tuple == (1.0, -2.0, 3.0, 0.0, 0.0, 0.0, 1.0)

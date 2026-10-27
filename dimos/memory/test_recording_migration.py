@@ -17,6 +17,8 @@
 import json
 
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
+from dimos_lcm.geometry_msgs.PoseStamped import PoseStamped as LcmPoseStamped
+from dimos_lcm.std_msgs.Header import Header as LcmHeader
 import pytest
 from typer.testing import CliRunner
 
@@ -25,7 +27,6 @@ from dimos.memory.test_convert_recording import read_mcap, write_mcap
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPoseStamped
 
 
 def source_file(path, payload=b'"hello"'):
@@ -104,10 +105,11 @@ def test_overlap_symlinks_and_invalid_single_output_are_rejected(tmp_path):
     assert invalid.exit_code == 2
 
 
-def test_retained_legacy_interface_is_explicit_and_cdr_remains_distinct():
-    old = LegacyPoseStamped(ts=1.5, frame_id="world", position=(3.25, 0, 0))
-    restored = LegacyPoseStamped.lcm_decode(old.lcm_encode())
-    assert (restored.ts, restored.frame_id, restored.position.x) == (1.5, "world", 3.25)
+def test_cdr_codec_rejects_historical_lcm_bytes():
+    old = LcmPoseStamped(header=LcmHeader(frame_id="world"))
+    old.header.stamp.sec = 1
+    old.header.stamp.nsec = 500000000
+    old.pose.position.x = 3.25
     current = PoseStamped(
         header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
         pose=Pose(

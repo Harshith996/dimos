@@ -21,11 +21,10 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene, ide
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
-from dimos.message_utils import occupancy
+from dimos.message_utils import occupancy as occupancy_utils, time as message_time
 from dimos.messages.builtin_interfaces.msg import Time
 from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
 
 
 @pytest.fixture(params=[(0, 0), (-1, 999999999), (1700000000, 123456789)])
@@ -33,13 +32,18 @@ def grids(request):
     cells = np.zeros((7, 7), dtype=np.int8)
     cells[0, 0] = -1
     cells[3, 3] = cells[4, 4] = 100
-    generated = occupancy.from_array(
+    generated = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=Time(sec=request.param[0], nanosec=request.param[1])),
         resolution=0.25,
     )
     generated.info.map_load_time = Time(sec=7, nanosec=9)
-    return generated, LegacyGrid(grid=cells, resolution=0.25, frame_id="map", ts=0)
+    return generated, occupancy_utils.from_array(
+        np.asarray(cells, dtype=np.int8),
+        header=Header(stamp=message_time.time_from_seconds(0), frame_id="map"),
+        resolution=0.25,
+        origin=None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -62,12 +66,12 @@ def test_existing_algorithms_preserve_input_identity_and_exact_generated_metadat
     received = actual
 
     assert type(actual) is OccupancyGrid
-    assert type(old) is LegacyGrid
-    np.testing.assert_array_equal(occupancy.view(received), old.grid)
+    assert type(old) is OccupancyGrid
+    np.testing.assert_array_equal(occupancy_utils.view(received), occupancy_utils.view(old))
     assert received.header == original.header
     assert received.info.map_load_time == Time(sec=7, nanosec=9)
     assert received.info.origin == original.info.origin
-    assert occupancy.view(received)[0, 0] == -1
+    assert occupancy_utils.view(received)[0, 0] == -1
     np.testing.assert_array_equal(generated.data, original.data)
     assert generated.header == original.header
     assert generated.info == original.info
@@ -77,7 +81,7 @@ def test_existing_algorithms_preserve_input_identity_and_exact_generated_metadat
     np.testing.assert_array_equal(generated.data, original.data)
     assert generated.header == original.header
     assert generated.info == original.info
-    assert legacy.ts == 0
+    assert message_time.to_seconds(legacy.header.stamp) == 0
 
 
 def test_gradient_retains_unknown_obstacles_and_exact_distance_cost(grids):
@@ -85,27 +89,27 @@ def test_gradient_retains_unknown_obstacles_and_exact_distance_cost(grids):
 
     actual = gradient(generated, max_distance=0.5)
 
-    assert occupancy.view(actual)[0, 0] == -1
-    assert occupancy.view(actual)[3, 3] == 100
-    assert occupancy.view(actual)[3, 2] == 50
-    assert occupancy.view(actual)[1, 1] == 0
+    assert occupancy_utils.view(actual)[0, 0] == -1
+    assert occupancy_utils.view(actual)[3, 3] == 100
+    assert occupancy_utils.view(actual)[3, 2] == 50
+    assert occupancy_utils.view(actual)[1, 1] == 0
 
 
 def test_overlay_preserves_base_metadata_and_rejects_different_dimensions(grids):
     base, _ = grids
     cells = np.zeros((7, 7), dtype=np.int8)
     cells[2, 5] = 100
-    overlay = occupancy.from_array(
+    overlay = occupancy_utils.from_array(
         cells, header=Header(frame_id="map", stamp=Time(sec=0, nanosec=0)), resolution=0.25
     )
 
     actual = overlay_occupied(base, overlay)
 
-    assert occupancy.view(actual)[2, 5] == 100
-    assert occupancy.view(actual)[3, 3] == 100
+    assert occupancy_utils.view(actual)[2, 5] == 100
+    assert occupancy_utils.view(actual)[3, 3] == 100
     assert actual.header == base.header
     assert actual.info.map_load_time == base.info.map_load_time
-    other = occupancy.from_array(
+    other = occupancy_utils.from_array(
         np.zeros((2, 2), dtype=np.int8), header=overlay.header, resolution=0.25
     )
     with pytest.raises(ValueError, match="Grid shapes must match"):

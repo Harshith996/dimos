@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.message_utils import geometry
+from dimos.message_utils import geometry, pointcloud
 from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.messages.nav_msgs.msg import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.local_planner.profile import (
     ceilings_to_clearance,
@@ -138,7 +138,7 @@ def render_ground_support(msg: PointCloud2) -> Archetype | None:
     """The floor voxels the planner's ground plane was fit to, as voxel squares on that plane."""
     import rerun as rr  # only the viewer process pays for the import
 
-    pts = msg.points_f32()
+    pts = pointcloud.xyz(msg).astype(np.float32)
     if not len(pts):
         return rr.Clear(recursive=False)
     half = _VOXEL / 2

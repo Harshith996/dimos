@@ -22,14 +22,15 @@ import pytest
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.mapping.occupancy.visualizations import generate_rgba_texture, visualize_occupancy_grid
 from dimos.mapping.occupancy.visualize_path import visualize_path
-from dimos.message_utils import image as image_utils, occupancy, time as message_time
+from dimos.message_utils import (
+    image as image_utils,
+    occupancy as occupancy_utils,
+    time as message_time,
+)
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 
 
 def make_values(stamp, rotated=False):
@@ -37,17 +38,17 @@ def make_values(stamp, rotated=False):
     cells[0, 0] = -1
     cells[7:9, 7:9] = 100
     cells[5, 5] = 50
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(stamp)),
         resolution=0.25,
         origin=Pose(
-            position=Point(x=0, y=0, z=0),
+            position=Point(0.0, 0.0, 0.0),
             orientation=Quaternion(
-                x=0,
-                y=0,
-                z=math.sin(math.pi / 4) if rotated else 0,
-                w=math.cos(math.pi / 4) if rotated else 1,
+                0.0,
+                0.0,
+                math.sin(math.pi / 4) if rotated else 0.0,
+                math.cos(math.pi / 4) if rotated else 1.0,
             ),
         ),
     )
@@ -57,19 +58,27 @@ def make_values(stamp, rotated=False):
             PoseStamped(
                 header=deepcopy(grid.header),
                 pose=Pose(
-                    position=occupancy.grid_to_world(grid, coordinate),
+                    position=occupancy_utils.grid_to_world(grid, coordinate),
                     orientation=Quaternion(x=0, y=0, z=0, w=1),
                 ),
             )
             for coordinate in [(1, 1), (4, 1), (4, 4)]
         ],
     )
-    old_grid = LegacyGrid(cells.copy(), resolution=0.25, frame_id="map", ts=0)
-    old_path = LegacyPath(
-        frame_id="map",
+    old_grid = occupancy_utils.from_array(
+        np.asarray(cells.copy(), dtype=np.int8),
+        header=Header(stamp=message_time.time_from_seconds(0), frame_id="map"),
+        resolution=0.25,
+        origin=None,
+    )
+    old_path = Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
         poses=[
-            LegacyStamped(
-                frame_id="map", position=[x * 0.25, y * 0.25, 0], orientation=[0, 0, 0, 1]
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
+                pose=Pose(
+                    position=Point(x * 0.25, y * 0.25, 0), orientation=Quaternion(0, 0, 0, 1)
+                ),
             )
             for x, y in [(1, 1), (4, 1), (4, 4)]
         ],
@@ -88,9 +97,9 @@ def test_generated_map_pixels_match_existing_palette_and_path_overlay(palette, s
 
     assert type(result) is Image and result.encoding == "bgr8"
     assert result.header == grid.header
-    np.testing.assert_array_equal(image_utils.view(result), expected.data)
+    np.testing.assert_array_equal(image_utils.view(result), image_utils.view(expected))
     decoded = result
-    np.testing.assert_array_equal(image_utils.view(decoded), expected.data)
+    np.testing.assert_array_equal(image_utils.view(decoded), image_utils.view(expected))
     result.header.frame_id = "changed"
     result.data[0] = 255
     np.testing.assert_equal(asdict(grid), before)
@@ -103,7 +112,7 @@ def test_generated_robot_footprints_match_existing_pixels_and_preserve_header(st
     expected = visualize_path(old_grid, old_path, 0.2, 0.4, scale=4)
     assert result.header == grid.header and result.encoding == "bgr8"
     assert image_utils.view(result).shape == (36, 36, 3)
-    np.testing.assert_array_equal(image_utils.view(result), expected.data)
+    np.testing.assert_array_equal(image_utils.view(result), image_utils.view(expected))
 
 
 @pytest.mark.parametrize(
@@ -133,7 +142,7 @@ def test_generated_rgba_texture_matches_existing_colormap_opacity_and_range(
 
 
 def test_generated_default_rgba_values_follow_existing_foxglove_palette():
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         np.array([[-1, 0, 100]], dtype=np.int8),
         resolution=1,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(0)),
@@ -147,7 +156,7 @@ def test_generated_default_rgba_values_follow_existing_foxglove_palette():
 def test_generated_mask_removes_small_occupied_edge_fraction(occupied_x):
     cells = np.zeros((5, 41), dtype=np.int8)
     cells[2, occupied_x] = 100
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         cells,
         resolution=1,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(0)),
@@ -180,7 +189,7 @@ def test_generated_mask_rejects_unsafe_occupied_fraction():
 
 
 def test_generated_turbo_handles_unknown_int8_cells_with_exact_existing_colors():
-    grid = occupancy.from_array(
+    grid = occupancy_utils.from_array(
         np.array([[-1, 0, 100]], dtype=np.int8),
         resolution=1,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(0)),

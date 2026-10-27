@@ -20,6 +20,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.transport import (
     DDSTransport,
     LCMTransport,
+    ROSTransport,
     ZenohTransport,
     pLCMTransport,
     pZenohTransport,
@@ -32,12 +33,9 @@ from dimos.core.transport_factory import (
     session_config,
     transport_topic,
 )
-from dimos.messages.sensor_msgs.msg import Image as CdrImage
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.sensor_msgs.msg import Image, Image as CdrImage, PointCloud2
 from dimos.messages.std_msgs.msg import Int32
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -176,10 +174,9 @@ def test_factory_preserves_pickle_for_python_types(config, message_type):
     assert isinstance(transport, expected)
 
 
-@pytest.mark.parametrize("transport_type", [DDSTransport])
-def test_generated_messages_require_ros_dds_type_adapters(transport_type):
+def test_generated_messages_require_dds_type_adapter():
     with pytest.raises(TypeError, match="type adapter"):
-        transport_type("generated", Int32)
+        DDSTransport("generated", Int32)
 
 
 @pytest.mark.parametrize("config", [LCM, ZENOH])
@@ -189,3 +186,11 @@ def test_factory_does_not_pickle_unregistered_cdr_types(config):
 
     with pytest.raises(TypeError):
         make_transport("invalid", Unregistered, g=config)
+
+
+@pytest.mark.parametrize("message_type", [Int32, PointCloud2])
+def test_generated_ros_transport_is_constructible_without_starting_ros(message_type):
+    transport = ROSTransport("lidar", message_type)
+    assert transport.topic.msg_type is message_type
+    assert transport.topic.topic == "lidar"
+    assert transport._ros is None
