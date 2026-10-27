@@ -1,9 +1,13 @@
 import type { TerminalId } from "../shared/protocol/auth.ts";
 import type { WebSocketLike } from "@earendil-works/chord";
 import { WebSocket } from "ws";
+import { createConnection } from "node:net";
 import { randomUUID } from "node:crypto";
 
-/** A fresh socket per attempt, with one terminal identity across reconnects. */
+/**
+ * A fresh socket per attempt, with one terminal identity across reconnects. The path is dialed as given: a `ws+unix:`
+ * URL would percent-encode spaces and non-ASCII, split at `:` and reject `#`.
+ */
 export function unixSocket({
   path,
   label,
@@ -14,6 +18,6 @@ export function unixSocket({
   readonly terminal?: TerminalId;
 }): () => WebSocketLike {
   const identity = terminal ?? randomUUID();
-  const url = `ws+unix:${path}:/?terminal=${identity}&label=${encodeURIComponent(label)}`;
-  return () => new WebSocket(url);
+  const url = `ws://localhost/?terminal=${identity}&label=${encodeURIComponent(label)}`;
+  return () => new WebSocket(url, { createConnection: () => createConnection(path) });
 }
