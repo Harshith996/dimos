@@ -196,7 +196,7 @@ class BlueprintFields(Body, total=False):
     optional_dependency: bool | None
     suggested_extras: list[str]
     scanned_at: str | None
-    # annotations.yaml abilities it has: those any of whose modules it runs
+    # annotations.yaml abilities it has: its modules'
     abilities: list[str]
 
 
@@ -237,6 +237,8 @@ ModuleFields = TypedDict(
         "outputs": list[PortType],
         "robots": list[str],
         "blueprints": list[str],
+        # annotations.yaml abilities it gives a blueprint that runs it
+        "abilities": list[str],
     },
     total=False,
 )
@@ -288,20 +290,6 @@ class Robots(Body, total=False):
     robots: dict[str, CatalogRobot]
 
 
-class Ability(Body):
-    """Something robots can do, the modules that do it, and the (visible) blueprints that run one of them."""
-
-    id: str
-    label: str
-    description: str
-    modules: list[str]
-    blueprints: list[str]
-
-
-class Abilities(Body, total=False):
-    abilities: list[Ability]
-
-
 class Catalog(Body, total=False):
     """Every blueprint, module, RPC and robot the last scan found."""
 
@@ -310,6 +298,8 @@ class Catalog(Body, total=False):
     rpcs: list[CatalogRpc]
     robots: dict[str, CatalogRobot]
     types: dict[str, dict[str, Any]]
+    # annotations.yaml abilities by id: label, description
+    abilities: dict[str, dict[str, Any]]
     errors: list[str]
     scan: ScanStatus
 

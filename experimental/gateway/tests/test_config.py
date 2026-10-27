@@ -255,38 +255,42 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
                     assert setting["global"] in GlobalConfig.model_fields
 
 
-def test_abilities_are_described_and_name_modules() -> None:
-    for ability_id, ability in annotation_file.load_abilities().items():
+def test_modules_name_described_abilities() -> None:
+    abilities, modules = annotation_file.load_abilities()
+    for ability_id, ability in abilities.items():
         assert ability.get("label") and ability.get("description"), (
             f"ability {ability_id} needs both"
         )
-        assert ability.get("modules"), f"ability {ability_id} names no modules"
+    for module, given in modules.items():
+        assert given and set(given) <= set(abilities), f"module {module}: {given}"
 
 
 def test_a_blueprint_has_the_abilities_of_the_modules_it_runs() -> None:
     notes = {
         "robots": {},
-        "abilities": {
-            "loop-closure": {
-                "label": "Loop closure",
-                "description": "d",
-                "modules": ["pgo-voxel-mapper"],
-            },
-            "arm-control": {
-                "label": "Arm control",
-                "description": "d",
-                "modules": ["arm-twist-coordinator"],
-            },
+        "abilities": {"mapping": {}, "loop-closure": {}, "arm-control": {}},
+        "module_abilities": {"pgo-voxel-mapper": ["loop-closure", "mapping"]},
+    }
+    cache = {
+        "results": {
+            "go2-map": {
+                "name": "go2-map",
+                "modules": [
+                    {"module": "pgo-voxel-mapper", "class": "x.Pgo"},
+                    {"module": "cost-mapper", "class": "x.Cost"},
+                ],
+            }
+        },
+        "modules": {
+            "pgo": {"name": "pgo-voxel-mapper", "class": "x.Pgo", "rpcs": []},
+            "cost": {"name": "cost-mapper", "class": "x.Cost", "rpcs": []},
         },
     }
-    loop_closed = {"modules": [{"module": "pgo-voxel-mapper"}, {"module": "cost-mapper"}]}
-    cache = {"results": {"go2-map": loop_closed, "go2-test-map": loop_closed}}
-    found = catalog.blueprints([{"name": "go2-map"}, {"name": "go2-test-map"}], cache, notes)
-    assert found[0]["abilities"] == ["loop-closure"]
-    by_id = {ability["id"]: ability for ability in catalog.abilities(found, notes)}
-    # a hidden blueprint (its name says test) isn't listed under its abilities
-    assert by_id["loop-closure"]["blueprints"] == ["go2-map"]
-    assert by_id["arm-control"]["blueprints"] == []
+    found = catalog.blueprints([{"name": "go2-map"}], cache, notes)
+    # in the order annotations.yaml lists abilities
+    assert found[0]["abilities"] == ["mapping", "loop-closure"]
+    by_name = {module["name"]: module["abilities"] for module in catalog.modules(cache, notes)}
+    assert by_name == {"pgo-voxel-mapper": ["loop-closure", "mapping"], "cost-mapper": []}
 
 
 def test_every_registered_blueprint_is_annotated() -> None:

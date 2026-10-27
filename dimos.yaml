@@ -35,7 +35,8 @@ provides:
     /catalog:
       get:
         description: >-
-          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), and the abilities (relocalization,
+          loop closure, arm control, …) its modules and blueprints list by id, with how stale it is (scan: finished_at,
           age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
     /catalog/blueprints:
       get:
@@ -102,11 +103,6 @@ provides:
     /catalog/robots:
       get:
         summary: Every robot dimos supports, by type, with its blueprints by name.
-    /catalog/abilities:
-      get:
-        description: >-
-          What robots can do (relocalization, loop closure, arm control, navigation, …), each with the modules that do it
-          and the blueprints that run one of them (annotations.yaml `abilities:`); hidden blueprints are left out
     /catalog/scan:
       post:
         description: >-

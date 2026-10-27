@@ -28,35 +28,18 @@ def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     checkout = dimos_dir / "experimental" / "gateway" / annotation_file.SOURCE_FILE.name
     source = checkout if checkout.exists() else annotation_file.SOURCE_FILE
     notes = annotation_file.resolved(annotation_file.load(source), names)
-    notes["abilities"] = annotation_file.load_abilities(source)
+    notes["abilities"], notes["module_abilities"] = annotation_file.load_abilities(source)
     return notes
 
 
 def abilities_of(modules: list[str], notes: dict[str, Any]) -> list[str]:
-    """The abilities a blueprint running `modules` has: those any of whose modules it runs."""
-    return [
-        ability_id
-        for ability_id, ability in notes.get("abilities", {}).items()
-        if set(ability.get("modules", [])) & set(modules)
-    ]
-
-
-def abilities(found: list[dict[str, Any]], notes: dict[str, Any]) -> list[dict[str, Any]]:
-    """Each ability with the blueprints (from `found`, catalog.blueprints) that have it, hidden ones left out."""
-    return [
-        {
-            "id": ability_id,
-            "label": ability.get("label", ability_id),
-            "description": ability.get("description", ""),
-            "modules": ability.get("modules", []),
-            "blueprints": [
-                blueprint["name"]
-                for blueprint in found
-                if not blueprint["hidden"] and ability_id in blueprint["abilities"]
-            ],
-        }
-        for ability_id, ability in notes.get("abilities", {}).items()
-    ]
+    """A blueprint's abilities: its modules', in the order annotations.yaml lists abilities."""
+    have = {
+        ability
+        for module in modules
+        for ability in notes.get("module_abilities", {}).get(module, [])
+    }
+    return [ability for ability in notes.get("abilities", {}) if ability in have]
 
 
 def blueprints(
@@ -102,7 +85,9 @@ def blueprints(
     return found
 
 
-def modules(cache: dict[str, Any] | None) -> list[dict[str, Any]]:
+def modules(
+    cache: dict[str, Any] | None, notes: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     cache = cache or {}
     robots_of: dict[str, set[str]] = {}
     blueprints_of: dict[str, set[str]] = {}
@@ -117,6 +102,7 @@ def modules(cache: dict[str, Any] | None) -> list[dict[str, Any]]:
             "robots": sorted(robots_of.get(record["class"], ())),
             "rpcs": [rpc["name"] for rpc in record["rpcs"]],
             "blueprints": sorted(blueprints_of.get(record["class"], ())),
+            "abilities": (notes or {}).get("module_abilities", {}).get(record["name"], []),
         }
         for record in sorted(cache.get("modules", {}).values(), key=lambda scanned: scanned["name"])
     ]
