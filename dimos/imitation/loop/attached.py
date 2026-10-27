@@ -32,6 +32,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import RunEntry, is_pid_alive, list_runs
 from dimos.imitation.collection.spec import EpisodeCollectionSpec
+from dimos.imitation.loop.operator_client import OperatorClient
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -63,6 +64,7 @@ class Attachment:
     simulation: bool
     collection: EpisodeCollectionSpec | None = None
     cameras: dict[str, dict[str, Any]] = field(default_factory=dict)
+    operator: OperatorClient | None = None
 
 
 class AttachedBlueprint:
@@ -203,6 +205,10 @@ class AttachedBlueprint:
                 )
             if recorder is not None:
                 self._collection_state = recorder.get_status()
+            operator = OperatorClient(run)
+            resources.callback(operator.close)
+            operator.start(app, modules)
+            binding.operator = operator
             binding.resources = resources.pop_all()
 
     def _disconnect(self) -> None:
@@ -327,6 +333,16 @@ class AttachedBlueprint:
             return self.state()
         binding = self._require_run(params.get("run_id"))
         coordinator = binding.coordinator
+        if action.startswith("operator_"):
+            if binding.operator is None:
+                raise RuntimeError("Operator capabilities are unavailable")
+            if action == "operator_status":
+                return binding.operator.snapshot()
+            if action == "operator_action":
+                return binding.operator.submit(params)
+            if action == "operator_cancel":
+                return binding.operator.cancel(params)
+            raise ValueError("Unknown operator request")
         if action in ("record", "save", "discard"):
             if binding.collection is None:
                 raise RuntimeError("This run does not advertise episode recording")

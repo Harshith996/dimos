@@ -19,12 +19,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation.manipulation_spec import PlanResult, PlanStatus
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    PlanResult,
+    PlanStatus,
+)
 from dimos.manipulation.operator_api import operator_call, operator_json, target_pose
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 
 
 def test_session_guard_precedes_dispatch_and_changes_on_restart(module_factory, mocker):
@@ -74,6 +80,30 @@ def test_json_preserves_plan_status_trajectory_and_pose():
     assert encoded["result"]["status"]["name"] == "FAILED"
     assert encoded["trajectory"]["points"][0]["positions"] == [0.123456789]
     assert encoded["pose"]["position"] == {"x": 0.1, "y": 0.2, "z": 0.3}
+
+
+def test_cancel_result_keeps_the_actual_execution_outcome():
+    result = ExecutionResult(
+        ExecutionStatus.ABORTED,
+        trajectory_status=TrajectoryStatus(
+            state=TrajectoryState.ABORTED,
+            progress=0.25,
+            timestamp=42.0,
+            time_elapsed=1.0,
+            time_remaining=3.0,
+            error="Operator hold",
+        ),
+    )
+    encoded = json.loads(json.dumps(operator_json(result)))
+    assert encoded["status"]["name"] == "ABORTED"
+    assert encoded["trajectory_status"] == {
+        "timestamp": 42.0,
+        "state": {"name": "ABORTED", "value": 3},
+        "progress": 0.25,
+        "time_elapsed": 1.0,
+        "time_remaining": 3.0,
+        "error": "Operator hold",
+    }
 
 
 def test_joint_targets_keep_group_identity_and_joint_order(module_factory, mocker):

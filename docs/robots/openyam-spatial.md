@@ -74,6 +74,32 @@ limits and kinematics, not robot or workspace collisions. The original SONIC
 Controller app is restored; its experimental OpenYAM dashboard was reverted.
 The engine's session-bound planner adapter remains available to other clients.
 
+The app's **Tool target** uses that adapter: drag its axes or enter a world pose,
+Preview the ghost trajectory, scrub its time slider and explicitly Execute it.
+Changing the target clears the old plan. **Start positions** saves measured
+joints against the planner's model identity. Keyboard control (W/S X, A/D Y,
+Q/E Z; Shift slows) sends world/tool-relative intent through the existing clutch
+WebSocket and IK path. Release holds; Space or page blur stops control.
+
+The existing attached-blueprint worker discovers planners and advertised skill
+schemas through `OperatorClient`. It exposes one operation state to browser
+controls and Desktop's agent HTTP tools. Planning and skill calls use a managed
+executor so Hold/cancel remain available. Execution stays in ManipulationModule,
+and sessions are checked by both the app client and planner. A read-only
+`/spatial/preview` endpoint computes known-model geometry without changing
+measured feedback or sending commands. No new module, service or sim2 API was
+needed for the UI.
+
+**Operator integration, 2026-10-26:** local installed-app checks exercised mouse
+target dragging and invalidation of an old plan, preview without motion,
+pose execution within 3 mm of the requested target, agent-created plans executed
+from the UI, keyboard move/release/hold, saved-pose return, cup/bottle detection
+from camera images, stable-ID selection and recording/save. Normal browser TLS
+validation stayed enabled and there were no page errors. This verifies the API
+advertised to the agent, not an end-to-end natural-language agent evaluation.
+Evidence: `/Users/pimvandenbosch/Desktop/openyam-learning-artifacts/operator-workflow-20261026/`.
+Physical Anvil and actual headset acceptance were not performed in this increment.
+
 **Local integration evidence, 2026-10-26:** the installed OpenYAM app exercised
 independent browser jogging, both grippers, Record/Stop & save, Discard, Home,
 Hold and the episode list against `openyam-spatial-sim`. The opposite arm stayed
@@ -417,9 +443,14 @@ or the unmodified RL policy deployment. The source artifact is not edited.
 RGB-D projection plus timestamped TF already supplies geometric perception.
 Object recognition is a separate stage. Existing
 `ObjectSceneRegistrationModule` consumes RGB, depth, intrinsics and TF and emits
-`objects`; configure its target frame as `world` before wiring that stream to
-this viewer. The viewer displays those world-frame boxes when a detector is
-connected. Its optional `perception_focus: PointStamped` output identifies a
+`objects`. Both spatial blueprints now compose this existing module in
+request-driven YOLO-E prompt mode with the `world` target frame. The module
+subscribes to TF during startup, so the first request can resolve the captured
+image's calibration. Missing timestamped calibration is an error, not an empty
+detection result. **Scene & skills** exposes its `detect` and `select` skills;
+the viewer retains observed boxes with their scan time. The detector can miss
+objects, and retaining a box does not make it a current observation.
+Its optional `perception_focus: PointStamped` output identifies a
 selected observed surface; adapting that point into a detector request is a
 separate consumer, not implemented by the default blueprint.
 
@@ -427,7 +458,12 @@ separate consumer, not implemented by the default blueprint.
 geometry for planning. The raw cloud includes the robot itself, so this
 prototype does not feed it directly into a collision planner. Teleoperation
 currently uses IK with joint/tracking limits, not collision-avoiding planning.
-The default blueprint loads no semantic model and says so in the interface.
+The perception extra supplies the text tokenizer dependency. YOLO-E prompt mode
+also uses Ultralytics' MobileCLIP weights; provision its normal `weights_dir`
+cache outside the code checkout. On this development machine that cache is
+`~/Library/Caches/Ultralytics/weights`; downloaded evidence stays in the external
+artifact directory. Grasp generation and PickAndPlaceModule are not composed:
+the sim planner's exported model still has no grippers or collision geometry.
 The spatial blueprint attaches the existing collection recorder. It does not
 yet supply bimanual ACT training or policy rollout.
 

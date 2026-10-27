@@ -43,6 +43,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.testing.link import Delay, DelayTimeline, DeliveryQueue, LinkConditions
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.rgbd import SurfaceFrame
@@ -116,6 +117,32 @@ def operator_viewer(viewer, mocker):
     viewer._web_server = RobotWebInterface()
     viewer._setup_routes()
     return viewer
+
+
+def test_preview_calculates_geometry_without_commanding_or_replacing_feedback(
+    operator_viewer, mocker
+):
+    viewer = operator_viewer
+    robot = mocker.Mock()
+    robot.feedback.return_value = {"left": {"grasp": [0.1, 0.2, 0.3]}}
+    mocker.patch.object(viewer, "_robot", robot)
+    joints = dict.fromkeys(DUAL_OPENYAM_JOINTS, 0.0)
+    before = viewer._feedback
+    with TestClient(viewer._web_server.app) as client:
+        response = client.post("/spatial/preview", json={"joints": joints})
+        assert response.json() == {"left": {"grasp": [0.1, 0.2, 0.3]}}
+        assert viewer._feedback is before
+        viewer._manipulation.execute.assert_not_called()
+        viewer.left_gripper_command.publish.assert_not_called()
+        viewer.right_gripper_command.publish.assert_not_called()
+        assert client.post("/spatial/preview", json={"joints": {"unknown": 0}}).status_code == 400
+        assert (
+            client.post(
+                "/spatial/preview", json={"joints": {**joints, DUAL_OPENYAM_JOINTS[0]: "NaN"}}
+            ).status_code
+            == 422
+        )
+    robot.feedback.assert_called_once_with(joints)
 
 
 def test_browser_records_and_plans_home_without_an_xr_connection(operator_viewer):

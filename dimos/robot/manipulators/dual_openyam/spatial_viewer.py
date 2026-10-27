@@ -59,6 +59,11 @@ from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
 
+class JointPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    joints: dict[str, float]
+
+
 class SpatialHand(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     position: tuple[float, float, float]
@@ -253,8 +258,8 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                         }
                         for arm in Hand
                     },
-                    "objects": self._objects if now - self._objects_at < 2 else [],
-                    "objects_active": now - self._objects_at < 2,
+                    "objects": self._objects,
+                    "objects_ts": self._objects_at,
                     "observation_timeout_s": self.config.observation_timeout_s,
                     "control": {
                         "session": self._operator_session,
@@ -267,6 +272,15 @@ class OpenYamSpatialTeleop(ArmTeleopModule):
                         "hold_reason": self._hold_reason,
                     },
                 }
+
+        @app.post("/spatial/preview")
+        def preview(command: JointPreview) -> dict[str, Any]:
+            if set(command.joints) != set(DUAL_OPENYAM_JOINTS):
+                raise HTTPException(400, "Preview requires the complete named joint state")
+            with self._lock:
+                if self._robot is None:
+                    raise HTTPException(503, "Robot geometry is unavailable")
+                return self._robot.feedback(command.joints)
 
         @app.get("/spatial/surface")
         def surface(after: float = 0) -> Response:

@@ -6,6 +6,8 @@ import {decodeSurface, SurfaceGrid} from './spatial_surface.mjs';
 import {SpatialUI} from './spatial_ui.mjs';
 import {WorkspaceTransform} from './spatial_workspace.mjs';
 import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
+import {SpatialOperator} from './spatial_operator.mjs';
+import {KeyboardClutch} from './spatial_keyboard.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 const boundSession = new URLSearchParams(location.search).get('operator_session');
@@ -83,6 +85,9 @@ let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
 let modePreference='auto', activeMode='tools';
 let desktopFramed=false, selectedArm='left';
+let keyboardEnabled=false, keyboardSide='left', keyboardFrame='world', lastKeyboardSend=0;
+let objectsTS=0, selectedObject=null;
+const keyboard=new KeyboardClutch();
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
@@ -114,6 +119,8 @@ for (const side of geometry.sides) {
   }
   arms[side].visible = false;
 }
+const operator=embedded?new SpatialOperator({scene,stage,camera,renderer,orbit,arms,endpoint,
+  onTarget:pose=>parent.postMessage({type:'dimos.spatial.target',value:pose},location.origin)}):null;
 
 function check(response) { if (!response.ok) throw new Error(`Station HTTP ${response.status}`); return response; }
 async function poll(path, interval, accept) {
@@ -125,7 +132,9 @@ async function poll(path, interval, accept) {
 }
 function connect() {
   if (!controlRequested) return;
-  socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  const url=embedded?new URL(endpoint('ws')):new URL('/ws',location.href);
+  url.protocol=url.protocol==='https:'?'wss:':'ws:';
+  socket = new WebSocket(url.href);
   socket.onopen = () => { sequence = 0; controlEpoch=null; entryError=''; resetHands(); };
   socket.onclose = event => { resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
@@ -144,7 +153,7 @@ poll(endpoint('state'), 35, async response => {
   }
   feedback = next; feedbackAt = performance.now(); paused=!!next.control.paused;
   if(controlEpoch!==feedback.control.epoch) {
-    resetTools(); controlEpoch=feedback.control.epoch;
+    resetTools(); keyboard.reset(); controlEpoch=feedback.control.epoch;
   }
   for (const side of geometry.sides) {
     const arm = feedback.arms?.[side]; if (!arm) continue;
@@ -171,13 +180,18 @@ poll(endpoint('state'), 35, async response => {
       bounds.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrix));
     ui.setWorkspaceBounds(bounds);
   }
-  document.querySelector('#perception').textContent = feedback.objects_active
-    ? `Object perception connected · ${feedback.objects.length} current detections`
-    : 'Object recognition: no detector connected.';
-  for (const child of [...detections.children]) { child.geometry.dispose(); child.material.dispose(); detections.remove(child); }
-  for (const object of feedback.objects) {
-    const box = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(...object.size)), new THREE.LineBasicMaterial({color: 0x88ceff}));
-    box.position.fromArray(object.position); box.quaternion.fromArray(object.orientation); detections.add(box);
+  document.querySelector('#perception').textContent = feedback.objects_ts
+    ? `${feedback.objects.length} observed objects · last scan ${Math.max(0,Math.round(feedback.server_time-feedback.objects_ts))} s ago`
+    : 'No object scan yet.';
+  if(objectsTS!==feedback.objects_ts){
+    objectsTS=feedback.objects_ts;
+    for (const child of [...detections.children]) { child.geometry.dispose(); child.material.dispose(); detections.remove(child); }
+    for (const object of feedback.objects) {
+      const solid=new THREE.BoxGeometry(...object.size), edges=new THREE.EdgesGeometry(solid);solid.dispose();
+      const box = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color:object.id===selectedObject?0xffcf70:0x88ceff}));
+      box.userData.id=object.id;
+      box.position.fromArray(object.position); box.quaternion.fromArray(object.orientation); detections.add(box);
+    }
   }
 });
 // Each request asks only for a newer acquisition. One in flight; no frame queue.
@@ -450,11 +464,21 @@ renderer.setAnimationLoop((time, frame) => {
       if (frame.session.visibilityState === 'visible') track(frame, reference, fresh, viewer);
       else { resetHands(); uiPointer.visible=false; send({}); }
     }
-  } else orbit.update();
+  } else {
+    orbit.update();
+    if(keyboardEnabled && time-lastKeyboardSend>20) {
+      const measured=feedback?.arms?.[keyboardSide];
+      if(measured){
+        const sample=keyboard.sample(measured,!paused && ready && feedback.control.mode==='clutch',time,(time-lastKeyboardSend)/1000);
+        send({[keyboardSide]:{...sample,arm:keyboardSide,action:'move'}});
+      }
+      lastKeyboardSend=time;
+    }
+  }
   renderer.render(scene, camera);
 });
 addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); });
+addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); operator?.dispose(); });
 
 function frameWorkspace(view) {
   stage.updateMatrixWorld(true);
@@ -475,11 +499,25 @@ if(embedded) {
     if(event.source!==parent || event.origin!==location.origin) return;
     if(event.data?.type==='dimos.spatial.selection' && geometry.sides.includes(event.data.value)) selectedArm=event.data.value;
     if(event.data?.type==='dimos.spatial.view' && ['fit','top','front'].includes(event.data.value)) frameWorkspace(event.data.value);
+    if(event.data?.type==='dimos.spatial.target')operator?.setTarget(event.data.value);
+    if(event.data?.type==='dimos.spatial.preview')void operator?.preview(event.data.value);
+    if(event.data?.type==='dimos.spatial.object'){
+      selectedObject=event.data.value;
+      for(const box of detections.children)box.material.color.setHex(box.userData.id===selectedObject?0xffcf70:0x88ceff);
+    }
+    if(event.data?.type==='dimos.spatial.keyboard'){
+      keyboardEnabled=!!event.data.value?.enabled;
+      keyboardSide=event.data.value?.side??selectedArm;keyboardFrame=event.data.value?.frame??'world';
+      keyboard.update([],keyboardFrame,performance.now());keyboard.reset();
+      if(keyboardEnabled){activeMode='clutch';controlRequested=true;connect();}
+      else {send({});controlRequested=false;socket?.close();}
+    }
+    if(event.data?.type==='dimos.spatial.keys' && keyboardEnabled)keyboard.update(event.data.value,keyboardFrame,performance.now());
   });
   let down=null;
   renderer.domElement.addEventListener('pointerdown',event=>{down=[event.clientX,event.clientY];});
   renderer.domElement.addEventListener('pointerup',event=>{
-    if(!down || Math.hypot(event.clientX-down[0],event.clientY-down[1])>5) {down=null;return;}
+    if(operator?.controls.dragging || !down || Math.hypot(event.clientX-down[0],event.clientY-down[1])>5) {down=null;return;}
     down=null;
     const box=renderer.domElement.getBoundingClientRect();
     const ray=new THREE.Raycaster();

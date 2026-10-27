@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
+from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -135,6 +136,8 @@ class ObjectSceneRegistrationModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        # Request-driven scans need transform history from before their first image.
+        _ = self.tfbuffer
 
         if self._detector_class is not None:
             self._detector = self._detector_class()
@@ -152,7 +155,9 @@ class ObjectSceneRegistrationModule(Module):
 
         self._segmenter = self._create_segmenter()
 
-        self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
+        self.register_disposable(
+            Disposable(self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg)))
+        )
 
         aligned_frames = align_timestamped(
             self.color_image.observable(),
@@ -160,7 +165,7 @@ class ObjectSceneRegistrationModule(Module):
             buffer_size=2.0,
             match_tolerance=0.1,
         )
-        backpressure(aligned_frames).subscribe(self._on_aligned_frames)
+        self.register_disposable(backpressure(aligned_frames).subscribe(self._on_aligned_frames))
 
     def _create_segmenter(self) -> BoxPromptImageSegmenter | None:
         if self._segmentation_backend == "yolo":
@@ -430,6 +435,8 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
                 forward_tolerance=0.2,
             )
+            if camera_transform is None and self._detect_on_request:
+                raise RuntimeError("Camera-to-world transform unavailable at the image timestamp")
 
         detections_2d: ImageDetections2D[Any]
         if self._detector_backend == "owlv2":

@@ -19,6 +19,8 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+from dimos.perception.detection.detectors.yoloe import YoloePromptMode
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.protocol.testing.link import LinkConditions
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
@@ -33,6 +35,18 @@ from dimos.robot.manipulators.dual_openyam.spatial_simulation import (
 from dimos.robot.manipulators.dual_openyam.spatial_station import SpatialStation
 from dimos.robot.manipulators.dual_openyam.spatial_viewer import OpenYamSpatialTeleop
 from dimos.robot.manipulators.dual_openyam.stations.anvil import ANVIL
+
+
+def _object_perception() -> Blueprint:
+    """Request-driven observations from the station's calibrated RGB-D stream."""
+    return ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        prompt_mode=YoloePromptMode.PROMPT,
+        detect_on_request=True,
+        min_detections_for_permanent=1,
+        distance_threshold=0.05,
+        detector_confidence=0.25,
+    )
 
 
 def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint:
@@ -52,6 +66,7 @@ def build_openyam_spatial(*, model: RobotModelConfig | None = None) -> Blueprint
             ),
             RealSenseCamera.blueprint(instance_name="workspace_camera", align_depth_to_color=True),
             StaticTfPublisher.blueprint(instance_name="workspace_mount", publish_hz=20),
+            _object_perception(),
         )
         .remappings(
             [
@@ -78,6 +93,7 @@ def build_openyam_spatial_sim(
                 instance_name="SpatialControlCoordinator", base_poses=station.bases
             ),
             ManipulationModule.blueprint(model=spatial_model_config(bases=station.bases)),
+            _object_perception(),
             OpenYamSpatialTeleop.blueprint(
                 base_poses=station.bases, link_conditions=link_conditions
             ),

@@ -1958,6 +1958,7 @@ all = [
     { name = "onnxruntime-gpu", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine == 'x86_64'" },
     { name = "onnxruntime-gpu", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine == 'x86_64'" },
     { name = "openai" },
+    { name = "openai-clip" },
     { name = "openevals" },
     { name = "pillow" },
     { name = "piper-sdk" },
@@ -2024,6 +2025,7 @@ base = [
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
+    { name = "openai-clip" },
     { name = "openevals" },
     { name = "pillow" },
     { name = "python-multipart" },
@@ -2103,6 +2105,7 @@ manipulation = [
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "onnxruntime", version = "1.24.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "openai" },
+    { name = "openai-clip" },
     { name = "openevals" },
     { name = "pillow" },
     { name = "piper-sdk" },
@@ -2152,6 +2155,7 @@ perception = [
     { name = "lap" },
     { name = "moondream" },
     { name = "omegaconf" },
+    { name = "openai-clip" },
     { name = "pillow" },
     { name = "safetensors" },
     { name = "sentencepiece" },
@@ -2216,6 +2220,7 @@ unitree = [
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
+    { name = "openai-clip" },
     { name = "openevals" },
     { name = "pillow" },
     { name = "python-multipart" },
@@ -2262,6 +2267,7 @@ unitree-dds = [
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
+    { name = "openai-clip" },
     { name = "openevals" },
     { name = "pillow" },
     { name = "python-multipart" },
@@ -2594,6 +2600,7 @@ requires-dist = [
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
+    { name = "openai-clip", marker = "extra == 'perception'", specifier = ">=1.0.1" },
     { name = "opencv-contrib-python", specifier = ">=4.8,<5" },
     { name = "openevals", marker = "extra == 'agents'", specifier = ">=0.1" },
     { name = "packaging", specifier = ">=24.0" },
@@ -3579,6 +3586,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/51/7c/f60c259dcbf4f0c47cc4ddb8f7720d2dcdc8888c8e5ad84c73ea4531cc5b/fsspec-2026.2.0.tar.gz", hash = "sha256:6544e34b16869f5aacd5b90bdf1a71acb37792ea3ddf6125ee69a22a53fb8bff", size = 313441, upload-time = "2026-02-05T21:50:53.743Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/ab/fb21f4c939bb440104cc2b396d3be1d9b7a9fd3c6c2a53d98c45b3d7c954/fsspec-2026.2.0-py3-none-any.whl", hash = "sha256:98de475b5cb3bd66bedd5c4679e87b4fdfe1a3bf4d707b151b3c07e58c9a2437", size = 202505, upload-time = "2026-02-05T21:50:51.819Z" },
+]
+
+[[package]]
+name = "ftfy"
+version = "6.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wcwidth" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/d3/8650919bc3c7c6e90ee3fa7fd618bf373cbbe55dff043bd67353dbb20cd8/ftfy-6.3.1.tar.gz", hash = "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec", size = 308927, upload-time = "2024-10-26T00:50:35.149Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/6e/81d47999aebc1b155f81eca4477a616a70f238a2549848c38983f3c22a82/ftfy-6.3.1-py3-none-any.whl", hash = "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083", size = 44821, upload-time = "2024-10-26T00:50:33.425Z" },
 ]
 
 [[package]]
@@ -6818,6 +6837,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/92/e5/3d197a0947a166649
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cc/56/0a89092a453bb2c676d66abee44f863e742b2110d4dbb1dbcca3f7e5fc33/openai-2.21.0-py3-none-any.whl", hash = "sha256:0bc1c775e5b1536c294eded39ee08f8407656537ccc71b1004104fe1602e267c", size = 1103065, upload-time = "2026-02-14T00:11:59.603Z" },
 ]
+
+[[package]]
+name = "openai-clip"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ftfy" },
+    { name = "regex" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/81/26d701ef9fface424b4ca808a5c5674df645ac46447720a540143d11c41e/openai-clip-1.0.1.tar.gz", hash = "sha256:cd40bf2f205c096c49524fcbff484339f793b52afd6e7ffad80a2fe108151721", size = 1371625, upload-time = "2022-07-19T12:56:52.824Z" }
 
 [[package]]
 name = "openai-whisper"

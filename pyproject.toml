@@ -252,6 +252,7 @@ web = [
 ]
 
 perception = [
+    "openai-clip>=1.0.1",  # Ultralytics YOLO-E text-model import requires the CLIP package.
     "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
     "edgetam-dimos>=1.0.1",
     "ultralytics>=8.3.70",

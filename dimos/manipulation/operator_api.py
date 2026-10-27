@@ -38,6 +38,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryStatus
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule
@@ -76,6 +77,15 @@ def operator_json(value: Any) -> Any:
         }
     if isinstance(value, TrajectoryPoint):
         return {"time_from_start": value.time_from_start, "positions": value.positions}
+    if isinstance(value, TrajectoryStatus):
+        return {
+            "timestamp": value.timestamp,
+            "state": operator_json(value.state),
+            "progress": value.progress,
+            "time_elapsed": value.time_elapsed,
+            "time_remaining": value.time_remaining,
+            "error": value.error,
+        }
     raise TypeError(f"No operator encoding for {type(value).__name__}")
 
 

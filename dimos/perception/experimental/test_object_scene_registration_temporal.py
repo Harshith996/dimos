@@ -22,12 +22,18 @@ from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
 import pytest
+import reactivex as rx
 
+from dimos.core.module import Module
+from dimos.core.stream import Transport
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.perception.experimental.objectDB import ObjectDB
+from dimos.protocol.tf.tf import TF
 
 
 class _FakeTF:
@@ -59,6 +65,40 @@ def module() -> Iterator[ObjectSceneRegistrationModule]:
     module._latest_scene_snapshot = None
     yield module
     module.stop()
+
+
+def test_first_requested_scan_uses_transform_history_received_at_start(module, mocker):
+    mocker.patch.object(Module, "start")
+    mocker.patch("dimos.perception.experimental.object_scene_registration.Yoloe2DDetector")
+    mocker.patch.object(module, "_create_segmenter", return_value=None)
+    mocker.patch.object(module.camera_info, "subscribe", return_value=lambda: None)
+    mocker.patch.object(module.color_image, "observable", return_value=rx.never())
+    mocker.patch.object(module.depth_image, "observable", return_value=rx.never())
+    transport = mocker.Mock(spec=Transport)
+    mocker.patch.object(module.tf, "_transport", transport)
+    module.start()
+    transform = Transform(frame_id="map", child_frame_id="camera", ts=12.5)
+    transport.subscribe.call_args.args[0](TFMessage(transform))
+    color = Image(
+        data=np.zeros((2, 2, 3), dtype=np.uint8), format=ImageFormat.BGR, frame_id="camera", ts=12.5
+    )
+    module._detector.process_image.return_value = ImageDetections2D(color, [])
+    convert = mocker.patch.object(module, "_process_3d_detections", return_value=[])
+
+    module._process_images(color, _image(12.5))
+
+    assert convert.call_args.args[3] == transform
+
+
+def test_request_reports_missing_calibration_instead_of_no_objects(module, mocker):
+    transform_buffer = mocker.Mock(spec=TF)
+    transform_buffer.get.return_value = None
+    mocker.patch.object(module, "_tf", transform_buffer)
+    mocker.patch.object(module, "_detect_on_request", True)
+    detector = mocker.patch.object(module, "_detector")
+    with pytest.raises(RuntimeError, match="transform unavailable at the image timestamp"):
+        module._process_images(_image(12.5), _image(12.5))
+    detector.process_image.assert_not_called()
 
 
 def test_transform_is_captured_before_slow_detector(
