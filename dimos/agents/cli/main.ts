@@ -14,7 +14,7 @@ import { ensureGateway } from "./process.ts";
 
 const USAGE = `dimos agent run [--conversation ID] [--cwd DIR] PROMPT   submit one input and print the answer
 dimos agent conversations                                list conversations, newest first
-dimos agent gateway                                      run the gateway in the foreground
+dimos agent gateway [--daemon]                           run the gateway, in the background with --daemon
 dimos agent status [--json]                              the gateway, DimOS, conversations, modules, jobs, streams
 dimos agent stop | version`;
 
@@ -47,6 +47,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
       conversation: { type: "string" },
       view: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
+      daemon: { type: "boolean", default: false },
       cwd: { type: "string" },
       help: { type: "boolean", default: false },
     },
@@ -64,6 +65,7 @@ async function main(argv: readonly string[], env: NodeJS.ProcessEnv): Promise<nu
     conversation: conversationId(values.conversation),
     view: values.view,
     json: values.json,
+    daemon: values.daemon,
     args,
     // Both cli/main.ts and dist/cli.js are one directory below the package root.
     bundledSkillsDir: join(dirname(fileURLToPath(import.meta.url)), "..", "harness", "skills"),

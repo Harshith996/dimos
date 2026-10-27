@@ -94,7 +94,7 @@ def _forwarded(name: str, help: str) -> None:
     agent_app.command(name, cls=_Verbatim, help=help)(command)
 
 
-_forwarded("gateway", "Run the gateway in the foreground; the service runs this.")
+_forwarded("gateway", "Run the gateway in the foreground, or in the background with --daemon.")
 _forwarded(
     "run", "Send PROMPT to a new conversation, or to --conversation ID, and print the answer."
 )

@@ -18,7 +18,7 @@ until a gateway answers, so a command first checks for one with `gatewayState` o
 | `run [--conversation ID] [--cwd DIR] PROMPT` | Sends `PROMPT` to a new conversation, or to `--conversation`, and streams the answer |
 | `status [--json]`                            | Prints the gateway, its DimOS link, modules, jobs and streams                        |
 | `conversations`                              | Lists the conversations, newest first                                                |
-| `gateway`                                    | Runs the gateway in the foreground. The systemd service runs this                    |
+| `gateway [--daemon]`                         | Runs the gateway in the foreground, or in the background with `--daemon`             |
 | `stop`                                       | Stops the gateway                                                                    |
 | `version`                                    | Prints this build                                                                    |
 
@@ -73,7 +73,7 @@ export const runLink: Command = async ({ paths, startGateway }) => {
   gateway of another build.
 
 [commands/base.ts](commands/base.ts) declares `CommandContext`: `paths` from `agentPaths(env)`, `env`, the parsed
-`--conversation`, `--cwd`, `--view` and `--json`, the remaining positionals as `args`, `bundledSkillsDir`, and
+`--conversation`, `--cwd`, `--view`, `--json` and `--daemon`, the remaining positionals as `args`, `bundledSkillsDir`, and
 `startGateway`. A new flag needs an entry in the `parseArgs` options in `main.ts` and a field here.
 [boundaries.test.ts](../test/boundaries.test.ts) fails when a file in `commands/` does not import `base.ts`.
 

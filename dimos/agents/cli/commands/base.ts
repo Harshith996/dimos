@@ -8,6 +8,7 @@ export type CommandContext = {
   readonly cwd: string | null;
   readonly view: boolean;
   readonly json: boolean;
+  readonly daemon: boolean;
   readonly args: readonly string[];
   readonly bundledSkillsDir: string;
   readonly startGateway: () => Promise<void>;
