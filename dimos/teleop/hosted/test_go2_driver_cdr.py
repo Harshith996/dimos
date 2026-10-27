@@ -63,9 +63,7 @@ def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker):
 
     provider.subscribe.side_effect = subscribe
     mocker.patch.object(BrokerConfig, "provider", return_value=provider)
-    mocker.patch(
-        "dimos.teleop.hosted.go2_command.time.time_ns", return_value=1_789_654_321_000_000_100
-    )
+    mocker.patch("dimos.teleop.hosted.go2_command.time.time", return_value=1_789_654_321.1)
     delivered = Event()
     commands = []
 
@@ -119,13 +117,13 @@ def test_framed_operator_drive_crosses_real_cdr_ports_to_driver_adapter(mocker):
         assert source.twist.linear.x == 99.0
         delivered.clear()
         release = TwistStamped(
-            Header(Time(1_789_654_321, 2), "operator"),
+            Header(Time(1_789_654_321, 50_000_000), "operator"),
             Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)),
         )
         send(release)
         assert delivered.wait(5)
-        assert commands[1][0].is_zero()
-        release.header.stamp.nanosec = 3
+        assert commands[1][0] == Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
+        release.header.stamp.nanosec = 75_000_000
         send(release)  # idle zeros do not cancel another navigation plan
         assert len(commands) == 2
         provider.start.assert_called_once()

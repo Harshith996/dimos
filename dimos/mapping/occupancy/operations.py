@@ -13,54 +13,36 @@
 # limitations under the License.
 
 from copy import deepcopy
-from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
-from dimos.message_utils import occupancy
+from dimos.message_utils import occupancy as occupancy_utils
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-
-_GridT = TypeVar("_GridT", OccupancyGrid, CdrOccupancyGrid)
+from dimos.messages.geometry_msgs.msg import Point, Vector3
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
-def _grid_values(message: OccupancyGrid | CdrOccupancyGrid) -> NDArray[np.int8]:
-    if isinstance(message, CdrOccupancyGrid):
-        return occupancy.view(message)
-    return message.grid
+def _grid_values(message: OccupancyGrid) -> NDArray[np.int8]:
+    return occupancy_utils.view(message)
 
 
-def _grid_coordinates(
-    message: OccupancyGrid | CdrOccupancyGrid, point: Point | Vector3
-) -> tuple[float, float]:
-    if isinstance(message, CdrOccupancyGrid):
-        return occupancy.world_to_grid(message, Point(x=point.x, y=point.y, z=point.z))
-    result = message.world_to_grid((point.x, point.y, point.z))
-    return result.x, result.y
+def _grid_coordinates(message: OccupancyGrid, point: Point | Vector3) -> tuple[float, float]:
+    return occupancy_utils.world_to_grid(message, Point(x=point.x, y=point.y, z=point.z))
 
 
-def _with_grid(message: _GridT, cells: NDArray[np.int8]) -> _GridT:
-    if isinstance(message, CdrOccupancyGrid):
-        if cells.shape != (message.info.height, message.info.width):
-            raise ValueError("Replacement occupancy cells must retain map dimensions")
-        result = deepcopy(message)
-        result.data = np.array(cells, dtype=np.int8, copy=True).reshape(-1)
-        return result
-    return OccupancyGrid(
-        grid=cells,
-        resolution=message.resolution,
-        origin=message.origin,
-        frame_id=message.frame_id,
-        ts=message.ts,
-    )
+def _with_grid(message: OccupancyGrid, cells: NDArray[np.int8]) -> OccupancyGrid:
+    if cells.shape != (message.info.height, message.info.width):
+        raise ValueError("Replacement occupancy cells must retain map dimensions")
+    result = deepcopy(message)
+    result.data = np.array(cells, dtype=np.int8, copy=True).reshape(-1)
+    return result
 
 
-def smooth_occupied(occupancy_grid: _GridT, min_neighbor_fraction: float = 0.4) -> _GridT:
+def smooth_occupied(
+    occupancy_grid: OccupancyGrid, min_neighbor_fraction: float = 0.4
+) -> OccupancyGrid:
     """Smooth occupied zones by removing unsupported protrusions.
 
     Removes occupied cells that don't have sufficient neighboring occupied
@@ -92,7 +74,7 @@ def smooth_occupied(occupancy_grid: _GridT, min_neighbor_fraction: float = 0.4) 
     return _with_grid(occupancy_grid, result_grid)
 
 
-def overlay_occupied(base: _GridT, overlay: _GridT) -> _GridT:
+def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGrid:
     """Overlay occupied zones from one grid onto another.
 
     Marks cells as occupied in the base grid wherever they are occupied

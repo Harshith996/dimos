@@ -19,20 +19,17 @@ import math
 import numpy as np
 import pytest
 
-from dimos.message_utils import occupancy, time as message_time
+from dimos.message_utils import occupancy as occupancy_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.messages.nav_msgs.msg import Path
 from dimos.messages.std_msgs.msg import Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyGrid
-from dimos.msgs.nav_msgs.Path import Path as LegacyPath
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 
 
 def grid_from_cells(cells, rotated=False):
-    return occupancy.from_array(
+    return occupancy_utils.from_array(
         cells,
         header=Header(frame_id="map", stamp=message_time.time_from_nanoseconds(-1)),
         resolution=0.5,
@@ -58,9 +55,14 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
     cells[5:7, 5:7] = 100
     grid = grid_from_cells(cells, rotated)
     before = asdict(grid)
-    point = occupancy.grid_to_world(grid, (5.25, 5.25))
+    point = occupancy_utils.grid_to_world(grid, (5.25, 5.25))
     expected = find_safe_goal(
-        LegacyGrid(cells, resolution=0.5),
+        occupancy_utils.from_array(
+            np.asarray(cells, dtype=np.int8),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            resolution=0.5,
+            origin=None,
+        ),
         (5.25 * 0.5, 5.25 * 0.5),
         algorithm=algorithm,
         min_clearance=clearance,
@@ -73,7 +75,7 @@ def test_generated_safe_goal_preserves_existing_search_choices_and_rotated_coord
 
     assert type(result) is Point
     assert expected is not None
-    coordinate = occupancy.world_to_grid(grid, result)
+    coordinate = occupancy_utils.world_to_grid(grid, result)
     np.testing.assert_allclose(coordinate, (expected.x / 0.5, expected.y / 0.5), atol=1e-12, rtol=0)
     np.testing.assert_equal(asdict(grid), before)
 
@@ -115,11 +117,18 @@ def test_generated_path_distances_and_lookahead_match_existing_geometry(index, e
     original = deepcopy(path)
     helper = PathDistancer(path)
     old = PathDistancer(
-        LegacyPath(
+        Path(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
             poses=[
-                LegacyStamped(position=[p.pose.position.x, p.pose.position.y, 0])
+                PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                    pose=Pose(
+                        position=Point(p.pose.position.x, p.pose.position.y, 0),
+                        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
                 for p in path.poses
-            ]
+            ],
         )
     )
     np.testing.assert_array_equal(helper.find_lookahead_point(index), expected)
@@ -152,7 +161,7 @@ def test_contiguous_generated_search_cannot_cross_an_enclosing_obstacle():
     cells = np.zeros((12, 12), dtype=np.int8)
     cells[4:8, 4:8] = 100
     grid = grid_from_cells(cells)
-    goal = occupancy.grid_to_world(grid, (5.25, 5.25))
+    goal = occupancy_utils.grid_to_world(grid, (5.25, 5.25))
     assert (
         find_safe_goal(
             grid, goal, algorithm="bfs_contiguous", min_clearance=0, connectivity_check_radius=0

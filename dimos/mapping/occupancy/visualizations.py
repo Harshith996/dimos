@@ -14,49 +14,29 @@
 
 from copy import deepcopy
 from functools import lru_cache
-from typing import Literal, TypeAlias, overload
+from typing import Literal, TypeAlias
 
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values, _GridT
+from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils import image
-from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.messages.sensor_msgs.msg import Image as CdrImage
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos.messages.sensor_msgs.msg import Image
 
 Palette: TypeAlias = Literal["rainbow", "turbo"]
 
 
-def _map_image(
-    grid: OccupancyGrid | CdrOccupancyGrid, pixels: NDArray[np.uint8]
-) -> Image | CdrImage:
-    if isinstance(grid, CdrOccupancyGrid):
-        return image.from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
-    return Image(data=pixels, format=ImageFormat.BGR, frame_id=grid.frame_id, ts=grid.ts)
-
-
-@overload
-def visualize_occupancy_grid(
-    occupancy_grid: CdrOccupancyGrid, palette: Palette, path: Path | CdrPath | None = None
-) -> CdrImage: ...
-
-
-@overload
-def visualize_occupancy_grid(
-    occupancy_grid: OccupancyGrid, palette: Palette, path: Path | CdrPath | None = None
-) -> Image: ...
+def _map_image(grid: OccupancyGrid, pixels: NDArray[np.uint8]) -> Image:
+    return image.from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
 
 
 def visualize_occupancy_grid(
-    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
+    occupancy_grid: OccupancyGrid,
     palette: Palette,
-    path: Path | CdrPath | None = None,
-) -> Image | CdrImage:
+    path: Path | None = None,
+) -> Image:
     match palette:
         case "rainbow":
             bgr_image = rainbow_image(_grid_values(occupancy_grid))
@@ -72,15 +52,15 @@ def visualize_occupancy_grid(
 
 
 def _draw_path(
-    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
+    occupancy_grid: OccupancyGrid,
     bgr_image: NDArray[np.uint8],
-    path: Path | CdrPath,
+    path: Path,
 ) -> None:
     import cv2
 
     points = []
     for pose in path.poses:
-        position = pose.pose.position if isinstance(pose, CdrPoseStamped) else pose.position
+        position = pose.pose.position
         x, y = _grid_coordinates(occupancy_grid, position)
         pixel_x = int(x)
         pixel_y = int(y)
@@ -169,7 +149,7 @@ def _interpolate_turbo(t: float) -> tuple[int, int, int]:
 
 
 def generate_rgba_texture(
-    grid: _GridT,
+    grid: OccupancyGrid,
     colormap: str | None = None,
     opacity: float = 1.0,
     cost_range: tuple[int, int] | None = None,

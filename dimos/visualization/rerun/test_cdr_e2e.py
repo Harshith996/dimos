@@ -62,7 +62,7 @@ def test_live_bridge_and_native_mcap_import_cover_scene(
         "world/odometry",
         "world/entities",
         "demo person",
-        "world/legacy_pose",
+        "world/frame_pose",
         "world/late_image",
         "world/cloud_boxes",
         "world/cloud_height",

@@ -33,13 +33,12 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
-    PoseStamped as CdrPoseStamped,
+    PoseStamped,
     Twist,
     TwistStamped,
     Vector3,
 )
 from dimos.messages.std_msgs.msg import Float32, Header
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.controller_types import Hand
@@ -119,19 +118,12 @@ class ArmCommandModule(ArmTeleopModule):
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame; stale/future/out-of-order dropped."""
-        wire = cdr_decode(data, CdrPoseStamped)
-        p, q = wire.pose.position, wire.pose.orientation
-        msg = PoseStamped(
-            ts=message_time.to_seconds(wire.header.stamp),
-            frame_id=wire.header.frame_id,
-            position=(p.x, p.y, p.z),
-            orientation=(q.x, q.y, q.z, q.w),
-        )
+        msg = cdr_decode(data, PoseStamped)
         try:
-            hand = self._resolve_hand(msg.frame_id)
+            hand = self._resolve_hand(msg.header.frame_id)
         except ValueError:
             return
-        ts = float(msg.ts)
+        ts = message_time.to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
         age = time.time() - ts
@@ -153,7 +145,7 @@ class ArmCommandModule(ArmTeleopModule):
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
-            self._pose_headers[hand] = deepcopy(wire.header)
+            self._pose_headers[hand] = deepcopy(msg.header)
 
     def _on_twist_bytes(self, data: bytes) -> None:
         """Browser keyboard EE-twist → coordinator's eef_twist task."""

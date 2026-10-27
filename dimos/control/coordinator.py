@@ -68,19 +68,12 @@ from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.message_utils import time as message_time
 from dimos.messages.geometry_msgs.msg import (
-    Quaternion as CdrQuaternion,
-    Transform as CdrTransform,
-    TransformStamped as CdrTransformStamped,
-    Twist as CdrTwist,
-    Vector3 as CdrVector3,
+    Twist,
 )
-from dimos.messages.sensor_msgs.msg import JointState as CdrJointState
-from dimos.messages.std_msgs.msg import Float32 as CdrFloat32, Header
-from dimos.messages.tf2_msgs.msg import TFMessage as CdrTFMessage
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Float32, Header
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -173,18 +166,18 @@ class ControlCoordinator(Module):
     _mujoco_sim: MujocoSimSpec | None = None
 
     # Output: Aggregated joint state for external consumers
-    coordinator_joint_state: Out[CdrJointState]
+    coordinator_joint_state: Out[JointState]
     # Intended position-command updates for recording.
-    coordinator_joint_command: Out[CdrJointState]
+    coordinator_joint_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
-    joint_command: In[CdrJointState]
+    joint_command: In[JointState]
 
     # Input: Streaming twist commands for velocity-commanded platforms
-    twist_command: In[CdrTwist]
+    twist_command: In[Twist]
 
     # Input: Normalized gripper opening (0.0 closed, 1.0 open).
-    gripper_command: In[CdrFloat32]
+    gripper_command: In[Float32]
 
     # Arming and dry-run are one-shot RPCs, not streams.
 
@@ -349,7 +342,7 @@ class ControlCoordinator(Module):
 
         return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
 
-    def _frame_pose_port(self) -> Out[CdrTFMessage]:
+    def _frame_pose_port(self) -> Out[TFMessage]:
         port = getattr(self, "tf", None)
         if isinstance(port, Out):
             return port
@@ -358,7 +351,7 @@ class ControlCoordinator(Module):
             "add `tf: Out[TFMessage]` to your coordinator subclass"
         )
 
-    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[CdrJointState]:
+    def _robot_joint_port(self, hardware_id: HardwareId) -> Out[JointState]:
         name = f"{hardware_id}_joints"
         port = getattr(self, name, None)
         if isinstance(port, Out):
@@ -373,40 +366,17 @@ class ControlCoordinator(Module):
             f"port — add `{name}: Out[JointState]` to your coordinator subclass"
         )
 
-    @staticmethod
-    def _joint_state_message(msg: JointState) -> CdrJointState:
-        return CdrJointState(
-            Header(message_time.time_from_seconds(msg.ts), msg.frame_id),
-            list(msg.name),
-            np.asarray(msg.position, dtype=np.float64),
-            np.asarray(msg.velocity, dtype=np.float64),
-            np.asarray(msg.effort, dtype=np.float64),
-        )
-
     def _publish_joint_state_message(self, msg: JointState) -> None:
-        self.coordinator_joint_state.publish(self._joint_state_message(msg))
+        self.coordinator_joint_state.publish(msg)
 
     def _publish_joint_command_message(self, msg: JointState) -> None:
-        self.coordinator_joint_command.publish(self._joint_state_message(msg))
+        self.coordinator_joint_command.publish(msg)
 
     def _publish_robot_joint_state(self, hardware_id: HardwareId, msg: JointState) -> None:
-        self._robot_joint_port(hardware_id).publish(self._joint_state_message(msg))
+        self._robot_joint_port(hardware_id).publish(msg)
 
     def _publish_frame_pose_message(self, msg: TFMessage) -> None:
-        self._frame_pose_port().publish(
-            CdrTFMessage(
-                [
-                    CdrTransformStamped(
-                        Header(message_time.time_from_seconds(transform.ts), transform.frame_id),
-                        transform.child_frame_id,
-                        CdrTransform(
-                            CdrVector3(*transform.translation), CdrQuaternion(*transform.rotation)
-                        ),
-                    )
-                    for transform in msg.transforms
-                ]
-            )
-        )
+        self._frame_pose_port().publish(msg)
 
     @rpc
     def add_hardware(
@@ -787,7 +757,13 @@ class ControlCoordinator(Module):
                     velocities.append(value)
 
         if names:
-            joint_state = JointState(name=names, velocity=velocities)
+            joint_state = JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray(velocities, dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
             self._dispatch("joint_command", joint_state)
 
     @rpc

@@ -617,7 +617,6 @@ dependencies = [
  "dimos-generated-messages",
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",
@@ -1435,14 +1434,6 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
-name = "lcm-msgs"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=04d78e8622500244123ba9cefa4c51b4cb454549#04d78e8622500244123ba9cefa4c51b4cb454549"
-dependencies = [
- "byteorder",
-]
 
 [[package]]
 name = "libc"

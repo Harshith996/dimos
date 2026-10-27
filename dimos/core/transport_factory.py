@@ -103,7 +103,7 @@ def make_transport(
 ) -> PubSubTransport[Any]:
     """Construct the active-backend pub/sub transport for a logical channel.
 
-    Generated messages use CDR and legacy messages keep LCM encoding.
+    Generated messages use CDR.
     Other Python types and undeclared types preserve the existing pickle transport.
 
     A channel name alone doesn't fully define a topic: backends have per-topic
@@ -114,9 +114,7 @@ def make_transport(
     transport map. LCM (UDP multicast) has no per-topic settings.
     """
 
-    use_pickled = msg_type is None or (
-        not hasattr(msg_type, "__msgtype__") and getattr(msg_type, "lcm_encode", None) is None
-    )
+    use_pickled = msg_type is None or not hasattr(msg_type, "__msgtype__")
     if msg_type is not None and not use_pickled:
         describe_message(msg_type)
     topic = transport_topic(name, g)
