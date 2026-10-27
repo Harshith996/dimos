@@ -601,7 +601,10 @@ def serve(args: argparse.Namespace, attached: AttachedBlueprint | None = None) -
                     result = experiment.dispatch(request["action"], request.get("params", {}))
                     emit({"id": request["id"], "result": result})
                 except Exception as exc:
-                    experiment.last_error = str(exc)
+                    # Operator errors belong to the request/job. A stale browser
+                    # session must not latch a fault on the connected robot.
+                    if not request["action"].startswith("operator_"):
+                        experiment.last_error = str(exc)
                     emit({"id": request["id"], "error": str(exc)})
             try:
                 experiment.update()
