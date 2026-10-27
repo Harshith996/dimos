@@ -21,17 +21,17 @@ The objects you can hold, with their state and actions, are in [gateway/README.m
 
 ## Quickstart
 
-Connect, hold the gateway object and print its link to DimOS. Real callers take the socket path from
-`agentPaths(process.env).socket`; here it is a literal. The snippets under Usage continue from this `client` and
-`gateway`.
+Connect to a running gateway, hold the gateway object and print its link to DimOS. The snippets under Usage continue
+from this `client` and `gateway`.
 
 ```ts
 import { GatewayContract } from "../shared/protocol/gateway/contract.ts";
+import { agentPaths } from "../gateway/config/paths.ts";
 import { connect } from "./main.ts";
 import { describeLink } from "../shared/protocol/gateway/link.ts";
 import { unixSocket } from "./node.ts";
 
-const client = await connect(unixSocket({ path: "/run/user/1000/dimos-agent.sock", label: "example" }));
+const client = await connect(unixSocket({ path: agentPaths(process.env).socket, label: "example" }));
 const gateway = await client.host.get(GatewayContract, {});
 console.log(describeLink(gateway.link.value));
 ```
@@ -95,7 +95,7 @@ const configure = () => {
 	const view = inventory.inventory.value;
 	frames.configure(view?.current ? view.inventory.environment.relay : null);
 };
-const stop = inventory.inventory.subscribe(configure);
+const unsubscribe = inventory.inventory.subscribe(configure);
 configure();
 frames.onRecord((record) => {
 	if (record.kind === "image") console.log(`${record.channel} ${record.width}x${record.height}`);
@@ -104,7 +104,7 @@ try {
 	frames.want(new Set(gateway.streams.value.filter((stream) => stream.encoding === "jpeg.v1").map((stream) => stream.channel)));
 	await new Promise((resolve) => setTimeout(resolve, 10_000));
 } finally {
-	stop();
+	unsubscribe();
 	frames.close();
 	inventory.release();
 }
