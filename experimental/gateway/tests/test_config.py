@@ -265,6 +265,14 @@ def test_modules_name_described_abilities() -> None:
         assert given and set(given) <= set(abilities), f"module {module}: {given}"
 
 
+def test_a_checkout_without_abilities_gets_the_gateways(tmp_path: Path) -> None:
+    gateway_dir = tmp_path / "experimental" / "gateway"
+    gateway_dir.mkdir(parents=True)
+    (gateway_dir / "annotations.yaml").write_text("robots:\n  types: {}\n  robots: {}\n")
+    notes = catalog.notes_for(tmp_path, [])
+    assert notes["abilities"] == annotation_file.load_abilities()[0] and notes["module_abilities"]
+
+
 def test_a_blueprint_has_the_abilities_of_the_modules_it_runs() -> None:
     notes = {
         "robots": {},

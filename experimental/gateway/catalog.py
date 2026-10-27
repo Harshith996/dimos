@@ -29,6 +29,9 @@ def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     source = checkout if checkout.exists() else annotation_file.SOURCE_FILE
     notes = annotation_file.resolved(annotation_file.load(source), names)
     notes["abilities"], notes["module_abilities"] = annotation_file.load_abilities(source)
+    if not notes["abilities"]:
+        # a checkout from before abilities: module names outlive it, so the gateway's own list still applies
+        notes["abilities"], notes["module_abilities"] = annotation_file.load_abilities()
     return notes
 
 
