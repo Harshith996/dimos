@@ -57,7 +57,6 @@ from dimos.robot.unitree.go2.controllers.locomotion.policy import load_policy
 from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
 from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.spec import RobotInstance
 from dimos.sim2.world.scene import scene_robot
@@ -494,9 +493,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             if self._simulation is None:
                 raise RuntimeError("Go2 requires the collected sim2 world")
             robot_id = self.config.instance_name or self.name
-            self.connection.bind(
-                StreamDescriptor.from_dict(self._simulation.describe()["robots"][robot_id])
-            )
+            self.connection.bind(self._simulation, robot_id)
         self.connection.start()
 
     def read_state(self) -> dict[str, float]:

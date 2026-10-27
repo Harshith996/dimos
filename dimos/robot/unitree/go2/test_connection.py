@@ -40,6 +40,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2 import connection as go2_conn
 from dimos.robot.unitree.go2.connection import ConnectionConfig, GO2Connection, go2_connection
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
@@ -47,7 +49,7 @@ from dimos.robot.unitree.go2.controllers.locomotion.policy import OnnxGo2Policy
 from dimos.robot.unitree.go2.simulation.device import Go2SimDevice
 from dimos.robot.unitree.go2.simulation.model import go2_definition
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import FrameMetadata, StateFrame
+from dimos.sim2.messages import FrameMetadata, RobotFeedback
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.world.scene import scene_path
 
@@ -306,7 +308,7 @@ def test_policy_joint_order_is_bound_to_the_physical_device(mocker):
     thread.return_value.is_alive.return_value = False
     device = Go2SimDevice()
     client = mocker.Mock()
-    client.descriptor.joint_names = names
+    client.joint_names = names
     mocker.patch.object(device, "_client", client)
     try:
         device.start()
@@ -325,20 +327,17 @@ def test_reset_during_inference_discards_result_and_restarts_policy(mocker):
     mocker.patch("dimos.robot.unitree.go2.simulation.device.load_policy", return_value=policy)
     thread = mocker.patch("dimos.robot.unitree.go2.simulation.device.Thread")
     thread.return_value.is_alive.return_value = False
-    frame = StateFrame(
-        FrameMetadata(1, 0, 1, 1, 0.005),
-        {
-            "position": np.zeros(12),
-            "velocity": np.zeros(12),
-            "imu_gyroscope": np.zeros(3),
-            "imu_quaternion": np.array([1, 0, 0, 0]),
-            "root_position": np.zeros(3),
-            "root_quaternion": np.array([1, 0, 0, 0]),
-            "wall_time": np.array([123.0]),
-        },
+    frame = RobotFeedback(
+        metadata=FrameMetadata(1, 0, 1, 1, 0.005),
+        joints=JointState(name=list(names), position=np.zeros(12), velocity=np.zeros(12), ts=123.0),
+        imu=Imu(ts=123.0),
+        odom=PoseStamped(ts=123.0),
+        base_velocity=Twist(),
+        monotonic_time=time.monotonic(),
+        enabled=True,
     )
     reset = replace(frame, metadata=replace(frame.metadata, episode_id=1))
-    client = mocker.Mock(spec=SimRobotClient, descriptor=mocker.Mock(joint_names=names))
+    client = mocker.Mock(spec=SimRobotClient, joint_names=names)
     client.read.side_effect = [frame, reset, reset]
     with ExitStack() as stack:
         device = Go2SimDevice()
