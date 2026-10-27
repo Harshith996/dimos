@@ -196,6 +196,8 @@ class BlueprintFields(Body, total=False):
     optional_dependency: bool | None
     suggested_extras: list[str]
     scanned_at: str | None
+    # annotations.yaml abilities it has: those any of whose modules it runs
+    abilities: list[str]
 
 
 class CatalogBlueprint(BlueprintFields, total=False):
@@ -284,6 +286,20 @@ class Robots(Body, total=False):
 
     types: dict[str, dict[str, Any]]
     robots: dict[str, CatalogRobot]
+
+
+class Ability(Body):
+    """Something robots can do, the modules that do it, and the (visible) blueprints that run one of them."""
+
+    id: str
+    label: str
+    description: str
+    modules: list[str]
+    blueprints: list[str]
+
+
+class Abilities(Body, total=False):
+    abilities: list[Ability]
 
 
 class Catalog(Body, total=False):

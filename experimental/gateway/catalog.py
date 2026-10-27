@@ -26,9 +26,37 @@ from experimental.gateway.errors import StatusError
 def notes_for(dimos_dir: Path, names: list[str]) -> dict[str, Any]:
     """annotations.yaml (the checkout's own when it has one), resolved against `names`."""
     checkout = dimos_dir / "experimental" / "gateway" / annotation_file.SOURCE_FILE.name
-    return annotation_file.resolved(
-        annotation_file.load(checkout if checkout.exists() else annotation_file.SOURCE_FILE), names
-    )
+    source = checkout if checkout.exists() else annotation_file.SOURCE_FILE
+    notes = annotation_file.resolved(annotation_file.load(source), names)
+    notes["abilities"] = annotation_file.load_abilities(source)
+    return notes
+
+
+def abilities_of(modules: list[str], notes: dict[str, Any]) -> list[str]:
+    """The abilities a blueprint running `modules` has: those any of whose modules it runs."""
+    return [
+        ability_id
+        for ability_id, ability in notes.get("abilities", {}).items()
+        if set(ability.get("modules", [])) & set(modules)
+    ]
+
+
+def abilities(found: list[dict[str, Any]], notes: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each ability with the blueprints (from `found`, catalog.blueprints) that have it, hidden ones left out."""
+    return [
+        {
+            "id": ability_id,
+            "label": ability.get("label", ability_id),
+            "description": ability.get("description", ""),
+            "modules": ability.get("modules", []),
+            "blueprints": [
+                blueprint["name"]
+                for blueprint in found
+                if not blueprint["hidden"] and ability_id in blueprint["abilities"]
+            ],
+        }
+        for ability_id, ability in notes.get("abilities", {}).items()
+    ]
 
 
 def blueprints(
@@ -60,6 +88,9 @@ def blueprints(
                 "hidden": note.get("hidden", annotation_file.HIDDEN_NAME.search(name) is not None),
                 "recommended_config": note.get("recommended_config", []),
                 "modules": [module["module"] for module in record.get("modules") or []],
+                "abilities": abilities_of(
+                    [module["module"] for module in record.get("modules") or []], notes
+                ),
                 "importable": record.get("importable"),
                 "import_error": record.get("import_error"),
                 "missing_module": record.get("missing_module"),

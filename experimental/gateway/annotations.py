@@ -38,6 +38,12 @@ def load(path: Path = SOURCE_FILE) -> dict[str, Any]:
     return section if "types" in section else source
 
 
+def load_abilities(path: Path = SOURCE_FILE) -> dict[str, Any]:
+    """The `abilities:` section: what a robot can do, each by the modules that do it (none in an older checkout)."""
+    source: dict[str, Any] = yaml.safe_load(path.read_text())
+    return source.get("abilities") or {}
+
+
 def owner_of(doc: dict[str, Any], path: str) -> str | None:
     owners = [
         (len(directory), str(robot_id))

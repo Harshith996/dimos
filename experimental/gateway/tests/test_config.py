@@ -23,7 +23,7 @@ import yaml
 from dimos.core.global_config import GlobalConfig
 from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
-from experimental.gateway import annotations as annotation_file, constants, launches
+from experimental.gateway import annotations as annotation_file, catalog, constants, launches
 from experimental.gateway.__main__ import serve
 from experimental.gateway.state import API_VERSION, ApiError, State
 
@@ -253,6 +253,40 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields
+
+
+def test_abilities_are_described_and_name_modules() -> None:
+    for ability_id, ability in annotation_file.load_abilities().items():
+        assert ability.get("label") and ability.get("description"), (
+            f"ability {ability_id} needs both"
+        )
+        assert ability.get("modules"), f"ability {ability_id} names no modules"
+
+
+def test_a_blueprint_has_the_abilities_of_the_modules_it_runs() -> None:
+    notes = {
+        "robots": {},
+        "abilities": {
+            "loop-closure": {
+                "label": "Loop closure",
+                "description": "d",
+                "modules": ["pgo-voxel-mapper"],
+            },
+            "arm-control": {
+                "label": "Arm control",
+                "description": "d",
+                "modules": ["arm-twist-coordinator"],
+            },
+        },
+    }
+    loop_closed = {"modules": [{"module": "pgo-voxel-mapper"}, {"module": "cost-mapper"}]}
+    cache = {"results": {"go2-map": loop_closed, "go2-test-map": loop_closed}}
+    found = catalog.blueprints([{"name": "go2-map"}, {"name": "go2-test-map"}], cache, notes)
+    assert found[0]["abilities"] == ["loop-closure"]
+    by_id = {ability["id"]: ability for ability in catalog.abilities(found, notes)}
+    # a hidden blueprint (its name says test) isn't listed under its abilities
+    assert by_id["loop-closure"]["blueprints"] == ["go2-map"]
+    assert by_id["arm-control"]["blueprints"] == []
 
 
 def test_every_registered_blueprint_is_annotated() -> None:

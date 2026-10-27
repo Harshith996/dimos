@@ -267,6 +267,16 @@ async def robots(state: GatewayState, fields: str | None = None) -> dict[str, An
     return picked({"types": notes.get("types", {}), "robots": catalog.robot_list(notes)}, fields)
 
 
+@router.get("/abilities", response_model=responses.Abilities)
+async def abilities(state: GatewayState, fields: str | None = None) -> dict[str, Any]:
+    entries = await listed(state)
+    notes = await asyncio.to_thread(
+        catalog.notes_for, state.dimos_dir, [entry["name"] for entry in entries]
+    )
+    found = catalog.blueprints(entries, state.scanner.cache(), notes)
+    return picked({"abilities": catalog.abilities(found, notes)}, fields)
+
+
 @router.get("/msgs/{name}", response_model=responses.MessageType)
 async def message_type(name: str) -> dict[str, Any]:
     check_name(name)
