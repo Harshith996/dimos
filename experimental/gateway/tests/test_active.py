@@ -71,7 +71,8 @@ def test_launch_runs_dimos_with_exactly_the_config_it_is_sent(client: TestClient
     assert started.status_code == 200, started.text
     assert started.json()["phase"] == "starting"
     until(output_has(client, "secret k1"))
-    until(output_has(client, "dtop 1"))
+    # dimos's own defaults: a caller wanting dtop (Desktop does) says so in the config
+    until(output_has(client, "dtop None"))
     until(running(client))
     now = client.get("/active").json()
     launch = now["launch"]
@@ -341,19 +342,12 @@ def test_a_launch_that_names_its_own_recordings_directory_keeps_it(home: Path) -
     assert launches.recordings_flag(launches.LaunchConfig(args=["--record-dir", "/tmp/mine"])) == []
 
 
-def test_dtop_env_is_the_one_dimos_reads(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.core.global_config import GlobalConfig
-
-    monkeypatch.setenv(launches.DTOP_ENV, "1")
-    assert GlobalConfig().dtop is True
-
-
 def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
     launches._save({"blueprint": "demo", "started_at": "x", "pid": os.getpid(), "pid_started": 0.0})
     assert launches.current_launch()["phase"] == "failed"
 
 
-def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
+def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs_gossip(
     client: TestClient, tmp_path: Path
 ) -> None:
     from experimental.gateway import events, store
@@ -371,8 +365,9 @@ def test_shared_config_yaml_sets_the_namespace_connect_socket_and_gossip(
     assert events.resolve_namespace("given") == "given"
     assert events.resolve_connect(None) == ["tcp/10.0.0.2:7447"]
     assert store.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    # a run's gossip is its launch config's (Desktop puts zenoh.gossip there), not this file's
     client.post("/active/launch", json={"blueprint": "demo"})
-    until(output_has(client, "gossip false"))
+    until(output_has(client, "gossip None"))
 
 
 SCANNED = {

@@ -41,8 +41,6 @@ ModuleValues = dict[str, dict[str, Any]]
 HIDDEN = "•••"
 STRUCTURED = ("global", "modules", "secrets")
 
-# GlobalConfig.dtop's env name (pydantic-settings: the field name, no prefix)
-DTOP_ENV = "DTOP"
 # GlobalConfig.record_dir's flag: where this launch's recordings go
 RECORD_DIR_FLAG = "--record-dir"
 _lock = threading.RLock()
@@ -444,11 +442,6 @@ def active() -> dict[str, Any]:
     }
 
 
-def gossip_env() -> dict[str, str]:
-    gossip = store.setting("zenoh", "gossip")
-    return {} if gossip is None else {"ZENOH_GOSSIP": "true" if gossip else "false"}
-
-
 def recordings_flag(launch: LaunchConfig) -> list[str]:
     """`--record-dir`: the directory `GET /history/recordings` answers with.
 
@@ -549,10 +542,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
             "PYTHONUNBUFFERED": "1",
             "NO_COLOR": "1",
             **launch_env_defaults(),
-            # dtop's stats for GET /active/stats; a --no-dtop flag still wins
-            DTOP_ENV: os.environ.get(DTOP_ENV, "1"),
-            # Desktop's zenoh gossip setting, which dimos's GlobalConfig.zenoh_gossip reads from the env
-            **gossip_env(),
             **secret_vars,
         }
         recordings = recordings_flag(launch)
