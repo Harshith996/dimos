@@ -53,6 +53,12 @@ and fresh RGB-D observations. Evidence and the authoring/check scripts are in
 
 ## Desktop workspace
 
+Open OpenYAM from Desktop's shell, rather than its direct `/apps/.../` page.
+**Ask agent** opens Desktop's own conversation with the selected run, arm and
+object as a draft. The agent must be installed and connected to a model; the
+app reports those states separately. Registering HTTP operations does not
+establish a functioning natural-language agent.
+
 The existing OpenYAM Desktop app follows the running blueprint. Views marked
 `presentation: "spatial-workspace"` use its spatial layout: a large measured
 scene, three camera views, left/right arm selection, gripper controls and joint
@@ -80,6 +86,15 @@ Changing the target clears the old plan. **Start positions** saves measured
 joints against the planner's model identity. Keyboard control (W/S X, A/D Y,
 Q/E Z; Shift slows) sends world/tool-relative intent through the existing clutch
 WebSocket and IK path. Release holds; Space or page blur stops control.
+
+**Objects → Scan workspace** calls the deployed RGB-D perception skill. Select
+an observation in the list or its box in the scene, then **Set tool target
+above**. This preserves the measured tool orientation and places a waypoint
+above the observed oriented box using the chosen world-Z clearance. It opens
+the same **Move → Preview → Execute** workflow without starting motion.
+Object metadata exposes the observation's frame, pose, size and acquisition
+time to both UI and agent. A remembered box is not live tracking or a grasp.
+The prior plan cannot be executed while replacing it with an object target.
 
 The existing attached-blueprint worker discovers planners and advertised skill
 schemas through `OperatorClient`. It exposes one operation state to browser

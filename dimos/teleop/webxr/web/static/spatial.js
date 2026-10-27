@@ -189,6 +189,7 @@ poll(endpoint('state'), 35, async response => {
     for (const object of feedback.objects) {
       const solid=new THREE.BoxGeometry(...object.size), edges=new THREE.EdgesGeometry(solid);solid.dispose();
       const box = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({color:object.id===selectedObject?0xffcf70:0x88ceff}));
+      edges.computeBoundingBox();
       box.userData.id=object.id;
       box.position.fromArray(object.position); box.quaternion.fromArray(object.orientation); detections.add(box);
     }
@@ -523,6 +524,15 @@ if(embedded) {
     const ray=new THREE.Raycaster();
     ray.setFromCamera(new THREE.Vector2((event.clientX-box.left)/box.width*2-1,1-(event.clientY-box.top)/box.height*2),camera);
     const hit=ray.intersectObjects(Object.values(arms),true)[0];
+    let objectHit=null, nearest=hit?.distance??Infinity;
+    for(const box of detections.children) {
+      const localRay=ray.ray.clone().applyMatrix4(box.matrixWorld.clone().invert());
+      const point=localRay.intersectBox(box.geometry.boundingBox,new THREE.Vector3());
+      if(!point) continue;
+      const distance=point.applyMatrix4(box.matrixWorld).distanceTo(ray.ray.origin);
+      if(distance<nearest){nearest=distance;objectHit=box.userData.id;}
+    }
+    if(objectHit){parent.postMessage({type:'dimos.spatial.selectObject',value:objectHit},location.origin);return;}
     const side=geometry.sides.find(side=>arms[side].children.includes(hit?.object));
     if(side) parent.postMessage({type:'dimos.spatial.select',value:side},location.origin);
   });

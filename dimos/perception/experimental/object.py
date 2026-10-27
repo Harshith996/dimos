@@ -175,6 +175,16 @@ class Object(Detection3D):
             "identity_basis": self.identity_basis,
             "last_seen_ts": self.last_seen_ts,
             "last_seen": f"{round(time.time() - (self.last_seen_ts or self.ts))}s ago",
+            "frame_id": self.pose.frame_id,
+            "position": [self.center.x, self.center.y, self.center.z],
+            "orientation": [
+                self.pose.orientation.x,
+                self.pose.orientation.y,
+                self.pose.orientation.z,
+                self.pose.orientation.w,
+            ],
+            "size": [self.size.x, self.size.y, self.size.z],
+            "confidence": self.confidence,
         }
 
     def to_dict(self) -> dict[str, Any]:
