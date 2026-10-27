@@ -130,9 +130,9 @@ def test_sharpness_prefers_edges_to_blurred_pixels(encoding):
     assert image.sharpness(sharp) > image.sharpness(soft)
 
 
-def test_sharpness_rejects_depth_and_empty_images():
-    depth = image.from_array(np.zeros((2, 2), dtype=np.float32), encoding="32FC1")
-    with pytest.raises(ValueError, match="8-bit visual"):
+def test_sharpness_rejects_unsupported_depth_and_empty_images():
+    depth = image.from_array(np.zeros((2, 2, 3), dtype=np.float32), encoding="32FC3")
+    with pytest.raises(ValueError, match="Sharpness requires"):
         image.sharpness(depth)
     with pytest.raises(ValueError, match="nonempty"):
         image.sharpness(
@@ -199,8 +199,7 @@ def test_brightness_ignores_padding_and_normalizes_big_endian_u16() -> None:
     )
     assert image.brightness(message) == pytest.approx(0.5)
     depth = image.from_array(np.array([[1.0]], dtype=np.float32), encoding="32FC1")
-    with pytest.raises(ValueError, match="unsigned integer"):
-        image.brightness(depth)
+    assert image.brightness(depth) == pytest.approx(1.0 / 255.0)
 
 
 @pytest.mark.parametrize("mode", ["L", "RGBA"])
@@ -249,3 +248,29 @@ def test_resize_reuses_fitting_message_and_copies_downscaled_pixels() -> None:
     assert resized.header == message.header
     resized.data[:] = 0
     assert np.all(image.view(message) == 17)
+
+
+@pytest.mark.parametrize(
+    "encoding, channels", [("mono8", 1), ("rgb8", 3), ("bgr8", 3), ("rgba8", 4), ("bgra8", 4)]
+)
+def test_sharpness_preserves_normalized_score(encoding, channels):
+    pixels = np.zeros((8, 8), dtype=np.uint8)
+    pixels[:, 4:] = 32
+    if channels > 1:
+        pixels = np.repeat(pixels[:, :, None], channels, axis=2)
+    assert image.sharpness(image.from_array(pixels, encoding=encoding)) == pytest.approx(
+        0.4699777662754059
+    )
+
+
+def test_sharpness_preserves_floor_resize_and_grayscale_support():
+    rng = np.random.default_rng(17)
+    pixels = rng.integers(0, 256, (173, 321, 3), dtype=np.uint8)
+    assert image.sharpness(image.from_array(pixels, encoding="rgb8")) == pytest.approx(
+        0.9509032368659973
+    )
+    for encoding, dtype in [("mono16", np.uint16), ("32FC1", np.float32)]:
+        assert (
+            image.sharpness(image.from_array(np.zeros((8, 8), dtype=dtype), encoding=encoding))
+            == 0.0
+        )
