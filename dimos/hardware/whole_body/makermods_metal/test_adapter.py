@@ -14,7 +14,6 @@
 
 from collections.abc import Iterator
 import runpy
-from types import SimpleNamespace
 
 import can_motor_control
 from can_motor_control import damiao
@@ -60,8 +59,9 @@ def test_metal_reuses_shared_driver_and_lifecycle(adapter) -> None:
 
 
 def test_topology_uses_metal_firmware_profiles(adapter, mocker) -> None:
-    profiles = SimpleNamespace(METAL_JLO="low", METAL_J2="shoulder", METAL_JHI="high")
-    mocker.patch.object(damiao, "MotorType", profiles)
+    profile = mocker.patch.object(damiao, "MotorProfile", create=True)
+    profile.side_effect = ["low", "shoulder", "high"]
+    codec = mocker.patch.object(damiao, "DamiaoCodec")
     specs = mocker.patch.object(can_motor_control, "MotorSpec")
     builder = mocker.MagicMock()
     builder.add_bus.return_value = builder
@@ -78,6 +78,12 @@ def test_topology_uses_metal_firmware_profiles(adapter, mocker) -> None:
         ("high", 0x06, 0x16),
         ("high", 0x07, 0x17),
     ]
+    assert [(call.args, call.kwargs) for call in profile.call_args_list] == [
+        ((0x8000,), {"p_max": 6.28, "v_max": 10.0, "t_max": 30.0}),
+        ((0x8001,), {"p_max": 6.28, "v_max": 10.0, "t_max": 120.0}),
+        ((0x8002,), {"p_max": 6.28, "v_max": 30.0, "t_max": 20.0}),
+    ]
+    codec.assert_called_once_with(profiles=["low", "shoulder", "high"])
     assert builder.add_arm.call_args.kwargs["bus"] == "metal"
     assert builder.add_gripper.call_args.kwargs["opening_direction"] == "increasing_position"
     assert builder.add_gripper.call_args.kwargs["default_current"] == 0.1
@@ -85,7 +91,7 @@ def test_topology_uses_metal_firmware_profiles(adapter, mocker) -> None:
 
 
 def test_missing_profiles_fail_before_opening_usb(adapter, mocker) -> None:
-    mocker.patch.object(damiao, "MotorType", SimpleNamespace())
+    mocker.patch.object(damiao, "MotorProfile", None, create=True)
     bus = mocker.spy(adapter, "_make_can_bus")
     with pytest.raises(RuntimeError, match="requires a can-motor-control release"):
         adapter._build_robot()

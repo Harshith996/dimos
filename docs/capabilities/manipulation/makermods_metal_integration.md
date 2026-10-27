@@ -12,16 +12,18 @@ incompatible, including position scaling, even if the motor hardware is Damiao.
 
 | Joints | Send / feedback IDs | Shared profile | PMAX / VMAX / TMAX |
 | --- | --- | --- | --- |
-| joint1, joint3, joint4 | 1/0x11, 3/0x13, 4/0x14 | METAL_JLO | 6.28 rad / 10 rad/s / 30 Nm |
-| joint2 | 2/0x12 | METAL_J2 | 6.28 rad / 10 rad/s / 120 Nm |
-| joint5, joint6, gripper | 5/0x15, 6/0x16, 7/0x17 | METAL_JHI | 6.28 rad / 30 rad/s / 20 Nm |
+| joint1, joint3, joint4 | 1/0x11, 3/0x13, 4/0x14 | custom 0x8000 | 6.28 rad / 10 rad/s / 30 Nm |
+| joint2 | 2/0x12 | custom 0x8001 | 6.28 rad / 10 rad/s / 120 Nm |
+| joint5, joint6, gripper | 5/0x15, 6/0x16, 7/0x17 | custom 0x8002 | 6.28 rad / 30 rad/s / 20 Nm |
 
 These are protocol scaling ranges, not mechanical or safe operating limits.
 Source: MakerMods' [native motor table](https://github.com/makermods-robotics/metal-python-ros/blob/bccf3c82a21453a7b1784a94966456e16ff0f008/metal_sdk/native/config/motor_config.cpp),
 corroborated by its [LeRobot profiles](https://github.com/makermods-robotics/lerobot/blob/a86385a0f381fa81e227c41d2774fbb94c2610fc/src/lerobot/motors/damiao/tables.py)
 and [joint mapping](https://github.com/makermods-robotics/lerobot/blob/a86385a0f381fa81e227c41d2774fbb94c2610fc/src/lerobot/robots/metal_follower/metal_follower.py).
-A shared driver release containing these three profiles and the per-motor
-feedback fix is required for physical use. Version 0.0.8 lacks the profiles;
+The adapter defines these profiles with the shared driver's custom `MotorProfile`
+API and registers them on its own `DamiaoCodec`; no Metal-specific library enum
+or profile table is needed. A shared driver release containing that API and the
+per-motor feedback fix is required for physical use. Version 0.0.8 lacks the API;
 this adapter fails before opening USB rather than substituting stock profiles.
 
 ## Run

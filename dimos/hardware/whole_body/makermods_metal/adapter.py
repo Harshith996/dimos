@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import can_motor_control
 from can_motor_control import damiao
@@ -79,19 +79,19 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
         )
 
     def _build_robot(self) -> can_motor_control.Robot:
-        try:
-            # getattr keeps imports/type-checking compatible with older releases.
-            low, shoulder, high = (
-                cast("damiao.MotorType", getattr(damiao.MotorType, name))
-                for name in ("METAL_JLO", "METAL_J2", "METAL_JHI")
-            )
-            profiles = (low, shoulder, low, low, high, high)
-            gripper_profile = high
-        except AttributeError as exc:
+        profile_type = getattr(damiao, "MotorProfile", None)
+        if profile_type is None:
             raise RuntimeError(
-                "Metal Arm requires a can-motor-control release with METAL_JLO/J2/JHI profiles; "
+                "Metal Arm requires a can-motor-control release with custom MotorProfile support; "
                 "stock DM profiles use incompatible firmware scaling"
-            ) from exc
+            )
+        # Firmware ranges from MakerMods, registered only on this robot's codec.
+        low = profile_type(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
+        shoulder = profile_type(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)
+        high = profile_type(0x8002, p_max=6.28, v_max=30.0, t_max=20.0)
+        codec = damiao.DamiaoCodec(profiles=[low, shoulder, high])
+        profiles = (low, shoulder, low, low, high, high)
+        gripper_profile = high
         motors = [
             can_motor_control.MotorSpec(name, profile, index, index + 0x10)
             for index, (name, profile) in enumerate(
@@ -100,7 +100,7 @@ class MakerModsMetalAdapter(DamiaoWholeBodyAdapter):
         ]
         return (
             can_motor_control.Robot.builder()
-            .add_bus("metal", self._make_can_bus("metal"), damiao.DamiaoCodec())
+            .add_bus("metal", self._make_can_bus("metal"), codec)
             .add_arm("arm", bus="metal", motors=motors)
             .add_gripper(
                 "gripper",
