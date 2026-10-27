@@ -164,7 +164,11 @@ export async function ensureGateway(
   const held = `The gateway on ${paths.socket} did not answer; read ${paths.logFile}, or find what holds the socket with \`ss -xlp\`.`;
   if (await reachable(paths.socket, 500)) return waitUntilServing(paths, null, held);
   const lock = startLock(paths);
-  if (!(await startLockHeld(lock))) await rm(lock, { recursive: true, force: true });
+  const lockAge = await stat(lock).then(
+    (info) => Date.now() - info.mtimeMs,
+    () => null,
+  );
+  if (lockAge !== null && lockAge > LOCK_STALE_MS) await rm(lock, { recursive: true, force: true });
   await mkdir(dirname(paths.socket), { recursive: true, mode: 0o700 });
   try {
     await mkdir(lock, { mode: 0o700 });
