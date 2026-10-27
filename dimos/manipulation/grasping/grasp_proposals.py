@@ -25,6 +25,7 @@ from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module, ModuleConfig
+from dimos.manipulation.grasping import grasp_filters
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXError, GraspGenXModule
 from dimos.manipulation.grasping.grasp_gen_x.remote import RemoteGraspGenX
 from dimos.manipulation.grasping.heuristic_grasp import top_down_grasps
@@ -66,6 +67,11 @@ class GraspProposalsConfig(ModuleConfig):
     # Empty: no server. The seed makes the same cloud give the same grasps; None leaves it unseeded.
     graspgenx_url: str = ""
     graspgenx_seed: int | None = 0
+    # GraspGenX grasps are checked against the scene around the object (localize's scene_cloud):
+    # gripper samples within this of a scene point collide (metres).
+    collision_m: float = Field(default=grasp_filters.COLLISION_M, gt=0.0)
+    # A cloud with fewer points than this gets a hint to look from another angle.
+    sparse_cloud_points: int = Field(default=60, gt=0)
 
 
 class GraspProposals(Module):

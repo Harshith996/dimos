@@ -68,7 +68,7 @@ def xarm_config() -> GraspGenXConfig:
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
         # Sampled and returned in full: the client checks them against the scene before any cut
         # (on a low open container most of the model's best grasps pass through the table).
-        num_grasps=SERVED_GRASPS,
+        num_samples=SERVED_GRASPS,
         max_candidates=SERVED_GRASPS,
     )
 
