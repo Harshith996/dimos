@@ -32,3 +32,17 @@ Message definitions come from the existing built-in message pipeline in
 source, install the project to generate `build/message-source/rust`. The SDK
 and native consumers depend on that same `dimos-generated-messages` crate;
 TF messages have no separate definitions or generation command.
+
+### Generated message boundary
+
+SDK 0.2 uses `dimos-generated-messages` from the prepared
+`build/message-source/rust` crate. Point-cloud helpers accept its
+`sensor_msgs::msg::point_cloud2::PointCloud2` directly. The SDK no longer depends
+on `lcm-msgs`; the LCM network transport still carries the same standalone CDR
+payloads as Zenoh.
+
+For a standalone module, stage the module, SDK, and generated crate together
+with `native/rust/module-source.nix` or
+`dimos.message_codegen.native_build.stage_rust_module_source`. Both preserve
+repository-relative Cargo paths. Prepare message sources explicitly before
+staging; staging does not download dependencies or install tools.

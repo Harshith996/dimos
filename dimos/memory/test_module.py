@@ -23,10 +23,9 @@ import threading
 import pytest
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.core.transport_factory import make_transport
+from dimos.core.transport import LCMTransport
 from dimos.memory.buffer import Unbounded
 from dimos.memory.module import Recorder, StreamModule
 from dimos.memory.store.sqlite import SqliteStore
@@ -35,10 +34,9 @@ from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
 from dimos.messages.builtin_interfaces.msg import Time as GeneratedTime
 from dimos.messages.dimos_msgs.msg import LineSegments3D as GeneratedSegments
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.std_msgs.msg import Header as GeneratedHeader
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers
 
@@ -179,7 +177,7 @@ def test_recorder_tf_cdr_boundary_records_each_transform_without_changing_header
     with ExitStack() as cleanup:
         recorder = Recorder(rpc_transport=MemqRPC, db_path=path)
         cleanup.callback(recorder.stop)
-        transport = make_transport("tf", TFMessage, g=GlobalConfig(transport="lcm"))
+        transport = LCMTransport("tf", TFMessage, url="memq://")
         cleanup.callback(transport.stop)
         recorder.set_transport("tf", transport)
         recorder._record_tf()

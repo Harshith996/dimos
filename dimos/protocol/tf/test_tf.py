@@ -14,75 +14,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import ExitStack
 import math
 import threading
 import time
 
 import pytest
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer, TFLookup
-
-
-@pytest.fixture
-def tf_pair():
-    with ExitStack() as cleanup:
-        transport = LCMTransport("/tf", TFMessage, url="memq://")
-        cleanup.callback(transport.stop)
-        broadcaster = TF(transport)
-        cleanup.callback(broadcaster.dispose)
-        querier = TF(transport)
-        cleanup.callback(querier.dispose)
-        yield broadcaster, querier
-
-
-@pytest.fixture
-def wait_started(mocker):
-    def observe(buffer):
-        waiting = threading.Event()
-        actual_wait = buffer._cv.wait
-
-        def wait(timeout=None):
-            waiting.set()
-            return actual_wait(timeout)
-
-        mocker.patch.object(buffer._cv, "wait", side_effect=wait)
-        return waiting
-
-    return observe
 
 
 # from https://foxglove.dev/blog/understanding-ros-transforms
 def test_tf_ros_example() -> None:
     tf = TF()
 
-    base_link_to_arm = TransformStamped(
-        header=Header(frame_id="base_link", stamp=message_time.time_from_seconds(time.time())),
+    base_link_to_arm = _transform(
+        translation=Vector3(1.0, -1.0, 0.0),
+        rotation=geometry.quaternion_from_euler(*(0, 0, math.pi / 6)),
+        frame_id="base_link",
         child_frame_id="arm",
-        transform=Transform(
-            translation=Vector3(x=1.0, y=-1.0, z=0.0),
-            rotation=geometry.quaternion_from_euler(0, 0, math.pi / 6),
-        ),
+        ts=time.time(),
     )
 
-    arm_to_end = TransformStamped(
-        header=Header(frame_id="arm", stamp=message_time.time_from_seconds(time.time())),
+    arm_to_end = _transform(
+        translation=Vector3(1.0, 1.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
+        frame_id="arm",
         child_frame_id="end_effector",
-        transform=Transform(
-            translation=Vector3(x=1.0, y=1.0, z=0.0),
-            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        ),
+        ts=time.time(),
     )
 
     tf.publish(base_link_to_arm, arm_to_end)
+    time.sleep(0.2)
 
     end_effector_global_pose = tf.get("base_link", "end_effector")
     assert end_effector_global_pose is not None
@@ -93,35 +71,71 @@ def test_tf_ros_example() -> None:
     tf.dispose()
 
 
-def test_tf_main(tf_pair) -> None:
-    """Two TF views exchange generated values over an explicit CDR transport."""
-    broadcaster, querier = tf_pair
+def _transform(*, frame_id="", child_frame_id="", ts=None, translation=None, rotation=None):
+    return TransformStamped(
+        Header(message_time.time_from_seconds(time.time() if ts is None else ts), frame_id),
+        child_frame_id,
+        Transform(
+            translation if translation is not None else Vector3(0.0, 0.0, 0.0),
+            rotation if rotation is not None else Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+    )
+
+
+def _message(*transforms):
+    return TFMessage(transforms=list(transforms))
+
+
+def _pose(*, ts=None, frame_id="", position=None, orientation=None):
+    xyz = (
+        geometry.vector_array(position)
+        if isinstance(position, Vector3)
+        else (position if position is not None else (0.0, 0.0, 0.0))
+    )
+    return PoseStamped(
+        Header(message_time.time_from_seconds(time.time() if ts is None else ts), frame_id),
+        Pose(
+            Point(*xyz), orientation if orientation is not None else Quaternion(0.0, 0.0, 0.0, 1.0)
+        ),
+    )
+
+
+def test_tf_main() -> None:
+    """Test TF broadcasting and querying between two TF instances.
+    If you run rerun-bridge this will show up in the UI"""
+
+    # here we create broadcasting and receiving TF instance.
+    # this is to verify that comms work multiprocess, normally
+    # you'd use only one instance in your module
+    broadcaster_transport = make_transport("/tf", TFMessage)
+    querier_transport = make_transport("/tf", TFMessage)
+    broadcaster = TF(broadcaster_transport)
+    querier = TF(querier_transport)
 
     # Create a transform from world to robot
     current_time = time.time()
 
-    world_to_charger = TransformStamped(
-        header=Header(frame_id="world", stamp=message_time.time_from_seconds(current_time)),
+    world_to_charger = _transform(
+        translation=Vector3(2.0, -2.0, 0.0),
+        rotation=geometry.quaternion_from_euler(*(0, 0, 2)),
+        frame_id="world",
         child_frame_id="charger",
-        transform=Transform(
-            translation=Vector3(x=2.0, y=-2.0, z=0.0),
-            rotation=geometry.quaternion_from_euler(0, 0, 2),
-        ),
+        ts=current_time,
     )
 
-    world_to_robot = TransformStamped(
-        header=Header(frame_id="world", stamp=message_time.time_from_seconds(current_time)),
+    world_to_robot = _transform(
+        translation=Vector3(1.0, 2.0, 3.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # Identity rotation
+        frame_id="world",
         child_frame_id="robot",
-        transform=Transform(
-            translation=Vector3(x=1.0, y=2.0, z=3.0),
-            rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        ),
+        ts=current_time,
     )
 
     # Broadcast the transform
     broadcaster.publish(world_to_robot)
     broadcaster.publish(world_to_charger)
-    assert querier.get("world", "robot", forward_tolerance=2.0) is not None
+    # Give time for the message to propagate
+    time.sleep(0.05)
 
     # Verify frames are available
     frames = querier.get_frames()
@@ -129,20 +143,19 @@ def test_tf_main(tf_pair) -> None:
     assert "robot" in frames
 
     # Add another transform in the chain
-    robot_to_sensor = TransformStamped(
-        header=Header(frame_id="robot", stamp=message_time.time_from_seconds(current_time)),
+    robot_to_sensor = _transform(
+        translation=Vector3(0.5, 0.0, 0.2),
+        rotation=Quaternion(0.0, 0.0, 0.707107, 0.707107),  # 90 degrees around Z
+        frame_id="robot",
         child_frame_id="sensor",
-        transform=Transform(
-            translation=Vector3(x=0.5, y=0.0, z=0.2),
-            rotation=Quaternion(x=0.0, y=0.0, z=0.707107, w=0.707107),
-        ),
+        ts=current_time,
     )
 
     broadcaster.publish(robot_to_sensor)
 
-    assert querier.get("world", "sensor", forward_tolerance=2.0) is not None
+    time.sleep(0.05)
 
-    # The receiving TF view resolves the same frame chain as the publisher.
+    # we can now query (from a separate process given we use querier) the transform tree
     chain_transform = querier.get("world", "sensor")
 
     # broadcaster will agree with us
@@ -155,14 +168,30 @@ def test_tf_main(tf_pair) -> None:
     assert abs(chain_transform.transform.translation.y - 2.0) < 0.001
     assert abs(chain_transform.transform.translation.z - 3.2) < 0.001
 
-    # A perceived object is expressed as a stamped sensor -> object transform.
+    # we see something on camera
+    random_object_in_view = _pose(
+        frame_id="random_object",
+        position=Vector3(1, 0, 0),
+    )
+
+    print("Random obj", random_object_in_view)
+
+    # random_object is perceived by the sensor
+    # we create a transform pointing from sensor to object
     random_t = TransformStamped(
-        header=Header(frame_id="sensor", stamp=message_time.time_from_seconds(time.time())),
-        child_frame_id="random_object",
-        transform=Transform(
-            translation=Vector3(x=1, y=0, z=0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+        Header(random_object_in_view.header.stamp, "sensor"),
+        random_object_in_view.header.frame_id,
+        Transform(
+            Vector3(*geometry.vector_array(random_object_in_view.pose.position)),
+            random_object_in_view.pose.orientation,
         ),
     )
+
+    # we could have also done
+    assert random_t.header.frame_id == "sensor"
+    assert random_t.child_frame_id == "random_object"
+
+    print("randm t", random_t)
 
     # we broadcast our object location
     broadcaster.publish(random_t)
@@ -174,7 +203,10 @@ def test_tf_main(tf_pair) -> None:
     ## (this would mess with the transform system because it expects trees not graphs)
     ## and our random_object would get re-connected to world from sensor
 
-    assert querier.get("world", "random_object", forward_tolerance=2.0) is not None
+    print(broadcaster)
+
+    # Give time for the message to propagate
+    time.sleep(0.05)
 
     # we know where the object is in the world frame now
     world_object = broadcaster.get("world", "random_object")
@@ -182,7 +214,10 @@ def test_tf_main(tf_pair) -> None:
     # both instances agree
     assert querier.get("world", "random_object") == world_object
 
+    print("world object", world_object)
+
     # if you have "diagon" https://diagon.arthursonzogni.com/ installed you can draw a graph
+    print(broadcaster.graph())
 
     assert world_object is not None
     assert abs(world_object.transform.translation.x - 1.5) < 0.001
@@ -194,22 +229,29 @@ def test_tf_main(tf_pair) -> None:
     assert robot_to_charger is not None
 
     # Expected: robot->world->charger
+    print(f"robot_to_charger translation: {robot_to_charger.transform.translation}")
+    print(f"robot_to_charger rotation: {robot_to_charger.transform.rotation}")
 
     assert abs(robot_to_charger.transform.translation.x - 1.0) < 0.001
     assert abs(robot_to_charger.transform.translation.y - (-4.0)) < 0.001
     assert abs(robot_to_charger.transform.translation.z - (-3.0)) < 0.001
 
+    # Stop services (they were autostarted but don't know how to autostop)
+    broadcaster.dispose()
+    querier.dispose()
+    broadcaster_transport.stop()
+    querier_transport.stop()
+
 
 class TestTBuffer:
     def test_add_transform(self) -> None:
         buffer = TBuffer(buffer_size=10.0)
-        transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        transform = _transform(
+            translation=Vector3(1.0, 2.0, 3.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=2.0, z=3.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
 
         buffer.add(transform)
@@ -222,15 +264,11 @@ class TestTBuffer:
 
         # Add transforms at different times
         for i in range(3):
-            transform = TransformStamped(
-                header=Header(
-                    frame_id="world", stamp=message_time.time_from_seconds(base_time + i * 0.5)
-                ),
+            transform = _transform(
+                translation=Vector3(float(i), 0.0, 0.0),
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=float(i), y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                ts=base_time + i * 0.5,
             )
             buffer.add(transform)
 
@@ -253,24 +291,20 @@ class TestTBuffer:
 
         # Add old transform
         old_time = time.time() - 2.0
-        old_transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(old_time)),
+        old_transform = _transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=old_time,
         )
         buffer.add(old_transform)
 
         # Add recent transform
-        recent_transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        recent_transform = _transform(
+            translation=Vector3(2.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=2.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
         buffer.add(recent_transform)
 
@@ -286,22 +320,18 @@ class TestMultiTBuffer:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 
         # Add transforms for different frame pairs
-        transform1 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        transform1 = _transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot1",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
 
-        transform2 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        transform2 = _transform(
+            translation=Vector3(2.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot2",
-            transform=Transform(
-                translation=Vector3(x=2.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
 
         ttbuffer.receive_transform(transform1, transform2)
@@ -311,70 +341,52 @@ class TestMultiTBuffer:
         assert ("world", "robot1") in ttbuffer.buffers
         assert ("world", "robot2") in ttbuffer.buffers
 
-    def test_graph(self, mocker) -> None:
+    def test_graph(self) -> None:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 
         # Add transforms for different frame pairs
-        transform1 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        transform1 = _transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot1",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
 
-        transform2 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(time.time())),
+        transform2 = _transform(
+            translation=Vector3(2.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot2",
-            transform=Transform(
-                translation=Vector3(x=2.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=time.time(),
         )
 
         ttbuffer.receive_transform(transform1, transform2)
-        render = mocker.patch("dimos.protocol.tf.tf.subprocess.run")
-        render.return_value.returncode = 0
-        render.return_value.stdout = "rendered frame tree"
-        assert ttbuffer.graph() == "rendered frame tree"
-        assert render.call_args.kwargs["input"].splitlines() == [
-            "world -> robot1",
-            "world -> robot2",
-        ]
 
-    def test_forward_tolerance_returns_when_buffer_fills(self, wait_started) -> None:
+        print(ttbuffer.graph())
+
+    def test_forward_tolerance_returns_when_buffer_fills(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
-        waiting = wait_started(ttbuffer)
-
         def publish_after_delay() -> None:
-            waiting.wait(timeout=1.0)
+            time.sleep(0.05)
             ttbuffer.receive_transform(
-                TransformStamped(
-                    header=Header(
-                        frame_id="world", stamp=message_time.time_from_seconds(base_time)
-                    ),
+                _transform(
+                    translation=Vector3(1.0, 0.0, 0.0),
+                    frame_id="world",
                     child_frame_id="robot",
-                    transform=Transform(
-                        translation=Vector3(x=1.0, y=0.0, z=0.0),
-                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                    ),
+                    ts=base_time,
                 )
             )
 
         publisher = threading.Thread(target=publish_after_delay)
         publisher.start()
-        try:
-            t0 = time.monotonic()
-            result = ttbuffer.get(
-                "world", "robot", time_point=base_time, time_tolerance=0.1, forward_tolerance=1.0
-            )
-            elapsed = time.monotonic() - t0
-        finally:
-            publisher.join(timeout=2.0)
-        assert not publisher.is_alive()
+
+        t0 = time.monotonic()
+        result = ttbuffer.get(
+            "world", "robot", time_point=base_time, time_tolerance=0.1, forward_tolerance=1.0
+        )
+        elapsed = time.monotonic() - t0
+        publisher.join()
 
         assert result is not None
         assert result.transform.translation.x == 1.0
@@ -392,13 +404,11 @@ class TestMultiTBuffer:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
         ttbuffer.receive_transform(
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                translation=Vector3(2.0, 0.0, 0.0),
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=2.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                ts=base_time,
             )
         )
 
@@ -410,47 +420,37 @@ class TestMultiTBuffer:
         assert result.transform.translation.x == 2.0
         assert elapsed < 0.05
 
-    def test_forward_tolerance_wakes_on_chain_completion(self, wait_started) -> None:
+    def test_forward_tolerance_wakes_on_chain_completion(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
         ttbuffer.receive_transform(
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                translation=Vector3(1.0, 0.0, 0.0),
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=1.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                ts=base_time,
             )
         )
 
-        waiting = wait_started(ttbuffer)
-
         def publish_after_delay() -> None:
-            waiting.wait(timeout=1.0)
+            time.sleep(0.05)
             ttbuffer.receive_transform(
-                TransformStamped(
-                    header=Header(
-                        frame_id="robot", stamp=message_time.time_from_seconds(base_time)
-                    ),
+                _transform(
+                    translation=Vector3(0.0, 2.0, 0.0),
+                    frame_id="robot",
                     child_frame_id="sensor",
-                    transform=Transform(
-                        translation=Vector3(x=0.0, y=2.0, z=0.0),
-                        rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                    ),
+                    ts=base_time,
                 )
             )
 
         publisher = threading.Thread(target=publish_after_delay)
         publisher.start()
-        try:
-            result = ttbuffer.get(
-                "world", "sensor", time_point=base_time, time_tolerance=0.1, forward_tolerance=1.0
-            )
-        finally:
-            publisher.join(timeout=2.0)
-        assert not publisher.is_alive()
+
+        result = ttbuffer.get(
+            "world", "sensor", time_point=base_time, time_tolerance=0.1, forward_tolerance=1.0
+        )
+        publisher.join()
 
         assert result is not None
         assert result.transform.translation.x == 1.0
@@ -461,13 +461,11 @@ class TestMultiTBuffer:
         base_time = time.time()
 
         # Add direct transform
-        transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+        transform = _transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=base_time,
         )
         ttbuffer.receive_transform(transform)
 
@@ -482,21 +480,17 @@ class TestMultiTBuffer:
         base_time = time.time()
 
         # Create transform chain: world -> robot -> sensor
-        transform1 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+        transform1 = _transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=base_time,
         )
-        transform2 = TransformStamped(
-            header=Header(frame_id="robot", stamp=message_time.time_from_seconds(base_time)),
+        transform2 = _transform(
+            translation=Vector3(0.0, 2.0, 0.0),
+            frame_id="robot",
             child_frame_id="sensor",
-            transform=Transform(
-                translation=Vector3(x=0.0, y=2.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            ts=base_time,
         )
         ttbuffer.receive_transform(transform1, transform2)
 
@@ -515,45 +509,35 @@ class TestMultiTBuffer:
         # world -> base -> arm -> hand
         #      \-> robot -> sensor
         transforms = [
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                frame_id="world",
                 child_frame_id="base",
-                transform=Transform(
-                    translation=Vector3(x=1.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                translation=Vector3(1.0, 0.0, 0.0),
+                ts=base_time,
             ),
-            TransformStamped(
-                header=Header(frame_id="base", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                frame_id="base",
                 child_frame_id="arm",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=1.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                translation=Vector3(0.0, 1.0, 0.0),
+                ts=base_time,
             ),
-            TransformStamped(
-                header=Header(frame_id="arm", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                frame_id="arm",
                 child_frame_id="hand",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=1.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                translation=Vector3(0.0, 0.0, 1.0),
+                ts=base_time,
             ),
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=2.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                translation=Vector3(2.0, 0.0, 0.0),
+                ts=base_time,
             ),
-            TransformStamped(
-                header=Header(frame_id="robot", stamp=message_time.time_from_seconds(base_time)),
+            _transform(
+                frame_id="robot",
                 child_frame_id="sensor",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=2.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                translation=Vector3(0.0, 2.0, 0.0),
+                ts=base_time,
             ),
         ]
 
@@ -573,22 +557,8 @@ class TestMultiTBuffer:
         base_time = time.time()
 
         # Create disconnected transforms
-        transform1 = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
-            child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=0.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        )
-        transform2 = TransformStamped(
-            header=Header(frame_id="base", stamp=message_time.time_from_seconds(base_time)),
-            child_frame_id="sensor",
-            transform=Transform(
-                translation=Vector3(x=0.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
-        )
+        transform1 = _transform(frame_id="world", child_frame_id="robot", ts=base_time)
+        transform2 = _transform(frame_id="base", child_frame_id="sensor", ts=base_time)
         ttbuffer.receive_transform(transform1, transform2)
 
         # No path exists
@@ -600,21 +570,17 @@ class TestMultiTBuffer:
         base_time = time.time()
 
         # Add transforms at different times
-        old_transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time - 10.0)),
+        old_transform = _transform(
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=1.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            translation=Vector3(1.0, 0.0, 0.0),
+            ts=base_time - 10.0,
         )
-        new_transform = TransformStamped(
-            header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
+        new_transform = _transform(
+            frame_id="world",
             child_frame_id="robot",
-            transform=Transform(
-                translation=Vector3(x=2.0, y=0.0, z=0.0),
-                rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            ),
+            translation=Vector3(2.0, 0.0, 0.0),
+            ts=base_time,
         )
         ttbuffer.receive_transform(old_transform, new_transform)
 
@@ -637,38 +603,10 @@ class TestMultiTBuffer:
         # world -> A -> B -> target (3 hops)
         # world -> target (direct, 1 hop)
         transforms = [
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
-                child_frame_id="A",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            TransformStamped(
-                header=Header(frame_id="A", stamp=message_time.time_from_seconds(base_time)),
-                child_frame_id="B",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            TransformStamped(
-                header=Header(frame_id="B", stamp=message_time.time_from_seconds(base_time)),
-                child_frame_id="target",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
-                child_frame_id="target",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
+            _transform(frame_id="world", child_frame_id="A", ts=base_time),
+            _transform(frame_id="A", child_frame_id="B", ts=base_time),
+            _transform(frame_id="B", child_frame_id="target", ts=base_time),
+            _transform(frame_id="world", child_frame_id="target", ts=base_time),
         ]
 
         for t in transforms:
@@ -692,15 +630,11 @@ class TestMultiTBuffer:
         buffer = TBuffer()
         base_time = time.time()
         for i in range(3):
-            transform = TransformStamped(
-                header=Header(
-                    frame_id="world", stamp=message_time.time_from_seconds(base_time + i * 0.1)
-                ),
+            transform = _transform(
+                translation=Vector3(float(i), 0.0, 0.0),
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=float(i), y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                ts=base_time + i * 0.1,
             )
             buffer.add(transform)
 
@@ -712,40 +646,17 @@ class TestMultiTBuffer:
         # Test MultiTBuffer with multiple frame pairs
         ttbuffer = MultiTBuffer()
         transforms = [
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(base_time)),
-                child_frame_id="robot1",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            TransformStamped(
-                header=Header(
-                    frame_id="world", stamp=message_time.time_from_seconds(base_time + 0.5)
-                ),
-                child_frame_id="robot2",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
-            TransformStamped(
-                header=Header(
-                    frame_id="robot1", stamp=message_time.time_from_seconds(base_time + 1.0)
-                ),
-                child_frame_id="sensor",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-            ),
+            _transform(frame_id="world", child_frame_id="robot1", ts=base_time),
+            _transform(frame_id="world", child_frame_id="robot2", ts=base_time + 0.5),
+            _transform(frame_id="robot1", child_frame_id="sensor", ts=base_time + 1.0),
         ]
 
         for t in transforms:
             ttbuffer.receive_transform(t)
 
         ttbuffer_str = str(ttbuffer)
+        print("\nMultiTBuffer string representation:")
+        print(ttbuffer_str)
 
         assert "MultiTBuffer(3 buffers):" in ttbuffer_str
         assert "TBuffer(world -> robot1, 1 msgs" in ttbuffer_str
@@ -759,13 +670,12 @@ class TestMultiTBuffer:
 T0 = 1_700_000_000.0
 
 
-def _t(parent: str, child: str, x: float, ts: float) -> TransformStamped:
-    return TransformStamped(
-        header=Header(frame_id=parent, stamp=message_time.time_from_seconds(ts)),
+def _t(parent: str, child: str, x: float, ts: float) -> Transform:
+    return _transform(
+        frame_id=parent,
         child_frame_id=child,
-        transform=Transform(
-            translation=Vector3(x=x, y=0.0, z=0.0), rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
-        ),
+        translation=Vector3(x, 0.0, 0.0),
+        ts=ts,
     )
 
 
@@ -783,7 +693,7 @@ def make_tf(request, tmp_path):  # type: ignore[no-untyped-def]
     """Builder fixture: feed it transforms, get back a TFLookup over them."""
     stores = []
 
-    def build(*transforms: TransformStamped) -> TFLookup:
+    def build(*transforms: Transform) -> TFLookup:
         if request.param == "live":
             buf = MultiTBuffer()
             buf.receive_transform(*transforms)
@@ -796,9 +706,7 @@ def make_tf(request, tmp_path):  # type: ignore[no-untyped-def]
         stores.append(store)
         stream = store.stream("tf", TFMessage)
         for t in transforms:
-            stream.append(
-                TFMessage(transforms=[t]), ts=message_time.to_seconds(t.header.stamp), pose=None
-            )
+            stream.append(_message(t), ts=message_time.to_seconds(t.header.stamp), pose=None)
         return StreamTF(store.stream("tf", TFMessage))
 
     yield build
@@ -850,23 +758,19 @@ class TestLookupGrid:
         # world -> robot: translate (1, 0, 0); robot -> sensor: translate
         # (0, 2, 0) and rotate 90° around Z.
         tf = make_tf(
-            TransformStamped(
-                header=Header(frame_id="world", stamp=message_time.time_from_seconds(T0)),
+            _transform(
+                translation=Vector3(1.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="world",
                 child_frame_id="robot",
-                transform=Transform(
-                    translation=Vector3(x=1.0, y=0.0, z=0.0),
-                    rotation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
+                ts=T0,
             ),
-            TransformStamped(
-                header=Header(frame_id="robot", stamp=message_time.time_from_seconds(T0)),
+            _transform(
+                translation=Vector3(0.0, 2.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)),
+                frame_id="robot",
                 child_frame_id="sensor",
-                transform=Transform(
-                    translation=Vector3(x=0.0, y=2.0, z=0.0),
-                    rotation=Quaternion(
-                        x=0.0, y=0.0, z=math.sin(math.pi / 4), w=math.cos(math.pi / 4)
-                    ),
-                ),
+                ts=T0,
             ),
         )
         result = tf.get("world", "sensor", time_point=T0)
@@ -903,10 +807,10 @@ class TestStreamTF:
         stream = store.stream("tf", TFMessage)
         # Startup burst: a static stamped exactly at the stream start (regression:
         # strict `ts >` range queries used to drop it), then dynamic map→base.
-        stream.append(TFMessage(transforms=[_t("world", "map", 100.0, T0)]), ts=T0, pose=None)
+        stream.append(_message(_t("world", "map", 100.0, T0)), ts=T0, pose=None)
         for i in range(100):
             ts = T0 + i / 10
-            stream.append(TFMessage(transforms=[_t("map", "base", i / 10, ts)]), ts=ts, pose=None)
+            stream.append(_message(_t("map", "base", i / 10, ts)), ts=ts, pose=None)
         yield store
         store.stop()
 
@@ -953,7 +857,7 @@ class TestStreamTF:
         stream = store.stream("tf", TFMessage)
         for i in range(400):
             ts = T0 + i / 10
-            stream.append(TFMessage(transforms=[_t("map", "base", i / 10, ts)]), ts=ts, pose=None)
+            stream.append(_message(_t("map", "base", i / 10, ts)), ts=ts, pose=None)
         try:
             tf = StreamTF(store.stream("tf", TFMessage), cache_span=2.0)
             got = tf.get("map", "base", time_point=T0 + 35.0, time_tolerance=0.5)

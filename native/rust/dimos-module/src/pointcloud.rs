@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reading a `PointCloud2` off the wire. Every wire count is signed and untrusted, so each
-//! is range-checked before it indexes; a malformed cloud is an `ExtractError`, never a panic.
+//! Reading generated `PointCloud2` values with checked sizes and field offsets.
 
-use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
+use dimos_generated_messages::sensor_msgs::msg::{
+    point_cloud2::PointCloud2, point_field::PointField,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtractError(pub &'static str);
@@ -28,7 +29,7 @@ impl std::fmt::Display for ExtractError {
 
 impl std::error::Error for ExtractError {}
 
-fn count(v: i32, what: &'static str) -> Result<usize, ExtractError> {
+fn count(v: u32, what: &'static str) -> Result<usize, ExtractError> {
     usize::try_from(v).map_err(|_| ExtractError(what))
 }
 
@@ -133,7 +134,9 @@ pub fn extract_xyz_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lcm_msgs::std_msgs::Header;
+    use dimos_generated_messages::{
+        builtin_interfaces::msg::time::Time, std_msgs::msg::header::Header,
+    };
 
     /// An xyz float32 cloud, the shape the raytracer publishes.
     fn cloud_of(points: &[[f32; 3]]) -> PointCloud2 {
@@ -143,20 +146,23 @@ mod tests {
                 data.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let field = |name: &str, off: i32| PointField {
+        let field = |name: &str, off: u32| PointField {
             name: name.into(),
             offset: off,
             datatype: PointField::FLOAT32 as u8,
             count: 1,
         };
         PointCloud2 {
-            header: Header::default(),
+            header: Header {
+                stamp: Time { sec: 0, nanosec: 0 },
+                frame_id: String::new(),
+            },
             height: 1,
-            width: points.len() as i32,
+            width: points.len() as u32,
             fields: vec![field("x", 0), field("y", 4), field("z", 8)],
             is_bigendian: false,
             point_step: 12,
-            row_step: 12 * points.len() as i32,
+            row_step: 12 * points.len() as u32,
             data,
             is_dense: true,
         }
@@ -222,24 +228,19 @@ mod tests {
 
     #[test]
     fn malformed_metadata_is_an_error_not_a_panic() {
-        // every wire count is signed; none of these may reach an index
         for (what, tweak) in [
             (
-                "negative width",
-                (|c: &mut PointCloud2| c.width = -1) as fn(&mut PointCloud2),
+                "offset past step",
+                (|c: &mut PointCloud2| c.fields[2].offset = u32::MAX) as fn(&mut PointCloud2),
             ),
-            ("negative height", |c| c.height = -1),
-            ("negative step", |c| c.point_step = -12),
-            ("negative offset", |c| c.fields[0].offset = -4),
-            ("offset past step", |c| c.fields[2].offset = i32::MAX),
             ("width*height overflows", |c| {
-                c.width = i32::MAX;
-                c.height = i32::MAX;
+                c.width = u32::MAX;
+                c.height = u32::MAX;
             }),
             ("width*height*step overflows", |c| {
-                c.width = i32::MAX;
-                c.height = i32::MAX;
-                c.point_step = i32::MAX;
+                c.width = u32::MAX;
+                c.height = u32::MAX;
+                c.point_step = u32::MAX;
             }),
         ] {
             let mut cloud = cloud_of(&[[0.0; 3]]);

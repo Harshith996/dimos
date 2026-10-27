@@ -59,7 +59,6 @@ from dimos.messages.sensor_msgs.msg import (
 )
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as LegacyPoseStamped
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
@@ -263,7 +262,7 @@ def viewer_layout() -> rrb.Blueprint:
                     "world/cloud/**",
                     "world/cloud_boxes/**",
                     "world/cloud_height/**",
-                    "world/legacy_pose/**",
+                    "world/frame_pose/**",
                     "world/tf/**",
                     "tf#/**",
                 ],
@@ -374,8 +373,14 @@ def run(output: Path) -> None:
                     print(f"Bridge rendered {topic}: {value.__msgtype__}")
             finally:
                 writer.finish()
-        # Existing messages still take the bridge's ordinary rendering path.
-        bridge._on_message(LegacyPoseStamped(position=(0, -1, 0), frame_id="map"), "/legacy_pose")
+        # A second generated pose exercises explicit map-frame parenting.
+        bridge._on_message(
+            PoseStamped(
+                Header(Time(sec=0, nanosec=0), "map"),
+                Pose(Point(0.0, -1.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
+            "/frame_pose",
+        )
         recording = rr.get_global_data_recording()
         if recording is not None:
             recording.flush()
