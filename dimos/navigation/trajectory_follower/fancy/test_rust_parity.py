@@ -25,6 +25,10 @@ import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos.messages.std_msgs.msg import Header
+
 pytest.importorskip("dimos_trajectory_follower")
 
 from dimos.message_utils import geometry, time as message_time

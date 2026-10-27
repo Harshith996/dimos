@@ -32,31 +32,16 @@ pub struct McapRecordingStore {
 
 impl McapRecordingStore {
     pub fn open(path: &str, streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
-        for stream in streams {
-            if stream.codec == crate::Codec::Cdr {
-                stream
-                    .cdr_schema
-                    .as_ref()
-                    .context("CDR MCAP requires its complete schema")?
-                    .validate()?;
-            }
-        }
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
-        let profile = if streams
-            .iter()
-            .all(|stream| stream.codec == crate::Codec::Cdr)
-        {
-            "ros2"
-        } else {
-            "dimos"
-        };
         let options = WriteOptions::new()
-            .profile(profile)
+            .profile("dimos")
             .library("dimos-memory-recorder")
             .compression(Some(Compression::Zstd))
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
         let mut writer = Writer::with_options(BufWriter::new(file), options)?;
         let mut channels = HashMap::new();
+        let schemas: BTreeMap<String, String> =
+            serde_json::from_str(dimos_generated_msgs::ROS2MSG_SCHEMAS)?;
         for stream in streams {
             let metadata = BTreeMap::from([
                 (
@@ -67,20 +52,25 @@ impl McapRecordingStore {
                 ("dimos.port".to_string(), stream.port.clone()),
                 (
                     "dimos.observation_time".to_string(),
-                    if stream.cdr_schema.is_some() {
-                        "log_time"
-                    } else {
-                        "publish_time"
-                    }
-                    .to_string(),
+                    "publish_time".to_string(),
                 ),
             ]);
             let schema_id = if let Some(schema) = &stream.cdr_schema {
+                schema.validate()?;
                 writer.add_schema(&schema.name, "ros2msg", schema.data.as_bytes())?
             } else if let Some(schema) = &stream.json_schema {
                 writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
             } else {
-                0
+                let message_type = if stream.codec == crate::Codec::Jpeg {
+                    "sensor_msgs/msg/CompressedImage"
+                } else {
+                    &stream.payload_type
+                };
+                if let Some(schema) = schemas.get(message_type) {
+                    writer.add_schema(message_type, "ros2msg", schema.as_bytes())?
+                } else {
+                    0
+                }
             };
             let channel =
                 writer.add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
@@ -169,13 +159,14 @@ mod tests {
     fn mcap_rejects_negative_source_time_instead_of_writing_zero() {
         let file = NamedTempFile::new().unwrap();
         let stream = Arc::new(StreamConfig {
-            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
-            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            payload_type: "std_msgs/msg/String".into(),
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
@@ -215,13 +206,14 @@ mod tests {
     fn mcap_preserves_zero_source_time_and_rejects_invalid_reception_time() {
         let file = NamedTempFile::new().unwrap();
         let stream = Arc::new(StreamConfig {
-            cdr_schema: None,
             port: "events".into(),
             name: "events".into(),
-            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            payload_type: "std_msgs/msg/String".into(),
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)

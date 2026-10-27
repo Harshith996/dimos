@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.message_utils import pointcloud
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.std_msgs.msg import Header
 
 VOXEL = 0.05
 
@@ -26,11 +26,16 @@ def _wall(x, ts):
     """A 1 m x 1 m wall of voxel centers in the plane at `x`."""
     ys, zs = np.meshgrid(np.arange(0.025, 1, VOXEL), np.arange(0.025, 1, VOXEL))
     pts = np.stack([np.full(ys.size, x), ys.ravel(), zs.ravel()], axis=1)
-    return PointCloud2.from_numpy(pts, timestamp=ts)
+    return pointcloud.from_xyz(
+        pts, header=Header(stamp=message_time.time_from_seconds(ts), frame_id="")
+    )
 
 
 def _voxels(grid):
-    return {tuple(v) for v in np.floor(grid.get_global_pointcloud2().points_f32() / VOXEL)}
+    return {
+        tuple(v)
+        for v in np.floor(pointcloud.xyz(grid.get_global_pointcloud2()).astype(np.float32) / VOXEL)
+    }
 
 
 def _drifted_walls():

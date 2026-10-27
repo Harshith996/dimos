@@ -69,6 +69,13 @@ from dimos.web.lcm_codec import (
 )
 from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN, RESERVED_CHANNEL_PREFIX
 
+
+def default_encoding(message_type: type[Any], dir: str) -> str:
+    """Use schema-backed CDR for generated messages and JSON for plain values."""
+    type_name = cdr_type_name(message_type)
+    return f"{type_name}{CDR_V1_SUFFIX}" if type_name is not None else "json.v1"
+
+
 _F = TypeVar("_F", bound=Callable[..., Any])
 
 # Frame header meta rides the wire on every frame; keep it a small JSON object.
@@ -480,11 +487,7 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
             encoding, message_type, encode_lcm_v1, takes_params=True, check_params=check_lcm_params
         )
     if encoding == "json.v1":
-        # DimosMsg detection by attribute: the protocol has a data member, so
-        # issubclass() is unavailable, and importing dimos.msgs here would
-        # defeat this module's import-lightness. Some wire messages (Image)
-        # are dataclasses too - the marker must win.
-        is_dimos_msg = callable(getattr(message_type, "lcm_encode", None))
+        is_dimos_msg = isinstance(getattr(message_type, "__msgtype__", None), str)
         plain_dataclass = dataclasses.is_dataclass(message_type) and not is_dimos_msg
         if message_type not in _JSON_V1_TYPES and not plain_dataclass:
             raise ValueError(

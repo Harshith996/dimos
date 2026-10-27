@@ -12,55 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import overload
 
 import numpy as np
 
 from dimos.mapping.occupancy.operations import _grid_coordinates
 from dimos.mapping.occupancy.visualizations import _map_image, visualize_occupancy_grid
 from dimos.message_utils import geometry, image as image_utils
-from dimos.messages.geometry_msgs.msg import PoseStamped as CdrPoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid as CdrOccupancyGrid, Path as CdrPath
-from dimos.messages.sensor_msgs.msg import Image as CdrImage
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos.messages.sensor_msgs.msg import Image
 
 
-@overload
-def visualize_path(
-    occupancy_grid: CdrOccupancyGrid,
-    path: Path | CdrPath,
-    robot_width: float,
-    robot_length: float,
-    thickness: int = 1,
-    scale: int = 8,
-) -> CdrImage: ...
-
-
-@overload
 def visualize_path(
     occupancy_grid: OccupancyGrid,
-    path: Path | CdrPath,
+    path: Path,
     robot_width: float,
     robot_length: float,
     thickness: int = 1,
     scale: int = 8,
-) -> Image: ...
-
-
-def visualize_path(
-    occupancy_grid: OccupancyGrid | CdrOccupancyGrid,
-    path: Path | CdrPath,
-    robot_width: float,
-    robot_length: float,
-    thickness: int = 1,
-    scale: int = 8,
-) -> Image | CdrImage:
+) -> Image:
     import cv2
 
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
-    bgr = image_utils.view(image) if isinstance(image, CdrImage) else image.data
+    bgr = image_utils.view(image)
 
     bgr = cv2.resize(
         bgr,
@@ -76,15 +49,13 @@ def visualize_path(
     # Draw robot rectangle at each path point
     for pose in path.poses:
         # Convert world coordinates to grid coordinates
-        position = pose.pose.position if isinstance(pose, CdrPoseStamped) else pose.position
+        position = pose.pose.position
         x, y = _grid_coordinates(occupancy_grid, position)
         cx = int(x * scale)
         cy = int(y * scale)
 
         # Get yaw angle from pose orientation
-        angle = (
-            geometry.yaw(pose.pose.orientation) if isinstance(pose, CdrPoseStamped) else pose.yaw
-        )
+        angle = geometry.yaw(pose.pose.orientation)
 
         # Define rectangle corners centered at origin (length along x, width along y)
         half_length = robot_length_px / 2

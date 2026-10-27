@@ -15,73 +15,52 @@
 
 from copy import deepcopy
 import math
-from typing import TypeVar, cast
 
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 
 from dimos.messages.geometry_msgs.msg import (
     Point,
-    Pose as CdrPose,
-    PoseStamped as CdrPoseStamped,
-    Quaternion as CdrQuaternion,
+    Pose,
+    PoseStamped,
+    Quaternion,
 )
-from dimos.messages.nav_msgs.msg import Path as CdrPath
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.nav_msgs.msg import Path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-_PathT = TypeVar("_PathT", Path, CdrPath)
-_Stamped = PoseStamped | CdrPoseStamped
-_Quaternion = Quaternion | CdrQuaternion
-
-
-def _pose(stamped: _Stamped) -> PoseStamped | CdrPose:
-    return stamped.pose if isinstance(stamped, CdrPoseStamped) else stamped
+def _pose(stamped: PoseStamped) -> Pose:
+    return stamped.pose
 
 
 def _new_pose(
-    path: Path | CdrPath, position: tuple[float, float, float], orientation: _Quaternion
-) -> _Stamped:
-    if isinstance(path, CdrPath):
-        x, y, z = position
-        return CdrPoseStamped(
-            header=deepcopy(path.header),
-            pose=CdrPose(
-                position=Point(x=float(x), y=float(y), z=float(z)),
-                orientation=CdrQuaternion(
-                    x=orientation.x, y=orientation.y, z=orientation.z, w=orientation.w
-                ),
-            ),
-        )
+    path: Path, position: tuple[float, float, float], orientation: Quaternion
+) -> PoseStamped:
+    x, y, z = position
     return PoseStamped(
-        frame_id=path.frame_id,
-        position=position,
-        orientation=Quaternion(orientation.x, orientation.y, orientation.z, orientation.w),
+        header=deepcopy(path.header),
+        pose=Pose(
+            position=Point(x=float(x), y=float(y), z=float(z)),
+            orientation=Quaternion(
+                x=orientation.x, y=orientation.y, z=orientation.z, w=orientation.w
+            ),
+        ),
     )
 
 
-def _new_path(path: _PathT, poses: list[_Stamped]) -> _PathT:
-    if isinstance(path, CdrPath):
-        return CdrPath(header=deepcopy(path.header), poses=cast("list[CdrPoseStamped]", poses))
-    return Path(frame_id=path.frame_id, poses=cast("list[PoseStamped]", poses))
+def _new_path(path: Path, poses: list[PoseStamped]) -> Path:
+    return Path(header=deepcopy(path.header), poses=poses)
 
 
-def _set_orientation(stamped: _Stamped, orientation: _Quaternion) -> None:
-    if isinstance(stamped, CdrPoseStamped):
-        stamped.pose.orientation = CdrQuaternion(
-            x=orientation.x, y=orientation.y, z=orientation.z, w=orientation.w
-        )
-    else:
-        stamped.orientation = Quaternion(orientation.x, orientation.y, orientation.z, orientation.w)
+def _set_orientation(stamped: PoseStamped, orientation: Quaternion) -> None:
+    stamped.pose.orientation = Quaternion(
+        x=orientation.x, y=orientation.y, z=orientation.z, w=orientation.w
+    )
 
 
-def _add_orientations_to_path(path: Path | CdrPath, goal_orientation: _Quaternion) -> None:
+def _add_orientations_to_path(path: Path, goal_orientation: Quaternion) -> None:
     """Add orientations to path poses based on direction of movement.
 
     Args:
@@ -129,7 +108,7 @@ def _add_orientations_to_path(path: Path | CdrPath, goal_orientation: _Quaternio
 
 
 # TODO: replace goal_pose with just goal_orientation
-def simple_resample_path(path: _PathT, goal_pose: Pose | CdrPose, spacing: float) -> _PathT:
+def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
     """Resample a path to have approximately uniform spacing between poses.
 
     Args:
@@ -142,14 +121,14 @@ def simple_resample_path(path: _PathT, goal_pose: Pose | CdrPose, spacing: float
     if len(path.poses) < 2 or spacing <= 0:
         return path
 
-    resampled: list[_Stamped] = []
+    resampled: list[PoseStamped] = []
     resampled.append(path.poses[0])
 
     accumulated_distance = 0.0
 
     for i in range(1, len(path.poses)):
         current = path.poses[i]
-        prev: _Stamped = path.poses[i - 1]
+        prev: PoseStamped = path.poses[i - 1]
 
         # Calculate segment distance
         dx = _pose(current).position.x - _pose(prev).position.x
@@ -200,8 +179,8 @@ def simple_resample_path(path: _PathT, goal_pose: Pose | CdrPose, spacing: float
 
 
 def smooth_resample_path(
-    path: _PathT, goal_pose: Pose | CdrPose, spacing: float, smoothing_window: int = 100
-) -> _PathT:
+    path: Path, goal_pose: Pose, spacing: float, smoothing_window: int = 100
+) -> Path:
     """Resample a path with smoothing to reduce jagged corners and abrupt turns.
 
     This produces smoother paths than simple_resample_path by:
@@ -295,7 +274,7 @@ def smooth_resample_path(
     sampled_y = np.interp(sample_distances, arc_length_smooth, ys_smooth)
 
     # Create resampled poses
-    resampled: list[_Stamped] = []
+    resampled: list[PoseStamped] = []
     for i in range(len(sampled_x)):
         new_pose = _new_pose(
             path, (float(sampled_x[i]), float(sampled_y[i]), 0.0), Quaternion(0, 0, 0, 1)

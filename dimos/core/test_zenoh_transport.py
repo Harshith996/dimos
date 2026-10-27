@@ -39,7 +39,8 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -181,7 +182,7 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
     t.start()
     t.subscribe(collector.callback)
 
-    test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
+    test_img = image.from_array(np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8")
     retry_until(collector.event, lambda: t.broadcast(None, test_img))
     assert isinstance(collector.received[0], Image)
     t.stop()

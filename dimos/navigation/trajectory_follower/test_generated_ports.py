@@ -112,7 +112,7 @@ def test_actual_generated_follower_ports_drive_arrive_and_preempt_over_cdr(follo
         wires["tf"].publish(base_transform(header, 0.0))
         wires["path"].publish(route(header, 2.0))
         assert moving.wait(5)
-        header.stamp = message_time.time_from_nanoseconds(1700000000123456790)
+        header.stamp = message_time.time_from_nanoseconds(1700000001123456789)
         wires["tf"].publish(base_transform(header, 2.0))
         assert arrived.wait(5)
         assert goals == [Bool(data=True)]
