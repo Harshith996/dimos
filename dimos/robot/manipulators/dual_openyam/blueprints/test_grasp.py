@@ -144,3 +144,11 @@ def test_graspgenx_variant_only_swaps_the_grasp_provider() -> None:
     assert heuristic - {HeuristicGraspModule} == learned - {GraspGenXModule}
     atom = _atom(dual_openyam_grasp_graspgenx, GraspGenXModule)
     assert atom.kwargs["grasp_frame_to_tcp"][2][3] == pytest.approx(0.146)
+    # The learned provider ranks by quality, so the pick walks further down its list.
+    assert (
+        _atom(dual_openyam_grasp_graspgenx, PickAndPlaceModule).kwargs["max_grasp_attempts"] == 30
+    )
+    assert (
+        "max_grasp_attempts" not in _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs
+        or _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs["max_grasp_attempts"] == 5
+    )

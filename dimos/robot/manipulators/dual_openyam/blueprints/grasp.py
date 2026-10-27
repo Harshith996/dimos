@@ -216,8 +216,15 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
 
 
+# GraspGenX ranks by grasp quality, not reachability; with the heuristic's single top-down
+# candidate the default of 5 is plenty, with 100 learned candidates the first 5 were all
+# side approaches this 6-DOF arm cannot reach (2026-10-27, scene 56).
+DUAL_OPENYAM_GRASPGENX_ATTEMPTS = 30
+
+
 def dual_openyam_grasp_modules(
     grasp_provider: Blueprint | None = None,
+    max_grasp_attempts: int = 5,
 ) -> tuple[Blueprint, ...]:
     return (
         planner(
@@ -234,6 +241,7 @@ def dual_openyam_grasp_modules(
         PickAndPlaceModule.blueprint(
             planning_frame="world",
             pregrasp_offset=0.05,
+            max_grasp_attempts=max_grasp_attempts,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
             grasp_verification=GraspVerificationConfig(empty_epsilon=0.035),
@@ -284,6 +292,7 @@ dual_openyam_grasp_graspgenx = autoconnect(
         GraspGenXModule.blueprint(
             gripper=DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
             grasp_frame_to_tcp=DUAL_OPENYAM_GRASP_FRAME_TO_TCP,
-        )
+        ),
+        max_grasp_attempts=DUAL_OPENYAM_GRASPGENX_ATTEMPTS,
     )
 ).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
