@@ -1,4 +1,4 @@
-import type { ConversationId, EntryId, LiveState } from "@earendil-works/pi-durable";
+import type { ConversationId, EntryId, LiveState, SubmissionId } from "@earendil-works/pi-durable";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { Ref } from "@earendil-works/chord";
 import type { Client } from "../../sdk/main.ts";
@@ -12,6 +12,7 @@ import type { EpochMs } from "../../shared/protocol/time.ts";
 import { until } from "../../sdk/until.ts";
 import { newActionRequest, newUserRequest } from "../../shared/protocol/actions/request.ts";
 import type { Transcript } from "../../shared/protocol/conversation/state.ts";
+import type { UserRequestId } from "../../shared/protocol/conversation/input.ts";
 import { refusalText } from "../../shared/view-models/outcome.ts";
 import type { Command, CommandContext } from "./base.ts";
 
@@ -20,20 +21,30 @@ function textOf(content: readonly { readonly type: string; readonly text?: strin
 }
 
 /**
- * Writes the answer as it streams. The partial in `pi.live` is throttled, so the text printed so far is a prefix of
- * the assistant item that lands; each item's remainder and a newline close it.
+ * Writes the answer to one request as it streams, so a busy conversation's earlier answers stay out: `pi.live` only
+ * while the run carries the request's submission, transcript items only after its input. The partial in `pi.live` is
+ * throttled, so the text printed so far is a prefix of the assistant item that lands; each item's remainder and a
+ * newline close it.
  */
 class AnswerPrinter {
   private printed = "";
   private readonly seenItems = new Set<EntryId>();
   private readonly seenCalls = new Set<string>();
+  private readonly request: UserRequestId;
+  private submission: SubmissionId | null = null;
+  private placed = false;
   atLineStart = true;
 
-  constructor(before: Transcript) {
-    for (const item of before.items) this.seenItems.add(item.entry);
+  constructor(request: UserRequestId) {
+    this.request = request;
+  }
+
+  sent(submission: SubmissionId): void {
+    this.submission = submission;
   }
 
   live(live: LiveState): void {
+    if (this.submission === null || !(live.run?.inputs.includes(this.submission) ?? false)) return;
     for (const slot of live.tools ?? []) {
       if (this.seenCalls.has(slot.callId)) continue;
       this.seenCalls.add(slot.callId);
@@ -55,6 +66,11 @@ class AnswerPrinter {
     for (const item of transcript.items) {
       if (this.seenItems.has(item.entry)) continue;
       this.seenItems.add(item.entry);
+      if (!this.placed) {
+        this.placed =
+          item.kind === "input" && item.input.source.kind === "user" && item.input.source.request === this.request;
+        continue;
+      }
       if (item.kind === "assistant") this.answer(item.message);
     }
   }
@@ -126,7 +142,8 @@ export const printRun: Command = async (options) => {
       const { conversation, id } = shown;
       try {
         process.stderr.write(`Conversation ${id}\n`);
-        const printer = new AnswerPrinter(conversation.transcript.value);
+        const request = newUserRequest();
+        const printer = new AnswerPrinter(request);
         const stops = [
           conversation.live.subscribe(() => printer.live(conversation.live.value)),
           conversation.transcript.subscribe(() => printer.transcript(conversation.transcript.value)),
@@ -134,13 +151,15 @@ export const printRun: Command = async (options) => {
         try {
           const sent = await retryByRequestId(
             client,
-            { request: newUserRequest(), text: prompt, images: [], whenBusy: "followUp" as const },
+            { request, text: prompt, images: [], whenBusy: "followUp" as const },
             (sameArgs) => owner(conversation).send(sameArgs),
           );
           if (!sent.ok) {
             process.stderr.write(`${refusalText(sent.refusal)}\n`);
             return 1;
           }
+          printer.sent(sent.value.submission);
+          printer.live(conversation.live.value);
           try {
             const ended = await Promise.race([
               until(conversation.outcomes, (rows) => rows.find((row) => row.submission === sent.value.submission)),
