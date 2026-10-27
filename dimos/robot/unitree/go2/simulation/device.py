@@ -14,10 +14,12 @@
 
 """Internal Go2 device: the stock walking API backed by a resident sim2 robot."""
 
+from __future__ import annotations
+
 from pathlib import Path
 from threading import Event, Lock, Thread
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from reactivex import empty
@@ -25,9 +27,7 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -41,8 +41,10 @@ from dimos.robot.unitree.go2.controllers.locomotion.policy import (
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.sim2.client import SimRobotClient
-from dimos.sim2.messages import StreamDescriptor
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.sim2.module import SimulationSpec
 
 logger = setup_logger()
 
@@ -59,15 +61,15 @@ class Go2SimDevice:
         self._thread: Thread | None = None
         self._error: str | None = None
 
-    def bind(self, descriptor: StreamDescriptor) -> None:
-        self._client = SimRobotClient(descriptor, writable=True)
+    def bind(self, world: SimulationSpec, robot_id: str) -> None:
+        self._client = SimRobotClient(world=world, robot_id=robot_id)
         self._client.connect()
 
     def start(self) -> None:
         if self._client is None:
             raise RuntimeError("Go2 requires a collected sim2 world before starting")
         self._policy = load_policy(self._policy_path)
-        names = self._client.descriptor.joint_names
+        names = self._client.joint_names
         if set(names) != set(self._policy.joint_names):
             raise ValueError("Go2 policy joints do not match the physical robot")
         self._policy_order = np.array([names.index(name) for name in self._policy.joint_names])
@@ -97,7 +99,8 @@ class Go2SimDevice:
         try:
             while not self._stop.is_set():
                 frame = self._client.read()
-                v = frame.values
+                if frame.imu is None:
+                    raise RuntimeError("Go2 locomotion requires IMU feedback")
                 if frame.metadata.episode_id != episode:
                     policy.reset()
                     command[:] = 0
@@ -107,12 +110,13 @@ class Go2SimDevice:
                 with self._lock:
                     desired = self._command if time.monotonic() < self._expires else np.zeros(3)
                     command += np.clip(desired - command, -COMMAND_SLEW, COMMAND_SLEW)
+                x, y, z, w = frame.imu.orientation.to_tuple()
                 target = policy.act(
                     Proprioception(
-                        angular_velocity=v["imu_gyroscope"],
-                        gravity=projected_gravity(v["imu_quaternion"]),
-                        joint_position=v["position"][self._policy_order],
-                        joint_velocity=v["velocity"][self._policy_order],
+                        angular_velocity=np.array(frame.imu.angular_velocity.to_tuple()),
+                        gravity=projected_gravity(np.array([w, x, y, z])),
+                        joint_position=np.asarray(frame.joints.position)[self._policy_order],
+                        joint_velocity=np.asarray(frame.joints.velocity)[self._policy_order],
                     ),
                     command,
                 )
@@ -122,7 +126,7 @@ class Go2SimDevice:
                             q=target[self._motor_order].tolist(),
                             kp=policy.kp[self._motor_order].tolist(),
                             kd=policy.kd[self._motor_order].tolist(),
-                            timestamp=float(v["wall_time"][0]),
+                            timestamp=frame.joints.ts,
                         ),
                         observed=frame,
                     )
@@ -131,15 +135,7 @@ class Go2SimDevice:
                     if self._client.read().metadata.episode_id != episode:
                         continue
                     raise
-                w, x, y, z = v["root_quaternion"]
-                self._odom.on_next(
-                    PoseStamped(
-                        position=Vector3(*v["root_position"]),
-                        orientation=Quaternion(x, y, z, w),
-                        frame_id="world",
-                        ts=float(v["wall_time"][0]),
-                    )
-                )
+                self._odom.on_next(frame.odom)
                 deadline += CONTROL_DT
                 self._stop.wait(max(0, deadline - time.monotonic()))
                 if time.monotonic() - deadline > CONTROL_DT:
