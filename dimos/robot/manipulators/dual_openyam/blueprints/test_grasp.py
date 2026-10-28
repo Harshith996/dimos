@@ -170,7 +170,7 @@ def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
             f"{side}_finger_{jaw}_joint" for side in ("left", "right") for jaw in ("left", "right")
         }
         assert all(
-            opened == 0.047 and closed == 0.0
+            opened == -0.04695 and closed == 0.0
             for opened, closed in robot.gripper.finger_joints.values()
         )
         assert len(robot.gripper.joint_positions()) == 5

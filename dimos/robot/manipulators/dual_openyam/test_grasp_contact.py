@@ -15,6 +15,7 @@
 """The pick's grasp contact check on the dual OpenYAM workcell model.
 
 Grasps sit where the Spam can stood in SceneReplica scene 56, in the right arm's reach.
+The model is dual_openyam_workcell_v5: prismatic fingers, exact fingertip meshes.
 """
 
 from __future__ import annotations
@@ -124,20 +125,31 @@ def test_rejects_a_sideways_scoop_along_the_table(checker: GraspContactChecker) 
     assert not _clear(checker, scoop, CAN, TABLE)
 
 
-def test_rejects_a_neighbour_under_one_finger(checker: GraspContactChecker) -> None:
-    neighbour = _box((X, Y - 0.075, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
-    assert not _clear(checker, _pose(X, Y, MID), CAN, TABLE, neighbour)
+def test_rejects_a_neighbour_the_open_finger_would_land_on(checker: GraspContactChecker) -> None:
+    # The open fingers stand 47 mm from the centre: a neighbour starting 45 mm out is hit,
+    # one starting 60 mm out is cleared because the finger tapers above it.
+    close = _box((X, Y - 0.06, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
+    clear = _box((X, Y - 0.075, DUAL_OPENYAM_TABLE_TOP_Z + 0.03), (0.04, 0.03, 0.06))
+    assert not _clear(checker, _pose(X, Y, MID), CAN, TABLE, close)
+    assert _clear(checker, _pose(X, Y, MID), CAN, TABLE, clear)
 
 
 def test_rejects_what_the_arm_cannot_reach(checker: GraspContactChecker) -> None:
     assert not _clear(checker, _pose(0.95, Y, MID), CAN, TABLE)
 
 
-def test_open_fingers_clear_objects_up_to_the_jaw_span_less_the_carriage(
+def test_open_fingers_clear_objects_up_to_the_jaw_span(checker: GraspContactChecker) -> None:
+    # 94 mm between the open pads: a 9 cm object fits at full finger depth, 10 cm does not.
+    top = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT
+    assert _clear(checker, _pose(X, Y, top - 0.04), _object(0.09), _table(hole=0.055))
+    assert not _clear(checker, _pose(X, Y, top - 0.01), _object(0.10), _table(hole=0.06))
+
+
+def test_rejects_a_grasp_that_puts_the_finger_carriage_into_a_tall_object(
     checker: GraspContactChecker,
 ) -> None:
-    # The finger carriages' hulls narrow the gap towards the gripper body: 6 cm fits
-    # at a 3 cm grasp depth, 8 cm never does (dual_openyam_workcell_v4 SOURCE.md).
-    top = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT
-    assert _clear(checker, _pose(X, Y, top - 0.03), _object(0.06), _table(hole=0.04))
-    assert not _clear(checker, _pose(X, Y, top - 0.02), _object(0.08), _table(hole=0.05))
+    # The carriages sit 7 to 9 cm above the fingertips and reach the centre when open.
+    tall = _object(0.06, height=0.12)
+    top = DUAL_OPENYAM_TABLE_TOP_Z + 0.12
+    assert _clear(checker, _pose(X, Y, top - 0.04), tall, _table(hole=0.04))
+    assert not _clear(checker, _pose(X, Y, top - 0.08), tall, _table(hole=0.04))

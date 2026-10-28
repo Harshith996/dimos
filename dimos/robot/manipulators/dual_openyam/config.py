@@ -112,9 +112,9 @@ DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
 ]
 
 
-# Each fingertip link slides this far (metres) from the closed zero to fully open;
-# both out is the 94 mm span of the real jaws (dual_openyam_workcell_v4 SOURCE.md).
-DUAL_OPENYAM_FINGER_TRAVEL = 0.047
+# Finger joint position (metres) at fully open; zero is closed with the pads touching.
+# The i2rt YAM model's joint7 and joint8 travel, kept in dual_openyam_workcell_v5.
+DUAL_OPENYAM_FINGER_OPEN = -0.04695
 
 
 def dual_openyam_gripper_config() -> GripperConfig:
@@ -129,7 +129,7 @@ def dual_openyam_gripper_config() -> GripperConfig:
             f"{side}_tip_{jaw}" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
         ),
         finger_joints={
-            f"{side}_finger_{jaw}_joint": (DUAL_OPENYAM_FINGER_TRAVEL, 0.0)
+            f"{side}_finger_{jaw}_joint": (DUAL_OPENYAM_FINGER_OPEN, 0.0)
             for side in DUAL_OPENYAM_SIDES
             for jaw in ("left", "right")
         },
