@@ -500,6 +500,23 @@ with Pi and `--set no_dimos=true --set max_steps=120`.
 recorded body poses. See `data/robosuite/README.md` in the downloaded data
 package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
+### Hardware
+
+`HardwareEnvironment` runs a real robot the same way: it launches `dimos --record
+run <blueprint> <modules>` without `--simulation`, so the robot's address comes from
+your dimos config. An operator stays in the loop:
+
+- Before each case, it shows the task and asks whether the scene is reset and the
+  robot is ready. Anything but `y` fails the case without starting the robot. The code
+  never moves the robot to reset it.
+- When the case ends, `stop_tool` (for example the arm's `cancel` skill) halts motion
+  in place before dimos stops. There is no move back to home.
+- `human(task)` grades the run: the operator answers whether the robot succeeded.
+
+`dimos.evals.suites.hardware_xarm7` (pick up a cup, at speed scale 0.3) and
+`dimos.evals.suites.hardware_go2` (walk forward and turn around) hold one case each,
+so one run is one robot and one scene. Keep the e-stop within reach.
+
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`.
