@@ -116,7 +116,7 @@
       "locked": {
         "dir": "dimos/perception/depth2depth_cloud/rust",
         "lastModified": 1793225299,
-        "narHash": "sha256-VAyE6puew/m4uRKHsl1X5rLs8Zjqob/DAG7FFLpCFq8=",
+        "narHash": "sha256-vDWT4ycVVYuEwaJLRHzRpPg1QOPMH+gr/n/HNzZCCfo=",
         "owner": "dimensionalOS",
         "repo": "dimos",
         "rev": "68f91f3ed487eab7ae92d34fa986850f9cebd220",
