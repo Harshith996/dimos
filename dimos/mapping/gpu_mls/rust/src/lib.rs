@@ -17,4 +17,5 @@
 
 pub mod brick_map;
 pub mod gpu;
+pub mod surfaces;
 pub mod synthetic;
