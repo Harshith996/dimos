@@ -37,6 +37,8 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_VIEW_TOPICS,
     dual_openyam_grasp,
     dual_openyam_grasp_graspgenx,
+    dual_openyam_grasp_localize,
+    dual_openyam_grasp_localize_graspgenx,
     dual_openyam_grasp_model_config,
 )
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -157,6 +159,37 @@ def test_rerun_bridge_throttles_the_image_streams() -> None:
     assert atom.kwargs["max_hz"]["world/color_image"] == 10.0
     assert atom.kwargs["max_hz"]["world/left_wrist_color_image"] == 3.0
     assert "world/color_image" in atom.kwargs["max_hz"]
+
+
+def test_localize_variants_differ_from_the_base_stacks_by_the_perception_module() -> None:
+    from dimos.perception.experimental.object_scene_registration import (
+        ObjectSceneRegistrationModule,
+    )
+    from dimos.robot.manipulators.dual_openyam.blueprints.agentic import (
+        dual_openyam_grasp_localize_agent,
+        dual_openyam_grasp_localize_graspgenx_agent,
+    )
+    from dimos.robot.manipulators.dual_openyam.localize_registration import (
+        LocalizeSceneRegistrationModule,
+    )
+
+    for base, variant in (
+        (dual_openyam_grasp, dual_openyam_grasp_localize),
+        (dual_openyam_grasp_graspgenx, dual_openyam_grasp_localize_graspgenx),
+    ):
+        assert ObjectSceneRegistrationModule in _modules(base)
+        assert LocalizeSceneRegistrationModule not in _modules(base)
+        assert LocalizeSceneRegistrationModule in _modules(variant)
+        assert ObjectSceneRegistrationModule not in _modules(variant)
+        assert _modules(base) - {ObjectSceneRegistrationModule} == _modules(variant) - {
+            LocalizeSceneRegistrationModule
+        }
+        atom = _atom(variant, LocalizeSceneRegistrationModule)
+        assert atom.kwargs["world_frame"] == "world"
+        assert atom.kwargs["params"].min_views == 1
+        assert atom.kwargs["max_obstacle_width"] == 0.06
+    assert LocalizeSceneRegistrationModule in _modules(dual_openyam_grasp_localize_agent)
+    assert GraspGenXModule in _modules(dual_openyam_grasp_localize_graspgenx_agent)
 
 
 def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:

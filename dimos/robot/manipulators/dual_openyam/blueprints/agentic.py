@@ -33,6 +33,8 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_TABLE_TOP_Z,
     dual_openyam_grasp,
     dual_openyam_grasp_graspgenx,
+    dual_openyam_grasp_localize,
+    dual_openyam_grasp_localize_graspgenx,
 )
 
 _DUAL_ARM_ADDENDUM = """\
@@ -80,6 +82,18 @@ dual_openyam_grasp_agent = autoconnect(
 
 dual_openyam_grasp_graspgenx_agent = autoconnect(
     dual_openyam_grasp_graspgenx,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=dual_openyam_agent_prompt()),
+)
+
+dual_openyam_grasp_localize_agent = autoconnect(
+    dual_openyam_grasp_localize,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=dual_openyam_agent_prompt()),
+)
+
+dual_openyam_grasp_localize_graspgenx_agent = autoconnect(
+    dual_openyam_grasp_localize_graspgenx,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=dual_openyam_agent_prompt()),
 )

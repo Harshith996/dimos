@@ -55,6 +55,10 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.localize_registration import (
+    LocalizeSceneRegistrationModule,
+    localize_params,
+)
 from dimos.robot.manipulators.dual_openyam.scene_overlay import SceneOverlayModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -227,7 +231,39 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
 
 
-def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple[Blueprint, ...]:
+def dual_openyam_scene_registration() -> Blueprint:
+    """Moondream boxes and EdgeTAM masks on the latest overhead frame, with an ObjectDB."""
+    return ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        detector_backend="moondream",
+        segmentation_backend="edgetam",
+        detect_on_request=True,
+        # Benchmark scenes put objects 9 cm apart; 8 cm merged neighbours into one id.
+        distance_threshold=0.03,
+        min_detections_for_permanent=1,
+        max_distance=1.5,
+        use_aabb=True,
+        max_obstacle_width=0.06,
+    )
+
+
+# Localize thresholds for the overhead D405, from the offline sweep of 2026-10-28 on the
+# scene 56 recording (tools/localize_sweep.py). The defaults are the xArm wrist camera's.
+DUAL_OPENYAM_LOCALIZE_PARAMS = localize_params()
+
+
+def dual_openyam_localize_registration() -> Blueprint:
+    """The localize memory (SigLIP retrieval, OWLv2 boxes, EdgeTAM masks) in the same role."""
+    return LocalizeSceneRegistrationModule.blueprint(
+        world_frame="world",
+        params=DUAL_OPENYAM_LOCALIZE_PARAMS,
+        max_obstacle_width=0.06,
+    )
+
+
+def dual_openyam_grasp_modules(
+    grasp_provider: Blueprint | None = None, scene_registration: Blueprint | None = None
+) -> tuple[Blueprint, ...]:
     model = dual_openyam_grasp_model_config()
     return (
         planner(
@@ -263,18 +299,7 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # Ghost of a saved scene over the overhead image, for rebuilding benchmark scenes;
         # pass-through until --sceneoverlaymodule.scene names a capture in scenes-dir.
         SceneOverlayModule.blueprint(),
-        ObjectSceneRegistrationModule.blueprint(
-            target_frame="world",
-            detector_backend="moondream",
-            segmentation_backend="edgetam",
-            detect_on_request=True,
-            # Benchmark scenes put objects 9 cm apart; 8 cm merged neighbours into one id.
-            distance_threshold=0.03,
-            min_detections_for_permanent=1,
-            max_distance=1.5,
-            use_aabb=True,
-            max_obstacle_width=0.06,
-        ),
+        scene_registration or dual_openyam_scene_registration(),
         dual_openyam_grasp_rerun(),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
@@ -292,13 +317,27 @@ dual_openyam_grasp = autoconnect(*dual_openyam_grasp_modules()).global_config(
     record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS
 )
 
+
+def dual_openyam_graspgenx() -> Blueprint:
+    return GraspGenXModule.blueprint(
+        gripper=DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
+        grasp_frame_to_tcp=DUAL_OPENYAM_GRASP_FRAME_TO_TCP,
+        # Return every sample: the pick's contact check chooses among them.
+        max_candidates=500,
+    )
+
+
 dual_openyam_grasp_graspgenx = autoconnect(
+    *dual_openyam_grasp_modules(dual_openyam_graspgenx())
+).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
+
+# The same two stacks with the localize memory as their perception; nothing else differs.
+dual_openyam_grasp_localize = autoconnect(
+    *dual_openyam_grasp_modules(scene_registration=dual_openyam_localize_registration())
+).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)
+
+dual_openyam_grasp_localize_graspgenx = autoconnect(
     *dual_openyam_grasp_modules(
-        GraspGenXModule.blueprint(
-            gripper=DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
-            grasp_frame_to_tcp=DUAL_OPENYAM_GRASP_FRAME_TO_TCP,
-            # Return every sample: the pick's contact check chooses among them.
-            max_candidates=500,
-        ),
+        dual_openyam_graspgenx(), scene_registration=dual_openyam_localize_registration()
     )
 ).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)

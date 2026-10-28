@@ -122,6 +122,37 @@ the pick-and-place module places top-down with the grasp orientation and a
 pre-place 0.05 above the target, and the arm's fingers-down reach ends near
 z 0.16 at the bin's x, so the bin rim cannot be cleared on this stack.
 
+### The localize memory as perception
+
+`dual-openyam-grasp-localize` and `dual-openyam-grasp-localize-graspgenx` (and their
+`-agent` forms) are the two grasp stacks with one module swapped: `LocalizeSceneRegistrationModule`
+in the robot folder answers the pick's scene-registration calls from `PerceptionLocalize`
+(SigLIP frame retrieval, OWLv2 boxes, EdgeTAM masks, sightings fused across frames) instead of
+`ObjectSceneRegistrationModule` (Moondream boxes on the latest frame). Everything else, the
+arms, planner, grasp provider, contact check, cameras, overlay, recording and viewer, is the
+base stack's own, so a run differs from the base by that module alone.
+
+What the adapter adds on top of the memory, because the pick stack needs it: a scan waits for a
+frame embedded after it was asked and keeps the hits seen in it; ids survive between scans while an
+object stays within `id_match_radius_m`; the `objects` stream feeds the planner's obstacle boxes;
+and `get_full_scene_pointcloud` lifts the overhead depth frame of the scan into the world frame
+minus the excluded object, so the grasp contact check keeps its scene. The policy confirms an
+object from one viewpoint (`min_views` 1) because the overhead camera never moves.
+
+Thresholds are the camera's, not the model's defaults. `DUAL_OPENYAM_LOCALIZE_PARAMS` in
+`blueprints/grasp.py` comes from the offline sweep in `tools/localize_sweep.py`, run on a
+recording of the overhead camera with the benchmark objects on the table:
+
+```bash
+python -m dimos.robot.manipulators.dual_openyam.tools.localize_sweep \
+    --dataset recordings/<run-id>/memory.db --from 70 --duration 100 \
+    "extra large clamp" "pudding box" "spam can" "tuna fish can" "tomato soup can"
+```
+
+It embeds the window once, then localizes every label under each threshold setting and prints,
+per object, the best detector score and the settings that found it. Re-run it when the camera,
+the lighting or the detector changes.
+
 ### Rebuilding a scene
 
 The grasp stacks carry a scene overlay module, pass-through until a scene is named. Point it at
