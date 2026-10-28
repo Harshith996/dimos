@@ -168,7 +168,19 @@ def test_missing_input_fails_before_native_process_starts(recorder, mocker):
 
 
 @pytest.mark.parametrize(
-    "stream", ["status", "tf", "start", "config", "rpc", "bad-name", "_private"]
+    "stream",
+    [
+        "status",
+        "tf",
+        "start",
+        "config",
+        "rpc",
+        "ref",
+        "input_types",
+        "class",
+        "bad-name",
+        "_private",
+    ],
 )
 def test_invalid_ports_fail_at_factory_boundary(stream, tmp_path):
     profile = _profile(1)
