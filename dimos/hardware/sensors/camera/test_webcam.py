@@ -16,7 +16,9 @@ from unittest.mock import call
 
 import cv2
 import numpy as np
+import pytest
 import pytest_mock
+import reactivex as rx
 
 from dimos.hardware.sensors.camera.module import CameraModule, CameraModuleConfig
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
@@ -109,3 +111,38 @@ def test_webcam_with_size_but_no_focal_length_gets_a_nominal_pinhole() -> None:
 def test_webcam_stereo_slice_halves_the_nominal_pinhole_width() -> None:
     info = Webcam(width=1280, height=720, stereo_slice="left").camera_info
     assert (info.width, info.height) == (640, 720)
+
+
+@pytest.fixture
+def camera_module():
+    camera = CameraModule(
+        hardware=WebcamConfig(camera_index=3, width=320, height=240, fps=20), transform=None
+    )
+    yield camera
+    camera.stop()
+
+
+def test_module_uses_configured_webcam_and_stops_it_once(camera_module, mocker):
+    factory = mocker.patch("dimos.hardware.sensors.camera.module.Webcam", autospec=True)
+    webcam = factory.return_value
+    webcam.image_stream.return_value = rx.never()
+    webcam.camera_info = CameraInfo()
+    mocker.patch("dimos.hardware.sensors.camera.module.rx.interval", return_value=rx.never())
+    publish = mocker.patch.object(camera_module.camera_info, "publish")
+
+    camera_module.start()
+    camera_module.publish_metadata()
+    camera_module.stop()
+    camera_module.stop()
+
+    assert {
+        key: factory.call_args.kwargs[key] for key in ("camera_index", "width", "height", "fps")
+    } == {
+        "camera_index": 3,
+        "width": 320,
+        "height": 240,
+        "fps": 20,
+    }
+    publish.assert_called_once()
+    assert isinstance(publish.call_args.args[0], CameraInfo)
+    webcam.stop.assert_called_once_with()

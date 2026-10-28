@@ -22,7 +22,6 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -56,15 +55,16 @@ class CameraModule(Module, perception.Camera):
     camera_info: Out[CameraInfo]
     tf: Out[TFMessage]
 
-    hardware: CameraHardware
+    _camera: Webcam | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        self.hardware = Webcam(**self.config.hardware.model_dump())
+        camera = Webcam(**self.config.hardware.model_dump())
+        self._camera = camera
 
-        stream = self.hardware.image_stream()
+        stream = camera.image_stream()
 
         if self.config.frequency > 0:
             stream = stream.pipe(sharpness_barrier(self.config.frequency))
@@ -78,7 +78,10 @@ class CameraModule(Module, perception.Camera):
         )
 
     def publish_metadata(self) -> None:
-        camera_info = self.hardware.camera_info.with_ts(time.time())
+        camera = self._camera
+        if camera is None:
+            return
+        camera_info = camera.camera_info.with_ts(time.time())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:
@@ -99,9 +102,10 @@ class CameraModule(Module, perception.Camera):
 
     @rpc
     def stop(self) -> None:
-        hardware = getattr(self, "hardware", None)
-        if hardware is not None and hasattr(hardware, "stop"):
-            hardware.stop()
+        camera = self._camera
+        self._camera = None
+        if camera is not None:
+            camera.stop()
         super().stop()
 
 
