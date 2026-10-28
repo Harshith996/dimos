@@ -81,7 +81,7 @@ recorder = collect(profile=profile, recording=Path("recordings/session-001"))
 Include `recorder`, your robot, camera producers, and an
 `EpisodeMonitorModule.blueprint(instance_name="episodes")` in `autoconnect()`.
 The monitor supplies `status: In[String]` containing versioned JSON episode events.
-Robot-specific readiness rules belong on that monitor. The recorder must precede
+The monitor only controls episode start, save, and discard. The recorder must precede
 producers in the Blueprint so it stops after them.
 
 The Python graph supports any number of coordinators. Connect each recorded stream
