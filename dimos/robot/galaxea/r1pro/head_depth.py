@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import numpy as np
+from pydantic import Field
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
@@ -24,11 +25,26 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
+from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthCloudConfig
 from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_WIDTH_M
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 BASE_FRAME = R1ProLioConfig.model_fields["base_frame"].default
+
+
+class R1ProHeadDepthConfig(Depth2DepthCloudConfig):
+    source_dir: str | None = "dimos/robot/galaxea/r1pro/floor_prior/rust"
+    executable: str = "result/bin/r1pro_head_depth"
+    # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
+    floor_anchor_step: int = Field(default=8, ge=1, le=256)
+    floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
+    floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
+
+
+class R1ProHeadDepth(Depth2DepthCloud):
+    """Depth2DepthCloud plus a floor prior: the chassis lidar never sees the near floor, which unanchored reads 2-5x short."""
+
+    config: R1ProHeadDepthConfig
 
 
 class HeadFloorPriorConfig(ModuleConfig):
@@ -160,9 +176,9 @@ def _apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 
 def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
-    """Orin-tuned head depth anchored on Point-LIO, floored by HeadFloorPrior; keywords override Depth2DepthCloud's config."""
+    """Orin-tuned head depth anchored on Point-LIO, floored by HeadFloorPrior; keywords override R1ProHeadDepth's config."""
     return autoconnect(
-        Depth2DepthCloud.blueprint(
+        R1ProHeadDepth.blueprint(
             **{
                 "tf_tolerance_s": tf_tolerance_s,
                 # Past this the per-pixel calibration has few lidar anchors to lean on.
@@ -174,8 +190,6 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 # 8x8 / 3000 over 11x11 / 1500 raised near floor coverage from ~45% to 51% on r1_live_20260930_1332.
                 "decimation": 8,
                 "max_points": 3000,
-                # One floor probe per cloud pixel.
-                "floor_anchor_step": 8,
                 # JPEG decoded at 1/4 size: calibration then works on a quarter of the pixels (3 -> 9.5 fps on the Orin).
                 "decode_scale": 4,
                 # One lidar anchor per 4x4 px block: ~31k anchors per frame was most of the calibration time.
@@ -184,9 +198,9 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
             }
         ).remappings(
             [
-                (Depth2DepthCloud, "image", "head_left_color"),
-                (Depth2DepthCloud, "camera_info", "head_left_info"),
-                (Depth2DepthCloud, "depth_cloud", "head_depth_raw"),
+                (R1ProHeadDepth, "image", "head_left_color"),
+                (R1ProHeadDepth, "camera_info", "head_left_info"),
+                (R1ProHeadDepth, "depth_cloud", "head_depth_raw"),
             ]
         ),
         HeadFloorPrior.blueprint(

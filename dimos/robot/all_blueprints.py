@@ -329,6 +329,7 @@ all_modules = {
     "point-nav-skill-container": "dimos.agents.skills.point_nav.PointNavSkillContainer",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
+    "r1-pro-head-depth": "dimos.robot.galaxea.r1pro.head_depth.R1ProHeadDepth",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",
     "r1-pro-point-lio": "dimos.robot.galaxea.r1pro.lio.R1ProPointLio",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
