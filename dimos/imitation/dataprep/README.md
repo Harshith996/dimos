@@ -26,7 +26,7 @@ channels; the reader environment must contain their Python message classes.
 
 ## Explicit features
 
-`observation` and `action` each map a distinct output feature name to a
+`observation` and `action` each map a distinct configured feature name to a
 `FeatureSpec` in [schema.py](/dimos/imitation/dataprep/schema.py). Each feature declares:
 
 | Field | Meaning |
@@ -183,6 +183,19 @@ statistics, and dataset metadata to `LeRobotDataset`. DimOS maps aligned samples
 to frames, preserves task labels and episode boundaries, and publishes the
 completed dataset only after a successful export. Failed exports preserve an
 existing dataset. Invalid frame dtype or shape is reported by LeRobot.
+
+LeRobot conversion uses fixed policy-facing feature names; no rename config is
+required. One numerical observation becomes `observation.state`, one action becomes
+`action`, and image observations become `observation.images.<name>`. Multiple
+numerical observations and actions use `observation.<name>` and `action.<name>`.
+Names already following these conventions stay unchanged. Collisions are errors.
+The same mapping applies to feature metadata and every frame. Source stream names
+and HDF5 feature names remain unchanged.
+
+`dimos_meta.json` retains the original declarations and records the computed
+`feature_names` mapping for inspection. LeRobot training reads the actual dataset
+features from `meta/info.json`, not this sidecar. Conversion does not concatenate
+multiple vectors or make every policy support multiple state or action features.
 
 Import dataset configuration and sample types from `dataprep.schema`, and
 alignment functions from `dataprep.core`. The host adapter is in

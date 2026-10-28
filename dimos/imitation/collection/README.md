@@ -43,7 +43,9 @@ Metadata is optional. `name` labels the recording and supplies the default local
 dataset name. `robot_type` labels the dataset; it does not load hardware or determine
 joint order. Preparation output metadata overrides saved metadata.
 
-Feature keys name dataset columns. `stream` identifies a typed recorder input.
+Feature keys name configured projections. LeRobot export applies fixed policy-facing
+names; HDF5 preserves the configured keys. The saved export sidecar records the
+computed mapping. See the [LeRobot export rules](/dimos/imitation/dataprep/README.md#lerobot-export). `stream` identifies a typed recorder input.
 `names` specifies joint order even when incoming JointState messages use another
 order. Several projections can share a raw stream, which the recorder captures
 once. Shared projections must agree on message class and source semantics.
