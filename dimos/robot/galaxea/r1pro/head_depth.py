@@ -22,7 +22,6 @@ from pydantic import Field
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.native_module import NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -33,11 +32,9 @@ from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 BASE_FRAME = R1ProLioConfig.model_fields["base_frame"].default
 
 
-# NativeModuleConfig listed again so bin/native-modules discovers (builds and publishes) it.
-class R1ProHeadDepthConfig(Depth2DepthCloudConfig, NativeModuleConfig):
+class R1ProHeadDepthConfig(Depth2DepthCloudConfig):
     source_dir: str | None = "dimos/robot/galaxea/r1pro/floor_prior/rust"
     executable: str = "result/bin/r1pro_head_depth"
-    build_command: str | None = "nix build -L path:."
     # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
     floor_anchor_step: int = Field(default=8, ge=1, le=256)
     floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
