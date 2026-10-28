@@ -69,9 +69,7 @@ _profile = CollectionProfile(
 
 dual_openyam_quest_collection = autoconnect(
     collect(profile=_profile),
-    EpisodeMonitorModule.blueprint(
-        instance_name="episodes", required_action_joints=DUAL_OPENYAM_JOINTS
-    ),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
     build_dual_openyam_webxr(visualization=ViserVisualizationConfig(host="0.0.0.0")),
     CameraModule.blueprint(
         instance_name="left_wrist",
