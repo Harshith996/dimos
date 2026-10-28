@@ -88,8 +88,8 @@ class WebRtcTiming(BaseConfig):
     heartbeat_period: float = 2.0
     ice_keepalive_period: float = 2.0
     # silence of link_quiet_timeout marks the link disconnected (it can recover); link_lost_timeout ends it
-    link_quiet_timeout: float = 5.0
-    link_lost_timeout: float = 30.0
+    link_quiet_timeout: float = 3.0
+    link_lost_timeout: float = 5.0
     keyframe_retry_period: float = 1.0
     clock_window: float = 30.0
     clock_reset: float = 1.0

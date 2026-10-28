@@ -102,11 +102,11 @@ fn robot_api(timing: &Timing) -> Result<webrtc::api::API, String> {
     let mut registry = Registry::new();
     registry = configure_nack(registry, &mut media);
     registry = configure_rtcp_reports(registry);
-    // the link is lost after link_lost_timeout of silence
+    // the link is lost after link_lost_timeout of silence in all (ICE counts its failed timeout from disconnected)
     let mut settings = SettingEngine::default();
     settings.set_ice_timeouts(
         Some(secs(timing.link_quiet_timeout)),
-        Some(secs(timing.link_lost_timeout)),
+        Some(secs(timing.link_lost_timeout - timing.link_quiet_timeout)),
         Some(secs(timing.ice_keepalive_period)),
     );
     Ok(APIBuilder::new()
