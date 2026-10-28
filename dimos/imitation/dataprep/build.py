@@ -36,6 +36,7 @@ from dimos.imitation.dataprep.core import (
     inspect_episodes,
     iter_episode_samples,
 )
+from dimos.imitation.dataprep.formats.lerobot.features import canonical_feature_names
 from dimos.imitation.dataprep.formats.lerobot.publication import staged_dataset
 from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
@@ -91,6 +92,11 @@ def _write_dimos_meta(
         "format": config.output.format,
         "metadata": config.output.metadata,
     }
+    if config.output.format == "lerobot":
+        meta["feature_names"] = canonical_feature_names(
+            {key: spec.dtype for key, spec in config.observation.items()},
+            config.action.keys(),
+        )
     # Writers return a directory (lerobot) or a file (hdf5). Put the sidecar
     # *inside* a directory, or *beside* a file (`<name>.dimos_meta.json`).
     if dataset_path.is_dir():
