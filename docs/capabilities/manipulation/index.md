@@ -5,9 +5,9 @@ the default world and native path planner.
 
 For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
-For the CLI-first demonstration → training → policy workflow, see
-[Imitation Learning for Manipulation](/docs/capabilities/manipulation/imitation-learning.md). Quest is optional;
-the primary OpenYAM path uses direct hand teaching.
+For demonstration collection, dataset preparation, training, and compatible
+checkpoint rollout, see [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md).
+Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
 
 ## Quick Start
 
