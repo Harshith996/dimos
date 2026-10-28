@@ -27,7 +27,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
-from dimos.core.module import ModuleBase, is_module_type, validate_input_types
+from dimos.core.module import ModuleBase, is_module_type
 from dimos.core.stream import IO, In, Out, Transport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
@@ -162,11 +162,6 @@ class BlueprintAtom:
                         module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
                     elif is_module_type(inner):
                         module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
-
-        streams.extend(
-            StreamRef(name=name, type=kind, direction="in")
-            for name, kind in validate_input_types(module, kwargs.get("input_types", {})).items()
-        )
 
         instance_name = kwargs.get("instance_name")
         if instance_name is not None and not isinstance(instance_name, str):

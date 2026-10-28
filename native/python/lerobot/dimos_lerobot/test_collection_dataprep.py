@@ -25,6 +25,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from mcap.writer import Writer
 import numpy as np
 import pytest
+import pytest_mock
 
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.build import run_dataprep
@@ -195,6 +196,8 @@ def test_collection_to_lerobot_roundtrip(
     )
 
     lerobot_info = inspect_dataset(lerobot_path)
+    assert set(lerobot_info["observation"]) == {"camera", "state"}
+    assert lerobot_info["observation"]["state"] == {"shape": [2], "dtype": "float32"}
     assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 6, 1.0)
     dataset = LeRobotDataset("dimos/collection-test", root=lerobot_path)
     data = dataset.hf_dataset
@@ -232,3 +235,49 @@ def test_explicit_range_exports_use_configured_task_label(
     assert metadata.total_frames == 3
     assert [row["tasks"] for row in metadata.episodes] == [["manual pick"]]
     assert (root / "dimos_meta.json").is_file()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_sidecar_failure_preserves_complete_dataset_and_allows_retry(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+    mocker: pytest_mock.MockerFixture,
+    existing: bool,
+) -> None:
+    recording, _ = recorded_session
+    output = OutputConfig(
+        format="lerobot",
+        path=tmp_path / "dataset",
+        metadata={"repo_id": "local/sidecar-test"},
+    )
+    config = _dataprep_config(recording, output)
+    previous = {}
+    if existing:
+        run_dataprep(config, writer=write)
+        previous = {
+            path.relative_to(output.path): path.read_bytes()
+            for path in output.path.rglob("*")
+            if path.is_file()
+        }
+    fail = mocker.patch(
+        "dimos.imitation.dataprep.build._write_dimos_meta",
+        side_effect=OSError(28, "No space left on device"),
+    )
+
+    with pytest.raises(OSError, match="No space left"):
+        run_dataprep(config, writer=write)
+
+    if existing:
+        assert {
+            path.relative_to(output.path): path.read_bytes()
+            for path in output.path.rglob("*")
+            if path.is_file()
+        } == previous
+    else:
+        assert not output.path.exists()
+    assert not list(tmp_path.glob(".dataset-*"))
+    mocker.stop(fail)
+    root = run_dataprep(config, writer=write)
+    assert root == output.path
+    assert (root / "dimos_meta.json").is_file()
+    assert LeRobotDataset("local/sidecar-test", root=root).meta.total_frames == 6
