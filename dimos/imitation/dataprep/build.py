@@ -23,6 +23,7 @@ readers/writers. Built-in workflows expose it through `dimos imitation`.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import nullcontext
 from itertools import chain
 import json
 from pathlib import Path
@@ -35,6 +36,7 @@ from dimos.imitation.dataprep.core import (
     inspect_episodes,
     iter_episode_samples,
 )
+from dimos.imitation.dataprep.formats.lerobot.publication import staged_dataset
 from dimos.imitation.dataprep.schema import (
     DataPrepConfig,
     Episode,
@@ -237,9 +239,18 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                 "data during each episode before changing the synchronization contract."
             ) from error
 
-        dataset_path = Path(selected_writer(chain((first_sample,), samples), output))
-        written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
-        _write_dimos_meta(dataset_path, config, written, quality_reports)
+        # The writer also supports standalone builds. This outer transaction
+        # includes the sidecar so a failed rebuild preserves the complete dataset.
+        publication = (
+            staged_dataset(output.path) if output.format == "lerobot" else nullcontext(output.path)
+        )
+        with publication as staged_path:
+            staged_output = output.model_copy(update={"path": staged_path})
+            dataset_path = Path(selected_writer(chain((first_sample,), samples), staged_output))
+            written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
+            _write_dimos_meta(dataset_path, config, written, quality_reports)
+        if output.format == "lerobot":
+            dataset_path = output.path
         logger.info(
             "[dataprep] succeeded — wrote %d samples across %d episodes to %s",
             samples_seen,

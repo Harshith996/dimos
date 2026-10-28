@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 from io import StringIO
+import json
 from pathlib import Path
 import sys
 
@@ -25,7 +26,12 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.imitation.dataprep.formats.lerobot.protocol import BuildRequest, BuildResult
+from dimos.imitation.dataprep.formats.lerobot.protocol import (
+    BuildRequest,
+    BuildResult,
+    InspectRequest,
+    InspectResult,
+)
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig, Sample
 
 
@@ -180,3 +186,66 @@ def test_writer_rejects_invalid_export_metadata(tmp_path, field, value, message)
     config.metadata[field] = value
     with pytest.raises(ValueError, match=message):
         write(numeric_samples(), config)
+
+
+@pytest.mark.parametrize("sidecar", [False, True])
+@pytest.mark.parametrize(
+    "names", [("state", "joint_target"), ("action.sensor", "observation.target")]
+)
+def test_inspect_preserves_custom_feature_names_in_direct_and_json_results(
+    tmp_path: Path,
+    sidecar: bool,
+    names: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = numeric_output(tmp_path / "dataset")
+    features = config.metadata["feature_schema"]
+    observation_name, action_name = names
+    features[observation_name] = features.pop("observation.state")
+    features[action_name] = features.pop("action")
+    features["complementary_info.is_filled"] = {
+        "dtype": "bool",
+        "shape": [1],
+        "names": ["is_filled"],
+    }
+    samples = (
+        sample.model_copy(
+            update={
+                "observation": {observation_name: sample.observation["observation.state"]},
+                "action": {action_name: sample.action["action"]},
+                "complementary_info": {"is_filled": np.asarray([False])},
+            }
+        )
+        for sample in numeric_samples()
+    )
+    root = write(samples, config)
+    if sidecar:
+        (root / "dimos_meta.json").write_text(
+            json.dumps(
+                {
+                    "observation": {observation_name: {}},
+                    "action": {action_name: {}},
+                }
+            )
+        )
+
+    summary = dataprep.inspect_dataset(root)
+
+    entry = {"shape": [1], "dtype": "float32"}
+    if sidecar:
+        assert summary["observation"] == {observation_name: entry}
+        assert summary["action"] == {action_name: entry}
+    elif observation_name == "state":
+        assert summary["observation"] == {}
+        assert summary["action"] == {}
+        assert summary["features"]["state"] == entry
+        assert summary["features"]["joint_target"] == entry
+    else:
+        assert summary["observation"] == {"observation.target": entry}
+        assert summary["action"] == {"action.sensor": entry}
+    assert summary["features"]["complementary_info.is_filled"] == {"shape": [1], "dtype": "bool"}
+    capsys.readouterr()
+    monkeypatch.setattr(sys, "stdin", StringIO(InspectRequest(path=root).model_dump_json()))
+    dataprep.main([])
+    assert InspectResult.model_validate_json(capsys.readouterr().out).info == summary

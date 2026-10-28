@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from collections.abc import AsyncGenerator, Callable, Mapping
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
-import keyword
 import pickle
 import sys
 import threading
@@ -136,31 +135,6 @@ ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfi
 
 class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
-
-
-def validate_input_types(
-    module: type["ModuleBase"],
-    input_types: Mapping[str, type[Any]],
-) -> dict[str, type[Any]]:
-    """Validate instance inputs before Blueprint wiring or module construction."""
-    if not input_types:
-        return {}
-    annotations = {
-        name for base in module.__mro__ for name in vars(base).get("__annotations__", {})
-    }
-    reserved = set(dir(module)) | annotations | {"ref", "rpc", "input_types"}
-    for name, kind in input_types.items():
-        if (
-            not isinstance(name, str)
-            or not name.isidentifier()
-            or keyword.iskeyword(name)
-            or name.startswith("_")
-            or name in reserved
-        ):
-            raise ValueError(f"Invalid or reserved input name: {name!r}")
-        if not isinstance(kind, type):
-            raise TypeError(f"Input {name!r} requires a message class")
-    return dict(input_types)
 
 
 class ModuleBase(Configurable, CompositeResource):
@@ -880,14 +854,8 @@ class Module(ModuleBase):
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
 
-    def __init__(
-        self,
-        *,
-        input_types: Mapping[str, type[Any]] | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.ref = None
-        instance_inputs = validate_input_types(type(self), input_types or {})
 
         try:
             hints = get_type_hints(self.__class__, include_extras=True)
@@ -908,8 +876,6 @@ class Module(ModuleBase):
                 inner, *_ = get_args(ann) or (Any,)
                 stream = IO(inner, name, self)  # type: ignore[assignment]
                 setattr(self, name, stream)
-        for name, kind in instance_inputs.items():
-            setattr(self, name, In(kind, name, self))
         super().__init__(config_args=kwargs)
 
     def __str__(self) -> str:

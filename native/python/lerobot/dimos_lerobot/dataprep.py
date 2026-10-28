@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import redirect_stdout, suppress
+import json
 from pathlib import Path
 import sys
-from tempfile import TemporaryDirectory
 from typing import Any
 
 from lerobot.datasets import LeRobotDatasetMetadata
@@ -36,6 +36,7 @@ from dimos.imitation.dataprep.formats.lerobot.protocol import (
     InspectRequest,
     InspectResult,
 )
+from dimos.imitation.dataprep.formats.lerobot.publication import staged_dataset
 from dimos.imitation.dataprep.schema import OutputConfig, Sample
 
 
@@ -84,17 +85,7 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     }
     default_task_label = output.metadata.get("default_task_label", "task")
     destination = output.path
-    if destination.is_symlink() or (
-        destination.exists()
-        and (
-            not destination.is_dir()
-            or (any(destination.iterdir()) and not (destination / "meta" / "info.json").is_file())
-        )
-    ):
-        raise FileExistsError(f"{destination} already exists and is not a LeRobot dataset")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(prefix=f".{destination.name}-", dir=destination.parent) as temporary:
-        staged_path = Path(temporary) / "dataset"
+    with staged_dataset(destination) as staged_path:
         dataset = LeRobotDataset.create(
             repo_id=repo_id,
             fps=fps,
@@ -130,15 +121,6 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
             with suppress(Exception):
                 dataset.finalize()  # type: ignore[no-untyped-call]
             raise
-        previous = Path(temporary) / "previous"
-        if destination.exists():
-            destination.rename(previous)
-        try:
-            staged_path.rename(destination)
-        except BaseException:
-            if previous.exists():
-                previous.rename(destination)
-            raise
     return destination
 
 
@@ -147,15 +129,26 @@ def inspect_dataset(path: Path) -> dict[str, Any]:
     metadata = LeRobotDatasetMetadata(repo_id="local/dataset", root=path)
     observation: dict[str, Any] = {}
     action: dict[str, Any] = {}
+    other: dict[str, Any] = {}
+    sidecar_path = path / "dimos_meta.json"
+    sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
+    observation_names = set(sidecar.get("observation", {}))
+    action_names = set(sidecar.get("action", {}))
     metadata_columns = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
     for name, feature in metadata.features.items():
         if name in metadata_columns:
             continue
-        entry = {"shape": feature.get("shape"), "dtype": feature.get("dtype")}
-        if name.startswith("observation"):
+        entry = {"shape": list(feature["shape"]), "dtype": feature.get("dtype")}
+        if name in observation_names:
+            observation[name] = entry
+        elif name in action_names:
+            action[name] = entry
+        elif name.startswith("observation"):
             observation[name] = entry
         elif name.startswith("action"):
             action[name] = entry
+        else:
+            other[name] = entry
     lengths = list(metadata.episodes["length"]) if metadata.episodes is not None else []
     return {
         "format": "lerobot",
@@ -167,6 +160,7 @@ def inspect_dataset(path: Path) -> dict[str, Any]:
         "robot": metadata.robot_type,
         "observation": observation,
         "action": action,
+        "features": other,
         "episode_lengths": summarize_lengths(lengths),
         "shapes_uniform": True,
         "has_stats": metadata.stats is not None,

@@ -17,15 +17,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+import keyword
 from pathlib import Path
 import sys
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, StreamRef
 from dimos.core.core import rpc
-from dimos.core.module import validate_input_types
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
@@ -42,6 +43,28 @@ from dimos.memory.type.recording import OnExisting
 from dimos.msgs.std_msgs.String import String
 
 PortTypes = tuple[tuple[str, type[Any]], ...]
+
+
+def _validate_input_types(
+    module: type[CollectionRecorder],
+    input_types: Mapping[str, type[Any]],
+) -> dict[str, type[Any]]:
+    annotations = {
+        name for base in module.__mro__ for name in vars(base).get("__annotations__", {})
+    }
+    reserved = set(dir(module)) | annotations | {"ref", "rpc", "input_types"}
+    for name, kind in input_types.items():
+        if (
+            not isinstance(name, str)
+            or not name.isidentifier()
+            or keyword.iskeyword(name)
+            or name.startswith("_")
+            or name in reserved
+        ):
+            raise ValueError(f"Invalid or reserved input name: {name!r}")
+        if not isinstance(kind, type):
+            raise TypeError(f"Input {name!r} requires a message class")
+    return dict(input_types)
 
 
 class CollectionRecorderConfig(RustRecorderConfig):
@@ -94,10 +117,25 @@ class CollectionRecorder(RustRecorder):
         input_types: Mapping[str, type[Any]],
         **kwargs: Any,
     ) -> None:
-        super().__init__(input_types=input_types, **kwargs)
+        inputs = _validate_input_types(type(self), input_types)
+        for name, kind in inputs.items():
+            setattr(self, name, In(kind, name, self))
+        super().__init__(**kwargs)
         self.recording_inputs = (*input_types.items(), ("status", String))
         self._recording_schema = recording_schema
         self._prepared = False
+
+    @classmethod
+    def blueprint(cls, **kwargs: Any) -> Blueprint:
+        """Declare this recorder's runtime inputs without extending core Modules."""
+        inputs = _validate_input_types(cls, kwargs["input_types"])
+        blueprint = Blueprint.create(cls, **kwargs)
+        [atom] = blueprint.blueprints
+        streams = (
+            *atom.streams,
+            *(StreamRef(name=name, type=kind, direction="in") for name, kind in inputs.items()),
+        )
+        return replace(blueprint, blueprints=(replace(atom, streams=streams),))
 
     @rpc
     def build(self) -> None:
@@ -149,7 +187,6 @@ def collect(
 ) -> Blueprint:
     """Declare profile inputs and record a portable SQLite or MCAP session directory."""
     inputs = profile.input_types()
-    validate_input_types(CollectionRecorder, inputs)
     for kind in inputs.values():
         if (
             kind.__module__ == "__main__"
