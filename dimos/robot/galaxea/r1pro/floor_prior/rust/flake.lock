@@ -115,11 +115,11 @@
       },
       "locked": {
         "dir": "dimos/perception/depth2depth_cloud/rust",
-        "lastModified": 1793225299,
-        "narHash": "sha256-vDWT4ycVVYuEwaJLRHzRpPg1QOPMH+gr/n/HNzZCCfo=",
+        "lastModified": 1793230734,
+        "narHash": "sha256-EcSJ3wn9vaYxQ+hKCXUvYKDQFfO4o0cwklf0Kg5VriY=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "68f91f3ed487eab7ae92d34fa986850f9cebd220",
+        "rev": "147ca1eb86b5a7c8e8c7606012e0ddd63f70287a",
         "type": "github"
       },
       "original": {
