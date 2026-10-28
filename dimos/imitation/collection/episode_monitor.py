@@ -130,9 +130,7 @@ class EpisodeMonitorModule(Module):
             self._input_subscriptions.append(
                 self.register_disposable(
                     Disposable(
-                        self.coordinator_joint_command.subscribe(
-                            self._on_joint_position_command
-                        )
+                        self.coordinator_joint_command.subscribe(self._on_joint_position_command)
                     )
                 )
             )
