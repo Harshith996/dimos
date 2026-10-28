@@ -43,7 +43,9 @@ def _teach_robot() -> Blueprint:
             hardware,
             adapter_kwargs={
                 **hardware.adapter_kwargs,
-                "runtime_config": replace(runtime_config, passive_grippers=("gripper",)),
+                "runtime_config": replace(
+                    runtime_config, gravity_comp=True, passive_grippers=("gripper",)
+                ),
             },
         )
     hardware = replace(
@@ -56,10 +58,10 @@ def _teach_robot() -> Blueprint:
         tasks=[
             TaskConfig(
                 name="teach_openyam",
-                type="trajectory",
+                type="hand_guiding",
                 joint_names=list(OPENYAM_JOINTS),
                 priority=10,
-                params={"hold_position_when_idle": True},
+                auto_start=True,
             )
         ],
     )
