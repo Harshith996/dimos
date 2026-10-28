@@ -190,10 +190,21 @@ DUAL_OPENYAM_VIEW_TOPICS = [
 ]
 
 
+# Frames per second the bridge forwards per image entity. The cameras run at 30 Hz;
+# four such streams kept a laptop viewer at two cores of JPEG decoding (2026-10-27).
+DUAL_OPENYAM_VIEW_MAX_HZ = {
+    "world/color_image": 10.0,
+    "world/overlay_image": 10.0,
+    "world/left_wrist_color_image": 3.0,
+    "world/right_wrist_color_image": 3.0,
+}
+
+
 def dual_openyam_grasp_rerun() -> Blueprint:
     return RerunBridgeModule.blueprint(
         blueprint=dual_openyam_grasp_view,
         topics=DUAL_OPENYAM_VIEW_TOPICS,
+        max_hz=DUAL_OPENYAM_VIEW_MAX_HZ,
         memory_limit="2GB",
         rerun_open="none",
     )

@@ -150,6 +150,15 @@ def test_graspgenx_variant_only_swaps_the_grasp_provider() -> None:
         assert "max_grasp_attempts" not in _atom(stack, PickAndPlaceModule).kwargs
 
 
+def test_rerun_bridge_throttles_the_image_streams() -> None:
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    atom = _atom(dual_openyam_grasp, RerunBridgeModule)
+    assert atom.kwargs["max_hz"]["world/color_image"] == 10.0
+    assert atom.kwargs["max_hz"]["world/left_wrist_color_image"] == 3.0
+    assert "world/color_image" in atom.kwargs["max_hz"]
+
+
 def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
