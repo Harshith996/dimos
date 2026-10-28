@@ -15,6 +15,7 @@
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
 from dataclasses import replace
+import math
 import os
 import platform
 
@@ -102,12 +103,14 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             "base_trajectory", "execute", {"trajectory": _forward(0.2, duration=0.5)}
         )
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
+        # The task itself ends the trajectory settle_timeout after its last point; pytest's timeout catches a hang.
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
-            is TrajectoryState.COMPLETED,
-            timeout=15.0,
-            message="the base trajectory never completed",
+            is not TrajectoryState.EXECUTING,
+            timeout=math.inf,
         )
+        status = coordinator.task_invoke("base_trajectory", "get_status", {})
+        assert status.state is TrajectoryState.COMPLETED
         assert coordinator.get_joint_positions()["chassis/vx"] == pytest.approx(0.2, abs=0.03)
     finally:
         coordinator.stop()
