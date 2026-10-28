@@ -133,7 +133,7 @@ def _github_output(line: str) -> None:
 
 # Pre-filter source files for a NativeModuleConfig subclass before parsing
 # them, mirroring what the AST scan below accepts (a direct base by that name).
-_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\([^)]*\bNativeModuleConfig\b", re.MULTILINE)
 _SKIP_PREFIXES = ("test_", "demo_", "conftest")
 
 
