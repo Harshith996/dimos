@@ -29,6 +29,7 @@ from numpy.typing import NDArray
 
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.core import summarize_lengths
+from dimos.imitation.dataprep.formats.lerobot.features import canonical_feature_names
 from dimos.imitation.dataprep.formats.lerobot.protocol import (
     REQUEST_ADAPTER,
     BuildRequest,
@@ -79,8 +80,15 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     raw_schema = output.metadata.get("feature_schema")
     if not isinstance(raw_schema, dict) or not raw_schema:
         raise ValueError("LeRobot output.metadata.feature_schema is required")
+    names = canonical_feature_names(
+        {key: raw_schema[key]["dtype"] for key in first.observation},
+        first.action.keys(),
+    )
+    renamed = [names.get(key, key) for key in raw_schema]
+    if len(set(renamed)) != len(renamed):
+        raise ValueError("LeRobot feature rename collision in output schema")
     features = {
-        key: {**definition, "shape": tuple(definition["shape"])}
+        names.get(key, key): {**definition, "shape": tuple(definition["shape"])}
         for key, definition in raw_schema.items()
     }
     default_task_label = output.metadata.get("default_task_label", "task")
@@ -106,7 +114,13 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
                 raise ValueError(f"episode {sample.episode_id!r} is not contiguous")
             current_episode = sample.episode_id
             dataset.add_frame(
-                {"task": _task(sample, default_task_label), **_sample_features(sample)}
+                {
+                    "task": _task(sample, default_task_label),
+                    **{
+                        names.get(key, key): value
+                        for key, value in _sample_features(sample).items()
+                    },
+                }
             )
 
         try:
@@ -132,8 +146,9 @@ def inspect_dataset(path: Path) -> dict[str, Any]:
     other: dict[str, Any] = {}
     sidecar_path = path / "dimos_meta.json"
     sidecar = json.loads(sidecar_path.read_text()) if sidecar_path.is_file() else {}
-    observation_names = set(sidecar.get("observation", {}))
-    action_names = set(sidecar.get("action", {}))
+    names = sidecar.get("feature_names", {})
+    observation_names = {names.get(key, key) for key in sidecar.get("observation", {})}
+    action_names = {names.get(key, key) for key in sidecar.get("action", {})}
     metadata_columns = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
     for name, feature in metadata.features.items():
         if name in metadata_columns:

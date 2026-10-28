@@ -17,6 +17,7 @@ from io import StringIO
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from dimos_lerobot import dataprep
 from dimos_lerobot.dataprep import write
@@ -181,7 +182,12 @@ def test_native_dataset_retains_boolean_fill_flags(tmp_path: Path) -> None:
     ("field", "value", "message"),
     [("repo_id", None, "repo_id is required"), ("fps", 14.5, "positive integer")],
 )
-def test_writer_rejects_invalid_export_metadata(tmp_path, field, value, message):
+def test_writer_rejects_invalid_export_metadata(
+    tmp_path: Path,
+    field: str,
+    value: Any,
+    message: str,
+) -> None:
     config = numeric_output(tmp_path / "dataset")
     config.metadata[field] = value
     with pytest.raises(ValueError, match=message):
@@ -219,7 +225,25 @@ def test_inspect_preserves_custom_feature_names_in_direct_and_json_results(
         )
         for sample in numeric_samples()
     )
-    root = write(samples, config)
+    root = config.path
+    dataset = LeRobotDataset.create(
+        repo_id="local/legacy",
+        fps=30,
+        features=features,
+        root=root,
+        use_videos=True,
+    )
+    for sample in samples:
+        dataset.add_frame(
+            {
+                **sample.observation,
+                **sample.action,
+                "complementary_info.is_filled": sample.complementary_info["is_filled"],
+                "task": "pick",
+            }
+        )
+    dataset.save_episode(parallel_encoding=False)
+    dataset.finalize()  # type: ignore[no-untyped-call]
     if sidecar:
         (root / "dimos_meta.json").write_text(
             json.dumps(
