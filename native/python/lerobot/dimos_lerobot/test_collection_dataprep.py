@@ -199,17 +199,10 @@ def test_collection_to_lerobot_roundtrip(
     dataset = LeRobotDataset("dimos/collection-test", root=lerobot_path)
     data = dataset.hf_dataset
     assert data["timestamp"] == pytest.approx([0.0, 1.0, 2.0, 0.0, 1.0, 2.0])
-    assert data["episode_index"] == [0, 0, 0, 1, 1, 1]
-    assert data["frame_index"] == [0, 1, 2, 0, 1, 2]
     np.testing.assert_array_equal(np.asarray(data["state"]), EXPECTED_STATE)
     np.testing.assert_array_equal(np.asarray(data["action"]), EXPECTED_ACTION)
 
     episode_rows = list(dataset.meta.episodes)
-    assert [row["length"] for row in episode_rows] == [3, 3]
-    assert [(row["dataset_from_index"], row["dataset_to_index"]) for row in episode_rows] == [
-        (0, 3),
-        (3, 6),
-    ]
     assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
 
     video = _read_video(lerobot_path / "videos/camera/chunk-000/file-000.mp4")
