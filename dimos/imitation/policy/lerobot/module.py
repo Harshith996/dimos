@@ -41,17 +41,9 @@ from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 class PolicyControlSpec(Spec, Protocol):
     """Coordinator operations used by policy rollout."""
 
-    def get_trajectory_generation(self) -> int: ...
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult: ...
 
-    def execute_trajectory(
-        self,
-        trajectory: JointTrajectory,
-        expected_generation: int | None = None,
-    ) -> TrajectoryExecutionResult: ...
-
-    def cancel_trajectory(
-        self, expected_generation: int | None = None
-    ) -> TrajectoryCancellationResult: ...
+    def cancel_trajectory(self) -> TrajectoryCancellationResult: ...
 
     def list_tasks(self) -> list[str]: ...
 

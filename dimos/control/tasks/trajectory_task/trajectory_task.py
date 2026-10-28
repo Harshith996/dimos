@@ -85,7 +85,6 @@ class TrajectoryExecutionStatus(Enum):
     START_STATE_MISMATCH = auto()
     ALREADY_EXECUTING = auto()
     ESTOPPED = auto()
-    STALE_REQUEST = auto()
 
 
 @dataclass(frozen=True)
