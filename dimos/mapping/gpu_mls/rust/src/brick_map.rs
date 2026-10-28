@@ -389,12 +389,14 @@ impl BrickMap {
         });
 
         if mode == MODE_TRACE {
-            self.pass(&mut encoder, "trace", |map, pass| {
+            self.pass(&mut encoder, "trace walk", |map, pass| {
                 map.dispatch(pass, &map.pipelines.trace_rays, ray_groups);
                 map.prepare(pass);
+            });
+            self.pass(&mut encoder, "trace fit", |map, pass| {
                 map.dispatch_list(pass, &map.pipelines.fit_normals, 2);
             });
-            self.pass(&mut encoder, "trace pass 2", |map, pass| {
+            self.pass(&mut encoder, "trace walk 2", |map, pass| {
                 pass.set_bind_group(0, &map.miss_bind_group, &[]);
                 map.dispatch(pass, &map.pipelines.trace_rays, ray_groups);
                 map.prepare(pass);
