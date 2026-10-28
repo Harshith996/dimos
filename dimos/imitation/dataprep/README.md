@@ -174,3 +174,25 @@ memory. It decodes video values as selected frames are emitted instead of
 retaining every decoded image in the episode. Format writers have their own
 buffering behavior; the HDF5 writer currently buffers an episode before writing
 its datasets.
+
+
+## LeRobot export
+
+The isolated project delegates frame validation, video encoding, data files,
+statistics, and dataset metadata to `LeRobotDataset`. DimOS maps aligned samples
+to frames, preserves task labels and episode boundaries, and publishes the
+completed dataset only after a successful export. Failed exports preserve an
+existing dataset. Invalid frame dtype or shape is reported by LeRobot.
+
+Import dataset configuration and sample types from `dataprep.schema`, and
+alignment functions from `dataprep.core`. The host adapter is in
+`dataprep/formats/lerobot/adapter.py`. Native MCAP codec discovery belongs to
+`McapStore`, with `decode_metadata=True` for trusted recordings.
+
+The isolated project uses standard `test_*.py` names. CI discovers the whole
+project directory, including new tests without a workflow change:
+
+```bash
+cd native/python/lerobot
+uv run --frozen --group tests --with-editable ../../.. pytest dimos_lerobot
+```
