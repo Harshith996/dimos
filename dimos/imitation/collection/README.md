@@ -6,7 +6,7 @@ controls through ordinary `autoconnect()` and `remappings()`.
 
 ## Declare the recorded features
 
-This example declares measured joint state, accepted joint targets, and one RGB
+This example declares measured joint state, commanded joint targets, and one RGB
 image. Constructing the profile does not connect to hardware.
 
 ```python session=profile no-result
@@ -30,12 +30,12 @@ profile = CollectionProfile(
         ),
     },
     actions={"action": state.model_copy(update={
-        "stream": "accepted", "source_kind": "joint_position_updates",
+        "stream": "commanded", "source_kind": "joint_position_updates",
     }, deep=True)},
     metadata={"name": "custom-arm", "robot_type": "custom-arm-2dof"},
 )
 assert profile.input_types() == {
-    "measured": JointState, "wrist_image": Image, "accepted": JointState,
+    "measured": JointState, "wrist_image": Image, "commanded": JointState,
 }
 ```
 
@@ -131,8 +131,8 @@ add an explicit depth feature and connect its producer.
 Capture stores asynchronous streams at their native rates. The saved schema fixes
 the alignment to a 30 Hz grid, anchored at the first video observation, or the first
 observation when there is no video. Snapshot matching uses a 20 ms tolerance.
-Accepted joint updates use causal hold: only commands at or before the target time
-contribute, and omitted joints retain their last accepted target. Missing accepted
+Commanded joint updates use causal hold: only commands at or before the target time
+contribute, and omitted joints retain their last commanded target. Missing commanded
 targets never fall back to measured state or future commands.
 
 The collection API exposes no `sync` or `quality` options. Existing low-level

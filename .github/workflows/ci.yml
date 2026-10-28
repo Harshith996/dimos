@@ -379,12 +379,18 @@ jobs:
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependencies
         run: uv sync --group tests --frozen
       # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+
+      - name: Native collection roundtrip tests
+        run: |
+          uv run pytest -m native_e2e \
+            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py \
+            dimos/imitation/test_datacollection_e2e.py --no-cov
 
       - name: Save cargo build cache
         if: github.ref == 'refs/heads/main'
