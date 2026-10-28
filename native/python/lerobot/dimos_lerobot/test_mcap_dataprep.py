@@ -30,7 +30,7 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import run_dataprep
-from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, SyncConfig
+from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -159,8 +159,7 @@ def test_mcap_converts_to_lerobot_dataset(tmp_path: Path, camera_count: int) -> 
     destination = tmp_path / "dataset"
     _record(source, camera_count)
     profile = CollectionProfile(
-        name="dual-test",
-        robot_type="dual_openyam",
+        metadata={"name": "dual-test", "robot_type": "dual_openyam"},
         observations={
             **{
                 f"observation.images.view_{i}": FeatureSpec(
@@ -200,7 +199,6 @@ def test_mcap_converts_to_lerobot_dataset(tmp_path: Path, camera_count: int) -> 
                 names=JOINTS,
             ),
         },
-        sync=SyncConfig(anchor="observation.images.view_0", rate_hz=30, tolerance_ms=20),
     )
     directory = tmp_path / "session"
     directory.mkdir()

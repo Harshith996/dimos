@@ -45,10 +45,10 @@ from dimos.experimental.memory.rust_recorder import (
 )
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recorder import collect
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.core import extract_episodes
-from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec, SyncConfig
+from dimos.imitation.dataprep.schema import EpisodeExtractor, FeatureSpec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.replay_module import ReplayModule
@@ -185,11 +185,9 @@ def test_native_collection_directory_preserves_schema_and_messages(
         names=["x", "y", "z"],
     )
     profile = CollectionProfile(
-        name="native-test",
-        robot_type="test",
+        metadata={"name": "native-test", "robot_type": "test"},
         observations={"image": camera, "state": state},
         actions={"action": state},
-        sync=SyncConfig(anchor="image", rate_hz=30, tolerance_ms=20),
     )
     artifact = _capture_native_artifact(
         tmp_path, rust_recorder_executable, store_kind, monkeypatch, profile
@@ -248,7 +246,7 @@ def _capture_native_artifact(
             "session": recorder.config.session,
         }
         recorder.stop()
-        atom = collection_recorder(
+        atom = collect(
             profile=profile, recording=tmp_path / "session", format=store_kind
         ).active_blueprints[0]
         recorder = atom.module(**atom.kwargs, **kwargs)

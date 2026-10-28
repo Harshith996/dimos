@@ -1,232 +1,160 @@
-# Collection composition
+# Record a collection
 
-A `CollectionProfile` describes **what to record and how to interpret it as a
-dataset**. It connects typed robot streams to named observation/action features.
-The same declaration supplies recorder inputs and the schema saved beside the
-recording. The robot blueprint owns hardware, cameras, transports and lifecycle;
-a profile does not construct them or select a policy backend.
+`CollectionProfile` declares observations and actions. `collect()` returns a
+recorder Blueprint. Your platform Blueprint supplies control, cameras, and episode
+controls through ordinary `autoconnect()` and `remappings()`.
 
-## Standard joint and RGB collection
+## Declare the recorded features
 
-Use `collect()` for robots publishing `coordinator_joint_state` and, for commanded
-actions, `applied_joint_position_command`. It generates the profile, typed recorder,
-camera modules, remappings and episode monitor before autoconnect. No separate
-robot-specific profile is needed.
-
-```python skip
-from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.collection.composition import collect
-from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator
-
-robot = HardwareComponent("custom-arm", HardwareType.WHOLE_BODY, joints=["arm/joint1"])
-control = ControlCoordinator.blueprint(instance_name="ControlCoordinator", hardware=[robot])
-collection = collect(
-    name="custom-arm-teach",
-    cameras={"wrist": WebcamConfig(camera_index=0, fps=30)},
-    control=control,
-    action_source="measured_positions",
-)
-```
-
-The control Blueprint supplies hardware identity and joint order through its
-sole coordinator configuration. `collect()` rejects missing or ambiguous
-coordinators and hardware declarations. For multiple hardware components,
-pass an explicit `robot_type` for dataset metadata. `collect()` does not
-create another coordinator or change its control gains. Use `measured_positions`
-with a hand-guiding Blueprint and `accepted_targets` with a teleop Blueprint.
-These choices mean snapshot positions and causal accepted target updates,
-respectively. Pass an `episodes` Blueprint to retain deployment-specific episode
-controls, such as the dual-arm accepted-target readiness check.
-
-Camera keys become module names and dataset features such as
-`observation.images.wrist`. Dimensions and the default dataset rate come from
-the camera configuration; the first camera anchors alignment with a 20 ms
-tolerance. Pass `sync=SyncConfig(...)` to choose a different anchor or rate.
-Configure `recording` and `format` in Python or through the existing recorder
-module CLI options. The `episodes` module still accepts `--episodes.task`.
-
-The result is an ordinary Blueprint and can be composed with other producers.
-Use `extra_observations` with explicit `FeatureSpec` values for additional wired
-sensors. Standard feature names cannot be replaced through this extension.
-For a different camera producer or custom feature layout, use
-`joint_rgb_profile()` with `collection_recorder()`, or declare a full
-`CollectionProfile`. Saved recordings retain the existing portable schema and
-remain independent of the current robot configuration.
-
-## Types and fields
-
-| Type | Responsibility |
-| --- | --- |
-| `FeatureSpec` | Dataset projection plus an optional live-capture `message_type`. |
-| `CollectionProfile` | Robot contract: name, robot_type, observations, actions, sync and quality. |
-| `RecordingSchema` | Portable JSON snapshot of the contract, without Python message classes. |
-
-See [profile.py](/dimos/imitation/collection/profile.py),
-[recording.py](/dimos/imitation/collection/recording.py), and
-[dataprep/schema.py](/dimos/imitation/dataprep/schema.py).
-
-Collection and offline preparation use the same feature class. A live profile
-requires `message_type` on every feature; the recorder also requires each class
-to be importable at module level and implement the native codec. Offline
-features need no message class. `message_type` is omitted from feature JSON and
-JSON Schema, and `to_schema()` clears it when saving the portable contract.
-
-## A minimal custom arm
-
-This two-joint example records measured positions as observations and accepted
-targets as actions. It runs without hardware. Put the declaration in your robot
-package; joint names must match what its producers publish.
+This example declares measured joint state, accepted joint targets, and one RGB
+image. Constructing the profile does not connect to hardware.
 
 ```python session=profile no-result
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.imitation.dataprep.core import SyncConfig
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 joints = ["arm/joint1", "arm/gripper"]
-profile = CollectionProfile(
-    name="custom-arm", robot_type="custom-arm-2dof",
-    observations={"observation.state": FeatureSpec(
-        stream="measured", message_type=JointState, field="position",
-        dtype="float32", shape=(2,), names=joints,
-    )},
-    actions={"action": FeatureSpec(
-        stream="accepted", message_type=JointState, field="position",
-        dtype="float32", shape=(2,), names=joints,
-        source_kind="joint_position_updates",
-    )},
-    sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
+state = FeatureSpec(
+    stream="measured", message_type=JointState, field="position",
+    dtype="float32", shape=(2,), names=joints,
 )
-assert profile.input_types() == {"measured": JointState, "accepted": JointState}
-```
-
-The outer keys (`observation.state`, `action`) are **dataset feature names**.
-`stream` names (`measured`, `accepted`) identify **recorder input ports** and must
-match blueprint outputs or be connected through remappings. `message_type` is
-the raw message class; `dtype` and `shape` describe its projected dataset value.
-
-| Field | Meaning |
-| --- | --- |
-| `name`, `robot_type` | Identities saved in metadata, not blueprint lookup keys. |
-| `observations`, `actions` | Nonempty mappings with distinct feature names. |
-| `sync` | Observation-feature anchor, dataset rate and snapshot tolerance. |
-| `quality` | Validation policy; defaults to strict mode. |
-| Feature `field` | Optional message attribute or dictionary key, such as `position`. |
-| Feature `dtype`, `shape` | Numerical dtype or `video`, and exact per-frame dimensions. |
-| Feature `names` | Ordered vector elements, or image axis labels. |
-| Feature `source_kind` | `snapshot` (default) or `joint_position_updates`. |
-
-`shape=(2,)` is one two-element vector, not two independently declared features.
-JointState projection follows configured names regardless of incoming order:
-
-```python session=profile no-result
-from dimos.imitation.dataprep.core import resolve_field
-
-message = JointState(name=["arm/gripper", "arm/joint1"], position=[0.2, 1.0])
-value = resolve_field(message, profile.observations["observation.state"])
-assert value.tolist() == [1.0, 0.2]
-```
-
-Dataset preparation converts numerical values to the declared dtype and checks
-shape, missing joints and finite values. Missing accepted targets are not filled
-from measured state or future commands.
-
-### State versus action
-
-- `snapshot` selects a nearby recorded observation within the alignment
-  tolerance. Hand-guided teaching can use measured positions for both state
-  and action with this source kind.
-- `joint_position_updates` reconstructs accepted JointState position targets
-  causally. Sparse updates retain omitted joints' last accepted target, including
-  history before the episode. Every configured joint needs an accepted target.
-  This source kind requires JointState messages and a named position vector.
-
-Several features may project different fields or subsets from one raw stream.
-`input_types()` deduplicates recorder inputs, not dataset features. Shared-stream
-features must agree on message class and source kind. Measured state and accepted
-commands are different streams, even when both use JointState.
-
-### Add a camera
-
-An image feature declares an input; the blueprint still provides its camera.
-This adds a 64×64 RGB stream as the timeline anchor:
-
-```python session=profile no-result
-from dimos.msgs.sensor_msgs.Image import Image
-
 profile = CollectionProfile(
-    name=profile.name, robot_type=profile.robot_type,
-    observations={**profile.observations, "observation.images.wrist": FeatureSpec(
-        stream="wrist_rgb", message_type=Image, field="data",
-        dtype="video", shape=(64, 64, 3), names=["height", "width", "channels"],
-    )},
-    actions=profile.actions,
-    sync=SyncConfig(anchor="observation.images.wrist", rate_hz=30, tolerance_ms=20),
+    observations={
+        "observation.state": state,
+        "observation.images.wrist": FeatureSpec(
+            stream="wrist_image", message_type=Image, field="data",
+            dtype="video", shape=(480, 640, 3),
+            names=["height", "width", "channels"],
+        ),
+    },
+    actions={"action": state.model_copy(update={
+        "stream": "accepted", "source_kind": "joint_position_updates",
+    }, deep=True)},
+    metadata={"name": "custom-arm", "robot_type": "custom-arm-2dof"},
 )
-assert profile.input_types()["wrist_rgb"] is Image
+assert profile.input_types() == {
+    "measured": JointState, "wrist_image": Image, "accepted": JointState,
+}
 ```
 
-Use the producer's actual resolution. Video input must be a uint8 image; its
-names label axes, while vector names label elements. Add more camera features
-and matching producers for more cameras; there is no camera-count setting.
+Metadata is optional. `name` labels the recording and supplies the default local
+dataset name. `robot_type` labels the dataset; it does not load hardware or determine
+joint order. Preparation output metadata overrides saved metadata.
 
-## Recorder and saved schema
+Feature keys name dataset columns. `stream` identifies a typed recorder input.
+`names` specifies joint order even when incoming JointState messages use another
+order. Several projections can share a raw stream, which the recorder captures
+once. Shared projections must agree on message class and source semantics.
 
-The factory in [recorder.py](/dimos/imitation/collection/recorder.py) returns an
-ordinary blueprint with typed ports declared before `autoconnect`:
+For hand-guided teaching, use the measured state as both observation and action.
+For custom action representations, declare additional action features directly.
+The collection API has no action-mode enumeration.
+
+## Compose the platform
 
 ```python session=profile no-result
 from pathlib import Path
-from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recorder import collect
 
-recorder = collection_recorder(
-    profile=profile, recording=Path("recordings/custom-arm"),
-    format="mcap", instance_name="recorder",
-)
+recorder = collect(profile=profile, recording=Path("recordings/session-001"))
 ```
 
-Construction does not start recording. Compose this with your robot producers,
-camera and episode monitor in a blueprint. The recorder additionally requires
-`status: In[String]` carrying versioned JSON episode events. Port names must be
-nonreserved Python identifiers; message classes must be importable at module
-level and support native LCM encode/decode. No workflow registration is needed.
+Include `recorder`, your robot, camera producers, and an
+`EpisodeMonitorModule.blueprint(instance_name="episodes")` in `autoconnect()`.
+The monitor supplies `status: In[String]` containing versioned JSON episode events.
+Robot-specific readiness rules belong on that monitor. The recorder must precede
+producers in the Blueprint so it stops after them.
 
-At runtime, wiring checks require every declared input. Capture stores native-rate,
-unaligned streams in a new directory containing `schema.json` and `recording.mcap`,
-or `recording.db` for `format="sqlite"`. Remapped recorded names are reflected in
-the saved schema. Copy the complete directory so schema and payload stay together.
+The Python graph supports any number of coordinators. Connect each recorded stream
+explicitly when names differ. The recorder requires every declared input and status
+before recording. Message classes must be importable at module level and support
+native LCM encoding. Missing or ambiguous producers are wiring errors.
 
-`to_schema()` drops `message_type` but preserves dataset interpretation. Export
-uses the saved schema, not a later edited robot profile. This round-trip builds
-a config without reading a recording or starting the isolated runtime:
+You can supply the directory through `--recorder.recording` instead of Python.
+The directory must be new; existing directories are errors. Recording creates
+`schema.json` and `recording.mcap`, or `recording.db` with `format="sqlite"`.
+The profile's metadata name is not a filesystem path.
+
+## Replace USB cameras with RealSense
+
+Give cameras stable logical names such as `left_wrist`, `right_wrist`, and
+`overhead`. The platform selects drivers and devices. For example, these are real
+Blueprint declarations, not functions that start cameras:
+
+```python
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
+
+usb = autoconnect(*(
+    CameraModule.blueprint(
+        instance_name=name,
+        hardware=WebcamConfig(camera_index=index, width=640, height=480, fps=30),
+    )
+    for index, name in enumerate(("left_wrist", "right_wrist", "overhead"))
+))
+realsense = autoconnect(*(
+    RealSenseCamera.blueprint(
+        instance_name=name, serial_number=serial, width=640, height=480, fps=30,
+    )
+    for name, serial in {
+        "left_wrist": "LEFT_DEVICE_SERIAL",
+        "right_wrist": "RIGHT_DEVICE_SERIAL",
+        "overhead": "OVERHEAD_DEVICE_SERIAL",
+    }.items()
+))
+remappings = [
+    (name, "color_image", f"{name}_image")
+    for name in ("left_wrist", "right_wrist", "overhead")
+]
+usb = usb.remappings(remappings)
+realsense = realsense.remappings(remappings)
+```
+
+Replace the example serial numbers with your devices' serial numbers.
+Replace `usb` with `realsense` in the platform composition. Keep the profile when
+RGB message types, output dimensions, and logical stream names stay the same.
+Existing ROS or remote producers use the same stream contract.
+
+If the output dimensions change, change the image feature shape or normalize the
+camera output. Preparation checks actual shape and dtype. Recording preserves raw
+streams and does not decode every image for live shape validation. To record depth,
+add an explicit depth feature and connect its producer.
+
+## Prepare the saved recording
+
+Capture stores asynchronous streams at their native rates. The saved schema fixes
+the alignment to a 30 Hz grid, anchored at the first video observation, or the first
+observation when there is no video. Snapshot matching uses a 20 ms tolerance.
+Accepted joint updates use causal hold: only commands at or before the target time
+contribute, and omitted joints retain their last accepted target. Missing accepted
+targets never fall back to measured state or future commands.
+
+The collection API exposes no `sync` or `quality` options. Existing low-level
+preparation APIs retain their alignment and quality settings for offline use.
 
 ```python session=profile no-result
 from dimos.imitation.collection.recording import RecordingSchema
-from dimos.imitation.dataprep.core import OutputConfig
+from dimos.imitation.dataprep.schema import OutputConfig
 
 schema = RecordingSchema.model_validate_json(profile.to_schema().model_dump_json())
 config = schema.dataprep_config(
-    Path("recordings/custom-arm"),
+    Path("recordings/session-001"),
     OutputConfig(format="lerobot", path=Path("datasets/custom-arm")),
 )
-assert config.source == "recordings/custom-arm/recording.mcap"
 assert config.action["action"].names == joints
+assert config.sync.rate_hz == 30
 assert "message_type" not in schema.model_dump_json()
 ```
 
-For a real directory, use `RecordingSchema.read(directory)` first, then pass its
-config to `run_lerobot_dataprep` in
-[formats/lerobot/adapter.py](/dimos/imitation/dataprep/formats/lerobot/adapter.py), or to `run_dataprep`
-in [dataprep/build.py](/dimos/imitation/dataprep/build.py) for HDF5.
-`inspect_recording(..., config=config)` uses the same interpretation for quality
-inspection. These APIs are available at this layer; the later imitation CLI
-is not required.
+For an existing recording, call `RecordingSchema.read(directory)` before creating
+the preparation config. Copy the complete directory to move it between machines.
+Preparation reads the saved schema, including resolved recorded stream names, and
+does not import the current robot configuration. Existing schemas with top-level
+`name` and `robot_type` remain readable.
 
-Profile validation checks declarations; wiring checks inputs; preparation checks
-actual recorded values. A valid profile alone does not prove recording quality
-or checkpoint compatibility.
-
-Instance recorder ports use the core `input_types` Blueprint argument. The same
-ordinary `CollectionRecorder` class handles every camera count. No generated
-classes, class cache, metaclass, or custom pickle registration are required.
+See [offline alignment](/dimos/imitation/dataprep/README.md) and
+[the isolated LeRobot exporter](/dimos/imitation/dataprep/README.md#lerobot-export).

@@ -140,7 +140,7 @@ class CollectionRecorder(RustRecorder):
         return specs
 
 
-def collection_recorder(
+def collect(
     *,
     profile: CollectionProfile,
     recording: Path | None = None,
