@@ -60,7 +60,7 @@ _profile = CollectionProfile(
 
 openyam_quest_collection = autoconnect(
     collect(profile=_profile),
-    EpisodeMonitorModule.blueprint(instance_name="episodes", required_action_joints=OPENYAM_JOINTS),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
     teleop_webxr_openyam,
     CameraModule.blueprint(
         instance_name="wrist",
