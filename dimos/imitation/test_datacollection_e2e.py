@@ -42,6 +42,7 @@ from dimos.imitation.dataprep.schema import (
     FeatureSpec,
     OutputConfig,
     QualityConfig,
+    RecordingSchema,
     SyncConfig,
 )
 from dimos.memory.store.sqlite import SqliteStore
@@ -106,35 +107,37 @@ def _status(
 
 def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
     return DataPrepConfig(
+        recording_schema=RecordingSchema(
+            episodes=EpisodeExtractor(status_stream="status"),
+            observation={
+                "camera": FeatureSpec(
+                    stream="color_image",
+                    field="data",
+                    dtype="video",
+                    shape=(64, 64, 3),
+                    names=["height", "width", "channels"],
+                ),
+                "state": FeatureSpec(
+                    stream="coordinator_joint_state",
+                    field="position",
+                    dtype="float32",
+                    shape=(2,),
+                    names=["joint_0", "joint_1"],
+                ),
+            },
+            action={
+                "action": FeatureSpec(
+                    stream="coordinator_joint_state",
+                    field="position",
+                    dtype="float32",
+                    shape=(2,),
+                    names=["joint_0", "joint_1"],
+                ),
+            },
+            sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0),
+            quality=QualityConfig(max_camera_gap_ms=1100.0),
+        ),
         source=str(db_path),
-        episodes=EpisodeExtractor(status_stream="status"),
-        observation={
-            "camera": FeatureSpec(
-                stream="color_image",
-                field="data",
-                dtype="video",
-                shape=(64, 64, 3),
-                names=["height", "width", "channels"],
-            ),
-            "state": FeatureSpec(
-                stream="coordinator_joint_state",
-                field="position",
-                dtype="float32",
-                shape=(2,),
-                names=["joint_0", "joint_1"],
-            ),
-        },
-        action={
-            "action": FeatureSpec(
-                stream="coordinator_joint_state",
-                field="position",
-                dtype="float32",
-                shape=(2,),
-                names=["joint_0", "joint_1"],
-            ),
-        },
-        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0),
-        quality=QualityConfig(max_camera_gap_ms=1100.0),
         output=output,
     )
 
