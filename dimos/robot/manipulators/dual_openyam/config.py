@@ -20,6 +20,7 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
     DUAL_OPENYAM_JOINTS,
@@ -111,6 +112,30 @@ DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
 ]
 
 
+# Each fingertip link slides this far (metres) from the closed zero to fully open;
+# both out is the 94 mm span of the real jaws (dual_openyam_workcell_v4 SOURCE.md).
+DUAL_OPENYAM_FINGER_TRAVEL = 0.047
+
+
+def dual_openyam_gripper_config() -> GripperConfig:
+    """Which OpenYAM links may touch a grasped object and how the fingers close.
+
+    For the pick's grasp contact check: only the fingertip links may touch the
+    object, and the check slides the four finger joints from open to closed to
+    drop grasps that hit the table or a neighbour, or close on nothing.
+    """
+    return GripperConfig(
+        pad_links=tuple(
+            f"{side}_tip_{jaw}" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
+        ),
+        finger_joints={
+            f"{side}_finger_{jaw}_joint": (DUAL_OPENYAM_FINGER_TRAVEL, 0.0)
+            for side in DUAL_OPENYAM_SIDES
+            for jaw in ("left", "right")
+        },
+    )
+
+
 def dual_openyam_model_config() -> RobotModelConfig:
     """Build the combined arm-only planning model."""
     return RobotModelConfig(
@@ -118,6 +143,7 @@ def dual_openyam_model_config() -> RobotModelConfig:
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
         collision_exclusion_pairs=list(DUAL_OPENYAM_COLLISION_EXCLUSIONS),
+        gripper=dual_openyam_gripper_config(),
         planning_groups=[
             PlanningGroupDefinition(
                 name="left_manipulator",

@@ -139,7 +139,7 @@ From `dimos shell`, `SceneOverlayModule.set_scene("Scene_25")` switches scenes,
 
 ## Model assets
 
-`dual_openyam_workcell_v3`, exported as `DUAL_OPENYAM_MODEL`, is the physical
+`dual_openyam_workcell_v4`, exported as `DUAL_OPENYAM_MODEL`, is the physical
 workcell: the i2rt YAM arm geometry and meshes, the two arm bases and the
 joint 3 zero offsets from the rig calibration of 2026-10-15, the link masses
 and centres of mass from the gravity identification of 2026-10-16 (the Damiao
@@ -149,7 +149,13 @@ for each wrist D405 and bracket, and a fixed `workcell` link with the table
 slab, the camera post and the overhead camera. Its zero configuration is the
 folded rest pose on the supports. The hardware gains in `config.py` are the
 ones chosen by the step sweeps of the same calibration. The package's `SOURCE.md` records where every
-number comes from. A revised model ships under a new package name, because LFS
+number comes from. v4 turns the four fingertip joints prismatic (zero closed, 47 mm
+open each) so the pick's grasp contact check can open and close the fingers; the
+planner lists the arm joints only and keeps them closed. The check is on in the
+grasp stacks through `robot=` on `PickAndPlaceModule` and the model's `GripperConfig`
+(fingertip links as the pads): grasps the arm cannot reach, that would touch the
+table or a neighbour, or that close on nothing are dropped before any motion, and
+the GraspGenX stack hands it all 500 samples. A revised model ships under a new package name, because LFS
 extraction caches by directory name.
 
 ## Safety

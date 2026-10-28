@@ -216,19 +216,11 @@ def dual_openyam_wrist_camera(side: str) -> Blueprint:
     return camera.remappings([(name, stream, f"{side}_wrist_{stream}") for stream in streams])
 
 
-# GraspGenX ranks by grasp quality, not reachability; with the heuristic's single top-down
-# candidate the default of 5 is plenty, with 100 learned candidates the first 5 were all
-# side approaches this 6-DOF arm cannot reach (2026-10-27, scene 56).
-DUAL_OPENYAM_GRASPGENX_ATTEMPTS = 30
-
-
-def dual_openyam_grasp_modules(
-    grasp_provider: Blueprint | None = None,
-    max_grasp_attempts: int = 5,
-) -> tuple[Blueprint, ...]:
+def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple[Blueprint, ...]:
+    model = dual_openyam_grasp_model_config()
     return (
         planner(
-            model=dual_openyam_grasp_model_config(),
+            model=model,
             gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS,
             kinematics=DUAL_OPENYAM_PINK,
             default_speed_scale=0.25,
@@ -240,8 +232,10 @@ def dual_openyam_grasp_modules(
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(
             planning_frame="world",
+            # The contact check drops grasps the arm cannot reach or that would hit the
+            # table, a neighbour, or the object off the fingertips, before any IK.
+            robot=model,
             pregrasp_offset=0.05,
-            max_grasp_attempts=max_grasp_attempts,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
             grasp_verification=GraspVerificationConfig(empty_epsilon=0.035),
@@ -292,7 +286,8 @@ dual_openyam_grasp_graspgenx = autoconnect(
         GraspGenXModule.blueprint(
             gripper=DUAL_OPENYAM_GRIPPER_SWEEP_VOLUME,
             grasp_frame_to_tcp=DUAL_OPENYAM_GRASP_FRAME_TO_TCP,
+            # Return every sample: the pick's contact check chooses among them.
+            max_candidates=500,
         ),
-        max_grasp_attempts=DUAL_OPENYAM_GRASPGENX_ATTEMPTS,
     )
 ).global_config(record="sqlite", record_topics=DUAL_OPENYAM_RECORD_TOPICS)

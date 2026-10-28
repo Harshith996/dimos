@@ -144,11 +144,26 @@ def test_graspgenx_variant_only_swaps_the_grasp_provider() -> None:
     assert heuristic - {HeuristicGraspModule} == learned - {GraspGenXModule}
     atom = _atom(dual_openyam_grasp_graspgenx, GraspGenXModule)
     assert atom.kwargs["grasp_frame_to_tcp"][2][3] == pytest.approx(0.146)
-    # The learned provider ranks by quality, so the pick walks further down its list.
-    assert (
-        _atom(dual_openyam_grasp_graspgenx, PickAndPlaceModule).kwargs["max_grasp_attempts"] == 30
-    )
-    assert (
-        "max_grasp_attempts" not in _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs
-        or _atom(dual_openyam_grasp, PickAndPlaceModule).kwargs["max_grasp_attempts"] == 5
-    )
+    # Every sample goes to the pick's contact check; the attempt budget stays the default.
+    assert atom.kwargs["max_candidates"] == 500
+    for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
+        assert "max_grasp_attempts" not in _atom(stack, PickAndPlaceModule).kwargs
+
+
+def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
+    for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
+        robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
+        assert robot.gripper is not None
+        assert set(robot.gripper.pad_links) == {
+            f"{side}_tip_{jaw}" for side in ("left", "right") for jaw in ("left", "right")
+        }
+        assert set(robot.gripper.finger_joints) == {
+            f"{side}_finger_{jaw}_joint" for side in ("left", "right") for jaw in ("left", "right")
+        }
+        assert all(
+            opened == 0.047 and closed == 0.0
+            for opened, closed in robot.gripper.finger_joints.values()
+        )
+        assert len(robot.gripper.joint_positions()) == 5
+        assert {g.tip_link for g in robot.planning_groups} == {"left_tcp", "right_tcp"}
+        assert robot is _atom(stack, ManipulationModule).kwargs["model"]
