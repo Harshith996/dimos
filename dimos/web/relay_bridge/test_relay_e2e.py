@@ -46,6 +46,8 @@ from dimos.web.relay_bridge.protocol import (
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError
 
+pytestmark = pytest.mark.self_hosted
+
 # One robot identity for the whole module; function-scoped clients close before
 # the next test registers it. No manifest on purpose: undeclared channels take
 # the frame header's delivery, which is what these transport tests steer with.
@@ -105,7 +107,11 @@ async def fetch_stats(relay: RelayReadyInfo) -> dict:
 def test_info_matches_ready_line(relay: RelayReadyInfo) -> None:
     with urllib.request.urlopen(f"http://127.0.0.1:{relay.http_port}/api/info") as response:
         info = json.load(response)
-    assert info == {"wtUrl": relay.wt_url, "certHash": relay.cert_hash, "v": relay.v}
+    assert info == {
+        "wtUrl": relay.wt_url,
+        "certHash": relay.cert_hash,
+        "v": relay.v,
+    }
     assert relay.wt_url.startswith("https://127.0.0.1:")
 
 
