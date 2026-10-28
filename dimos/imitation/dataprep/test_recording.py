@@ -103,11 +103,9 @@ def test_moved_recording_directory_prepares_saved_episodes(format, camera_count,
         names=["right", "left"],
     )
     profile = CollectionProfile(
-        name="external-robot",
-        robot_type="custom",
+        metadata={"name": "external-robot", "robot_type": "custom"},
         observations={**cameras, "state": joints},
         actions={"action": joints},
-        sync=SyncConfig(anchor="camera_0", rate_hz=30, tolerance_ms=20),
     )
     directory = tmp_path / "original"
     directory.mkdir()

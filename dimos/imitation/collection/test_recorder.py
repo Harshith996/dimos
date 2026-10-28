@@ -27,9 +27,9 @@ from dimos.core.native_module import NativeModule
 from dimos.core.stream import Out, RemoteIn
 from dimos.imitation.collection import recorder as recorder_module
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import CollectionRecorderConfig, collection_recorder
+from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect
 from dimos.imitation.collection.recording import RecordingSchema
-from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, SyncConfig
+from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
@@ -42,8 +42,7 @@ class _CameraPublisher(Module):
 
 def _profile(camera_count):
     return CollectionProfile(
-        name="test",
-        robot_type="test",
+        metadata={"name": "test", "robot_type": "test"},
         observations={
             **{
                 f"images.{i}": FeatureSpec(
@@ -75,7 +74,6 @@ def _profile(camera_count):
                 names=["joint"],
             )
         },
-        sync=SyncConfig(anchor="images.0", rate_hz=30, tolerance_ms=20),
     )
 
 
@@ -83,7 +81,7 @@ def _profile(camera_count):
 def recorder(tmp_path):
     profile = _profile(2)
     profile.actions["action"].stream = "commanded"
-    atom = collection_recorder(
+    atom = collect(
         profile=profile,
         recording=tmp_path / "collection.mcap",
     ).active_blueprints[0]
@@ -94,7 +92,7 @@ def recorder(tmp_path):
 
 @pytest.mark.parametrize("count", [1, 2, 4])
 def test_factory_exposes_all_typed_inputs_before_autoconnect(count, tmp_path):
-    blueprint = collection_recorder(profile=_profile(count), recording=tmp_path / "test.mcap")
+    blueprint = collect(profile=_profile(count), recording=tmp_path / "test.mcap")
     stack = autoconnect(
         blueprint,
         *[_CameraPublisher.blueprint(instance_name=f"publisher_{i}") for i in range(count)],
@@ -119,13 +117,9 @@ def test_factory_exposes_all_typed_inputs_before_autoconnect(count, tmp_path):
 
 
 def test_two_shapes_and_recording_paths_have_independent_configuration(tmp_path):
-    first = collection_recorder(
-        profile=_profile(1), recording=tmp_path / "one.mcap", instance_name="one"
-    )
-    second = collection_recorder(
-        profile=_profile(4), recording=tmp_path / "four.mcap", instance_name="four"
-    )
-    same_shape = collection_recorder(profile=_profile(1), recording=tmp_path / "other.mcap")
+    first = collect(profile=_profile(1), recording=tmp_path / "one.mcap", instance_name="one")
+    second = collect(profile=_profile(4), recording=tmp_path / "four.mcap", instance_name="four")
+    same_shape = collect(profile=_profile(1), recording=tmp_path / "other.mcap")
     one, four = autoconnect(first, second).active_blueprints
     assert one.module is same_shape.active_blueprints[0].module
     assert one.module is four.module
@@ -135,7 +129,7 @@ def test_two_shapes_and_recording_paths_have_independent_configuration(tmp_path)
 
 
 def test_blueprint_pickle_preserves_instance_inputs(tmp_path):
-    blueprint = collection_recorder(profile=_profile(2), recording=tmp_path / "recording.mcap")
+    blueprint = collect(profile=_profile(2), recording=tmp_path / "recording.mcap")
     restored = pickle.loads(pickle.dumps(blueprint))
     atom = restored.active_blueprints[0]
     assert atom.module is recorder_module.CollectionRecorder
@@ -180,7 +174,7 @@ def test_invalid_ports_fail_at_factory_boundary(stream, tmp_path):
     profile = _profile(1)
     profile.observations["images.0"].stream = stream
     with pytest.raises(ValueError, match="reserved"):
-        collection_recorder(profile=profile, recording=tmp_path / "invalid.mcap")
+        collect(profile=profile, recording=tmp_path / "invalid.mcap")
 
 
 def test_native_collection_uses_the_recorder_build_directory(recorder):
@@ -214,9 +208,7 @@ def test_generated_inputs_survive_forkserver_and_fresh_deployment(
 ):
     # Workers predate the class; fork inheritance cannot make this pass.
     assert worker_manager.workers[0].pid is not None
-    atom = collection_recorder(
-        profile=_profile(3), recording=tmp_path / "worker.mcap"
-    ).active_blueprints[0]
+    atom = collect(profile=_profile(3), recording=tmp_path / "worker.mcap").active_blueprints[0]
     first = worker_manager.deploy(
         atom.module, global_config, {**atom.kwargs, "instance_name": "first"}
     )
@@ -239,7 +231,7 @@ def test_unsupported_message_type_is_rejected(tmp_path):
     profile = _profile(1)
     profile.observations["images.0"].message_type = str
     with pytest.raises(TypeError, match="native recording"):
-        collection_recorder(profile=profile, recording=tmp_path / "invalid.mcap")
+        collect(profile=profile, recording=tmp_path / "invalid.mcap")
 
 
 def test_local_message_type_is_rejected(tmp_path):
@@ -249,11 +241,11 @@ def test_local_message_type_is_rejected(tmp_path):
     profile = _profile(1)
     profile.observations["images.0"].message_type = LocalMessage
     with pytest.raises(ValueError, match="importable at module level"):
-        collection_recorder(profile=profile, recording=tmp_path / "invalid.mcap")
+        collect(profile=profile, recording=tmp_path / "invalid.mcap")
 
 
 def test_run_config_resolves_collection_destination(tmp_path):
-    blueprint = collection_recorder(profile=_profile(1))
+    blueprint = collect(profile=_profile(1))
     parser = BlueprintConfigParser(blueprint)
     help_text = parser.format_help()
     assert "--recorder.recording" in help_text
@@ -277,12 +269,8 @@ def test_same_ports_keep_independent_dataset_projections(tmp_path):
     first_profile = _profile(1)
     second_profile = _profile(1)
     second_profile.observations["state"].names = ["other_joint"]
-    first = collection_recorder(
-        profile=first_profile, recording=tmp_path / "first"
-    ).active_blueprints[0]
-    second = collection_recorder(
-        profile=second_profile, recording=tmp_path / "second"
-    ).active_blueprints[0]
+    first = collect(profile=first_profile, recording=tmp_path / "first").active_blueprints[0]
+    second = collect(profile=second_profile, recording=tmp_path / "second").active_blueprints[0]
     assert first.module is second.module
     assert first.kwargs["recording_schema"].observation["state"].names == ["joint"]
     assert second.kwargs["recording_schema"].observation["state"].names == ["other_joint"]
@@ -291,7 +279,7 @@ def test_same_ports_keep_independent_dataset_projections(tmp_path):
 @pytest.fixture
 def connected_recorder(tmp_path, mocker):
     def make(format="mcap", **kwargs):
-        atom = collection_recorder(
+        atom = collect(
             profile=_profile(2), recording=tmp_path / "session", format=format
         ).active_blueprints[0]
         instance = atom.module(**atom.kwargs, **kwargs)
@@ -373,13 +361,13 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
     (package / "__init__.py").write_text("")
     (package / "collection.py").write_text(
         "from dimos.core.coordination.blueprints import autoconnect\n"
-        "from dimos.imitation.collection.recorder import CollectionRecorderConfig, collection_recorder\n"
+        "from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect\n"
         "from dimos.imitation.collection.profile import CollectionProfile\nfrom dimos.imitation.dataprep.schema import FeatureSpec\n"
         "from dimos.imitation.dataprep.core import SyncConfig\n"
         "from dimos.msgs.sensor_msgs.JointState import JointState\n"
         "feature = FeatureSpec(stream='joints', message_type=JointState, field='position', dtype='float32', shape=(1,), names=['joint'])\n"
-        "profile = CollectionProfile(name='vendor', robot_type='vendor', observations={'state': feature}, actions={'action': feature}, sync=SyncConfig(anchor='state', rate_hz=30, tolerance_ms=20))\n"
-        "collect = autoconnect(collection_recorder(profile=profile))\n"
+        "profile = CollectionProfile(metadata={'robot_type': 'vendor'}, observations={'state': feature}, actions={'action': feature})\n"
+        "collect = autoconnect(collect(profile=profile))\n"
     )
     metadata = tmp_path / "vendor_robot-1.0.dist-info"
     metadata.mkdir()

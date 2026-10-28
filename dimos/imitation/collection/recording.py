@@ -15,7 +15,9 @@
 """Portable collection directories: one raw artifact and its dataset schema."""
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic import Field
 
 from dimos.imitation.dataprep.schema import DataPrepConfig, DatasetSchema, OutputConfig
 
@@ -23,8 +25,9 @@ from dimos.imitation.dataprep.schema import DataPrepConfig, DatasetSchema, Outpu
 class RecordingSchema(DatasetSchema):
     """JSON snapshot of the collection profile; no Python classes or absolute paths."""
 
-    name: str
-    robot_type: str
+    name: str = "collection"
+    robot_type: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
     payload: Literal["recording.mcap", "recording.db"] = "recording.mcap"
 
     @classmethod
@@ -39,13 +42,14 @@ class RecordingSchema(DatasetSchema):
             update={
                 "metadata": {
                     "repo_id": f"local/{self.name}",
-                    "robot_type": self.robot_type,
+                    **({"robot_type": self.robot_type} if self.robot_type else {}),
+                    **self.metadata,
                     **output.metadata,
                 }
             }
         )
         return DataPrepConfig(
-            **self.model_dump(exclude={"name", "robot_type", "payload"}),
+            **self.model_dump(exclude={"name", "robot_type", "metadata", "payload"}),
             source=str(directory / self.payload),
             output=output,
         )

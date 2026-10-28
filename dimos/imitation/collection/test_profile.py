@@ -18,7 +18,7 @@ import pytest
 
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.core import resolve_field
-from dimos.imitation.dataprep.schema import DataPrepConfig, FeatureSpec, OutputConfig, SyncConfig
+from dimos.imitation.dataprep.schema import DataPrepConfig, FeatureSpec, OutputConfig
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -26,8 +26,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 @pytest.fixture
 def profile():
     return CollectionProfile(
-        name="custom",
-        robot_type="test",
+        metadata={"name": "custom", "robot_type": "test"},
         observations={
             "camera": FeatureSpec(
                 stream="camera",
@@ -65,7 +64,6 @@ def profile():
                 names=["b"],
             ),
         },
-        sync=SyncConfig(anchor="camera", rate_hz=30, tolerance_ms=20),
     )
 
 
@@ -128,12 +126,19 @@ def test_profile_rejects_updates_from_non_joint_messages(profile, profile_values
         CollectionProfile(**values)
 
 
-@pytest.mark.parametrize("anchor", ["absent", "target"])
-def test_sync_anchor_must_be_an_observation(profile_values, anchor):
-    values = profile_values
-    values["sync"]["anchor"] = anchor
-    with pytest.raises(ValueError, match="sync anchor"):
-        CollectionProfile(**values)
+def test_profile_persists_fixed_alignment_for_offline_preparation(profile):
+    schema = profile.to_schema()
+    assert schema.sync.model_dump() == {
+        "anchor": "camera",
+        "rate_hz": 30.0,
+        "tolerance_ms": 20.0,
+    }
+
+
+@pytest.mark.parametrize("field", ["sync", "quality", "robot_type", "name"])
+def test_profile_rejects_removed_configuration(profile_values, field):
+    with pytest.raises(ValueError, match="Extra inputs"):
+        CollectionProfile(**profile_values, **{field: "unused"})
 
 
 def test_offline_features_require_message_types_when_used_for_capture(profile, profile_values):

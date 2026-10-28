@@ -29,8 +29,8 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.spec import CameraConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import collection_recorder
-from dimos.imitation.dataprep.schema import FeatureSpec, SyncConfig
+from dimos.imitation.collection.recorder import collect
+from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.webxr.blueprints import (
@@ -71,8 +71,7 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
         names=joints,
     )
     profile = CollectionProfile(
-        name=f"{robot}-webxr",
-        robot_type=robot,
+        metadata={"name": f"{robot}-webxr", "robot_type": robot},
         observations={
             "camera": FeatureSpec(
                 stream="color_image",
@@ -85,11 +84,10 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
             "state": state,
         },
         actions={"action": state.model_copy(deep=True)},
-        sync=SyncConfig(anchor="camera", rate_hz=camera_config.fps, tolerance_ms=50),
     )
     directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
     return (
-        collection_recorder(profile=profile, recording=directory, format="sqlite"),
+        collect(profile=profile, recording=directory, format="sqlite"),
         EpisodeMonitorModule.blueprint(task=task),
         producers,
     )
