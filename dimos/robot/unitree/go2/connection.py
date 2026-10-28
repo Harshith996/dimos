@@ -465,6 +465,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._camera_info_stop = Event()
         self.connection = make_connection(self.config.ip, self.config)
         if self.connection is None:
             return
@@ -505,6 +506,7 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
                 )
             return
         Module.start(self)
+        self._camera_info_stop.clear()
         self.connection.start()
 
         def onimage(image: Image) -> None:
@@ -546,20 +548,23 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             return
 
         # Best-effort steps: teardown must always reach the connection's stop.
+        self._camera_info_stop.set()
         try:
             self.liedown()
         except Exception:
             logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
-        try:
-            self.connection.stop()
-        except Exception:
-            logger.warning("connection stop failed", exc_info=True)
-
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
-        Module.stop(self)
+        try:
+            # Cancel and drain stream callbacks before disconnecting the backend they read from.
+            Module.stop(self)
+        finally:
+            try:
+                self.connection.stop()
+            except Exception:
+                logger.warning("connection stop failed", exc_info=True)
 
     def _send(self, verb: str) -> bool:
         """A verb for the Rust module, as Go2Base.send_command: it runs in order, and a failure is logged there."""
@@ -605,9 +610,9 @@ class GO2Connection(NativeModule, Camera, Pointcloud):
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
-        while True:
+        while not self._camera_info_stop.is_set():
             self.camera_info.publish(self.camera_info_static.with_ts(time.time()))
-            time.sleep(self.config.timing.camera_info_period)
+            self._camera_info_stop.wait(self.config.timing.camera_info_period)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
