@@ -1088,3 +1088,23 @@ def test_example_config_in_strict_mode_rejects_one_late_image(mocker, tmp_path: 
 
     with pytest.raises(RuntimeError, match="failed dataset validation"):
         run_dataprep(config, writer=mocker.Mock(return_value=tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("last_timestamp", "expected"),
+    [(10.066666666, [0, 1, 2]), (10.06, [0, 1])],
+)
+def test_alignment_endpoint_respects_source_timestamp_precision(last_timestamp, expected):
+    store = _FakeStore({"js": _scalar_stream([(10, 0), (10.033333333, 1), (last_timestamp, 2)])})
+    samples = list(
+        iter_episode_samples(
+            store,
+            Episode(id="episode", start_ts=10, end_ts=10.1),
+            {"state": _feature("js")},
+            SyncConfig(anchor="state", rate_hz=30, tolerance_ms=20),
+            QualityConfig(),
+            obs_keys={"state"},
+            action_keys=set(),
+        )
+    )
+    assert [sample.observation["state"].item() for sample in samples] == expected
