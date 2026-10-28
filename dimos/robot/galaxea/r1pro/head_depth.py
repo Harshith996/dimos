@@ -22,19 +22,26 @@ from pydantic import Field
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_module import NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthCloudConfig
+from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthSettings
 from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_WIDTH_M
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 BASE_FRAME = R1ProLioConfig.model_fields["base_frame"].default
 
 
-class R1ProHeadDepthConfig(Depth2DepthCloudConfig):
+class R1ProHeadDepthConfig(NativeModuleConfig, Depth2DepthSettings):
     source_dir: str | None = "dimos/robot/galaxea/r1pro/floor_prior/rust"
     executable: str = "result/bin/r1pro_head_depth"
+    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see Depth2DepthSettings).
+    build_command: str | None = "nix build -L path:."
+    stdin_config: bool = True
+    # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    frame_id: str = ""
     # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
     floor_anchor_step: int = Field(default=8, ge=1, le=256)
     floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)

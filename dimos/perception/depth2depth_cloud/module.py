@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -34,14 +34,8 @@ def has_nvidia_gpu() -> bool:
     return Path("/etc/nv_tegra_release").exists() or Path("/proc/driver/nvidia/version").exists()
 
 
-class Depth2DepthCloudConfig(NativeModuleConfig):
-    source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
-    executable: str = "result/bin/depth2depth_cloud"
-    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see below).
-    build_command: str | None = "nix build -L path:."
-    stdin_config: bool = True
-    # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
-    base_fields: frozenset[str] = frozenset({"frame_id"})
+class Depth2DepthSettings(BaseModel):
+    """Depth2DepthCloud's own settings, shared with native modules built on it."""
 
     # Model input; multiples of 14, smaller is faster. TensorRT builds an engine per size (minutes, once).
     model_height: int = 448
@@ -76,7 +70,6 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     max_range_m: float = Field(default=6.0, ge=0.0, le=1000.0)
     decimation: int = Field(default=4, ge=1, le=64)
     max_points: int = Field(default=0, ge=0, le=10000000)
-    frame_id: str = ""
     # Keep only points whose height in height_frame (e.g. base_link) is within [min, max]; "" keeps all.
     height_frame: str = ""
     min_height_m: float = -1000.0
@@ -92,8 +85,8 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
         return size
 
     @model_validator(mode="after")
-    def _tensorrt_on_nvidia(self) -> Depth2DepthCloudConfig:
-        if self.build_command == "nix build -L path:." and has_nvidia_gpu():
+    def _tensorrt_on_nvidia(self) -> Depth2DepthSettings:
+        if getattr(self, "build_command", None) == "nix build -L path:." and has_nvidia_gpu():
             self.build_command = "nix build -L path:.#tensorrt"
         return self
 
@@ -103,6 +96,17 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
         if scale not in (1, 2, 4, 8):
             raise ValueError(f"decode_scale={scale}: JPEG decodes scale by 1, 2, 4 or 8 only")
         return scale
+
+
+class Depth2DepthCloudConfig(NativeModuleConfig, Depth2DepthSettings):
+    source_dir: str | None = "dimos/perception/depth2depth_cloud/rust"
+    executable: str = "result/bin/depth2depth_cloud"
+    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see Depth2DepthSettings).
+    build_command: str | None = "nix build -L path:."
+    stdin_config: bool = True
+    # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    frame_id: str = ""
 
 
 class Depth2DepthCloud(NativeModule):
