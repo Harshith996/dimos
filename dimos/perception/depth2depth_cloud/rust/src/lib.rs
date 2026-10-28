@@ -14,3 +14,6 @@
 
 pub mod module;
 pub mod undistort;
+
+/// The calibration crate, at the version the module links, for `FrameAnchors` implementations.
+pub use depth2depth;
