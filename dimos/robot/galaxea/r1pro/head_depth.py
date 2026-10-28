@@ -22,11 +22,13 @@ from pydantic import Field
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.native_module import NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthSettings
+from dimos.perception.depth2depth_cloud.module import Depth2DepthSettings
 from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_WIDTH_M
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
@@ -48,10 +50,16 @@ class R1ProHeadDepthConfig(NativeModuleConfig, Depth2DepthSettings):
     floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
 
 
-class R1ProHeadDepth(Depth2DepthCloud):
+class R1ProHeadDepth(NativeModule):
     """Depth2DepthCloud plus a floor prior: the chassis lidar never sees the near floor, which unanchored reads 2-5x short."""
 
     config: R1ProHeadDepthConfig
+
+    image: In[CompressedImage]
+    camera_info: In[CameraInfo]
+    lidar: In[PointCloud2]
+    tf: In[TFMessage]
+    depth_cloud: Out[PointCloud2]
 
 
 class HeadFloorPriorConfig(ModuleConfig):

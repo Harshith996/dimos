@@ -37,6 +37,10 @@ def has_nvidia_gpu() -> bool:
 class Depth2DepthSettings(BaseModel):
     """Depth2DepthCloud's own settings, shared with native modules built on it."""
 
+    if TYPE_CHECKING:
+        # NativeModuleConfig's, which every config using these settings also is.
+        build_command: str | None
+
     # Model input; multiples of 14, smaller is faster. TensorRT builds an engine per size (minutes, once).
     model_height: int = 448
     model_width: int = 560
@@ -86,7 +90,7 @@ class Depth2DepthSettings(BaseModel):
 
     @model_validator(mode="after")
     def _tensorrt_on_nvidia(self) -> Depth2DepthSettings:
-        if getattr(self, "build_command", None) == "nix build -L path:." and has_nvidia_gpu():
+        if self.build_command == "nix build -L path:." and has_nvidia_gpu():
             self.build_command = "nix build -L path:.#tensorrt"
         return self
 
