@@ -143,6 +143,7 @@ class LocalizeSceneRegistrationModule(PerceptionLocalize, ObjectSceneRegistratio
                 [h for h in hits if h.point_cloud is not None and h.last_seen_timestamp >= since]
                 for hits in results
             ]
+            fresh = _one_label_per_object(fresh, self.config.params.cluster_radius_m)
             objects = self._register(prompts, fresh, depth)
             self._scene_snapshot = (depth, self._camera_transform(depth))
         detections = to_detection3d_array(objects, frame_id=world, ts=depth.ts)
@@ -317,6 +318,31 @@ class LocalizeSceneRegistrationModule(PerceptionLocalize, ObjectSceneRegistratio
                 )
             )
         return objects
+
+
+def _one_label_per_object(
+    hits: list[list[Localization]], radius: float
+) -> list[list[Localization]]:
+    """Each object answers to one label: of the labels that put a hit within ``radius``
+    of the same spot, the best-scoring one keeps it.
+
+    Open-vocabulary detectors give every can on the table some score for every can
+    label; without this a scan reports three spam cans, three tuna cans and three
+    soup cans at the same three places.
+    """
+    ranked = sorted(
+        ((hit.semantic_score, label, hit) for label, row in enumerate(hits) for hit in row),
+        key=lambda item: -item[0],
+    )
+    taken: list[np.ndarray] = []
+    kept: list[list[Localization]] = [[] for _ in hits]
+    for _, label, hit in ranked:
+        center = np.asarray(hit.position_world_xyz)
+        if any(np.linalg.norm(center - other) <= radius for other in taken):
+            continue
+        taken.append(center)
+        kept[label].append(hit)
+    return kept
 
 
 def _depth_metres(depth: Image) -> np.ndarray:

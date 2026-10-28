@@ -187,6 +187,9 @@ def test_localize_variants_differ_from_the_base_stacks_by_the_perception_module(
         atom = _atom(variant, LocalizeSceneRegistrationModule)
         assert atom.kwargs["world_frame"] == "world"
         assert atom.kwargs["params"].min_views == 1
+        assert atom.kwargs["params"].max_object_extent_m == 0.25
+        assert atom.kwargs["params"].accept_score == 0.25
+        assert atom.kwargs["detector"] == "gdino"
         assert atom.kwargs["max_obstacle_width"] == 0.06
     assert LocalizeSceneRegistrationModule in _modules(dual_openyam_grasp_localize_agent)
     assert GraspGenXModule in _modules(dual_openyam_grasp_localize_graspgenx_agent)

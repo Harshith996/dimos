@@ -172,6 +172,28 @@ def test_scan_reports_fresh_hits_with_ids_clouds_and_planner_objects(
     assert module.detections_3d.messages and module.detections.messages
 
 
+def test_each_object_answers_to_its_best_label_only(
+    module: LocalizeSceneRegistrationModule,
+) -> None:
+    # Three cans, and every can label scores every can: the best label wins each spot.
+    spam, tuna, soup = (0.28, -0.16, 0.02), (0.35, 0.12, 0.02), (0.43, -0.01, 0.02)
+    module._answers = [
+        [_hit(spam, score=0.46), _hit(tuna, score=0.35), _hit(soup, score=0.26)],
+        [_hit(spam, score=0.17), _hit(tuna, score=0.40), _hit(soup, score=0.12)],
+        [_hit(spam, score=0.21), _hit(tuna, score=0.14), _hit(soup, score=0.30)],
+    ]
+
+    detections = module.scan_scene(["spam can", "tuna fish can", "tomato soup can"])
+
+    labels = {
+        d.results[0].hypothesis.class_id: d.bbox.center.position for d in detections.detections
+    }
+    assert set(labels) == {"spam can", "tuna fish can", "tomato soup can"}
+    assert abs(labels["spam can"].x - spam[0]) < 0.01
+    assert abs(labels["tuna fish can"].x - tuna[0]) < 0.01
+    assert abs(labels["tomato soup can"].x - soup[0]) < 0.01
+
+
 def test_scan_drops_hits_seen_before_it_was_asked(module: LocalizeSceneRegistrationModule) -> None:
     module._answers = [[_hit((0.2, -0.1, 0.03), ts=TS - 5.0)]]
 

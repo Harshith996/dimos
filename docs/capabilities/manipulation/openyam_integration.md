@@ -153,6 +153,22 @@ It embeds the window once, then localizes every label under each threshold setti
 per object, the best detector score and the settings that found it. Re-run it when the camera,
 the lighting or the detector changes.
 
+What the 2026-10-28 sweep on scene 56 found, and what the stacks assume because of it:
+
+- By name ("spam can", "tuna fish can", "tomato soup can") neither OWLv2 nor GroundingDINO told
+  the three cans apart: every can label scored every can. The adapter keeps the best label per
+  spot, but a name alone still mislabels a can.
+- Labels that describe the object as it looks on this table do. With GroundingDINO, "black
+  spring clamp", "pink jello box", "spam luncheon meat can", "short round silver tuna can" and
+  "tall soup can" were each found once, on the right object, at `accept_score` 0.25 (scores 0.52
+  to 0.70); the 0.40 default missed the Spam tin. A wrong description is worse than a name:
+  "red and white pudding box" landed on the Spam tin at 0.60 and "blue spam tin" on the Jello
+  box at 0.51. So the stacks use GroundingDINO at 0.25, and a scan should use labels the sweep
+  has confirmed on a recording of the table. The benchmark reporter maps them back to the
+  published SceneReplica names.
+- The policy's 0.60 m object extent let a table-edge blob near the arm bases through at loose
+  thresholds; the stacks cap it at 0.25 m, the clamp being the longest object at 0.21 m.
+
 ### Rebuilding a scene
 
 The grasp stacks carry a scene overlay module, pass-through until a scene is named. Point it at

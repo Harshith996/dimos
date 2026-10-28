@@ -247,15 +247,23 @@ def dual_openyam_scene_registration() -> Blueprint:
     )
 
 
-# Localize thresholds for the overhead D405, from the offline sweep of 2026-10-28 on the
-# scene 56 recording (tools/localize_sweep.py). The defaults are the xArm wrist camera's.
-DUAL_OPENYAM_LOCALIZE_PARAMS = localize_params()
+# Localize settings for the overhead D405, from the offline sweep of 2026-10-28 on the
+# scene 56 recording (tools/localize_sweep.py, 97 frames). GroundingDINO with labels that
+# describe the objects as they look on this table ("pink jello box", "spam luncheon meat
+# can", "short round silver tuna can", "tall soup can", "black spring clamp") found all five
+# once each on the right object at accept_score 0.25, scores 0.52 to 0.70; the 0.40 default
+# missed the Spam tin, and by name ("spam can", "tuna fish can") neither detector told the
+# cans apart. The extent cap drops a table-edge blob near the arm bases; the clamp, the
+# longest object, is 0.21 m.
+DUAL_OPENYAM_LOCALIZE_DETECTOR = "gdino"
+DUAL_OPENYAM_LOCALIZE_PARAMS = localize_params(accept_score=0.25, max_object_extent_m=0.25)
 
 
 def dual_openyam_localize_registration() -> Blueprint:
-    """The localize memory (SigLIP retrieval, OWLv2 boxes, EdgeTAM masks) in the same role."""
+    """The localize memory (SigLIP retrieval, GroundingDINO boxes, EdgeTAM masks) in the same role."""
     return LocalizeSceneRegistrationModule.blueprint(
         world_frame="world",
+        detector=DUAL_OPENYAM_LOCALIZE_DETECTOR,
         params=DUAL_OPENYAM_LOCALIZE_PARAMS,
         max_obstacle_width=0.06,
     )
