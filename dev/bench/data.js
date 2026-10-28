@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793203693395,
+  "lastUpdate": 1793207172235,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime (arm64)": [
@@ -8530,6 +8530,60 @@ window.BENCHMARK_DATA = {
             "value": 135.997,
             "unit": "G",
             "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 852/855; perf counted 100.0%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "git@sambull.org",
+            "name": "Sam Bull",
+            "username": "Dreamsorcerer"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "78c71f33f6cea71564aefe060b0e5cae94fe6986",
+          "message": "Fix Zenoh hanging after a failed test (#4856)\n\nCo-authored-by: Jeff Hykin <jeff.hykin@gmail.com>",
+          "timestamp": "2026-10-28T19:03:07+02:00",
+          "tree_id": "e08d6f44d05941f6f9e93351dfaaffeeece232fa",
+          "url": "https://github.com/dimensionalOS/dimos/commit/78c71f33f6cea71564aefe060b0e5cae94fe6986"
+        },
+        "date": 1793207170225,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "peak memory",
+            "value": 1709.215,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "peak threads",
+            "value": 371,
+            "unit": "threads",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "network (transport)",
+            "value": 2731.02,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "disk write",
+            "value": 1.496,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "instructions",
+            "value": 137.793,
+            "unit": "G",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
           }
         ]
       }
