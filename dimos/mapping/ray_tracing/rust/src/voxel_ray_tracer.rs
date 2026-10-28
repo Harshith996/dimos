@@ -457,6 +457,20 @@ impl Voxel {
         }
     }
 
+    pub fn health(&self) -> VoxelHealth {
+        self.health
+    }
+
+    /// Point count, then the sum and second moment of the points about the
+    /// voxel center.
+    pub fn moments(&self) -> (u32, Vector3<f32>, Matrix3<f32>) {
+        (self.num_pts, self.sum, self.m2)
+    }
+
+    pub fn fine_mask(&self) -> u64 {
+        self.fine
+    }
+
     /// Fold a centered point into the running moments. True when the count
     /// crosses the refit milestone, which then advances geometrically.
     fn observe(&mut self, q: Vector3<f32>) -> bool {
