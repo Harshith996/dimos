@@ -437,7 +437,7 @@ def test_stop_waits_for_delayed_submission_then_cancels_it(
     _preflight(module)
     stopping, stopped = Event(), Event()
 
-    def stop():
+    def stop() -> None:
         stopping.set()
         module.stop_rollout()
         stopped.set()
