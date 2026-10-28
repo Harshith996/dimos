@@ -451,11 +451,7 @@ class ManipulationModule(Module):
             operation_status = OperationStatus[self._state.name]
             error = self._error_message or None
             has_pending_plan = self._last_plan is not None
-        execution_status = (
-            self._execution_manager.status
-            if hasattr(self, "_execution_manager")
-            else ExecutionStatus.IDLE
-        )
+        execution_status = self._execution_status()
         return ManipulationSnapshot(
             timestamp=time.time(),
             operation_status=operation_status,
@@ -471,9 +467,16 @@ class ManipulationModule(Module):
         with self._lock:
             return OperationStatus[self._state.name]
 
+    def _execution_status(self) -> ExecutionStatus:
+        """Return execution status even before execution is initialized."""
+        execution_manager = getattr(self, "_execution_manager", None)
+        if execution_manager is None:
+            return ExecutionStatus.IDLE
+        return execution_manager.status
+
     def _refresh_execution_status(self) -> None:
         """Poll active nonblocking execution once, without waiting for motion."""
-        if self._execution_manager.status in {
+        if self._execution_status() in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.EXECUTING,
         }:
@@ -1212,7 +1215,7 @@ class ManipulationModule(Module):
     @rpc
     def get_obstacles(self) -> dict[str, PoseStamped]:
         """Return planning-world obstacle poses keyed by obstacle name."""
-        if self._world_monitor is None:
+        if self._world_monitor is None or not self._world_monitor.is_finalized:
             return {}
         return {
             obstacle.name: obstacle.pose for obstacle in self._world_monitor.world.get_obstacles()
