@@ -58,33 +58,46 @@ declared dtype. Video features must match their declared shape and contain
 uint8 image data. Features sharing a recorded stream must agree on its
 `source_kind`.
 
-This executable example defines measured observations and commanded-command
+This executable example defines measured observations and commanded-target
 actions separately. It only validates a config; building requires the named
 recorded streams to exist.
 
 ```python no-result
 from dimos.imitation.dataprep.schema import (
     RecordingSchema,
-    DataPrepConfig, FeatureSpec, OutputConfig, SyncConfig,
+    DataPrepConfig,
+    FeatureSpec,
+    OutputConfig,
+    SyncConfig,
 )
 
 joints = ["arm/joint1", "arm/gripper"]
-config = DataPrepConfig(recording_schema=RecordingSchema(observation={
-        "observation.state": FeatureSpec(
-            stream="coordinator_joint_state", field="position",
-            dtype="float32", shape=(2,), names=joints,
-        ),
-    },
-action={
-        "action": FeatureSpec(
-            stream="coordinator_joint_command", field="position",
-            dtype="float32", shape=(2,), names=joints,
-            source_kind="joint_position_updates",
-        ),
-    },
-sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20)),
-source="data/recordings/session.db",
-output=OutputConfig(format="hdf5", path="data/datasets/session.hdf5"))
+config = DataPrepConfig(
+    recording_schema=RecordingSchema(
+        observation={
+            "observation.state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+            ),
+        },
+        action={
+            "action": FeatureSpec(
+                stream="coordinator_joint_command",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=joints,
+                source_kind="joint_position_updates",
+            ),
+        },
+        sync=SyncConfig(anchor="observation.state", rate_hz=30, tolerance_ms=20),
+    ),
+    source="data/recordings/session.db",
+    output=OutputConfig(format="hdf5", path="data/datasets/session.hdf5"),
+)
 assert config.recording_schema.action["action"].names == joints
 assert config.recording_schema.action["action"].source_kind == "joint_position_updates"
 ```
