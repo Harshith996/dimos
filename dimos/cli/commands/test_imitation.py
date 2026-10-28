@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 from dimos.cli.commands.imitation import imitation_app
 from dimos.cli.dimos import main
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.schema import RecordingSchema
 from dimos.robot.manipulators.openyam.blueprints.learning_collection import openyam_teach_collection
 from dimos.utils.data import get_project_root
 
@@ -111,7 +111,7 @@ def test_prepare_uses_saved_schema_not_robot_lookup(recording, tmp_path, mocker)
     assert result.exit_code == 0, result.output
     config = prepare.call_args.args[0]
     assert config.source == str(recording / "recording.mcap")
-    assert config.observation == RecordingSchema.read(recording).observation
+    assert config.recording_schema.observation == RecordingSchema.read(recording).observation
     assert config.output.path == output
 
 
