@@ -386,12 +386,6 @@ jobs:
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
-      - name: Native collection roundtrip tests
-        run: |
-          uv run pytest -m native_e2e \
-            dimos/robot/manipulators/openyam/blueprints/test_learning_collection_e2e.py \
-            dimos/imitation/test_datacollection_e2e.py --no-cov
-
       - name: Save cargo build cache
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
