@@ -64,6 +64,9 @@ if TYPE_CHECKING:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+_SOURCE_TIMESTAMP_RESOLUTION_S = 1e-9
+
+
 def _joint_values(msg: JointState, field: str) -> dict[str, float]:
     values = getattr(msg, field)
     if len(msg.name) != len(values):
@@ -233,9 +236,11 @@ def _alignment_plan(
         period = 1.0 / sync.rate_hz
         targets: list[float] = []
         target = anchor[0]
-        while target <= anchor[-1]:
+        # Stamped messages round to nanoseconds; float epoch timestamps can be coarser.
+        endpoint_tolerance = max(_SOURCE_TIMESTAMP_RESOLUTION_S, math.ulp(anchor[-1]))
+        while target <= anchor[-1] + endpoint_tolerance:
             targets.append(target)
-            target += period
+            target = anchor[0] + len(targets) * period
     else:
         targets = list(anchor)
 
