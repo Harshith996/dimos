@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import av
 from dimos_lerobot.dataprep import inspect_dataset, write
+from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.feature_utils import dataset_to_policy_features
 from mcap.writer import Writer
 import numpy as np
 import pytest
@@ -79,7 +82,12 @@ def recorded_session(tmp_path: Path) -> tuple[Path, dict[float, np.ndarray[Any, 
         writer = Writer(output)
         writer.start()
         channels = {}
-        for name, kind in (("camera", Image), ("state", JointState), ("status", String)):
+        for name, kind in (
+            ("camera", Image),
+            ("state", JointState),
+            ("target", JointState),
+            ("status", String),
+        ):
             channels[name] = writer.register_channel(
                 topic=name,
                 message_encoding="lcm",
@@ -136,6 +144,15 @@ def recorded_session(tmp_path: Path) -> tuple[Path, dict[float, np.ndarray[Any, 
                         position=[base + frame, base + 100.0 + frame],
                         velocity=[],
                         effort=[],
+                    ),
+                )
+                add(
+                    "target",
+                    ts,
+                    JointState(
+                        ts=ts,
+                        name=["joint_0", "joint_1"],
+                        position=[base + frame + 1000.0, base + frame + 2000.0],
                     ),
                 )
             saved += int(success)
@@ -196,19 +213,19 @@ def test_collection_to_lerobot_roundtrip(
     )
 
     lerobot_info = inspect_dataset(lerobot_path)
-    assert set(lerobot_info["observation"]) == {"camera", "state"}
-    assert lerobot_info["observation"]["state"] == {"shape": [2], "dtype": "float32"}
+    assert set(lerobot_info["observation"]) == {"observation.images.camera", "observation.state"}
+    assert lerobot_info["observation"]["observation.state"] == {"shape": [2], "dtype": "float32"}
     assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 6, 1.0)
     dataset = LeRobotDataset("dimos/collection-test", root=lerobot_path)
     data = dataset.hf_dataset
     assert data["timestamp"] == pytest.approx([0.0, 1.0, 2.0, 0.0, 1.0, 2.0])
-    np.testing.assert_array_equal(np.asarray(data["state"]), EXPECTED_STATE)
+    np.testing.assert_array_equal(np.asarray(data["observation.state"]), EXPECTED_STATE)
     np.testing.assert_array_equal(np.asarray(data["action"]), EXPECTED_ACTION)
 
     episode_rows = list(dataset.meta.episodes)
     assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
 
-    video = _read_video(lerobot_path / "videos/camera/chunk-000/file-000.mp4")
+    video = _read_video(lerobot_path / "videos/observation.images.camera/chunk-000/file-000.mp4")
     assert len(video) == 6
     expected_means = [
         recorded_images[ts].mean() for ts in (100.0, 101.0, 102.0, 108.0, 109.0, 110.0)
@@ -281,3 +298,138 @@ def test_sidecar_failure_preserves_complete_dataset_and_allows_retry(
     assert root == output.path
     assert (root / "dimos_meta.json").is_file()
     assert LeRobotDataset("local/sidecar-test", root=root).meta.total_frames == 6
+
+
+@pytest.mark.parametrize("canonical", [False, True])
+def test_mcap_conversion_produces_training_feature_keys(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+    canonical: bool,
+) -> None:
+    recording, _ = recorded_session
+    config = _dataprep_config(
+        recording,
+        OutputConfig(
+            format="lerobot",
+            path=tmp_path / "training-dataset",
+            metadata={"repo_id": "local/training-keys"},
+        ),
+    )
+    image_key = "observation.images.images" if canonical else "images"
+    state_key = "observation.state" if canonical else "joint_state"
+    action_key = "action" if canonical else "target"
+    config.observation = {
+        state_key: config.observation["state"],
+        image_key: config.observation["camera"],
+    }
+    config.action = {action_key: config.action["action"].model_copy(update={"stream": "target"})}
+    config.sync.anchor = image_key
+
+    root = run_dataprep(config, writer=write)
+
+    dataset = LeRobotDataset("local/training-keys", root=root)
+    info = json.loads((root / "meta/info.json").read_text())
+    assert set(info["features"]) == {
+        "observation.state",
+        "observation.images.images",
+        "action",
+        "complementary_info.is_filled",
+        "timestamp",
+        "frame_index",
+        "episode_index",
+        "index",
+        "task_index",
+    }
+    # This is the feature inference function used by LeRobot's policy factory during training.
+    assert dataset_to_policy_features(dataset.meta.features) == {
+        "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(2,)),
+        "observation.images.images": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+        "action": PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
+    }
+    np.testing.assert_array_equal(
+        np.asarray(dataset.hf_dataset["observation.state"]), EXPECTED_STATE
+    )
+    np.testing.assert_array_equal(
+        np.asarray(dataset.hf_dataset["action"]),
+        [[1000, 2000], [1001, 2001], [1002, 2002], [1020, 2020], [1021, 2021], [1022, 2022]],
+    )
+    assert len(_read_video(root / "videos/observation.images.images/chunk-000/file-000.mp4")) == 6
+    sidecar = json.loads((root / "dimos_meta.json").read_text())
+    assert sidecar["feature_names"] == {
+        state_key: "observation.state",
+        image_key: "observation.images.images",
+        action_key: "action",
+    }
+    assert sidecar["observation"][state_key]["stream"] == "state"
+    assert sidecar["observation"][image_key]["stream"] == "camera"
+    summary = inspect_dataset(root)
+    assert set(summary["observation"]) == {"observation.state", "observation.images.images"}
+    assert set(summary["action"]) == {"action"}
+
+
+def test_multiple_features_keep_separate_canonical_keys(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+) -> None:
+    recording, _ = recorded_session
+    config = _dataprep_config(
+        recording,
+        OutputConfig(
+            path=tmp_path / "multiple",
+            metadata={"repo_id": "local/multiple"},
+        ),
+    )
+    state = config.observation["state"]
+    config.observation = {
+        "left_state": state.model_copy(update={"shape": (1,), "names": ["joint_0"]}),
+        "right_state": state.model_copy(update={"shape": (1,), "names": ["joint_1"]}),
+        "camera": config.observation["camera"],
+    }
+    config.action = {
+        "left_target": state.model_copy(
+            update={"stream": "target", "shape": (1,), "names": ["joint_0"]}
+        ),
+        "right_target": state.model_copy(
+            update={"stream": "target", "shape": (1,), "names": ["joint_1"]}
+        ),
+    }
+
+    root = run_dataprep(config, writer=write)
+
+    dataset = LeRobotDataset("local/multiple", root=root)
+    assert dataset_to_policy_features(dataset.meta.features) == {
+        "observation.left_state": PolicyFeature(type=FeatureType.STATE, shape=(1,)),
+        "observation.right_state": PolicyFeature(type=FeatureType.STATE, shape=(1,)),
+        "observation.images.camera": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 64, 64)),
+        "action.left_target": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+        "action.right_target": PolicyFeature(type=FeatureType.ACTION, shape=(1,)),
+    }
+    np.testing.assert_array_equal(
+        np.asarray(dataset.hf_dataset["action.left_target"]), [1000, 1001, 1002, 1020, 1021, 1022]
+    )
+
+
+def test_renamed_feature_collision_preserves_existing_dataset(
+    tmp_path: Path,
+    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
+) -> None:
+    recording, _ = recorded_session
+    config = _dataprep_config(
+        recording,
+        OutputConfig(
+            path=tmp_path / "collision",
+            metadata={"repo_id": "local/collision"},
+        ),
+    )
+    root = run_dataprep(config, writer=write)
+    previous = {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+    config.observation["observation.images.camera"] = config.observation["camera"]
+
+    with pytest.raises(ValueError, match="rename collision"):
+        run_dataprep(config, writer=write)
+
+    assert {
+        path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    } == previous
