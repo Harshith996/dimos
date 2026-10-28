@@ -96,11 +96,27 @@
       }
     },
     "dimos-depth2depth-cloud": {
-      "flake": false,
+      "inputs": {
+        "crate2nix": [
+          "crate2nix"
+        ],
+        "depth2depth": [
+          "depth2depth"
+        ],
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nix-filter": [
+          "nix-filter"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
       "locked": {
         "dir": "dimos/perception/depth2depth_cloud/rust",
         "lastModified": 1793225299,
-        "narHash": "sha256-vDWT4ycVVYuEwaJLRHzRpPg1QOPMH+gr/n/HNzZCCfo=",
+        "narHash": "sha256-VAyE6puew/m4uRKHsl1X5rLs8Zjqob/DAG7FFLpCFq8=",
         "owner": "dimensionalOS",
         "repo": "dimos",
         "rev": "68f91f3ed487eab7ae92d34fa986850f9cebd220",

@@ -12,7 +12,11 @@
     depth2depth.inputs.nixpkgs.follows = "nixpkgs";
     # The depth2depth_cloud crate it builds on (a path dependency in Cargo.toml), pinned like any shared code.
     dimos-depth2depth-cloud.url = "github:dimensionalOS/dimos?dir=dimos/perception/depth2depth_cloud/rust";
-    dimos-depth2depth-cloud.flake = false;
+    dimos-depth2depth-cloud.inputs.nixpkgs.follows = "nixpkgs";
+    dimos-depth2depth-cloud.inputs.nix-filter.follows = "nix-filter";
+    dimos-depth2depth-cloud.inputs.flake-utils.follows = "flake-utils";
+    dimos-depth2depth-cloud.inputs.crate2nix.follows = "crate2nix";
+    dimos-depth2depth-cloud.inputs.depth2depth.follows = "depth2depth";
   };
 
   # packages.default: Metal on a Mac, CPU elsewhere. packages.tensorrt (Linux): TensorRT on an NVIDIA GPU, as depth2depth_cloud.
