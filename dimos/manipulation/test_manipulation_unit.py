@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import pickle
+from threading import Event
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
 import numpy as np
@@ -35,11 +37,11 @@ from dimos.manipulation.manipulation_module import (
     VOXEL_MAP_OBSTACLE_ID,
     ManipulationModule,
     ManipulationModuleConfig,
-    ManipulationState,
 )
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
     ExecutionStatus,
+    OperationStatus,
     PlanStatus,
 )
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
@@ -159,7 +161,7 @@ def _install_generated_plan(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],
     )
-    module._last_plan = GeneratedPlan(
+    module._pending_plan = GeneratedPlan(
         trajectory=JointTrajectory(
             joint_names=config.joint_names,
             points=[
@@ -424,22 +426,22 @@ class TestStateMachine:
         """Cancel works for executing motion and in-progress planning."""
         module = module_factory()
 
-        module._state = ManipulationState.IDLE
+        module._state = OperationStatus.IDLE
         assert module.cancel().status is ExecutionStatus.NO_EXECUTION
 
-        module._state = ManipulationState.PLANNING
+        module._state = OperationStatus.PLANNING
         assert module.cancel().status is ExecutionStatus.ABORTED
-        assert module._state == ManipulationState.IDLE
-        assert module._planning_epoch == 1
+        assert module._state == OperationStatus.IDLE
+        assert module._state_epoch == 2
 
-        module._state = ManipulationState.EXECUTING
+        module._state = OperationStatus.EXECUTING
         assert module.cancel().status is ExecutionStatus.NO_EXECUTION
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
 
     def test_cancel_hides_active_plan_preview(self, module_factory):
         module = module_factory()
-        module._state = ManipulationState.EXECUTING
-        module._last_plan = GeneratedPlan(
+        module._state = OperationStatus.EXECUTING
+        module._pending_plan = GeneratedPlan(
             trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
         )
         module._world_monitor = MagicMock()
@@ -458,40 +460,40 @@ class TestStateMachine:
         module._initialize_execution()
 
         assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
-        assert module._state == ManipulationState.EXECUTING
+        assert module._state == OperationStatus.EXECUTING
 
         assert module.cancel().status is ExecutionStatus.ABORTED
         assert _cancelled(module._control_coordinator) == ["joint_trajectory"]
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
 
-    def test_safe_cancel_clears_fault(self, module_factory):
+    def test_safe_cancel_clears_diagnostic(self, module_factory):
         module = module_factory()
 
-        module._state = ManipulationState.FAULT
+        module._state = OperationStatus.IDLE
         module._error_message = "Error"
         result = module.cancel()
         assert result.status is ExecutionStatus.NO_EXECUTION
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
         assert module._error_message == ""
 
-    def test_reset_recovers_from_fault(self, module_factory):
-        """Planning only runs from IDLE or COMPLETED, so FAULT must be escapable."""
+    def test_reset_clears_previous_diagnostic(self, module_factory):
+        """Reset cancels first and clears its local diagnostic."""
         module = module_factory()
-        module._state = ManipulationState.FAULT
+        module._state = OperationStatus.IDLE
         module._error_message = "Execution failed"
 
         result = module.reset()
 
         assert result.succeeded
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
         assert module._error_message == ""
 
-    def test_reset_leaves_fault_standing_when_the_stop_is_unconfirmed(
+    def test_reset_fails_when_the_stop_is_unconfirmed(
         self, module_factory, mocker: MockerFixture
     ) -> None:
-        """Clearing this FAULT hands back a module that accepts motion into a moving arm."""
+        """An uncertain cancellation must not be reported as reset success."""
         module = module_factory()
-        module._state = ManipulationState.FAULT
+        module._state = OperationStatus.IDLE
         module._error_message = "cancel outcome uncertain"
         mocker.patch.object(
             module,
@@ -502,7 +504,7 @@ class TestStateMachine:
         result = module.reset()
 
         assert not result.succeeded
-        assert module._state == ManipulationState.FAULT
+        assert module._state == OperationStatus.IDLE
         assert module._error_message == "cancel outcome uncertain"
 
     def test_reset_cancels_an_active_trajectory(self, module_factory):
@@ -523,17 +525,7 @@ class TestStateMachine:
 
         assert _cancelled(module._control_coordinator) == ["joint_trajectory"]
         assert "Cancelled" in result.message
-        assert module._state == ManipulationState.IDLE
-
-    def test_fail_sets_fault_state(self, module_factory):
-        """_fail helper sets FAULT state and message."""
-        module = module_factory()
-        module._state = ManipulationState.PLANNING
-
-        result = module._fail("Test error")
-        assert result is False
-        assert module._state == ManipulationState.IDLE
-        assert module._error_message == "Test error"
+        assert module._state == OperationStatus.IDLE
 
 
 class PlanningInitializationHarness:
@@ -663,9 +655,7 @@ class TestPlanningInitialization:
         assert config.kinematics.dt == 0.02
         assert config.kinematics.posture_cost == 0.0
 
-    @pytest.mark.parametrize(
-        "operation_state", [ManipulationState.IDLE, ManipulationState.EXECUTING]
-    )
+    @pytest.mark.parametrize("operation_state", [OperationStatus.IDLE, OperationStatus.EXECUTING])
     def test_inverse_kinematics_uses_current_seed_without_planning(
         self, robot_config, module_factory, operation_state
     ):
@@ -701,7 +691,7 @@ class TestPlanningInitialization:
 
         assert result is expected
         assert module._state == operation_state
-        assert module._last_plan is None
+        assert module._pending_plan is None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
@@ -733,7 +723,7 @@ class TestPlanningInitialization:
 
         assert result.status == IKStatus.NO_SOLUTION
         assert result.message == "No joint state"
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
         module._kinematics.solve_pose_targets.assert_not_called()
 
     def test_inverse_kinematics_accepts_explicit_seed_without_current_state(
@@ -754,8 +744,8 @@ class TestPlanningInitialization:
             path=[explicit_seed],
             status=PlanningStatus.SUCCESS,
         )
-        module._last_plan = pending_plan
-        module._state = ManipulationState.COMPLETED
+        module._pending_plan = pending_plan
+        module._state = OperationStatus.IDLE
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
@@ -766,8 +756,8 @@ class TestPlanningInitialization:
         result = module.inverse_kinematics({"manipulator": pose}, seed=explicit_seed)
 
         assert result is expected
-        assert module._last_plan is pending_plan
-        assert module._state == ManipulationState.COMPLETED
+        assert module._pending_plan is pending_plan
+        assert module._state == OperationStatus.IDLE
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.current_model_joint_state.assert_not_called()
@@ -834,10 +824,10 @@ class TestPlanningGroupApis:
         )
 
         assert plan is not None
-        assert module._last_plan is not None
-        assert module._last_plan.group_ids == ("manipulator",)
-        assert module._last_plan.path == result_path
-        assert module._last_plan.trajectory.points[-1].positions == [0.1, 0.2, 0.3]
+        assert module._pending_plan is not None
+        assert module._pending_plan.group_ids == ("manipulator",)
+        assert module._pending_plan.path == result_path
+        assert module._pending_plan.trajectory.points[-1].positions == [0.1, 0.2, 0.3]
         module._planner.plan_selected_joint_path.assert_called_once()
         _, kwargs = module._planner.plan_selected_joint_path.call_args
         assert kwargs["selection"].group_ids == ("manipulator",)
@@ -923,7 +913,7 @@ class TestPlanningGroupApis:
             position=[0.0, 0.0, 0.0],
         )
         module._world_monitor.current_model_joint_state.return_value = None
-        module._last_plan = GeneratedPlan(
+        module._pending_plan = GeneratedPlan(
             trajectory=_generated_plan_trajectory(
                 ["joint1", "joint2", "joint3"],
                 [0.0, 0.0, 0.0],
@@ -958,8 +948,8 @@ class TestPlanningGroupApis:
         )
 
         assert plan is None
-        assert module._state == ManipulationState.IDLE
-        assert module._last_plan is None
+        assert module._state == OperationStatus.IDLE
+        assert module._pending_plan is None
         assert module.has_planned_path() is False
 
     def test_get_state_exposes_selected_group_init_preset(
@@ -1120,7 +1110,7 @@ class TestPlanningGroupApis:
         assert result.status == IKStatus.NO_SOLUTION
         assert result.message == "target is outside the workspace"
         assert module.get_error() == ""
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
 
 
 class TestPlanningDiagnostics:
@@ -1149,7 +1139,7 @@ class TestPlanningDiagnostics:
 
         assert result.status is PlanStatus.FAILED
         assert module.get_error() == "Planning failed: TIMEOUT: planner timed out"
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
 
 
 class TestExecute:
@@ -1159,9 +1149,9 @@ class TestExecute:
         module = module_factory()
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [0.1])
-        original = pickle.loads(pickle.dumps(module._last_plan))
+        original = pickle.loads(pickle.dumps(module._pending_plan))
         _install_generated_plan(module, config, [0.0], [0.2])
-        replacement = module._last_plan
+        replacement = module._pending_plan
         coordinator = _control_coordinator()
         module._control_coordinator = coordinator
         module._initialize_execution()
@@ -1170,7 +1160,7 @@ class TestExecute:
 
         assert result.status is ExecutionStatus.REJECTED
         assert _executed(coordinator) is None
-        assert module._last_plan is replacement
+        assert module._pending_plan is replacement
         assert (
             module.execute(
                 plan_id=pickle.loads(pickle.dumps(replacement)).plan_id, blocking=False
@@ -1184,7 +1174,7 @@ class TestExecute:
         module = module_factory()
 
         assert module.execute().status is ExecutionStatus.NO_PLAN
-        assert module._state == ManipulationState.IDLE
+        assert module._state == OperationStatus.IDLE
 
 
 def _executed(coordinator, task: str = "joint_trajectory"):
@@ -1198,3 +1188,229 @@ def _executed(coordinator, task: str = "joint_trajectory"):
 def _cancelled(coordinator) -> list[str]:
     """Tasks that were asked to cancel."""
     return [c.args[0] for c in coordinator.task_invoke.call_args_list if c.args[1] == "cancel"]
+
+
+@pytest.fixture
+def state_module(module_factory, mocker):
+    module = module_factory()
+    _install_generated_plan(module, _one_joint_config(), [0.0], [0.1])
+    plan = module._pending_plan
+    planner = mocker.patch.object(module, "_planner")
+    planner.plan_selected_joint_path.return_value = PlanningResult(
+        status=PlanningStatus.SUCCESS, path=plan.path
+    )
+    parametrizer = mocker.patch.object(module, "_trajectory_parametrizer")
+    parametrizer.materialize_plan.return_value = plan
+    return module
+
+
+@pytest.mark.parametrize("failure", ["planner", "materializer", None])
+def test_planning_always_finishes_and_can_retry(state_module, failure):
+    module = state_module
+    target = {"manipulator": JointState(name=["j0"], position=[0.1])}
+    boundary = (
+        module._planner.plan_selected_joint_path
+        if failure == "planner"
+        else module._trajectory_parametrizer.materialize_plan
+    )
+    if failure is not None:
+        boundary.side_effect = RuntimeError("request failed")
+
+    result = module.plan_to_joints(target)
+
+    assert module.get_operation_status() is OperationStatus.IDLE
+    if failure is None:
+        assert result.succeeded
+        assert module.has_planned_path()
+    else:
+        assert result.status is PlanStatus.FAILED
+        assert "request failed" in result.message
+        assert not module.has_planned_path()
+        boundary.side_effect = None
+        assert module.plan_to_joints(target).succeeded
+
+
+@pytest.mark.parametrize("state", list(OperationStatus))
+@pytest.mark.parametrize("command", ["empty", "invalid", "busy", "timeout"])
+def test_rejected_requests_preserve_workflow_and_plan(state_module, state, command):
+    module = state_module
+    module._state = state
+    module._error_message = "previous outcome"
+    pending = module._pending_plan
+    if command == "empty":
+        result = module.plan_to_joints({})
+    elif command == "invalid":
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.1, 0.2])})
+    elif command == "timeout":
+        result = module.execute(timeout=-1)
+    elif state is OperationStatus.IDLE:
+        result = module.execute(plan_id="wrong")
+    else:
+        result = module.execute()
+
+    assert not result.succeeded
+    assert module._state is state
+    assert module._pending_plan is pending
+    assert module.get_error() == "previous outcome"
+
+
+@pytest.mark.parametrize("invalidate", ["reset", "clear_planned_path", "stop"])
+def test_old_planning_result_cannot_replace_new_plan(state_module, invalidate):
+    module = state_module
+    entered, release = Event(), Event()
+    original = module._planner.plan_selected_joint_path.return_value
+
+    def plan(**kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original
+
+    module._planner.plan_selected_joint_path.side_effect = plan
+    target = {"manipulator": JointState(position=[0.1])}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        old = pool.submit(module.plan_to_joints, target)
+        try:
+            assert entered.wait(3)
+            getattr(module, invalidate)()
+            if invalidate == "stop":
+                module.start()
+            module._planner.plan_selected_joint_path.side_effect = None
+            replacement = module.plan_to_joints(target)
+            assert replacement.succeeded
+            pending = module._pending_plan
+        finally:
+            release.set()
+        assert not old.result(timeout=3).succeeded
+    assert module._pending_plan is pending
+    assert module._state is OperationStatus.IDLE
+
+
+def test_cancel_waits_for_dispatch_but_not_execution(state_module, mocker):
+    module = state_module
+    dispatched, release, cancel_started = Event(), Event(), Event()
+    calls = []
+
+    def dispatch(*args, **kwargs):
+        assert kwargs == {"blocking": False}
+        calls.append("dispatch")
+        dispatched.set()
+        assert release.wait(3)
+        return ExecutionResult(ExecutionStatus.ACCEPTED)
+
+    def cancel():
+        calls.append("cancel")
+        return ExecutionResult(ExecutionStatus.ABORTED)
+
+    mocker.patch.object(module._execution_manager, "execute", side_effect=dispatch)
+    mocker.patch.object(module._execution_manager, "cancel", side_effect=cancel)
+
+    def request_cancel():
+        cancel_started.set()
+        return module.cancel()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        execution = pool.submit(module.execute, blocking=False)
+        try:
+            assert dispatched.wait(3)
+            cancellation = pool.submit(request_cancel)
+            assert cancel_started.wait(3)
+            # State remains readable while the manager call holds command admission.
+            with module._lock:
+                assert module._state is OperationStatus.EXECUTING
+        finally:
+            release.set()
+        assert execution.result(timeout=3).status is ExecutionStatus.ACCEPTED
+        assert cancellation.result(timeout=3).status is ExecutionStatus.ABORTED
+    assert calls == ["dispatch", "cancel"]
+    assert module._state is OperationStatus.IDLE
+
+
+def test_blocking_wait_does_not_prevent_reset_or_overwrite_new_planning(state_module, mocker):
+    module = state_module
+    waiting, release, planning, finish_plan = Event(), Event(), Event(), Event()
+
+    def wait(timeout):
+        waiting.set()
+        assert release.wait(3)
+        return ExecutionResult(ExecutionStatus.COMPLETED)
+
+    def plan(**kwargs):
+        planning.set()
+        assert finish_plan.wait(3)
+        return module._planner.plan_selected_joint_path.return_value
+
+    mocker.patch.object(
+        module._execution_manager, "execute", return_value=ExecutionResult(ExecutionStatus.ACCEPTED)
+    )
+    mocker.patch.object(module._execution_manager, "wait", side_effect=wait)
+    cancel = mocker.patch.object(
+        module._execution_manager, "cancel", return_value=ExecutionResult(ExecutionStatus.ABORTED)
+    )
+    module._planner.plan_selected_joint_path.side_effect = plan
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        old = pool.submit(module.execute)
+        try:
+            assert waiting.wait(3)
+            assert module.reset().succeeded
+            cancel.assert_called_once_with()
+            new = pool.submit(module.plan_to_joints, {"manipulator": JointState(position=[0.1])})
+            assert planning.wait(3)
+            release.set()
+            assert old.result(timeout=3).status is ExecutionStatus.COMPLETED
+            assert module.get_operation_status() is OperationStatus.PLANNING
+        finally:
+            release.set()
+            finish_plan.set()
+        assert new.result(timeout=3).succeeded
+
+
+def test_planning_admission_follows_cancel_without_holding_state_lock(state_module, mocker):
+    module = state_module
+    cancelling, release, attempted = Event(), Event(), Event()
+    calls = []
+    outcome = module._planner.plan_selected_joint_path.return_value
+
+    def cancel():
+        cancelling.set()
+        assert release.wait(3)
+        calls.append("cancel finished")
+        return ExecutionResult(ExecutionStatus.NO_EXECUTION)
+
+    def plan(**kwargs):
+        calls.append("planning")
+        return outcome
+
+    def request_plan():
+        attempted.set()
+        return module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+
+    mocker.patch.object(module._execution_manager, "cancel", side_effect=cancel)
+    module._planner.plan_selected_joint_path.side_effect = plan
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cancellation = pool.submit(module.cancel)
+        try:
+            assert cancelling.wait(3)
+            planning = pool.submit(request_plan)
+            assert attempted.wait(3)
+            assert module.get_error() == ""
+        finally:
+            release.set()
+        assert cancellation.result(timeout=3).status is ExecutionStatus.NO_EXECUTION
+        assert planning.result(timeout=3).succeeded
+    assert calls == ["cancel finished", "planning"]
+    assert module.has_planned_path()
+
+
+def test_wait_timeout_keeps_execution_and_invalid_wait_does_not_finish_it(state_module, mocker):
+    module = state_module
+    mocker.patch.object(
+        module._execution_manager, "execute", return_value=ExecutionResult(ExecutionStatus.ACCEPTED)
+    )
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.TIMED_OUT)
+    )
+
+    assert module.execute(timeout=0).status is ExecutionStatus.TIMED_OUT
+    assert module._state is OperationStatus.EXECUTING
+    assert module.wait_for_execution(timeout=-1).status is ExecutionStatus.REJECTED
+    assert module._state is OperationStatus.EXECUTING

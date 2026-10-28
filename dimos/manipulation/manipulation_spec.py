@@ -36,8 +36,6 @@ class OperationStatus(Enum):
     IDLE = auto()
     PLANNING = auto()
     EXECUTING = auto()
-    COMPLETED = auto()
-    FAULT = auto()
 
 
 class PlanStatus(Enum):

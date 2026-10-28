@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Mapping, Sequence
-from enum import Enum
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 import math
 import threading
 import time
@@ -123,16 +123,6 @@ _SHAPE_TO_OBSTACLE_TYPE: dict[str, ObstacleType] = {
 }
 
 
-class ManipulationState(Enum):
-    """State machine for manipulation module."""
-
-    IDLE = 0
-    PLANNING = 1
-    EXECUTING = 2
-    COMPLETED = 3
-    FAULT = 4
-
-
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
@@ -225,10 +215,12 @@ class ManipulationModule(Module):
         super().__init__(**kwargs)
 
         # State machine
-        self._state = ManipulationState.IDLE
+        self._state = OperationStatus.IDLE
         self._lock = threading.Lock()
+        # Serialize admission/dispatch/cancel; manager calls never hold _lock.
+        self._command_lock = threading.RLock()
         self._error_message = ""
-        self._planning_epoch = 0
+        self._state_epoch = 0
         self._started = False
 
         # Planning components (initialized in start())
@@ -238,7 +230,7 @@ class ManipulationModule(Module):
         self._trajectory_parametrizer: TrajectoryParametrizerSpec | None = None
 
         # Canonical generated plan for the plan/preview/execute workflow.
-        self._last_plan: GeneratedPlan | None = None
+        self._pending_plan: GeneratedPlan | None = None
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -446,9 +438,9 @@ class ManipulationModule(Module):
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
-            operation_status = OperationStatus[self._state.name]
+            operation_status = self._state
             error = self._error_message or None
-            has_pending_plan = self._last_plan is not None
+            has_pending_plan = self._pending_plan is not None
         execution_status = (
             self._execution_manager.status
             if hasattr(self, "_execution_manager")
@@ -467,14 +459,13 @@ class ManipulationModule(Module):
         """Return the current operation status without collecting telemetry."""
         self._refresh_execution_status()
         with self._lock:
-            return OperationStatus[self._state.name]
+            return self._state
 
     def _refresh_execution_status(self) -> None:
         """Poll active nonblocking execution once, without waiting for motion."""
-        if self._execution_manager.status in {
-            ExecutionStatus.ACCEPTED,
-            ExecutionStatus.EXECUTING,
-        }:
+        with self._lock:
+            executing = self._state is OperationStatus.EXECUTING
+        if executing:
             self.wait_for_execution(timeout=0.0)
 
     def get_error(self) -> str:
@@ -483,25 +474,28 @@ class ManipulationModule(Module):
         Returns:
             Error message or empty string
         """
-        return self._error_message
+        with self._lock:
+            return self._error_message
 
     @rpc
     def cancel(self) -> ExecutionResult:
-        """Cancel planning or the active trajectory."""
-        with self._lock:
-            is_planning = self._state == ManipulationState.PLANNING
-            if is_planning:
-                self._planning_epoch += 1
-            plan = self._last_plan
-            self._last_plan = None
-
-        result = self._execution_manager.cancel()
-        if plan is not None:
+        """Cancel current work without latching a module failure state."""
+        with self._command_lock:
+            with self._lock:
+                planning = self._state is OperationStatus.PLANNING
+                self._state_epoch += 1
+                epoch = self._state_epoch
+                self._pending_plan = None
             self._dismiss_preview()
-        if is_planning and result.status is ExecutionStatus.NO_EXECUTION:
-            result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
-        self._apply_execution_result(result)
-        return result
+            try:
+                result = self._execution_manager.cancel()
+            except Exception as exc:
+                logger.exception("Failed to cancel manipulation")
+                result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+            if planning and result.status is ExecutionStatus.NO_EXECUTION:
+                result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
+            self._apply_execution_result(result, epoch, expected=None)
+            return result
 
     @rpc
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
@@ -511,30 +505,24 @@ class ManipulationModule(Module):
 
     @rpc
     def reset(self) -> CommandResult:
-        """Stop any motion and return to IDLE so new commands are accepted.
-
-        Execution can leave the module in FAULT, and planning only runs from
-        IDLE or COMPLETED, so without this a faulted module accepts nothing
-        further. cancel() does the work of stopping -- the trajectory, the
-        planning epoch, the pending plan and its preview; reset adds only the
-        return to IDLE with the error cleared, from whatever state the failure
-        left behind.
-
-        The exception is a stop the coordinator could not confirm. Clearing that
-        FAULT would discard the one signal saying the arm may still be moving,
-        and hand back a module that accepts a new motion into it.
-        """
-        result = self.cancel()
-        if result.status in UNCONFIRMED_STOP:
-            return CommandResult(CommandStatus.FAILED, result.message)
-        cancelled = result.status is not ExecutionStatus.NO_EXECUTION
-        with self._lock:
-            self._state = ManipulationState.IDLE
-            self._error_message = ""
-        return CommandResult(
-            CommandStatus.SUCCEEDED,
-            "Cancelled the active motion and reset to IDLE" if cancelled else "Reset to IDLE",
-        )
+        """Cancel first, then reset local workflow state; never clear hardware errors."""
+        with self._command_lock:
+            result = self.cancel()
+            if result.status in UNCONFIRMED_STOP or result.status in {
+                ExecutionStatus.TIMED_OUT,
+                ExecutionStatus.ACCEPTED,
+                ExecutionStatus.EXECUTING,
+                ExecutionStatus.REJECTED,
+            }:
+                return CommandResult(CommandStatus.FAILED, result.message)
+            with self._lock:
+                self._error_message = ""
+            return CommandResult(
+                CommandStatus.SUCCEEDED,
+                "Reset to IDLE"
+                if result.status is ExecutionStatus.NO_EXECUTION
+                else "Cancelled the active motion and reset to IDLE",
+            )
 
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
@@ -566,24 +554,64 @@ class ManipulationModule(Module):
             return self._world_monitor.is_state_valid(joint_state)
         return False
 
-    def _begin_group_planning(self, speed_scale: float | None = None) -> tuple[int, float] | None:
-        """Check state and begin planning for explicit planning-group APIs."""
-        if self._world_monitor is None:
-            logger.error("Planning not initialized")
-            return None
+    @contextmanager
+    def _planning_request(
+        self, group_ids: tuple[PlanningGroupID, ...], speed_scale: float | None
+    ) -> Iterator[tuple[int, float] | None]:
+        """Admit one planning request and finish it on every exit."""
         resolved_speed = self.config.default_speed_scale if speed_scale is None else speed_scale
         if not math.isfinite(resolved_speed) or not 0.0 < resolved_speed <= 1.0:
-            self._record_error("speed_scale must be finite, > 0, and <= 1")
-            return None
+            yield None
+            return
+        assert self._world_monitor is not None
+        try:
+            self._world_monitor.planning_groups.select(group_ids)
+        except (KeyError, ValueError):
+            yield None
+            return
+        with self._command_lock, self._lock:
+            if not self._started or self._state is not OperationStatus.IDLE:
+                admitted = None
+            else:
+                self._state_epoch += 1
+                epoch = self._state_epoch
+                self._pending_plan = None
+                self._error_message = ""
+                self._state = OperationStatus.PLANNING
+                admitted = (epoch, float(resolved_speed))
+        if admitted is None:
+            yield None
+            return
+        epoch, _ = admitted
+        try:
+            self._dismiss_preview()
+            yield admitted
+        except Exception as exc:
+            logger.exception("Planning request failed")
+            self._finish(epoch, f"Planning failed: {exc}")
+        finally:
+            with self._lock:
+                unfinished = self._state is OperationStatus.PLANNING
+            if unfinished:
+                self._finish(epoch, "Planning failed")
+
+    def _finish(
+        self,
+        epoch: int,
+        message: str = "",
+        plan: GeneratedPlan | None = None,
+        *,
+        active: bool = False,
+        expected: OperationStatus | None = OperationStatus.PLANNING,
+    ) -> bool:
+        """Commit only the current workflow's data and common finish transition."""
         with self._lock:
-            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                logger.warning("Cannot plan in current state", state=self._state.name)
-                return None
-            self._planning_epoch += 1
-            self._last_plan = None
-            self._error_message = ""
-            self._state = ManipulationState.PLANNING
-            return self._planning_epoch, float(resolved_speed)
+            if epoch != self._state_epoch or (expected is not None and self._state is not expected):
+                return False
+            self._pending_plan = plan
+            self._error_message = message
+            self._state = OperationStatus.EXECUTING if active else OperationStatus.IDLE
+            return True
 
     def _require_unique_pose_group_id(self) -> PlanningGroupID:
         """Return the unique pose-targetable group or raise if it is ambiguous."""
@@ -608,7 +636,7 @@ class ManipulationModule(Module):
             current = self._world_monitor.current_model_joint_state()
             start = filter_joint_state_to_selected_joints(current, selection.joint_names)
         except Exception as exc:
-            self._fail_planning_epoch(planning_epoch, f"Failed to resolve planning groups: {exc}")
+            self._finish(planning_epoch, f"Failed to resolve planning groups: {exc}")
             return None
         return selection, start
 
@@ -631,16 +659,9 @@ class ManipulationModule(Module):
                 speed_scale=speed_scale,
             )
         except Exception as exc:
-            self._fail_planning_epoch(planning_epoch, f"Failed to materialize plan: {exc}")
+            self._finish(planning_epoch, f"Failed to materialize plan: {exc}")
             return None
-        with self._lock:
-            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
-                logger.info("Discarding cancelled planning result")
-                return None
-            self._last_plan = plan
-            self._state = ManipulationState.COMPLETED
-            self._error_message = ""
-        return plan
+        return plan if self._finish(planning_epoch, plan=plan) else None
 
     def _plan_selected_path(
         self,
@@ -661,47 +682,11 @@ class ManipulationModule(Module):
         )
         if not result.is_success():
             detail = f": {result.message}" if result.message else ""
-            self._fail_planning_epoch(
-                planning_epoch, f"Planning failed: {result.status.name}{detail}"
-            )
+            self._finish(planning_epoch, f"Planning failed: {result.status.name}{detail}")
             return None
 
         logger.info("Path generated", waypoint_count=len(result.path), group_ids=group_ids)
         return self._store_generated_plan(group_ids, result, planning_epoch, speed_scale)
-
-    def _record_error(self, message: str) -> bool:
-        """Record an error without changing the manipulation state."""
-        logger.warning(message)
-        self._error_message = message
-        return False
-
-    def _clear_pending_plan(self) -> None:
-        """Invalidate the one authoritative pending plan."""
-        with self._lock:
-            plan = self._last_plan
-            self._last_plan = None
-        if plan is not None:
-            self._dismiss_preview()
-
-    def _fail(self, msg: str) -> bool:
-        """Finish a planning request with an error while remaining retryable."""
-        self._record_error(msg)
-        with self._lock:
-            self._last_plan = None
-            self._state = ManipulationState.IDLE
-        return False
-
-    def _fail_planning_epoch(self, planning_epoch: int, msg: str) -> bool:
-        """Fault only the still-current planning operation."""
-        with self._lock:
-            if self._state != ManipulationState.PLANNING or planning_epoch != self._planning_epoch:
-                logger.info("Discarding cancelled planning result")
-                return False
-            logger.warning(msg)
-            self._last_plan = None
-            self._state = ManipulationState.IDLE
-            self._error_message = msg
-            return False
 
     def _dismiss_preview(self) -> None:
         """Hide the preview ghost if the world supports it."""
@@ -761,7 +746,6 @@ class ManipulationModule(Module):
         speed_scale: float | None = None,
     ) -> PlanResult:
         """Plan one synchronized joint target set without moving hardware."""
-        self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
         plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale)
@@ -776,7 +760,6 @@ class ManipulationModule(Module):
         speed_scale: float | None = None,
     ) -> PlanResult:
         """Plan one synchronized pose target set without moving hardware."""
-        self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
         plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
@@ -793,20 +776,9 @@ class ManipulationModule(Module):
         if self._world_monitor is None or self._planner is None:
             return None
         if not joint_targets:
-            self._fail("At least one joint target is required")
             return None
 
         group_ids = tuple(joint_targets)
-        planning = self._begin_group_planning(speed_scale)
-        if planning is None:
-            return None
-        planning_epoch, resolved_speed_scale = planning
-
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        _selection, start = resolved
-
         goal_names: list[str] = []
         goal_positions: list[float] = []
         for group_id, target in joint_targets.items():
@@ -815,15 +787,24 @@ class ManipulationModule(Module):
                 normalized_target = normalize_joint_target(target_group, target)
             except (KeyError, ValueError) as exc:
                 logger.error(str(exc))
-                self._fail_planning_epoch(planning_epoch, f"Invalid joint target for '{group_id}'")
                 return None
             goal_names.extend(normalized_target.name)
             goal_positions.extend(normalized_target.position)
 
-        goal = JointState(name=goal_names, position=goal_positions)
-        return self._plan_selected_path(
-            group_ids, start, goal, planning_epoch, resolved_speed_scale
-        )
+        with self._planning_request(group_ids, speed_scale) as planning:
+            if planning is None:
+                return None
+            planning_epoch, resolved_speed_scale = planning
+
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
+                return None
+            _selection, start = resolved
+
+            goal = JointState(name=goal_names, position=goal_positions)
+            return self._plan_selected_path(
+                group_ids, start, goal, planning_epoch, resolved_speed_scale
+            )
 
     def generate_plan_to_pose_targets(
         self,
@@ -835,7 +816,6 @@ class ManipulationModule(Module):
         if self._world_monitor is None or self._kinematics is None:
             return None
         if not pose_targets:
-            self._fail("At least one pose target is required")
             return None
         stamped_targets = {
             group_id: PoseStamped(
@@ -847,27 +827,27 @@ class ManipulationModule(Module):
         }
         auxiliary_ids = tuple(auxiliary_groups)
         group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
-        planning = self._begin_group_planning(speed_scale)
-        if planning is None:
-            return None
-        planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        _selection, start = resolved
-        ik = self.inverse_kinematics(
-            pose_targets=stamped_targets,
-            auxiliary_group_ids=auxiliary_ids,
-            seed=start,
-        )
-        if not ik.is_success() or ik.joint_state is None:
-            detail = f": {ik.message}" if ik.message else ""
-            self._fail_planning_epoch(planning_epoch, f"IK failed: {ik.status.name}{detail}")
-            return None
-        logger.info("IK solved", position_error=ik.position_error)
-        return self._plan_selected_path(
-            group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
-        )
+        with self._planning_request(group_ids, speed_scale) as planning:
+            if planning is None:
+                return None
+            planning_epoch, resolved_speed_scale = planning
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
+                return None
+            _selection, start = resolved
+            ik = self.inverse_kinematics(
+                pose_targets=stamped_targets,
+                auxiliary_group_ids=auxiliary_ids,
+                seed=start,
+            )
+            if not ik.is_success() or ik.joint_state is None:
+                detail = f": {ik.message}" if ik.message else ""
+                self._finish(planning_epoch, f"IK failed: {ik.status.name}{detail}")
+                return None
+            logger.info("IK solved", position_error=ik.position_error)
+            return self._plan_selected_path(
+                group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
+            )
 
     def generate_cartesian_plan(
         self,
@@ -881,40 +861,41 @@ class ManipulationModule(Module):
         if self._world_monitor is None or self._planner is None:
             return None
         if not targets:
-            self._fail("At least one Cartesian target is required")
             return None
         auxiliary_ids = tuple(auxiliary_groups)
         group_ids = tuple((*targets.keys(), *auxiliary_ids))
-        planning = self._begin_group_planning(speed_scale)
-        if planning is None:
-            return None
-        planning_epoch, resolved_speed_scale = planning
-        resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
-        if resolved is None:
-            return None
-        selection, start = resolved
-        scaled_config = config.model_copy(
-            update={
-                "velocity_scale": config.velocity_scale * resolved_speed_scale,
-                "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
-            }
-        )
-        result = self._planner.plan_cartesian_path(
-            world=self._world_monitor.world,
-            selection=selection,
-            start=start,
-            targets=targets,
-            config=scaled_config,
-            auxiliary_groups=auxiliary_ids,
-            check_collision=check_collision,
-        )
-        if not result.is_success():
-            detail = f": {result.message}" if result.message else ""
-            self._fail_planning_epoch(
-                planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+        with self._planning_request(group_ids, speed_scale) as planning:
+            if planning is None:
+                return None
+            planning_epoch, resolved_speed_scale = planning
+            resolved = self._resolve_group_plan_start(group_ids, planning_epoch)
+            if resolved is None:
+                return None
+            selection, start = resolved
+            scaled_config = config.model_copy(
+                update={
+                    "velocity_scale": config.velocity_scale * resolved_speed_scale,
+                    "acceleration_scale": config.acceleration_scale * resolved_speed_scale,
+                }
             )
-            return None
-        return self._store_generated_plan(group_ids, result, planning_epoch, resolved_speed_scale)
+            result = self._planner.plan_cartesian_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                targets=targets,
+                config=scaled_config,
+                auxiliary_groups=auxiliary_ids,
+                check_collision=check_collision,
+            )
+            if not result.is_success():
+                detail = f": {result.message}" if result.message else ""
+                self._finish(
+                    planning_epoch, f"Cartesian planning failed: {result.status.name}{detail}"
+                )
+                return None
+            return self._store_generated_plan(
+                group_ids, result, planning_epoch, resolved_speed_scale
+            )
 
     @rpc
     def move_linear(
@@ -930,7 +911,6 @@ class ManipulationModule(Module):
     ) -> MoveResult:
         """Move one end effector by a world-frame translation."""
         delta = (float(dx), float(dy), float(dz))
-        self._clear_pending_plan()
         if not all(math.isfinite(value) for value in delta):
             plan_result = PlanResult(PlanStatus.INVALID_TARGET, "delta must be finite")
             return MoveResult(plan_result, None, delta, check_collision)
@@ -966,7 +946,7 @@ class ManipulationModule(Module):
         duration: float | None = None,
     ) -> CommandResult:
         """Preview a complete generated plan in the visualizer."""
-        plan = plan or self._last_plan
+        plan = plan or self._pending_plan
         if plan is None or not plan.path:
             return CommandResult(CommandStatus.REJECTED, "No generated plan to preview")
         if self._world_monitor is None:
@@ -980,7 +960,7 @@ class ManipulationModule(Module):
         Returns:
             True if a path is planned and ready
         """
-        return self._last_plan is not None and bool(self._last_plan.path)
+        return self._pending_plan is not None and bool(self._pending_plan.path)
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -996,12 +976,12 @@ class ManipulationModule(Module):
     @rpc
     def clear_planned_path(self) -> CommandResult:
         """Discard the pending plan and its preview without cancelling active execution."""
-        with self._lock:
-            plan = self._last_plan
-            self._last_plan = None
-            if self._state == ManipulationState.PLANNING:
-                self._planning_epoch += 1
-                self._state = ManipulationState.IDLE
+        with self._command_lock, self._lock:
+            plan = self._pending_plan
+            self._pending_plan = None
+            if self._state == OperationStatus.PLANNING:
+                self._state_epoch += 1
+                self._state = OperationStatus.IDLE
         if plan is not None:
             self._dismiss_preview()
         return CommandResult(CommandStatus.SUCCEEDED, "Pending plan cleared")
@@ -1114,81 +1094,95 @@ class ManipulationModule(Module):
     def execute(
         self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
     ) -> ExecutionResult:
-        """Dispatch the pending plan, rejecting a mismatched ID without consuming it.
+        """Consume a pending plan; blocking waits never hold module admission."""
+        if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+            return ExecutionResult(ExecutionStatus.REJECTED, "timeout must be finite and >= 0")
+        with self._command_lock:
+            result, epoch = self._dispatch_plan(self._pending_plan, plan_id)
+        if blocking and result.status is ExecutionStatus.ACCEPTED:
+            return self._wait_for_execution(epoch, timeout)
+        return result
 
-        Omit ``plan_id`` to explicitly execute whichever plan is pending.
-        """
+    def _dispatch_plan(
+        self,
+        target_plan: GeneratedPlan | None,
+        plan_id: str | None,
+    ) -> tuple[ExecutionResult, int | None]:
+        """Admit and dispatch under _command_lock, shared by RPC and visualization."""
         with self._lock:
-            target_plan = self._last_plan
+            if not self._started or self._state is not OperationStatus.IDLE:
+                return ExecutionResult(
+                    ExecutionStatus.REJECTED, "Manipulation is busy or stopped"
+                ), None
             if target_plan is None:
-                return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
+                return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan"), None
             if plan_id is not None and target_plan.plan_id != plan_id:
-                return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
+                return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced"), None
             bound = {
                 joint for joints in self.config.trajectory_tasks.values() for joint in joints
             } or set(self.config.model.joint_names)
             unowned = sorted(set(target_plan.trajectory.joint_names) - bound)
             if unowned:
-                message = (
+                return ExecutionResult(
+                    ExecutionStatus.REJECTED,
                     f"No trajectory task is bound to {unowned}; those joints support planning "
-                    "and preview only"
-                )
-                self._error_message = message
-                return ExecutionResult(ExecutionStatus.REJECTED, message)
-            self._last_plan = None
-            self._state = ManipulationState.EXECUTING
+                    "and preview only",
+                ), None
+            self._state_epoch += 1
+            epoch = self._state_epoch
+            self._pending_plan = None
+            self._state = OperationStatus.EXECUTING
         try:
-            result = self._execution_manager.execute(
-                target_plan,
-                blocking=blocking,
-                timeout=timeout,
-            )
+            result = self._execution_manager.execute(target_plan, blocking=False)
         except Exception as exc:
             logger.exception("Failed to dispatch generated plan")
             result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
-        self._apply_execution_result(result)
-        return result
+        self._apply_execution_result(result, epoch)
+        return result, epoch
 
     @rpc
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult:
-        """Wait for the active trajectory or return its cached terminal result."""
-        result = self._execution_manager.wait(timeout)
-        self._apply_execution_result(result)
+        """Wait without letting a historical result overwrite another workflow."""
+        if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+            return ExecutionResult(ExecutionStatus.REJECTED, "timeout must be finite and >= 0")
+        with self._command_lock, self._lock:
+            epoch = self._state_epoch if self._state is OperationStatus.EXECUTING else None
+        return self._wait_for_execution(epoch, timeout)
+
+    def _wait_for_execution(self, epoch: int | None, timeout: float | None) -> ExecutionResult:
+        try:
+            result = self._execution_manager.wait(timeout)
+        except Exception as exc:
+            logger.exception("Failed to wait for execution")
+            result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
+        if epoch is not None:
+            self._apply_execution_result(result, epoch)
         return result
 
-    def _apply_execution_result(self, result: ExecutionResult) -> None:
-        """Mirror execution ownership into the broader manipulation snapshot."""
-        with self._lock:
-            if result.status in {ExecutionStatus.ACCEPTED, ExecutionStatus.EXECUTING}:
-                self._state = ManipulationState.EXECUTING
-                self._error_message = ""
-            elif result.status is ExecutionStatus.COMPLETED:
-                self._state = ManipulationState.COMPLETED
-                self._error_message = ""
-            elif result.status in {ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT}:
-                self._state = ManipulationState.FAULT
-                self._error_message = result.message
-            elif result.status is not ExecutionStatus.TIMED_OUT:
-                self._state = ManipulationState.IDLE
-                self._error_message = result.message
+    def _apply_execution_result(
+        self,
+        result: ExecutionResult,
+        epoch: int,
+        *,
+        expected: OperationStatus | None = OperationStatus.EXECUTING,
+    ) -> None:
+        self._finish(
+            epoch,
+            result.message,
+            expected=expected,
+            active=result.status
+            in {
+                ExecutionStatus.ACCEPTED,
+                ExecutionStatus.EXECUTING,
+                ExecutionStatus.TIMED_OUT,
+            },
+        )
 
     def _execute_generated_plan(self, plan: GeneratedPlan) -> bool:
-        """Private in-process bridge for the visualization operator."""
-        with self._lock:
-            self._last_plan = plan
-            self._state = ManipulationState.COMPLETED
-        logger.info("Viser plan execution requested", plan_id=plan.plan_id)
-        result = self.execute(blocking=False, plan_id=plan.plan_id)
-        if result.status is not ExecutionStatus.ACCEPTED:
-            logger.warning(
-                "Viser plan execution rejected",
-                plan_id=plan.plan_id,
-                status=result.status.name,
-                reason=result.message,
-            )
-            return False
-        logger.info("Viser plan execution accepted", plan_id=plan.plan_id)
-        return True
+        """Use the same admission rules for the visualization operator."""
+        with self._command_lock:
+            result, _ = self._dispatch_plan(plan, plan.plan_id)
+        return result.status is ExecutionStatus.ACCEPTED
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
@@ -1429,15 +1423,21 @@ class ManipulationModule(Module):
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
 
-        execution_manager = getattr(self, "_execution_manager", None)
-        if execution_manager is not None:
-            cancellation = execution_manager.cancel()
-            if cancellation.status is ExecutionStatus.UNCERTAIN:
-                logger.error(
-                    "Shutdown could not confirm coordinator trajectory safety: %s",
-                    cancellation.message,
-                )
-            execution_manager.close()
+        with self._command_lock:
+            with self._lock:
+                self._started = False
+                self._state_epoch += 1
+                self._pending_plan = None
+                self._state = OperationStatus.IDLE
+            execution_manager = getattr(self, "_execution_manager", None)
+            if execution_manager is not None:
+                cancellation = execution_manager.cancel()
+                if cancellation.status is ExecutionStatus.UNCERTAIN:
+                    logger.error(
+                        "Shutdown could not confirm coordinator trajectory safety: %s",
+                        cancellation.message,
+                    )
+                execution_manager.close()
 
         # Stop TF thread
         if self._tf_thread is not None:
