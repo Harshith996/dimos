@@ -1181,10 +1181,17 @@ def test_planning_always_finishes_and_can_retry(state_module, failure):
 
 @pytest.mark.parametrize("state", list(OperationStatus))
 @pytest.mark.parametrize("command", ["empty", "invalid", "busy", "timeout"])
-def test_rejected_requests_preserve_workflow_and_plan(state_module, state, command):
+def test_rejected_requests_preserve_workflow_and_plan(state_module, state, command, mocker):
     module = state_module
     module._state = state
     module._error_message = "previous outcome"
+    if state is OperationStatus.EXECUTING:
+        module._pending_plan = None
+        mocker.patch.object(
+            module._execution_manager,
+            "wait",
+            return_value=ExecutionResult(ExecutionStatus.EXECUTING, "previous outcome"),
+        )
     pending = module._pending_plan
     if command == "empty":
         result = module.plan_to_joints({})
@@ -1363,3 +1370,85 @@ def test_wait_timeout_keeps_execution_and_invalid_wait_does_not_finish_it(state_
     assert module._state is OperationStatus.EXECUTING
     assert module.wait_for_execution(timeout=-1).status is ExecutionStatus.REJECTED
     assert module._state is OperationStatus.EXECUTING
+
+
+@pytest.mark.parametrize(
+    ("targets", "speed", "reason"),
+    [
+        ({"manipulator": JointState(position=[0.1])}, 0, "speed_scale"),
+        ({"manipulator": JointState(position=[0.1, 0.2])}, None, "expected 1"),
+        ({"unknown": JointState(position=[0.1])}, None, "unknown"),
+    ],
+)
+def test_planning_rejection_reports_its_own_reason(state_module, targets, speed, reason):
+    module = state_module
+    module._planner.plan_selected_joint_path.return_value = PlanningResult(
+        status=PlanningStatus.TIMEOUT, message="previous planner timeout"
+    )
+    previous = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+    assert previous.status is PlanStatus.FAILED
+    assert "TIMEOUT" in previous.message
+    pending = module._pending_plan
+    diagnostic = module.get_error()
+
+    result = module.plan_to_joints(targets, speed_scale=speed)
+
+    assert result.status is PlanStatus.INVALID_TARGET
+    assert reason in result.message
+    assert "previous planner timeout" not in result.message
+    assert module._pending_plan is pending
+    assert module.get_error() == diagnostic
+    assert module._planner.plan_selected_joint_path.call_count == 1
+
+
+def test_next_plan_refreshes_finished_nonblocking_execution(state_module, mocker):
+    module = state_module
+    mocker.patch.object(
+        module._execution_manager, "execute", return_value=ExecutionResult(ExecutionStatus.ACCEPTED)
+    )
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.COMPLETED)
+    )
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+
+    result = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+
+    assert result.succeeded
+    assert module._state is OperationStatus.IDLE
+    assert module.has_planned_path()
+
+
+@pytest.mark.parametrize("request_kind", ["pose", "linear"])
+def test_pose_and_linear_rejections_keep_saved_error_separate(state_module, request_kind):
+    module = state_module
+    pending = module._pending_plan
+    module._error_message = "previous planner timeout"
+
+    result = (
+        module.plan_to_poses({"manipulator": PoseStamped()}, speed_scale=0)
+        if request_kind == "pose"
+        else module.move_linear(dx=0.1, speed_scale=0).plan
+    )
+
+    assert result.status is PlanStatus.INVALID_TARGET
+    assert "speed_scale" in result.message
+    assert module._pending_plan is pending
+    assert module.get_error() == "previous planner timeout"
+
+
+def test_new_plan_cannot_replace_still_active_execution(state_module, mocker):
+    module = state_module
+    mocker.patch.object(
+        module._execution_manager, "execute", return_value=ExecutionResult(ExecutionStatus.ACCEPTED)
+    )
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.EXECUTING)
+    )
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+
+    result = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+
+    assert result.status is PlanStatus.FAILED
+    assert "EXECUTING" in result.message
+    assert module._state is OperationStatus.EXECUTING
+    module._planner.plan_selected_joint_path.assert_not_called()

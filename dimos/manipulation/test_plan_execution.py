@@ -329,3 +329,15 @@ def test_clear_during_execution_preserves_completion(module_factory):
     coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
     assert module.wait_for_execution(timeout=0).status is ExecutionStatus.COMPLETED
     assert module.get_operation_status() is OperationStatus.IDLE
+
+
+def test_next_operator_execution_refreshes_finished_nonblocking_execution(module_factory):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    assert module._execute_generated_plan(_plan())
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+
+    assert module._execute_generated_plan(_plan(final_position=0.5))
+
+    assert len([c for c in coordinator.task_invoke.call_args_list if c.args[1] == "execute"]) == 2
+    assert module._state is OperationStatus.EXECUTING

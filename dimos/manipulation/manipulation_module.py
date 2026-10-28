@@ -536,17 +536,13 @@ class ManipulationModule(Module):
         self, group_ids: tuple[PlanningGroupID, ...], speed_scale: float | None
     ) -> Iterator[tuple[int, float] | None]:
         """Admit one planning request and finish it on every exit."""
+        error = self._planning_input_error(group_ids, speed_scale)
+        if error:
+            yield None
+            return
         resolved_speed = self.config.default_speed_scale if speed_scale is None else speed_scale
-        if not math.isfinite(resolved_speed) or not 0.0 < resolved_speed <= 1.0:
-            yield None
-            return
-        assert self._world_monitor is not None
-        try:
-            self._world_monitor.planning_groups.select(group_ids)
-        except (KeyError, ValueError):
-            yield None
-            return
         with self._command_lock:
+            self._refresh_execution_status()
             epoch = self._begin(OperationStatus.PLANNING)
         if epoch is None:
             yield None
@@ -559,6 +555,42 @@ class ManipulationModule(Module):
             self._finish(epoch, f"Planning failed: {exc}")
         finally:
             self._finish(epoch, "Planning failed")
+
+    def _planning_input_error(
+        self, group_ids: tuple[PlanningGroupID, ...], speed_scale: float | None
+    ) -> str:
+        """Validate without overwriting a saved workflow diagnostic."""
+        if self._world_monitor is None:
+            return "Planning not initialized"
+        speed = self.config.default_speed_scale if speed_scale is None else speed_scale
+        if not math.isfinite(speed) or not 0.0 < speed <= 1.0:
+            return "speed_scale must be finite, > 0, and <= 1"
+        try:
+            self._world_monitor.planning_groups.select(group_ids)
+        except (KeyError, ValueError) as exc:
+            return str(exc)
+        return ""
+
+    def _joint_goal(self, targets: Mapping[PlanningGroupID, JointState]) -> JointState:
+        assert self._world_monitor is not None
+        names: list[str] = []
+        positions: list[float] = []
+        for group_id, target in targets.items():
+            group = self._world_monitor.planning_groups.get(group_id)
+            normalized = normalize_joint_target(group, target)
+            names.extend(normalized.name)
+            positions.extend(normalized.position)
+        return JointState(name=names, position=positions)
+
+    def _planning_failure(self) -> PlanResult:
+        with self._lock:
+            if not self._started:
+                message = "Manipulation is stopped"
+            elif self._state is not OperationStatus.IDLE:
+                message = f"Cannot plan while manipulation is {self._state.name}"
+            else:
+                message = self._error_message or "Planning failed"
+        return PlanResult(PlanStatus.FAILED, message)
 
     def _begin(self, phase: OperationStatus) -> int | None:
         """Admit a workflow under _command_lock without mutating rejected requests."""
@@ -735,9 +767,16 @@ class ManipulationModule(Module):
         """Plan one synchronized joint target set without moving hardware."""
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
+        error = self._planning_input_error(tuple(targets), speed_scale)
+        if error:
+            return PlanResult(PlanStatus.INVALID_TARGET, error)
+        try:
+            self._joint_goal(targets)
+        except (KeyError, ValueError) as exc:
+            return PlanResult(PlanStatus.INVALID_TARGET, str(exc))
         plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale)
         if plan is None:
-            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+            return self._planning_failure()
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
     @rpc
@@ -749,9 +788,12 @@ class ManipulationModule(Module):
         """Plan one synchronized pose target set without moving hardware."""
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
+        error = self._planning_input_error(tuple(targets), speed_scale)
+        if error:
+            return PlanResult(PlanStatus.INVALID_TARGET, error)
         plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
         if plan is None:
-            return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+            return self._planning_failure()
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
     def generate_plan_to_joint_targets(
@@ -766,17 +808,11 @@ class ManipulationModule(Module):
             return None
 
         group_ids = tuple(joint_targets)
-        goal_names: list[str] = []
-        goal_positions: list[float] = []
-        for group_id, target in joint_targets.items():
-            try:
-                target_group = self._world_monitor.planning_groups.get(group_id)
-                normalized_target = normalize_joint_target(target_group, target)
-            except (KeyError, ValueError) as exc:
-                logger.error(str(exc))
-                return None
-            goal_names.extend(normalized_target.name)
-            goal_positions.extend(normalized_target.position)
+        try:
+            goal = self._joint_goal(joint_targets)
+        except (KeyError, ValueError) as exc:
+            logger.warning("Invalid joint target", error=str(exc))
+            return None
 
         with self._planning_request(group_ids, speed_scale) as planning:
             if planning is None:
@@ -788,7 +824,6 @@ class ManipulationModule(Module):
                 return None
             _selection, start = resolved
 
-            goal = JointState(name=goal_names, position=goal_positions)
             return self._plan_selected_path(
                 group_ids, start, goal, planning_epoch, resolved_speed_scale
             )
@@ -909,6 +944,11 @@ class ManipulationModule(Module):
             plan_result = PlanResult(PlanStatus.AMBIGUOUS_GROUP, group.message)
             return MoveResult(plan_result, None, delta, check_collision)
         resolved_speed = self.config.linear_speed_scale if speed_scale is None else speed_scale
+        error = self._planning_input_error((group.id,), resolved_speed)
+        if error:
+            return MoveResult(
+                PlanResult(PlanStatus.INVALID_TARGET, error), None, delta, check_collision
+            )
         relative = Transform(
             translation=Vector3(*delta),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -920,7 +960,7 @@ class ManipulationModule(Module):
             check_collision=check_collision,
         )
         if plan is None:
-            plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+            plan_result = self._planning_failure()
             return MoveResult(plan_result, None, delta, check_collision)
         plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
         execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
@@ -1091,6 +1131,7 @@ class ManipulationModule(Module):
         plan_id: str | None,
     ) -> tuple[ExecutionResult, int | None]:
         """Admit and dispatch under _command_lock, shared by RPC and visualization."""
+        self._refresh_execution_status()
         with self._lock:
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan"), None

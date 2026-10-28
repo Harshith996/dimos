@@ -24,6 +24,10 @@ from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
     ExecutionStatus,
 )
+from dimos.robot.manipulators.common.agent_prompts import (
+    BASE_MANIPULATION_AGENT_SYSTEM_PROMPT,
+    MANIPULATION_AGENT_SYSTEM_PROMPT,
+)
 
 
 @pytest.fixture
@@ -48,4 +52,15 @@ def test_cancel_reports_an_unconfirmed_stop(
 def test_cancel_reports_a_confirmed_stop(skills: ManipulationSkills) -> None:
     skills.manipulation.cancel.return_value = ExecutionResult(ExecutionStatus.ABORTED, "Cancelled")
 
+    assert skills.cancel().message == "Cancelled"
+
+
+@pytest.mark.parametrize(
+    "prompt", [BASE_MANIPULATION_AGENT_SYSTEM_PROMPT, MANIPULATION_AGENT_SYSTEM_PROMPT]
+)
+def test_recovery_prompts_use_available_cancel_skill(skills, prompt):
+    assert "reset" not in prompt.lower()
+    assert "planning failure, inspect the error, correct the target, and retry" in prompt
+    assert "cancel" in prompt
+    skills.manipulation.cancel.return_value = ExecutionResult(ExecutionStatus.ABORTED, "Cancelled")
     assert skills.cancel().message == "Cancelled"
