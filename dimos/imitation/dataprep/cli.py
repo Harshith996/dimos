@@ -82,7 +82,12 @@ def build(
         raise typer.Exit(2)
 
     try:
-        path = run_dataprep(cfg)
+        if cfg.output.format == "lerobot":
+            from dimos.imitation.dataprep.formats.lerobot.adapter import run_lerobot_dataprep
+
+            path = run_lerobot_dataprep(cfg)
+        else:
+            path = run_dataprep(cfg)
     except Exception as e:
         # CLI boundary: any failure becomes a clean message + non-zero exit
         # instead of a traceback. run_dataprep raises specific errors internally.
