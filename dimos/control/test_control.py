@@ -538,20 +538,34 @@ class TestControlCoordinatorTrajectoryExecution:
         assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
         assert cancel_result.status is TrajectoryCancellationStatus.NO_TRAJECTORY_TASK
 
-    def test_execute_rejects_trajectory_when_hardware_start_differs(
+    def test_execute_uses_tick_snapshot_without_polling_hardware(
         self,
         make_coordinator,
         connected_hardware,
         mock_adapter,
         trajectory_task,
         simple_trajectory,
+        mocker,
     ):
+        mocker.patch.object(TickLoop, "start")
         coordinator = make_coordinator()
         mock_adapter.read_joint_positions.return_value = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0]
         coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
         coordinator.add_task(trajectory_task, task_type="trajectory")
 
+        coordinator.start()
+        assert coordinator.get_joint_positions() == {}
+        assert (
+            coordinator.execute_trajectory(simple_trajectory).status
+            is TrajectoryExecutionStatus.START_STATE_UNAVAILABLE
+        )
+        coordinator._tick_loop._tick()
+        mock_adapter.read_joint_positions.reset_mock()
+        mock_adapter.read_joint_positions.return_value = [0.0] * 6
+
+        assert coordinator.get_joint_positions()["arm/joint1"] == 0.1
         result = coordinator.execute_trajectory(simple_trajectory)
+        mock_adapter.read_joint_positions.assert_not_called()
 
         assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
         assert "arm/joint1" in result.message
@@ -572,6 +586,7 @@ class TestControlCoordinatorTrajectoryExecution:
         coordinator.add_task(trajectory_task, task_type="trajectory")
         coordinator.start()
         tick = coordinator._tick_loop._tick
+        tick()
         accepted = coordinator.execute_trajectory(simple_trajectory)
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
         tick()
@@ -596,7 +611,9 @@ class TestControlCoordinatorTrajectoryExecution:
         connected_hardware,
         trajectory_task,
         simple_trajectory,
+        mocker,
     ):
+        mocker.patch.object(TickLoop, "start")
         coordinator = make_coordinator()
         coordinator.add_hardware(connected_hardware.adapter, connected_hardware.component)
         assert coordinator.set_estop(True)
@@ -606,6 +623,8 @@ class TestControlCoordinatorTrajectoryExecution:
         refused = coordinator.execute_trajectory(simple_trajectory)
         assert refused.status is TrajectoryExecutionStatus.ESTOPPED
         assert coordinator.set_estop(False)
+        coordinator.start()
+        coordinator._tick_loop._tick()
         accepted = coordinator.execute_trajectory(simple_trajectory)
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
