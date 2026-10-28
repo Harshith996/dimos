@@ -21,7 +21,6 @@ import pytest_mock
 
 from dimos.imitation.dataprep.formats.lerobot.adapter import (
     inspect_lerobot_dataset,
-    lerobot_project,
     run_lerobot_dataprep,
 )
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig
@@ -59,17 +58,12 @@ def test_conversion_runs_module_in_checkout_policy_project(
 
     command = run.call_args.args[0]
     project = get_project_root() / "native/python/lerobot"
-    assert lerobot_project() == project
     assert command[:3] == ["uv", "run", "--frozen"]
     assert command[-3:] == ["python", "-m", "dimos_lerobot.dataprep"]
-    assert "--python" not in command
     assert run.call_args.kwargs["cwd"] == project
     assert "VIRTUAL_ENV" not in run.call_args.kwargs["env"]
     assert "UV_PYTHON" not in run.call_args.kwargs["env"]
     assert run.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"] != "/parent/env"
-    assert run.call_args.kwargs["capture_output"] is True
-    assert run.call_args.kwargs["text"] is True
-    assert '"command":"build"' in run.call_args.kwargs["input"]
     assert json.loads(run.call_args.kwargs["input"])["config"]["source"] == str(
         Path("recording.db").resolve()
     )

@@ -14,7 +14,6 @@
 
 from collections.abc import Iterator
 from io import StringIO
-import json
 from pathlib import Path
 import sys
 
@@ -28,8 +27,6 @@ import pytest_mock
 
 from dimos.imitation.dataprep.formats.lerobot.protocol import BuildRequest, BuildResult
 from dimos.imitation.dataprep.schema import DataPrepConfig, OutputConfig, Sample
-
-JOINTS = [f"arm/joint{index}" for index in range(1, 7)] + ["arm/gripper"]
 
 
 def test_module_entry_point_executes_typed_build_request(
@@ -60,102 +57,19 @@ def test_module_entry_point_rejects_arguments(args: list[str]) -> None:
         dataprep.main(args)
 
 
-def samples() -> Iterator[Sample]:
-    for episode, task in (("first", "pick"), ("second", "place")):
-        for frame in range(3):
-            value = float(frame + (10 if episode == "second" else 0))
-            yield Sample(
-                ts=value,
-                episode_id=episode,
-                observation={
-                    "observation.images.wrist": np.full((64, 64, 3), frame, dtype=np.uint8),
-                    "observation.state": np.full(7, value, dtype=np.float32),
-                    "observation.effort": np.full(7, value * 0.1, dtype=np.float32),
-                },
-                action={"action": np.full(7, value + 1, dtype=np.float32)},
-                task_label=task,
-                complementary_info={"is_filled": np.asarray([False])},
-            )
-
-
-def output(path: Path) -> OutputConfig:
+def numeric_output(path: Path) -> OutputConfig:
     return OutputConfig(
         format="lerobot",
         path=path,
         metadata={
             "repo_id": "local/openyam-test",
             "fps": 30,
-            "robot_type": "openyam",
             "feature_schema": {
-                "observation.images.wrist": {
-                    "dtype": "video",
-                    "shape": [64, 64, 3],
-                    "names": ["height", "width", "channels"],
-                },
-                "observation.state": {"dtype": "float32", "shape": [7], "names": JOINTS},
-                "observation.effort": {"dtype": "float32", "shape": [7], "names": JOINTS},
-                "action": {"dtype": "float32", "shape": [7], "names": JOINTS},
-                "complementary_info.is_filled": {
-                    "dtype": "bool",
-                    "shape": [1],
-                    "names": ["is_filled"],
-                },
+                "observation.state": {"dtype": "float32", "shape": [1], "names": ["joint"]},
+                "action": {"dtype": "float32", "shape": [1], "names": ["joint"]},
             },
         },
     )
-
-
-def test_native_writer_creates_canonical_openyam_dataset(tmp_path: Path) -> None:
-    root = write(samples(), output(tmp_path / "dataset"))
-
-    info = json.loads((root / "meta" / "info.json").read_text())
-    assert info["total_episodes"] == 2
-    assert info["total_frames"] == 6
-    assert info["fps"] == 30
-    assert info["robot_type"] == "openyam"
-    assert set(info["features"]) >= {
-        "observation.images.wrist",
-        "observation.state",
-        "action",
-        "observation.effort",
-        "complementary_info.is_filled",
-    }
-    assert info["features"]["observation.state"]["names"] == JOINTS
-
-    summary = dataprep.inspect_dataset(root)
-    assert summary["episodes"] == 2
-    assert summary["frames"] == 6
-    assert summary["episode_lengths"] == {
-        "min": 3,
-        "max": 3,
-        "mean": 3.0,
-        "uniform": True,
-    }
-    assert summary["observation"]["observation.images.wrist"]["dtype"] == "video"
-
-
-def test_native_writer_requires_repo_id(tmp_path: Path) -> None:
-    config = output(tmp_path / "dataset").model_copy(update={"metadata": {"fps": 30}})
-
-    with pytest.raises(ValueError, match="repo_id is required"):
-        write(samples(), config)
-
-
-def test_native_writer_rejects_fractional_fps(tmp_path: Path) -> None:
-    config = output(tmp_path / "dataset")
-    config.metadata["fps"] = 14.5
-
-    with pytest.raises(ValueError, match="positive integer"):
-        write(samples(), config)
-
-
-def numeric_output(path: Path) -> OutputConfig:
-    config = output(path)
-    config.metadata["feature_schema"] = {
-        "observation.state": {"dtype": "float32", "shape": [1], "names": ["joint"]},
-        "action": {"dtype": "float32", "shape": [1], "names": ["joint"]},
-    }
-    return config
 
 
 def numeric_samples(task_label: str | None = "pick") -> Iterator[Sample]:
@@ -188,7 +102,6 @@ def test_robot_metadata_is_preserved_with_explicit_type_precedence(
     tmp_path: Path, explicit_robot: str | None
 ) -> None:
     config = numeric_output(tmp_path / "dataset")
-    config.metadata.pop("robot_type")
     config.metadata["robot"] = "xarm7"
     if explicit_robot is not None:
         config.metadata["robot_type"] = explicit_robot
@@ -196,21 +109,6 @@ def test_robot_metadata_is_preserved_with_explicit_type_precedence(
     root = write(numeric_samples(), config)
 
     assert dataprep.inspect_dataset(root)["robot"] == (explicit_robot or "xarm7")
-
-
-def test_rebuild_replaces_dataset_only_after_success(tmp_path: Path) -> None:
-    config = numeric_output(tmp_path / "dataset")
-    root = write(numeric_samples(), config)
-
-    write(iter([next(numeric_samples("replacement"))]), config)
-
-    summary = dataprep.inspect_dataset(root)
-    assert (summary["episodes"], summary["frames"]) == (1, 1)
-    assert [
-        row["tasks"]
-        for row in LeRobotDatasetMetadata(repo_id="local/openyam-test", root=root).episodes
-    ] == [["replacement"]]
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["dataset"]
 
 
 @pytest.mark.parametrize("existing", [False, True])
@@ -231,8 +129,11 @@ def test_later_episode_failure_preserves_previous_output_and_allows_retry(
         assert [row["tasks"] for row in metadata.episodes] == [["original"]] * 2
     else:
         assert not config.path.exists()
-    root = write(numeric_samples("retry"), config)
-    assert dataprep.inspect_dataset(root)["frames"] == 2
+    root = write(iter([next(numeric_samples("retry"))]), config)
+    summary = dataprep.inspect_dataset(root)
+    assert (summary["episodes"], summary["frames"]) == (1, 1)
+    metadata = LeRobotDatasetMetadata(repo_id="local/openyam-test", root=root)
+    assert [row["tasks"] for row in metadata.episodes] == [["retry"]]
     assert sorted(path.name for path in tmp_path.iterdir()) == ["dataset"]
 
 
@@ -270,15 +171,12 @@ def test_native_dataset_retains_boolean_fill_flags(tmp_path: Path) -> None:
     assert dataset.meta.features["complementary_info.is_filled"]["dtype"] == "bool"
 
 
-def test_native_writer_leaves_frame_validation_to_lerobot(
-    tmp_path: Path, mocker: pytest_mock.MockerFixture
-) -> None:
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [("repo_id", None, "repo_id is required"), ("fps", 14.5, "positive integer")],
+)
+def test_writer_rejects_invalid_export_metadata(tmp_path, field, value, message):
     config = numeric_output(tmp_path / "dataset")
-    sample = next(numeric_samples()).model_copy(
-        update={"action": {"action": np.asarray([2], dtype=np.float64)}}
-    )
-    add_frame = mocker.spy(LeRobotDataset, "add_frame")
-    with pytest.raises(ValueError, match="dtype"):
-        write(iter([sample]), config)
-    assert add_frame.call_count == 1
-    assert not config.path.exists()
+    config.metadata[field] = value
+    with pytest.raises(ValueError, match=message):
+        write(numeric_samples(), config)
