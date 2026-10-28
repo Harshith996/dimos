@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.manipulation.manipulation_module import OperationStatus
+from dimos.manipulation.manipulation_spec import OperationStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
