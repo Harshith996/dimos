@@ -100,10 +100,7 @@ def _waypoint_colors(waypoint: PointStamped) -> Any:
 def _goal_colors(goal: PointStamped) -> Any:
     import rerun as rr
 
-    if not all(
-        math.isfinite(value)
-        for value in (goal.point.x, goal.point.y, goal.point.z)
-    ):
+    if not all(math.isfinite(value) for value in (goal.point.x, goal.point.y, goal.point.z)):
         return None
 
     return rr.Points3D(
