@@ -476,57 +476,6 @@ class TestStateMachine:
         assert module._state == OperationStatus.IDLE
         assert module._error_message == ""
 
-    def test_reset_clears_previous_diagnostic(self, module_factory):
-        """Reset cancels first and clears its local diagnostic."""
-        module = module_factory()
-        module._state = OperationStatus.IDLE
-        module._error_message = "Execution failed"
-
-        result = module.reset()
-
-        assert result.succeeded
-        assert module._state == OperationStatus.IDLE
-        assert module._error_message == ""
-
-    def test_reset_fails_when_the_stop_is_unconfirmed(
-        self, module_factory, mocker: MockerFixture
-    ) -> None:
-        """An uncertain cancellation must not be reported as reset success."""
-        module = module_factory()
-        module._state = OperationStatus.IDLE
-        module._error_message = "cancel outcome uncertain"
-        mocker.patch.object(
-            module,
-            "cancel",
-            return_value=ExecutionResult(ExecutionStatus.UNCERTAIN, "cancel outcome uncertain"),
-        )
-
-        result = module.reset()
-
-        assert not result.succeeded
-        assert module._state == OperationStatus.IDLE
-        assert module._error_message == "cancel outcome uncertain"
-
-    def test_reset_cancels_an_active_trajectory(self, module_factory):
-        """Refusing and asking the caller to cancel first is a dead end."""
-        module = module_factory()
-        config = _one_joint_config()
-        _install_generated_plan(module, config, [0.0], [0.1])
-        module._control_coordinator = _control_coordinator(
-            cancel_status=TrajectoryCancellationStatus.CANCELLED
-        )
-        module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
-            state=TrajectoryState.ABORTED
-        )
-        module._initialize_execution()
-        module.execute(blocking=False)
-
-        result = module.reset()
-
-        assert _cancelled(module._control_coordinator) == ["joint_trajectory"]
-        assert "Cancelled" in result.message
-        assert module._state == OperationStatus.IDLE
-
 
 class PlanningInitializationHarness:
     def __init__(self, mocker: MockerFixture) -> None:
@@ -1254,7 +1203,7 @@ def test_rejected_requests_preserve_workflow_and_plan(state_module, state, comma
     assert module.get_error() == "previous outcome"
 
 
-@pytest.mark.parametrize("invalidate", ["reset", "clear_planned_path", "stop"])
+@pytest.mark.parametrize("invalidate", ["cancel", "clear_planned_path", "stop"])
 def test_old_planning_result_cannot_replace_new_plan(state_module, invalidate):
     module = state_module
     entered, release = Event(), Event()
@@ -1325,7 +1274,7 @@ def test_cancel_waits_for_dispatch_but_not_execution(state_module, mocker):
     assert module._state is OperationStatus.IDLE
 
 
-def test_blocking_wait_does_not_prevent_reset_or_overwrite_new_planning(state_module, mocker):
+def test_blocking_wait_does_not_prevent_cancel_or_overwrite_new_planning(state_module, mocker):
     module = state_module
     waiting, release, planning, finish_plan = Event(), Event(), Event(), Event()
 
@@ -1351,7 +1300,7 @@ def test_blocking_wait_does_not_prevent_reset_or_overwrite_new_planning(state_mo
         old = pool.submit(module.execute)
         try:
             assert waiting.wait(3)
-            assert module.reset().succeeded
+            assert module.cancel().status is ExecutionStatus.ABORTED
             cancel.assert_called_once_with()
             new = pool.submit(module.plan_to_joints, {"manipulator": JointState(position=[0.1])})
             assert planning.wait(3)

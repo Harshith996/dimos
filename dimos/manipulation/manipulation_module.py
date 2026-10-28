@@ -36,7 +36,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.manipulation.execution_manager import PlanExecutionManager
 from dimos.manipulation.manipulation_spec import (
-    UNCONFIRMED_STOP,
     CommandResult,
     CommandStatus,
     ExecutionResult,
@@ -501,26 +500,6 @@ class ManipulationModule(Module):
         """Display the ranked proposals. The grasp module owns no visualizer."""
         if self._world_monitor is not None:
             self._world_monitor.show_grasp_proposals(candidates)
-
-    @rpc
-    def reset(self) -> CommandResult:
-        """Cancel first, then reset local workflow state; never clear hardware errors."""
-        with self._command_lock:
-            result = self.cancel()
-            if result.status in UNCONFIRMED_STOP or result.status in {
-                ExecutionStatus.TIMED_OUT,
-                ExecutionStatus.ACCEPTED,
-                ExecutionStatus.EXECUTING,
-                ExecutionStatus.REJECTED,
-            }:
-                return CommandResult(CommandStatus.FAILED, result.message)
-            self._finish(self._state_epoch, expected=OperationStatus.IDLE)
-            return CommandResult(
-                CommandStatus.SUCCEEDED,
-                "Reset to IDLE"
-                if result.status is ExecutionStatus.NO_EXECUTION
-                else "Cancelled the active motion and reset to IDLE",
-            )
 
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""

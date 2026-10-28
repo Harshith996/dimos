@@ -264,8 +264,6 @@ class ManipulationSpec(Spec, Protocol):
 
     def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None: ...
 
-    def reset(self) -> CommandResult: ...
-
     def set_gripper_position(
         self,
         position: float,
