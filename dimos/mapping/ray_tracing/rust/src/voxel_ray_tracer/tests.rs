@@ -850,8 +850,7 @@ type GrazedFloor = (
     Config,
 );
 
-/// The planar floor of `grazing_ray_spares_planar_floor`, the ray that grazes it, and a config sparing grazes only on
-/// voxels hit within the last 3 frames.
+/// The floor of `grazing_ray_spares_planar_floor`, a ray grazing it, and a config sparing only voxels hit in the last 3 frames.
 fn grazed_floor_with_recency() -> GrazedFloor {
     let voxel_size = 0.1_f32;
     let y_half = 0.3_f32;
@@ -859,8 +858,14 @@ fn grazed_floor_with_recency() -> GrazedFloor {
     let nx = (20.0 / ds).ceil() as i32;
     let ny = (2.0 * y_half / ds).ceil() as i32;
     let floor: Vec<(f32, f32, f32)> = (0..=nx)
-        .flat_map(|i| {
-            (0..=ny).map(move |j| (i as f32 * ds, -y_half + j as f32 * ds, voxel_size * 0.5))
+        .flat_map(|column| {
+            (0..=ny).map(move |row| {
+                (
+                    column as f32 * ds,
+                    -y_half + row as f32 * ds,
+                    voxel_size * 0.5,
+                )
+            })
         })
         .collect();
     let cfg = Config {
@@ -879,19 +884,25 @@ fn grazed_floor_with_recency() -> GrazedFloor {
 
 #[test]
 fn grazing_ray_clears_a_layer_nothing_sees_any_more() {
-    // A layer left by something that has gone (a person who walked off) keeps no grazing spare once it goes unhit.
     let (floor, origin, ray, cfg) = grazed_floor_with_recency();
     let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
-    let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
     for _ in 0..cfg.graze_recent_frames {
         update_map(&mut map, origin, &ray, &cfg);
     }
     assert!(
-        row.iter().all(|k| map.voxels.contains_key(k)),
+        row.iter().all(|key| map.voxels.contains_key(key)),
         "spared while recently hit"
     );
     update_map(&mut map, origin, &ray, &cfg);
-    let cleared = row.iter().filter(|k| !map.voxels.contains_key(k)).count();
+    let cleared = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
     assert!(
         cleared > 0,
         "a layer unhit for longer than graze_recent_frames clears under a grazing ray"
@@ -902,13 +913,20 @@ fn grazing_ray_clears_a_layer_nothing_sees_any_more() {
 fn grazing_ray_spares_a_layer_still_being_seen() {
     let (floor, origin, ray, cfg) = grazed_floor_with_recency();
     let (mut map, _) = build_surface(&floor, cfg.voxel_size, cfg.max_health);
-    let row: Vec<VoxelKey> = map.voxels.keys().filter(|k| k.1 == 0 && k.2 == 0).collect();
+    let row: Vec<VoxelKey> = map
+        .voxels
+        .keys()
+        .filter(|key| key.1 == 0 && key.2 == 0)
+        .collect();
     let above = (10.0_f32, 0.0_f32, 2.0_f32);
     for _ in 0..4 * cfg.graze_recent_frames {
         update_map(&mut map, above, &floor, &cfg);
         update_map(&mut map, origin, &ray, &cfg);
     }
-    let clipped = row.iter().filter(|k| !map.voxels.contains_key(k)).count();
+    let clipped = row
+        .iter()
+        .filter(|key| !map.voxels.contains_key(key))
+        .count();
     assert_eq!(
         clipped, 0,
         "a floor re-hit every other frame keeps its grazing spare"

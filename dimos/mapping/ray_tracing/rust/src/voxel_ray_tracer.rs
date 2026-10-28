@@ -91,8 +91,7 @@ pub struct Config {
     /// on direct hits, lower clears on slight grazes too.
     #[validate(range(min = 0.0, max = 1.0))]
     pub graze_cos: f32,
-    /// Spare a grazing miss only on a voxel hit within this many frames: a surface still being seen keeps its grazing
-    /// protection, one nothing sees any more (a person who walked off) clears like any other. u32::MAX spares always.
+    /// Spare a grazing miss only on a voxel hit within this many frames, so a surface nothing sees any more clears; u32::MAX spares always.
     pub graze_recent_frames: u32,
     /// Occupied neighbors a surface voxel needs to appear in the local map. Zero
     /// emits all. Higher drops isolated returns. The global map is unfiltered.
