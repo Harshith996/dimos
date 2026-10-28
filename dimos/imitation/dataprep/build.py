@@ -74,10 +74,10 @@ def _write_dimos_meta(
     schema alongside the dataset."""
     meta = {
         "source": config.source,
-        "observation": {k: v.model_dump() for k, v in config.observation.items()},
-        "action": {k: v.model_dump() for k, v in config.action.items()},
-        "sync": config.sync.model_dump(),
-        "quality": config.quality.model_dump(),
+        "observation": {k: v.model_dump() for k, v in config.recording_schema.observation.items()},
+        "action": {k: v.model_dump() for k, v in config.recording_schema.action.items()},
+        "sync": config.recording_schema.sync.model_dump(),
+        "quality": config.recording_schema.quality.model_dump(),
         "quality_reports": [report.model_dump() for report in quality_reports],
         "episodes": [
             {
@@ -94,8 +94,8 @@ def _write_dimos_meta(
     }
     if config.output.format == "lerobot":
         meta["feature_names"] = canonical_feature_names(
-            {key: spec.dtype for key, spec in config.observation.items()},
-            config.action.keys(),
+            {key: spec.dtype for key, spec in config.recording_schema.observation.items()},
+            config.recording_schema.action.keys(),
         )
     # Writers return a directory (lerobot) or a file (hdf5). Put the sidecar
     # *inside* a directory, or *beside* a file (`<name>.dimos_meta.json`).
@@ -114,7 +114,7 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
     configured format writer, and writes `dimos_meta.json`. Synchronous —
     raises on failure so the caller owns the exit code.
     """
-    shared = set(config.observation) & set(config.action)
+    shared = set(config.recording_schema.observation) & set(config.recording_schema.action)
     if shared:
         raise ValueError(
             f"observation and action share feature name(s) {sorted(shared)}; "
@@ -124,13 +124,13 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
     logger.info(
         "[dataprep] starting build  source=%s  extractor=%s  output=%s",
         config.source,
-        config.episodes.extractor,
+        config.recording_schema.episodes.extractor,
         config.output.path,
     )
     store = _open_recording(config.source)
     try:
         logger.info("[dataprep] streams in source: %s", store.list_streams())
-        all_eps = extract_episodes(store, config.episodes)
+        all_eps = extract_episodes(store, config.recording_schema.episodes)
         successful = [e for e in all_eps if e.success]
         logger.info(
             "[dataprep] episodes extracted: %d total / %d successful",
@@ -141,24 +141,30 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         if not successful:
             raise RuntimeError(
                 f"No successful episodes extracted from {config.source!r} "
-                f"using extractor={config.episodes.extractor!r}. "
+                f"using extractor={config.recording_schema.episodes.extractor!r}. "
                 f"Available streams: {store.list_streams()}. "
                 f"For a recording with no episode_status stream, set "
                 f"extractor='ranges' with explicit (start, end) tuples."
             )
 
-        obs_keys = set(config.observation)
-        action_keys = set(config.action)
-        streams = {**config.observation, **config.action}
+        obs_keys = set(config.recording_schema.observation)
+        action_keys = set(config.recording_schema.action)
+        streams = {**config.recording_schema.observation, **config.recording_schema.action}
         logger.info(
             "[dataprep] obs streams=%s  action streams=%s  sync=%s",
             sorted(obs_keys),
             sorted(action_keys),
-            config.sync.model_dump(),
+            config.recording_schema.sync.model_dump(),
         )
         selected_writer = writer or get_writer(config.output.format)
         quality_reports = [
-            inspect_episode_quality(store, episode, streams, config.sync, config.quality)
+            inspect_episode_quality(
+                store,
+                episode,
+                streams,
+                config.recording_schema.sync,
+                config.recording_schema.quality,
+            )
             for episode in successful
         ]
         valid_ids = {report.episode_id for report in quality_reports if report.valid}
@@ -176,8 +182,11 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
         # fps drives written timestamps + video rate, so tie it to the resample
         # rate; an explicit metadata.fps still wins.
         feature_schema = {
-            **{key: value.model_dump() for key, value in config.observation.items()},
-            **{key: value.model_dump() for key, value in config.action.items()},
+            **{
+                key: value.model_dump()
+                for key, value in config.recording_schema.observation.items()
+            },
+            **{key: value.model_dump() for key, value in config.recording_schema.action.items()},
             "complementary_info.is_filled": {
                 "dtype": "bool",
                 "shape": [1],
@@ -192,9 +201,11 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                 }
             }
         )
-        if config.sync.rate_hz > 0 and "fps" not in output.metadata:
+        if config.recording_schema.sync.rate_hz > 0 and "fps" not in output.metadata:
             output = output.model_copy(
-                update={"metadata": {**output.metadata, "fps": config.sync.rate_hz}}
+                update={
+                    "metadata": {**output.metadata, "fps": config.recording_schema.sync.rate_hz}
+                }
             )
         logger.info("[dataprep] writing %s dataset to %s", config.output.format, output.path)
 
@@ -211,8 +222,8 @@ def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Pat
                     store=store,
                     episode=ep,
                     streams=streams,
-                    sync=config.sync,
-                    quality=config.quality,
+                    sync=config.recording_schema.sync,
+                    quality=config.recording_schema.quality,
                     obs_keys=obs_keys,
                     action_keys=action_keys,
                 ):
@@ -296,10 +307,14 @@ def inspect_recording(
             "incomplete_episodes": [episode.model_dump() for episode in incomplete],
         }
         if config is not None:
-            streams = {**config.observation, **config.action}
+            streams = {**config.recording_schema.observation, **config.recording_schema.action}
             result["quality"] = [
                 inspect_episode_quality(
-                    store, episode, streams, config.sync, config.quality
+                    store,
+                    episode,
+                    streams,
+                    config.recording_schema.sync,
+                    config.recording_schema.quality,
                 ).model_dump()
                 for episode in episodes
                 if episode.success

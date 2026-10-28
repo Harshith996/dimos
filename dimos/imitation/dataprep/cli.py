@@ -73,7 +73,7 @@ def build(
     if not cfg.source:
         typer.echo("error: no source given (use --source or set it in --config)", err=True)
         raise typer.Exit(2)
-    if not cfg.observation and not cfg.action:
+    if not cfg.recording_schema.observation and not cfg.recording_schema.action:
         typer.echo(
             "error: no observation/action streams configured; pass --config with the "
             "stream maps (see dimos/imitation/dataprep/example_config.json)",

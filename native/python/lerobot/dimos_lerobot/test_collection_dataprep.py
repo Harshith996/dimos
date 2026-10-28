@@ -38,6 +38,7 @@ from dimos.imitation.dataprep.schema import (
     FeatureSpec,
     OutputConfig,
     QualityConfig,
+    RecordingSchema,
     SyncConfig,
 )
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -55,21 +56,23 @@ def _dataprep_config(path: Path, output: OutputConfig) -> DataPrepConfig:
         stream="state", field="position", dtype="float32", shape=(2,), names=["joint_0", "joint_1"]
     )
     return DataPrepConfig(
+        recording_schema=RecordingSchema(
+            episodes=EpisodeExtractor(status_stream="status"),
+            observation={
+                "camera": FeatureSpec(
+                    stream="camera",
+                    field="data",
+                    dtype="video",
+                    shape=(64, 64, 3),
+                    names=["height", "width", "channels"],
+                ),
+                "state": state,
+            },
+            action={"action": state},
+            sync=SyncConfig(anchor="camera", rate_hz=1, tolerance_ms=1),
+            quality=QualityConfig(max_camera_gap_ms=1100),
+        ),
         source=str(path),
-        episodes=EpisodeExtractor(status_stream="status"),
-        observation={
-            "camera": FeatureSpec(
-                stream="camera",
-                field="data",
-                dtype="video",
-                shape=(64, 64, 3),
-                names=["height", "width", "channels"],
-            ),
-            "state": state,
-        },
-        action={"action": state},
-        sync=SyncConfig(anchor="camera", rate_hz=1, tolerance_ms=1),
-        quality=QualityConfig(max_camera_gap_ms=1100),
         output=output,
     )
 
@@ -244,7 +247,7 @@ def test_explicit_range_exports_use_configured_task_label(
         metadata={"repo_id": "dimos/range-test", "default_task_label": "manual pick"},
     )
     config = _dataprep_config(recording, output)
-    config.episodes = EpisodeExtractor(extractor="ranges", ranges=[(100, 102)])
+    config.recording_schema.episodes = EpisodeExtractor(extractor="ranges", ranges=[(100, 102)])
 
     root = run_dataprep(config, writer=write)
 
@@ -318,12 +321,14 @@ def test_mcap_conversion_produces_training_feature_keys(
     image_key = "observation.images.images" if canonical else "images"
     state_key = "observation.state" if canonical else "joint_state"
     action_key = "action" if canonical else "target"
-    config.observation = {
-        state_key: config.observation["state"],
-        image_key: config.observation["camera"],
+    config.recording_schema.observation = {
+        state_key: config.recording_schema.observation["state"],
+        image_key: config.recording_schema.observation["camera"],
     }
-    config.action = {action_key: config.action["action"].model_copy(update={"stream": "target"})}
-    config.sync.anchor = image_key
+    config.recording_schema.action = {
+        action_key: config.recording_schema.action["action"].model_copy(update={"stream": "target"})
+    }
+    config.recording_schema.sync.anchor = image_key
 
     root = run_dataprep(config, writer=write)
 
@@ -379,13 +384,13 @@ def test_multiple_features_keep_separate_canonical_keys(
             metadata={"repo_id": "local/multiple"},
         ),
     )
-    state = config.observation["state"]
-    config.observation = {
+    state = config.recording_schema.observation["state"]
+    config.recording_schema.observation = {
         "left_state": state.model_copy(update={"shape": (1,), "names": ["joint_0"]}),
         "right_state": state.model_copy(update={"shape": (1,), "names": ["joint_1"]}),
-        "camera": config.observation["camera"],
+        "camera": config.recording_schema.observation["camera"],
     }
-    config.action = {
+    config.recording_schema.action = {
         "left_target": state.model_copy(
             update={"stream": "target", "shape": (1,), "names": ["joint_0"]}
         ),
@@ -425,7 +430,9 @@ def test_renamed_feature_collision_preserves_existing_dataset(
     previous = {
         path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
-    config.observation["observation.images.camera"] = config.observation["camera"]
+    config.recording_schema.observation["observation.images.camera"] = (
+        config.recording_schema.observation["camera"]
+    )
 
     with pytest.raises(ValueError, match="rename collision"):
         run_dataprep(config, writer=write)
