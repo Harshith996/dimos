@@ -529,7 +529,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             for index, action in enumerate(actions)
         )
         return JointTrajectory(
-            header=Header(message_time.time_from_seconds(0.0), ""), joint_names=list(self.config.joint_names), points=points
+            header=Header(message_time.time_from_seconds(0.0), ""),
+            joint_names=list(self.config.joint_names),
+            points=points,
         )
 
     def _wait_for_newer_joint_state(self, previous_ts: float) -> None:
