@@ -609,83 +609,44 @@ class TestControlCoordinatorTrajectoryExecution:
         accepted = coordinator.execute_trajectory(simple_trajectory)
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
-    @pytest.mark.parametrize("fenced", [False, True])
-    def test_cancel_during_hardware_read_respects_optional_generation(
-        self, make_coordinator, trajectory_task, simple_trajectory, mocker, fenced
+    def test_cancel_waits_for_submission_and_leaves_no_active_trajectory(
+        self, make_coordinator, trajectory_task, simple_trajectory, mocker
     ):
         coordinator = make_coordinator()
         coordinator.add_task(trajectory_task, task_type="trajectory")
-        generation = coordinator.get_trajectory_generation()
-        reading = Event()
-        release = Event()
-        results = []
+        reading, release, cancelling, cancelled = Event(), Event(), Event(), Event()
+        executions, cancellations = [], []
 
         def delayed_positions():
             reading.set()
             assert release.wait(timeout=2)
             return trajectory_start_positions(simple_trajectory)
 
+        def cancel():
+            cancelling.set()
+            cancellations.append(coordinator.cancel_trajectory())
+            cancelled.set()
+
         mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
-        kwargs = {"expected_generation": generation} if fenced else {}
-        worker = Thread(
-            target=lambda: results.append(
-                coordinator.execute_trajectory(simple_trajectory, **kwargs)
-            )
+        execution = Thread(
+            target=lambda: executions.append(coordinator.execute_trajectory(simple_trajectory))
         )
-        worker.start()
+        cancellation = Thread(target=cancel)
+        execution.start()
         try:
             assert reading.wait(timeout=2)
-            cancellation = coordinator.cancel_trajectory()
-            assert cancellation.safe
+            cancellation.start()
+            assert cancelling.wait(timeout=2)
+            assert not cancelled.wait(timeout=0.05)
         finally:
             release.set()
-            worker.join(timeout=2)
-
-        assert not worker.is_alive()
-        expected = (
-            TrajectoryExecutionStatus.STALE_REQUEST
-            if fenced
-            else TrajectoryExecutionStatus.ACCEPTED
-        )
-        assert results[0].status is expected
-        assert trajectory_task.is_active() is (not fenced)
-
-    def test_new_generation_accepts_submission_after_cancellation(
-        self, make_coordinator, trajectory_task, simple_trajectory, mocker
-    ):
-        coordinator = make_coordinator()
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-        mocker.patch.object(
-            coordinator,
-            "get_joint_positions",
-            return_value=trajectory_start_positions(simple_trajectory),
-        )
-        coordinator.cancel_trajectory()
-
-        result = coordinator.execute_trajectory(
-            simple_trajectory, expected_generation=coordinator.get_trajectory_generation()
-        )
-
-        assert result.status is TrajectoryExecutionStatus.ACCEPTED
-
-    def test_old_generation_cleanup_leaves_new_trajectory_alone(
-        self, make_coordinator, trajectory_task, simple_trajectory, mocker
-    ):
-        coordinator = make_coordinator()
-        coordinator.add_task(trajectory_task, task_type="trajectory")
-        mocker.patch.object(
-            coordinator,
-            "get_joint_positions",
-            return_value=trajectory_start_positions(simple_trajectory),
-        )
-        old_generation = coordinator.get_trajectory_generation()
-        coordinator.cancel_trajectory(expected_generation=old_generation)
-        coordinator.execute_trajectory(simple_trajectory)
-
-        result = coordinator.cancel_trajectory(expected_generation=old_generation)
-
-        assert result.status is TrajectoryCancellationStatus.ALREADY_STOPPED
-        assert trajectory_task.is_active()
+            execution.join(timeout=2)
+            if cancellation.ident is not None:
+                cancellation.join(timeout=2)
+        assert not execution.is_alive() and not cancellation.is_alive()
+        assert executions[0].status is TrajectoryExecutionStatus.ACCEPTED
+        assert cancellations[0].status is TrajectoryCancellationStatus.CANCELLED
+        assert not trajectory_task.is_active()
 
 
 class TestJointTrajectoryTask:
