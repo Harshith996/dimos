@@ -101,7 +101,7 @@ def test_execute_consumes_cached_plan_after_dispatch(
     module._pending_plan = plan
 
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
-    assert module.execute(blocking=False).status is ExecutionStatus.REJECTED
+    assert module.execute(blocking=False).status is ExecutionStatus.NO_PLAN
     assert module._pending_plan is None
     assert _executed(coordinator) is plan.trajectory
 
@@ -314,3 +314,18 @@ def test_historical_wait_result_does_not_end_planning(module_factory, mocker):
 
     assert module._state is OperationStatus.PLANNING
     assert module.get_error() == "current planning diagnostic"
+
+
+def test_clear_during_execution_preserves_completion(module_factory):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    module._pending_plan = _plan()
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+
+    assert module.clear_planned_path().succeeded
+    assert module._state is OperationStatus.EXECUTING
+    assert _cancelled(coordinator) == []
+
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    assert module.wait_for_execution(timeout=0).status is ExecutionStatus.COMPLETED
+    assert module.get_operation_status() is OperationStatus.IDLE

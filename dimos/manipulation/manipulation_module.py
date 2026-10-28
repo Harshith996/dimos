@@ -481,18 +481,17 @@ class ManipulationModule(Module):
     def cancel(self) -> ExecutionResult:
         """Cancel current work without latching a module failure state."""
         with self._command_lock:
-            with self._lock:
-                planning = self._state is OperationStatus.PLANNING
-                self._state_epoch += 1
-                epoch = self._state_epoch
-                self._pending_plan = None
+            epoch, previous = self._invalidate()
             self._dismiss_preview()
             try:
                 result = self._execution_manager.cancel()
             except Exception as exc:
                 logger.exception("Failed to cancel manipulation")
                 result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
-            if planning and result.status is ExecutionStatus.NO_EXECUTION:
+            if (
+                previous is OperationStatus.PLANNING
+                and result.status is ExecutionStatus.NO_EXECUTION
+            ):
                 result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
             self._apply_execution_result(result, epoch, expected=None)
             return result
@@ -515,8 +514,7 @@ class ManipulationModule(Module):
                 ExecutionStatus.REJECTED,
             }:
                 return CommandResult(CommandStatus.FAILED, result.message)
-            with self._lock:
-                self._error_message = ""
+            self._finish(self._state_epoch, expected=OperationStatus.IDLE)
             return CommandResult(
                 CommandStatus.SUCCEEDED,
                 "Reset to IDLE"
@@ -569,31 +567,41 @@ class ManipulationModule(Module):
         except (KeyError, ValueError):
             yield None
             return
-        with self._command_lock, self._lock:
-            if not self._started or self._state is not OperationStatus.IDLE:
-                admitted = None
-            else:
-                self._state_epoch += 1
-                epoch = self._state_epoch
-                self._pending_plan = None
-                self._error_message = ""
-                self._state = OperationStatus.PLANNING
-                admitted = (epoch, float(resolved_speed))
-        if admitted is None:
+        with self._command_lock:
+            epoch = self._begin(OperationStatus.PLANNING)
+        if epoch is None:
             yield None
             return
-        epoch, _ = admitted
         try:
             self._dismiss_preview()
-            yield admitted
+            yield epoch, float(resolved_speed)
         except Exception as exc:
             logger.exception("Planning request failed")
             self._finish(epoch, f"Planning failed: {exc}")
         finally:
-            with self._lock:
-                unfinished = self._state is OperationStatus.PLANNING
-            if unfinished:
-                self._finish(epoch, "Planning failed")
+            self._finish(epoch, "Planning failed")
+
+    def _begin(self, phase: OperationStatus) -> int | None:
+        """Admit a workflow under _command_lock without mutating rejected requests."""
+        with self._lock:
+            if not self._started or self._state is not OperationStatus.IDLE:
+                return None
+            self._state_epoch += 1
+            self._pending_plan = None
+            self._error_message = ""
+            self._state = phase
+            return self._state_epoch
+
+    def _invalidate(self, *, planning_only: bool = False) -> tuple[int, OperationStatus]:
+        """Clear pending data and invalidate affected callbacks under _command_lock."""
+        with self._lock:
+            previous = self._state
+            self._pending_plan = None
+            if not planning_only or previous is OperationStatus.PLANNING:
+                self._state_epoch += 1
+                if planning_only:
+                    self._state = OperationStatus.IDLE
+            return self._state_epoch, previous
 
     def _finish(
         self,
@@ -976,13 +984,8 @@ class ManipulationModule(Module):
     @rpc
     def clear_planned_path(self) -> CommandResult:
         """Discard the pending plan and its preview without cancelling active execution."""
-        with self._command_lock, self._lock:
-            plan = self._pending_plan
-            self._pending_plan = None
-            if self._state == OperationStatus.PLANNING:
-                self._state_epoch += 1
-                self._state = OperationStatus.IDLE
-        if plan is not None:
+        with self._command_lock:
+            self._invalidate(planning_only=True)
             self._dismiss_preview()
         return CommandResult(CommandStatus.SUCCEEDED, "Pending plan cleared")
 
@@ -1110,10 +1113,6 @@ class ManipulationModule(Module):
     ) -> tuple[ExecutionResult, int | None]:
         """Admit and dispatch under _command_lock, shared by RPC and visualization."""
         with self._lock:
-            if not self._started or self._state is not OperationStatus.IDLE:
-                return ExecutionResult(
-                    ExecutionStatus.REJECTED, "Manipulation is busy or stopped"
-                ), None
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan"), None
             if plan_id is not None and target_plan.plan_id != plan_id:
@@ -1128,10 +1127,11 @@ class ManipulationModule(Module):
                     f"No trajectory task is bound to {unowned}; those joints support planning "
                     "and preview only",
                 ), None
-            self._state_epoch += 1
-            epoch = self._state_epoch
-            self._pending_plan = None
-            self._state = OperationStatus.EXECUTING
+        epoch = self._begin(OperationStatus.EXECUTING)
+        if epoch is None:
+            return ExecutionResult(
+                ExecutionStatus.REJECTED, "Manipulation is busy or stopped"
+            ), None
         try:
             result = self._execution_manager.execute(target_plan, blocking=False)
         except Exception as exc:
@@ -1426,9 +1426,8 @@ class ManipulationModule(Module):
         with self._command_lock:
             with self._lock:
                 self._started = False
-                self._state_epoch += 1
-                self._pending_plan = None
-                self._state = OperationStatus.IDLE
+            epoch, _ = self._invalidate()
+            self._finish(epoch, self.get_error(), expected=None)
             execution_manager = getattr(self, "_execution_manager", None)
             if execution_manager is not None:
                 cancellation = execution_manager.cancel()
