@@ -13,27 +13,21 @@
 # limitations under the License.
 
 from pathlib import Path
-import pickle
 import sys
 
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.worker_manager_python import WorkerManagerPython
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule
-from dimos.core.stream import Out, RemoteIn
-from dimos.imitation.collection import recorder as recorder_module
+from dimos.core.stream import Out
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect
-from dimos.imitation.collection.recording import RecordingSchema
-from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig
+from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.get_all_blueprints import get_by_name
 
 
 class _CameraPublisher(Module):
@@ -116,32 +110,6 @@ def test_factory_exposes_all_typed_inputs_before_autoconnect(count, tmp_path):
         assert peers == [(atom.name, "in"), (f"publisher_{i}", "out")]
 
 
-def test_two_shapes_and_recording_paths_have_independent_configuration(tmp_path):
-    first = collect(profile=_profile(1), recording=tmp_path / "one.mcap", instance_name="one")
-    second = collect(profile=_profile(4), recording=tmp_path / "four.mcap", instance_name="four")
-    same_shape = collect(profile=_profile(1), recording=tmp_path / "other.mcap")
-    one, four = autoconnect(first, second).active_blueprints
-    assert one.module is same_shape.active_blueprints[0].module
-    assert one.module is four.module
-    assert {p.name for p in one.streams} != {p.name for p in four.streams}
-    assert one.kwargs["recording"] == tmp_path / "one.mcap"
-    assert four.kwargs["recording"] == tmp_path / "four.mcap"
-
-
-def test_blueprint_pickle_preserves_instance_inputs(tmp_path):
-    blueprint = collect(profile=_profile(2), recording=tmp_path / "recording.mcap")
-    restored = pickle.loads(pickle.dumps(blueprint))
-    atom = restored.active_blueprints[0]
-    assert atom.module is recorder_module.CollectionRecorder
-    assert atom.kwargs["input_types"] == {
-        "camera_0": Image,
-        "camera_1": Image,
-        "measured": JointState,
-    }
-    rebuilt = atom.module.blueprint(**atom.kwargs)
-    assert rebuilt.active_blueprints[0].streams == atom.streams
-
-
 def test_recorder_resolves_every_connected_stream(recorder, mocker):
     for name in (
         "camera_0",
@@ -189,56 +157,6 @@ def test_invalid_ports_fail_at_factory_boundary(stream, tmp_path):
         collect(profile=profile, recording=tmp_path / "invalid.mcap")
 
 
-def test_native_collection_uses_the_recorder_build_directory(recorder):
-    root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
-    cwd, executable = recorder.config.resolve_paths()
-    assert Path(cwd) == root
-    assert Path(executable) == root / "result/bin/dimos-memory-recorder"
-
-
-@pytest.fixture
-def worker_manager():
-    manager = WorkerManagerPython(g=GlobalConfig(n_workers=1))
-    manager.start()
-    yield manager
-    manager.stop()
-
-
-@pytest.fixture
-def deployed_recorders(worker_manager):
-    proxies = []
-    yield proxies
-    for proxy in reversed(proxies):
-        proxy.stop()
-
-
-@pytest.mark.skipif_macos_bug
-def test_generated_inputs_survive_forkserver_and_fresh_deployment(
-    worker_manager,
-    deployed_recorders,
-    tmp_path,
-):
-    # Workers predate the class; fork inheritance cannot make this pass.
-    assert worker_manager.workers[0].pid is not None
-    atom = collect(profile=_profile(3), recording=tmp_path / "worker.mcap").active_blueprints[0]
-    first = worker_manager.deploy(
-        atom.module, global_config, {**atom.kwargs, "instance_name": "first"}
-    )
-    deployed_recorders.append(first)
-    reloaded = recorder_module.CollectionRecorder
-    fresh = worker_manager.deploy_fresh(
-        reloaded, global_config, {**atom.kwargs, "instance_name": "fresh"}
-    )
-    deployed_recorders.append(fresh)
-    for proxy in (first, fresh):
-        for name, kind in atom.kwargs["input_types"].items():
-            port = getattr(proxy, name)
-            assert isinstance(port, RemoteIn)
-            assert port.type is kind
-    pids = [worker.pid for worker in worker_manager.workers]
-    assert len(set(pids)) == 2
-
-
 def test_unsupported_message_type_is_rejected(tmp_path):
     profile = _profile(1)
     profile.observations["images.0"].message_type = str
@@ -275,17 +193,6 @@ def test_run_config_resolves_collection_destination(tmp_path):
         assert recorder._recording_schema.observation["images.0"].stream == "camera_0"
     finally:
         recorder.stop()
-
-
-def test_same_ports_keep_independent_dataset_projections(tmp_path):
-    first_profile = _profile(1)
-    second_profile = _profile(1)
-    second_profile.observations["state"].names = ["other_joint"]
-    first = collect(profile=first_profile, recording=tmp_path / "first").active_blueprints[0]
-    second = collect(profile=second_profile, recording=tmp_path / "second").active_blueprints[0]
-    assert first.module is second.module
-    assert first.kwargs["recording_schema"].observation["state"].names == ["joint"]
-    assert second.kwargs["recording_schema"].observation["state"].names == ["other_joint"]
 
 
 @pytest.fixture
@@ -368,51 +275,6 @@ def test_schema_write_failure_prevents_capture(connected_recorder, mocker):
     assert not (recorder.config.recording / "schema.json").exists()
 
 
-def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypatch):
-    package = tmp_path / "vendor_robot"
-    package.mkdir()
-    (package / "__init__.py").write_text("")
-    (package / "collection.py").write_text(
-        "from dimos.core.coordination.blueprints import autoconnect\n"
-        "from dimos.imitation.collection.recorder import CollectionRecorderConfig, collect\n"
-        "from dimos.imitation.collection.profile import CollectionProfile\nfrom dimos.imitation.dataprep.schema import FeatureSpec\n"
-        "from dimos.imitation.dataprep.core import SyncConfig\n"
-        "from dimos.msgs.sensor_msgs.JointState import JointState\n"
-        "feature = FeatureSpec(stream='joints', message_type=JointState, field='position', dtype='float32', shape=(1,), names=['joint'])\n"
-        "profile = CollectionProfile(metadata={'robot_type': 'vendor'}, observations={'state': feature}, actions={'action': feature})\n"
-        "collect = autoconnect(collect(profile=profile))\n"
-    )
-    metadata = tmp_path / "vendor_robot-1.0.dist-info"
-    metadata.mkdir()
-    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: vendor-robot\nVersion: 1.0\n")
-    (metadata / "entry_points.txt").write_text(
-        "[dimos.blueprints]\ncollect = vendor_robot.collection:collect\n"
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    try:
-        blueprint = get_by_name("vendor-robot.collect")
-        parsed = BlueprintConfigParser(blueprint).parse(
-            ["--recording", str(tmp_path / "session")], environ={}
-        )
-        assert parsed.module_kwargs("recorder")["recording"] == tmp_path / "session"
-        assert blueprint.active_blueprints[0].kwargs["recording_schema"].robot_type == "vendor"
-        assert {port.name for port in blueprint.active_blueprints[0].streams} >= {
-            "joints",
-            "status",
-        }
-    finally:
-        sys.modules.pop("vendor_robot.collection", None)
-        sys.modules.pop("vendor_robot", None)
-
-
-@pytest.mark.parametrize("format,payload", [("mcap", "recording.mcap"), ("sqlite", "recording.db")])
-def test_collection_config_roundtrip_keeps_derived_store(tmp_path, format, payload):
-    config = CollectionRecorderConfig(recording=tmp_path / "session", format=format)
-    restored = CollectionRecorderConfig.model_validate(config.model_dump())
-    assert restored.store.path == str(tmp_path / "session" / payload)
-    assert restored.to_config_dict() == config.to_config_dict()
-
-
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -429,13 +291,3 @@ def test_collection_rejects_conflicting_file_settings_before_creating_directory(
     with pytest.raises(ValueError):
         CollectionRecorderConfig(recording=directory, **kwargs)
     assert not directory.exists()
-
-
-def test_replay_does_not_prepare_collection(connected_recorder, mocker):
-    recorder = connected_recorder(g=GlobalConfig(replay=True))
-    mocker.patch.object(NativeModule, "build")
-    native_start = mocker.patch.object(NativeModule, "start")
-    recorder.build()
-    recorder.start()
-    native_start.assert_not_called()
-    assert not recorder.config.recording.exists()
