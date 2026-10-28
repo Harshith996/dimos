@@ -91,9 +91,7 @@ XARM_GRASP_PROMPTS = [
     # as a ring instead of a roll. Keep a shape-word fallback for that view.
     "green ring",
 ]
-# The three primitives on data/xarm6's table. The apple and the orange exceed the
-# gripper's opening, so the cup is the pick target. Seen from above the beige
-# cylinder reads as a white disc, which no cup prompt matches.
+# data/xarm6's table. The cup is the pick target; from above it reads as a white disc.
 XARM6_GRASP_PROMPTS = ["red apple", "orange", "white ball"]
 
 # Measured off data/xarm_grasp_sim (mj_forward at the driver joint limits) and the
@@ -126,7 +124,7 @@ def _wrist_camera_transform(dof: int) -> Transform:
     camera_link has no parent, nothing resolves into world, and every cloud the
     camera produces is silently unusable. The flange is a frame the model already
     publishes, so ManipulationModule emits the whole chain from one loop at one
-    rate. The mount is the same bracket on both arms.
+    rate.
     """
     return Transform(
         translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
