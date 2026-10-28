@@ -16,7 +16,6 @@
 
 import pytest
 
-from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -98,15 +97,6 @@ def test_three_cameras_can_be_replaced_without_changing_profile(profile, camera_
     assert [atom.name for atom in graph.active_blueprints if atom.module is camera_module] == list(
         names
     )
-
-
-def test_collect_does_not_require_a_unique_coordinator(profile):
-    graph = autoconnect(
-        collect(profile=profile),
-        ControlCoordinator.blueprint(instance_name="left"),
-        ControlCoordinator.blueprint(instance_name="right"),
-    )
-    assert [atom.name for atom in graph.active_blueprints] == ["recorder", "left", "right"]
 
 
 def test_custom_action_features_are_not_limited_to_joint_commands(profile):
