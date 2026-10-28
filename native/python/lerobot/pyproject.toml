@@ -49,6 +49,7 @@ mypy_path = "../../.."
 [[tool.mypy.overrides]]
 module = [
     "lerobot.configs.policies",
+    "lerobot.configs.types",
     "lerobot.datasets",
     "lerobot.datasets.lerobot_dataset",
     "lerobot.policies.factory",
@@ -57,6 +58,7 @@ module = [
     "lerobot.processor",
     "lerobot.types",
     "lerobot.utils.import_utils",
+    "lerobot.utils.feature_utils",
 ]
 follow_untyped_imports = true
 ignore_missing_imports = true
