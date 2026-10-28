@@ -244,6 +244,11 @@ def dual_openyam_scene_registration() -> Blueprint:
         max_distance=1.5,
         use_aabb=True,
         max_obstacle_width=0.06,
+        # Overhead view: a mask edge holds table and the object's slanted sides, and the
+        # 3 px default made the Spam can's cloud 12 x 10 cm for a 5 x 8 cm tin, wider than
+        # the 94 mm jaws in every direction, so the grasp contact check dropped every
+        # heuristic grasp. 10 px gives 8.4 x 6.4 cm (scene 56 recording, 2026-10-28).
+        mask_erode_pixels=10,
     )
 
 

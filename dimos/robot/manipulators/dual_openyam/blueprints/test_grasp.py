@@ -195,6 +195,17 @@ def test_localize_variants_differ_from_the_base_stacks_by_the_perception_module(
     assert GraspGenXModule in _modules(dual_openyam_grasp_localize_graspgenx_agent)
 
 
+def test_registration_erodes_masks_for_the_overhead_view() -> None:
+    from dimos.perception.experimental.object_scene_registration import (
+        ObjectSceneRegistrationModule,
+    )
+
+    for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
+        atom = _atom(stack, ObjectSceneRegistrationModule)
+        assert atom.kwargs["mask_erode_pixels"] == 10
+        assert atom.kwargs["distance_threshold"] == 0.03
+
+
 def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
