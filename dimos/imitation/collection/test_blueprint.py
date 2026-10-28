@@ -62,7 +62,7 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     schema = recorder.kwargs["recording_schema"]
     assert schema.action["action"] == schema.observation["state"]
     assert schema.observation["camera"].shape == (480, 848, 3)
-    assert schema.sync.rate_hz == 15
+    assert schema.sync.rate_hz == 30
     coordinator = next(
         atom for atom in blueprint.active_blueprints if atom.name == "ControlCoordinator"
     )
@@ -75,7 +75,7 @@ def test_collection_uses_sqlite_without_tf(blueprint: Blueprint) -> None:
     "blueprint",
     [learning_collect_webxr_xarm7, learning_collect_webxr_piper],
 )
-def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
+def test_collect_stops_after_producers(blueprint: Blueprint) -> None:
     assert issubclass(blueprint.active_blueprints[0].module, CollectionRecorder)
 
 

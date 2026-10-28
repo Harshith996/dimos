@@ -36,7 +36,7 @@ from dimos.imitation.collection.episode import (
     RecordingState,
 )
 from dimos.imitation.collection.profile import CollectionProfile
-from dimos.imitation.collection.recorder import collection_recorder
+from dimos.imitation.collection.recorder import collect
 from dimos.imitation.collection.recording import RecordingSchema
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
@@ -122,8 +122,7 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
 def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
     config = _dataprep_config(db_path, OutputConfig(path=db_path.parent / "unused"))
     profile = CollectionProfile(
-        name="synthetic",
-        robot_type="synthetic",
+        metadata={"name": "synthetic", "robot_type": "synthetic"},
         observations={
             name: FeatureSpec(
                 **feature.model_dump(),
@@ -135,12 +134,8 @@ def _record_session(db_path: Path, executable: Path) -> dict[str, int]:
             name: FeatureSpec(**feature.model_dump(), message_type=JointState)
             for name, feature in config.action.items()
         },
-        sync=config.sync,
-        quality=config.quality,
     )
-    atom = collection_recorder(
-        profile=profile, recording=db_path.parent, format="sqlite"
-    ).active_blueprints[0]
+    atom = collect(profile=profile, recording=db_path.parent, format="sqlite").active_blueprints[0]
     recorder = atom.module(
         **atom.kwargs, executable=str(executable), source_dir=None, build_command=None
     )
