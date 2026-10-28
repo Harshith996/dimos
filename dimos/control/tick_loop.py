@@ -116,6 +116,7 @@ class TickLoop:
         frame_id: str = "coordinator",
         log_ticks: bool = False,
         publish_command_callback: Callable[[JointState], None] | None = None,
+        publish_accepted_command_callback: Callable[[JointState], None] | None = None,
         connections: dict[str, ConnectionSource] | None = None,
         connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
     ) -> None:
@@ -134,6 +135,7 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_command_callback = publish_command_callback
+        self._publish_accepted_command_callback = publish_accepted_command_callback
         self._publish_robot_callback = publish_robot_callback
         self._publish_tf_callback = publish_tf_callback
         self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
@@ -228,7 +230,7 @@ class TickLoop:
 
         hw_commands = self._route_to_hardware(joint_commands)
 
-        self._write_all_hardware(hw_commands)
+        self._write_all_hardware(hw_commands, joint_states.timestamp)
 
         self._write_all_connections(hw_commands)
 
@@ -470,10 +472,13 @@ class TickLoop:
     def _write_all_hardware(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        timestamp: float | None = None,
     ) -> None:
-        """Write commands to all hardware interfaces."""
+        """Write commands and publish intended and accepted targets separately."""
         hardware = self._hardware
         joint_commands: dict[str, float] = {}
+        accepted_names: list[str] = []
+        accepted_values: list[float] = []
         with self._hardware_lock:
             for hw_id, (positions, mode) in hw_commands.items():
                 if hw_id in hardware:
@@ -495,6 +500,9 @@ class TickLoop:
                             logger.error(
                                 f"Hardware {hw_id} rejected {mode.name} command from control task"
                             )
+                        elif mode in (ControlMode.POSITION, ControlMode.SERVO_POSITION):
+                            accepted_names.extend(positions)
+                            accepted_values.extend(positions.values())
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
         if joint_commands and self._publish_command_callback is not None:
@@ -511,6 +519,21 @@ class TickLoop:
                 )
             except Exception:
                 logger.exception("Failed to publish joint commands")
+
+        if accepted_names and self._publish_accepted_command_callback is not None:
+            try:
+                self._publish_accepted_command_callback(
+                    JointState(
+                        ts=timestamp if timestamp is not None else time.time(),
+                        frame_id=self._frame_id,
+                        name=accepted_names,
+                        position=accepted_values,
+                        velocity=[],
+                        effort=[],
+                    )
+                )
+            except Exception:
+                logger.exception("Failed to publish accepted joint commands")
 
     def _write_all_connections(
         self,

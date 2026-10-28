@@ -27,7 +27,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-def make_loop(callback):
+def make_loop(callback, accepted_callback=None):
     hardware = MagicMock(spec=ConnectedHardware)
     hardware.joint_names = ["arm/joint2", "arm/joint1", "arm/gripper"]
     hardware.component = HardwareComponent(
@@ -46,6 +46,7 @@ def make_loop(callback):
         task_lock=threading.Lock(),
         joint_to_hardware={},
         publish_command_callback=callback,
+        publish_accepted_command_callback=accepted_callback,
         frame_id="robot",
     ), hardware
 
@@ -137,3 +138,14 @@ def test_coordinator_wires_joint_state_command_output():
             )
         finally:
             coordinator.stop()
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_intended_and_accepted_targets_have_distinct_write_semantics(success):
+    intended = []
+    accepted = []
+    tick, hardware = make_loop(intended.append, accepted.append)
+    hardware.write_command.return_value = success
+    tick._write_all_hardware({"arm": ({"arm/joint1": 1.2}, ControlMode.POSITION)}, timestamp=123.0)
+    assert [message.position for message in intended] == [[1.2]]
+    assert [message.position for message in accepted] == ([[1.2]] if success else [])

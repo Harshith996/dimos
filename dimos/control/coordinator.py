@@ -200,6 +200,8 @@ class ControlCoordinator(Module):
     coordinator_joint_state: Out[JointState]
     # Intended position-command updates for recording.
     coordinator_joint_command: Out[JointState]
+    # Position targets whose hardware write succeeded.
+    applied_joint_position_command: Out[JointState]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -420,7 +422,14 @@ class ControlCoordinator(Module):
                 message, a robot cannot be driven (see ``ConnectionSource``),
                 or this coordinator also has hardware adapters.
         """
-        commands = _robot_ports(self.outputs, COMMAND_PORTS)
+        commands = _robot_ports(
+            {
+                name: port
+                for name, port in self.outputs.items()
+                if name != "applied_joint_position_command"
+            },
+            COMMAND_PORTS,
+        )
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
         if not robots:
@@ -1082,6 +1091,7 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_command_callback=self.coordinator_joint_command.publish,
+            publish_accepted_command_callback=self.applied_joint_position_command.publish,
             publish_robot_callback=publish_robot_cb,
             publish_tf_callback=self._frame_pose_port().publish
             if self.config.publish_frame_poses
