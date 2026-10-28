@@ -159,6 +159,17 @@ def test_rerun_bridge_throttles_the_image_streams() -> None:
     assert "world/color_image" in atom.kwargs["max_hz"]
 
 
+def test_registration_erodes_masks_for_the_overhead_view() -> None:
+    from dimos.perception.experimental.object_scene_registration import (
+        ObjectSceneRegistrationModule,
+    )
+
+    for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
+        atom = _atom(stack, ObjectSceneRegistrationModule)
+        assert atom.kwargs["mask_erode_pixels"] == 10
+        assert atom.kwargs["distance_threshold"] == 0.03
+
+
 def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
