@@ -22,8 +22,8 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.lerobot.module import (
-    LeRobotPolicyModule,
+from dimos.imitation.policy.module import (
+    PolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
@@ -52,7 +52,7 @@ def build_openyam_rollout(
     quest_control: bool = False,
 ) -> Blueprint:
     """Build an OpenYAM rollout; Quest control is an optional takeover layer."""
-    policy = LeRobotPolicyModule.blueprint(
+    policy = PolicyModule.blueprint(
         instance_name="policy",
         **({"policy_path": checkpoint} if checkpoint is not None else {}),
         **({"task": task} if task is not None else {}),
