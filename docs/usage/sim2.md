@@ -1,10 +1,10 @@
 # sim2 core
 
 sim2 owns a MuJoCo world and independently scheduled camera/lidar workers.
-Simulated robot modules (e.g. `Go2Sim`) use `SimRobotClient` for internal motor IO.
+Simulated robot modules use `SimRobotClient` for internal motor IO.
 The core does not choose a locomotion policy or create public robot connections.
 
-Go2 runs in sim2 with `unitree-go2-sim` / `unitree-go2-basic-sim`.
+Robot-specific simulated modules and blueprints are follow-up work.
 
 ## Ownership
 
@@ -43,7 +43,7 @@ their owner; cross-sensor acquisition tests stay in `sensors/test_sensors.py`.
 | `SimRobotClient` | One robot's internal command/observation channel; not a Module |
 | `CameraDevice`, `LidarDevice`, `ImuDevice` | Measurement acquisition, simulation-time scheduling, delayed delivery |
 | Sensor modules | Worker lifecycle, a local `WorldReader`, publication of device measurements |
-| Simulated robot module (`Go2Sim`) | `describe_simulated`, controller, the real connection's streams and RPCs |
+| Simulated robot module | `describe_simulated`, controller, the real connection's streams and RPCs |
 
 `simulation(world=WorldConfig(...))` returns a normal `Blueprint` containing one
 world and the declared sensors. It does not return `HardwareComponent` entries,
@@ -57,12 +57,12 @@ separate module that exposes the same streams and RPCs, and a blueprint chooses
 one or the other:
 
 ```python skip
-go2 = autoconnect(GO2Connection.blueprint())
+robot = autoconnect(RobotConnection.blueprint())
 
-go2_sim = Simulation.autoconnect(
-    Go2Sim.blueprint(),
-    SimRGBDCameraModule.blueprint(robot_id="go2", sensor=go2_camera()),
-    LidarModule.blueprint(robot_id="go2", sensor=go2_lidar(), root_body="base"),
+robot_sim = Simulation.autoconnect(
+    RobotSim.blueprint(robot_id="robot"),
+    SimRGBDCameraModule.blueprint(robot_id="robot", sensor=camera),
+    LidarModule.blueprint(robot_id="robot", sensor=lidar, root_body="base"),
     scene="path/to/scene.xml",
 ).remappings([(LidarModule, "pointcloud", "lidar")])
 ```
