@@ -14,7 +14,6 @@
 
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
-from dataclasses import replace
 import os
 import platform
 
@@ -22,7 +21,7 @@ import pytest
 
 from dimos.constants import LONG_TEST_TIMEOUT_S
 from dimos.control.components import HardwareType, make_twist_base_joints
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
@@ -83,26 +82,19 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)
-    # The mock base trails the clock on a loaded machine: the task waits as long as the test does for it to settle,
-    # to a tolerance tighter than the check below.
-    tasks = [
-        replace(
-            task,
-            params={
-                **task.params,
-                "settle_timeout": LONG_TEST_TIMEOUT_S,
-                "position_goal_tolerance": 0.01,
-            },
-        )
-        if task.name == "base_trajectory"
-        else task
-        for task in config.tasks
-    ]
+    # The blueprint's chassis under a base task of the test's own: the mock base trails the clock on a loaded
+    # machine, so it may take as long as the test to settle, to a tolerance tighter than the check below.
+    base_task = TaskConfig(
+        name="base_trajectory",
+        type="planar_base_trajectory",
+        joint_names=make_twist_base_joints("chassis"),
+        params={"settle_timeout": LONG_TEST_TIMEOUT_S, "position_goal_tolerance": 0.01},
+    )
     coordinator = ControlCoordinator(
         publish_joint_state=False,
         tick_rate=config.tick_rate,
         hardware=config.hardware,
-        tasks=tasks,
+        tasks=[base_task],
     )
     coordinator.start()
     try:
