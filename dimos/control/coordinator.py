@@ -948,8 +948,7 @@ class ControlCoordinator(Module):
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return None
+                raise KeyError(f"Task {task_name!r} not found")
 
             kwargs = dict(kwargs or {})
 

@@ -59,8 +59,7 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
 ) -> TaskConfig:
-    """Build the coordinator's single canonical joint-trajectory task."""
-    # The coordinator imports this module to recognize the canonical JTT.
+    """Build the named joint-trajectory task configuration."""
     from dimos.control.coordinator import TaskConfig
 
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
@@ -79,7 +78,6 @@ class TrajectoryExecutionStatus(Enum):
     """Semantic outcome of a trajectory execution request."""
 
     ACCEPTED = auto()
-    NO_TRAJECTORY_TASK = auto()
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
@@ -89,7 +87,7 @@ class TrajectoryExecutionStatus(Enum):
 
 @dataclass(frozen=True)
 class TrajectoryExecutionResult:
-    """Result returned by the coordinator trajectory execution RPC."""
+    """Result of a trajectory task execution command."""
 
     status: TrajectoryExecutionStatus
     message: str = ""
@@ -100,20 +98,19 @@ class TrajectoryCancellationStatus(Enum):
 
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
-    NO_TRAJECTORY_TASK = auto()
     UNCERTAIN = auto()
 
 
 @dataclass(frozen=True)
 class TrajectoryCancellationResult:
-    """Result returned by the coordinator trajectory cancellation RPC."""
+    """Result of a trajectory task cancellation command."""
 
     status: TrajectoryCancellationStatus
     message: str = ""
 
     @property
     def safe(self) -> bool:
-        """Return whether cancellation reached a deterministic coordinator state."""
+        """Return whether cancellation reached a deterministic task state."""
         return self.status is not TrajectoryCancellationStatus.UNCERTAIN
 
     @property
