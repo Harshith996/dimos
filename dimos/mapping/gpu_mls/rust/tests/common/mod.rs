@@ -69,8 +69,7 @@ pub fn gpu_config(cfg: &Config, brick_capacity: u32, max_points: u32) -> MapConf
     }
 }
 
-/// One device for the whole test binary: the Tegra driver deadlocks when
-/// parallel tests each create and drop their own.
+/// One device for the whole test binary, as in a running module.
 pub fn gpu() -> Arc<Gpu> {
     static GPU: OnceLock<Arc<Gpu>> = OnceLock::new();
     GPU.get_or_init(|| {

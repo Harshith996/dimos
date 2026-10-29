@@ -203,6 +203,145 @@ fn within_step(x: i32, y: i32, z: i32, nx: i32, ny: i32, nz: i32) -> bool {
     return abs(height_at(x, y, z, half) - height_at(nx, ny, nz, -half)) <= sp.step_m;
 }
 
+// A workgroup of 64 threads takes half a brick: 4 x-slabs, 4 x 8 x 8
+// voxels. Their neighborhoods all fall in that block grown by one voxel
+// (6 x 10 x 10), whose moments are loaded once into workgroup memory so the
+// fit's repeated passes over 27 neighbors read there. The voxels that need a
+// fit (a few dozen in a typical brick) are packed onto the first lanes.
+const TILE_SLABS: u32 = 4u;
+const TILE_CELLS: u32 = 600u;
+var<workgroup> tile_counts: array<u32, 600>;
+var<workgroup> tile_moments: array<f32, 5400>;
+var<workgroup> tile_bricks: array<u32, 27>;
+var<workgroup> tile_list: array<u32, 256>;
+var<workgroup> tile_len: atomic<u32>;
+var<workgroup> tile_any: u32;
+
+// Tile index of block-relative (x in -1..4, y and z in -1..8).
+fn tile_index(p: vec3<i32>) -> u32 {
+    return u32((p.x + 1) * 100 + (p.y + 1) * 10 + (p.z + 1));
+}
+
+fn tile_count(i: u32) -> f32 {
+    return f32(tile_counts[i]);
+}
+
+// The tile frame: meters from the block's center, shared by every cell so
+// the fit's passes sum moments without shifting them. Within 5.5 voxels of
+// it, f32 keeps a thin plane's covariance to about 1e-7 of its spread.
+fn tile_center(p: vec3<i32>) -> vec3<f32> {
+    return (vec3<f32>(p) - vec3<f32>(1.5, 3.5, 3.5)) * sp.voxel_size;
+}
+
+fn tile_mean(i: u32) -> vec3<f32> {
+    return vec3<f32>(tile_moments[i * 9u], tile_moments[i * 9u + 1u], tile_moments[i * 9u + 2u]);
+}
+
+// The cell's second moment about the tile frame's origin, xx xy xz yy yz zz.
+fn tile_second(i: u32) -> mat3x3<f32> {
+    let m = i * 9u + 3u;
+    let xx = tile_moments[m];
+    let xy = tile_moments[m + 1u];
+    let xz = tile_moments[m + 2u];
+    let yy = tile_moments[m + 3u];
+    let yz = tile_moments[m + 4u];
+    let zz = tile_moments[m + 5u];
+    return mat3x3<f32>(vec3<f32>(xx, xy, xz), vec3<f32>(xy, yy, yz), vec3<f32>(xz, yz, zz));
+}
+
+// Load voxel `v`'s moments (about its center, block-relative `p`) into tile
+// cell `c`, moved to the tile frame.
+fn tile_store(c: u32, v: u32, p: vec3<i32>) {
+    let vs = sp.voxel_size;
+    let n = f32(moment_count(v));
+    let sum = vec3<f32>(moment_value(v, 0u), moment_value(v, 1u), moment_value(v, 2u)) * vs;
+    let m2 = mat3x3<f32>(
+        vec3<f32>(moment_value(v, 3u), moment_value(v, 4u), moment_value(v, 5u)),
+        vec3<f32>(moment_value(v, 4u), moment_value(v, 6u), moment_value(v, 7u)),
+        vec3<f32>(moment_value(v, 5u), moment_value(v, 7u), moment_value(v, 8u)),
+    ) * (vs * vs);
+    let d = tile_center(p);
+    let moved = m2 + outer(sum, d) + outer(d, sum) + outer(d, d) * n;
+    let mean = sum / n + d;
+    let base = c * 9u;
+    tile_moments[base] = mean.x;
+    tile_moments[base + 1u] = mean.y;
+    tile_moments[base + 2u] = mean.z;
+    tile_moments[base + 3u] = moved[0][0];
+    tile_moments[base + 4u] = moved[0][1];
+    tile_moments[base + 5u] = moved[0][2];
+    tile_moments[base + 6u] = moved[1][1];
+    tile_moments[base + 7u] = moved[1][2];
+    tile_moments[base + 8u] = moved[2][2];
+}
+
+// The pooled plane of the voxel at block-relative `at`, from the tile: the
+// CPU pooled_normal, except the reweighting starts from each neighbor's height
+// off this voxel's own points instead of uniform, so at a step edge the fit
+// settles on the voxel's own level rather than a tilted plane through both.
+fn tile_fit(at: vec3<i32>) -> PooledFit {
+    var n_raw = 0u;
+    for (var k = 0u; k < NEIGHBORHOOD; k++) {
+        n_raw += tile_counts[tile_index(at + neighbor_offset(k))];
+    }
+    if (n_raw < NORMAL_MIN_POINTS) {
+        return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
+    }
+    let sigma = PLANE_SIGMA_FRAC * sp.voxel_size;
+    let two_sig2 = 2.0 * sigma * sigma;
+    let own = tile_index(at);
+    let level = tile_counts[own] > 0u;
+    let own_z = tile_mean(own).z;
+    // The previous pass's plane; none yet, so weights start from the level.
+    var plane_n = vec3<f32>(0.0);
+    var plane_p = vec3<f32>(0.0);
+    var fitted = false;
+    var last: Eigen;
+    for (var iter = 0u; iter <= REWEIGHT_ITERS; iter++) {
+        var wn = 0.0;
+        var s = vec3<f32>(0.0);
+        var t = mat3x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+        for (var k = 0u; k < NEIGHBORHOOD; k++) {
+            let i = tile_index(at + neighbor_offset(k));
+            if (tile_counts[i] == 0u) {
+                continue;
+            }
+            let mean = tile_mean(i);
+            var w = 1.0;
+            if (fitted) {
+                let dist = dot(plane_n, mean - plane_p);
+                w = exp(-(dist * dist) / two_sig2);
+            } else if (level) {
+                let rise = mean.z - own_z;
+                w = exp(-(rise * rise) / two_sig2);
+            }
+            let wi = w * tile_count(i);
+            wn += wi;
+            s += mean * wi;
+            if (iter < REWEIGHT_ITERS) {
+                t += tile_second(i) * w;
+            }
+        }
+        // The pass after the last fit only tallies the support kept.
+        if (iter == REWEIGHT_ITERS) {
+            if (!fitted || wn < MIN_SUPPORT * f32(n_raw)) {
+                return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
+            }
+            return PooledFit(classify(last), s / wn - tile_center(at));
+        }
+        if (wn < 1e-6) {
+            return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
+        }
+        let mean = s / wn;
+        let cov = t * (1.0 / wn) - outer(mean, mean);
+        last = sym3_eigen(cov);
+        plane_n = last.smallest;
+        plane_p = mean;
+        fitted = true;
+    }
+    return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
+}
+
 // Each healthy voxel's surface height and normal from its pooled plane. A
 // voxel inside a solid stack is never a surface nor an underside, so it
 // keeps its top face and skips the fit.
@@ -212,38 +351,83 @@ fn fit_cells(
     @builtin(num_workgroups) nwg: vec3<u32>,
     @builtin(local_invocation_index) li: u32,
 ) {
-    let v = thread_index(wg, nwg, li);
-    if (v >= min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity) * BRICK_VOXELS) {
+    // Dispatched one group per 64 pool voxels; the first 2 per brick each
+    // take a half brick and the rest stand idle.
+    let group = wg.y * nwg.x + wg.x;
+    let slot = group / 2u;
+    let first = slot * BRICK_VOXELS + (group % 2u) * TILE_SLABS * 64u;
+    let bricks = min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity);
+    for (var r = 0u; r < TILE_SLABS; r++) {
+        let v = first + r * 64u + li;
+        if (slot >= bricks || !voxel_exists(v) || health[v] <= 0) {
+            continue;
+        }
+        let local = key_of_voxel(v) - sp.window_min.xyz;
+        if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
+            continue;
+        }
+        let i = cell_index(local.x, local.y, local.z);
+        heights[i] = bottom_face(local.z) + sp.voxel_size;
+        cell_normals[i] = 0u;
+        if (!(occupied_at(local.x, local.y, local.z - 1) && occupied_at(local.x, local.y, local.z + 1))) {
+            tile_list[atomicAdd(&tile_len, 1u)] = r * 64u + li;
+        }
+    }
+    workgroupBarrier();
+    if (li == 0u) {
+        tile_any = atomicLoad(&tile_len);
+    }
+    let len = workgroupUniformLoad(&tile_any);
+    if (len == 0u) {
         return;
     }
-    if (!voxel_exists(v) || health[v] <= 0) {
-        return;
+
+    let home = brick_coords[slot].xyz;
+    let block_x = i32((group % 2u) * TILE_SLABS);
+    if (li < 27u) {
+        let offset = neighbor_offset(li);
+        tile_bricks[li] = select(find_brick(home + offset), slot, all(offset == vec3<i32>(0)));
     }
-    let key = key_of_voxel(v);
-    let local = key - sp.window_min.xyz;
-    if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
-        return;
+    workgroupBarrier();
+    for (var c = li; c < TILE_CELLS; c += 64u) {
+        let p = vec3<i32>(i32(c / 100u) - 1, i32(c / 10u % 10u) - 1, i32(c % 10u) - 1);
+        let brick_local = vec3<i32>(block_x + p.x, p.y, p.z);
+        let step = brick_local >> vec3<u32>(3u);
+        let b = tile_bricks[u32((step.x + 1) * 9 + (step.y + 1) * 3 + (step.z + 1))];
+        var count = 0u;
+        if (b != NO_SLOT) {
+            let nv = b * BRICK_VOXELS + local_index(brick_local);
+            count = moment_count(nv);
+            if (count > 0u) {
+                tile_store(c, nv, p);
+            }
+        }
+        tile_counts[c] = count;
     }
-    let i = cell_index(local.x, local.y, local.z);
-    let bottom = bottom_face(local.z);
-    heights[i] = bottom + sp.voxel_size;
-    cell_normals[i] = 0u;
-    if (occupied_at(local.x, local.y, local.z - 1) && occupied_at(local.x, local.y, local.z + 1)) {
-        return;
+    workgroupBarrier();
+
+    for (var j = li; j < len; j += 64u) {
+        let offset = tile_list[j];
+        let fv = first + offset;
+        let key = key_of_voxel(fv);
+        let cell = key - sp.window_min.xyz;
+        let ci = cell_index(cell.x, cell.y, cell.z);
+        let cell_bottom = bottom_face(cell.z);
+        let l = offset % 64u;
+        let fit = tile_fit(vec3<i32>(i32(offset / 64u), i32((l >> 3u) & 7u), i32(l & 7u)));
+        if (fit.normal.w <= 0.0) {
+            continue;
+        }
+        let n = select(fit.normal.xyz, -fit.normal.xyz, fit.normal.z < 0.0);
+        if (n.z > 1e-3) {
+            // The plane through the pooled mean, at the column center; kept within
+            // half a voxel of this one so a sparse voxel cannot drift off.
+            let h = voxel_center(key).z + fit.mean.z + dot(n.xy, fit.mean.xy) / n.z;
+            heights[ci] = clamp(h, cell_bottom - 0.5 * sp.voxel_size, cell_bottom + 1.5 * sp.voxel_size);
+        }
+        cell_normals[ci] = pack_normal(n);
+        atomicOr(&planar[column_word(cell.x, cell.y, cell.z)], 1u << (u32(cell.z) & 31u));
     }
-    let fit = pooled_fit(key, true);
-    if (fit.normal.w <= 0.0) {
-        return;
-    }
-    let n = select(fit.normal.xyz, -fit.normal.xyz, fit.normal.z < 0.0);
-    if (n.z > 1e-3) {
-        // The plane through the pooled mean, at the column center; kept within
-        // half a voxel of this one so a sparse voxel cannot drift off.
-        let h = voxel_center(key).z + fit.mean.z + dot(n.xy, fit.mean.xy) / n.z;
-        heights[i] = clamp(h, bottom - 0.5 * sp.voxel_size, bottom + 1.5 * sp.voxel_size);
-    }
-    cell_normals[i] = pack_normal(n);
-    atomicOr(&planar[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
 }
 
 // A voxel and the one above it holding the same plane (a floor on a grid

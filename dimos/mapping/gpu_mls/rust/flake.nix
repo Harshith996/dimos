@@ -73,6 +73,8 @@
           cat > $out/bin/gpu-mls-tests <<'EOF'
           #!${shell}
           ${prelude}
+          # The Jetson Orin's driver can hang in a fence wait when parallel tests drive the GPU at once.
+          export RUST_TEST_THREADS=''${RUST_TEST_THREADS:-1}
           here=$(dirname "$0")/../libexec/tests
           status=0
           for test in "$here"/*; do "$test" "$@" || status=1; done
