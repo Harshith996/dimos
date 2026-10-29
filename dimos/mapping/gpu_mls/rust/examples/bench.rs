@@ -39,8 +39,9 @@ type Point = (f32, f32, f32);
 const CROP_M: Point = (20.0, 20.0, 9.0);
 /// ...centered on the largest height change over this many frames (5 s of Mid-360).
 const CLIMB_FRAMES: usize = 50;
-/// Frames of the recording around that climb (about 5 minutes).
-const STRETCH_FRAMES: usize = 3000;
+/// Frames of the recording around that climb (about 40 s). The map never
+/// drops bricks, so at 5 cm a longer stretch of a building outgrows the pool.
+const STRETCH_FRAMES: usize = 400;
 
 /// Frames written by `export_frames.py`: a u32 count, the origin, then the points.
 fn read_frames(path: &str) -> Vec<(Point, Vec<Point>)> {
