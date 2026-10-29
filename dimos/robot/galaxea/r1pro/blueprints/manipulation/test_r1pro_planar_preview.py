@@ -20,6 +20,7 @@ import platform
 
 import pytest
 
+from dimos.constants import LONG_TEST_TIMEOUT_S
 from dimos.control.components import HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -74,11 +75,7 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
 
 
-# Long enough that only a base that never arrives fails, however late a loaded machine's ticks run.
-_DRIVE_TIMEOUT_S = 3600.0
-
-
-@pytest.mark.timeout(_DRIVE_TIMEOUT_S)
+@pytest.mark.timeout(LONG_TEST_TIMEOUT_S)
 @pytest.mark.skipif(
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
@@ -93,7 +90,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             task,
             params={
                 **task.params,
-                "settle_timeout": _DRIVE_TIMEOUT_S,
+                "settle_timeout": LONG_TEST_TIMEOUT_S,
                 "position_goal_tolerance": 0.01,
             },
         )
@@ -116,7 +113,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
             is not TrajectoryState.EXECUTING,
-            timeout=_DRIVE_TIMEOUT_S,
+            timeout=LONG_TEST_TIMEOUT_S,
         )
         status = coordinator.task_invoke("base_trajectory", "get_status", {})
         assert status.state is TrajectoryState.COMPLETED
