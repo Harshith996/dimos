@@ -650,8 +650,8 @@ impl SurfaceExtractor {
         encoder.clear_buffer(&self.buffers.plane_count, 0, None);
         let mut pass = begin(encoder, "planes", &mut timer);
         let p = &self.pipelines;
-        let cells = self.cell_groups();
-        self.run(&mut pass, None, &p.find_walls, self.column_groups(), 1);
+        let columns = self.column_groups();
+        self.run(&mut pass, None, &p.find_walls, columns, 1);
         for pipeline in [
             &p.uf_init,
             &p.link_components,
@@ -661,7 +661,7 @@ impl SurfaceExtractor {
             &p.number_planes,
             &p.bound_planes,
         ] {
-            self.run(&mut pass, None, pipeline, cells, 1);
+            self.run(&mut pass, None, pipeline, columns, 1);
         }
     }
 
@@ -687,7 +687,7 @@ impl SurfaceExtractor {
             &mut pass,
             None,
             &self.pipelines.scatter_walls,
-            self.cell_groups(),
+            self.column_groups(),
             1,
         );
         for step in Self::flood_steps(widest.next_power_of_two() / 2) {
@@ -704,7 +704,7 @@ impl SurfaceExtractor {
             &mut pass,
             None,
             &self.pipelines.measure_walls,
-            self.cell_groups(),
+            self.column_groups(),
             1,
         );
     }

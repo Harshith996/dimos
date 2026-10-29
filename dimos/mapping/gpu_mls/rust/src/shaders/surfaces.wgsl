@@ -719,15 +719,35 @@ fn uf_union(base: u32, a: u32, b: u32) {
     }
 }
 
+// The next surface cell up a column, -1 past the top. The planes passes run
+// one thread per column over its surface cells; only those carry labels.
+fn next_surface(x: i32, y: i32, word: ptr<function, u32>, bits: ptr<function, u32>) -> i32 {
+    while (*bits == 0u) {
+        if (*word >= sp.size.w) {
+            return -1;
+        }
+        *bits = surface[column_word(x, y, 0) + *word];
+        *word += 1u;
+    }
+    let z = (*word - 1u) * 32u + firstTrailingBit(*bits);
+    *bits &= *bits - 1u;
+    return i32(z);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn uf_init(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
-    let c = cell_index(i32(gid.x), i32(gid.y), i32(gid.z));
-    let own = select(NO_SEED, c, is_surface(i32(gid.x), i32(gid.y), i32(gid.z)));
-    atomicStore(&labels[c], own);
-    atomicStore(&labels[planes_base() + c], own);
+    let x = i32(gid.x);
+    let y = i32(gid.y);
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let c = cell_index(x, y, z);
+        atomicStore(&labels[c], c);
+        atomicStore(&labels[planes_base() + c], c);
+    }
 }
 
 // Which sheet of its component a cell is on, counted from below: cells of
@@ -750,16 +770,7 @@ fn component_rank(x: i32, y: i32, z: i32, component: u32) -> u32 {
 
 // Union each surface cell with its linked +x and +y neighbors; the plane pass
 // also requires equal rank.
-fn link_neighbors(gid: vec3<u32>, planes: bool) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
-        return;
-    }
-    let x = i32(gid.x);
-    let y = i32(gid.y);
-    let z = i32(gid.z);
-    if (!is_surface(x, y, z)) {
-        return;
-    }
+fn link_neighbors(x: i32, y: i32, z: i32, planes: bool) {
     let c = cell_index(x, y, z);
     var rank = 0u;
     var component = 0u;
@@ -788,20 +799,42 @@ fn link_neighbors(gid: vec3<u32>, planes: bool) {
 
 @compute @workgroup_size(8, 8, 1)
 fn link_components(@builtin(global_invocation_id) gid: vec3<u32>) {
-    link_neighbors(gid, false);
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
+        return;
+    }
+    let x = i32(gid.x);
+    let y = i32(gid.y);
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        link_neighbors(x, y, z, false);
+    }
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn link_planes(@builtin(global_invocation_id) gid: vec3<u32>) {
-    link_neighbors(gid, true);
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
+        return;
+    }
+    let x = i32(gid.x);
+    let y = i32(gid.y);
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        link_neighbors(x, y, z, true);
+    }
 }
 
 fn flatten(gid: vec3<u32>, base: u32) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
-    let c = cell_index(i32(gid.x), i32(gid.y), i32(gid.z));
-    if (atomicLoad(&labels[base + c]) != NO_SEED) {
+    let x = i32(gid.x);
+    let y = i32(gid.y);
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let c = cell_index(x, y, z);
         atomicStore(&labels[base + c], uf_find(base, c));
     }
 }
@@ -840,46 +873,50 @@ fn plane_of_cell(c: u32) -> u32 {
 // Number each plane root; the ids index plane_bounds and plane_table.
 @compute @workgroup_size(8, 8, 1)
 fn number_planes(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
-    let c = cell_index(x, y, i32(gid.z));
-    if (atomicLoad(&labels[planes_base() + c]) != c) {
-        return;
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let c = cell_index(x, y, z);
+        if (atomicLoad(&labels[planes_base() + c]) != c) {
+            continue;
+        }
+        let id = atomicAdd(&plane_count[0], 1u);
+        if (id >= plane_info.capacity) {
+            seeds_a[c] = NO_SEED;
+            continue;
+        }
+        seeds_a[c] = id;
+        atomicStore(&plane_bounds[id * 4u], x);
+        atomicStore(&plane_bounds[id * 4u + 1u], y);
+        atomicStore(&plane_bounds[id * 4u + 2u], x);
+        atomicStore(&plane_bounds[id * 4u + 3u], y);
     }
-    let id = atomicAdd(&plane_count[0], 1u);
-    if (id >= plane_info.capacity) {
-        seeds_a[c] = NO_SEED;
-        return;
-    }
-    seeds_a[c] = id;
-    atomicStore(&plane_bounds[id * 4u], x);
-    atomicStore(&plane_bounds[id * 4u + 1u], y);
-    atomicStore(&plane_bounds[id * 4u + 2u], x);
-    atomicStore(&plane_bounds[id * 4u + 3u], y);
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn bound_planes(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
-    let z = i32(gid.z);
-    if (!is_surface(x, y, z)) {
-        return;
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let id = plane_of_cell(cell_index(x, y, z));
+        if (id == NO_SEED) {
+            continue;
+        }
+        atomicMin(&plane_bounds[id * 4u], x);
+        atomicMin(&plane_bounds[id * 4u + 1u], y);
+        atomicMax(&plane_bounds[id * 4u + 2u], x);
+        atomicMax(&plane_bounds[id * 4u + 3u], y);
     }
-    let id = plane_of_cell(cell_index(x, y, z));
-    if (id == NO_SEED) {
-        return;
-    }
-    atomicMin(&plane_bounds[id * 4u], x);
-    atomicMin(&plane_bounds[id * 4u + 1u], y);
-    atomicMax(&plane_bounds[id * 4u + 2u], x);
-    atomicMax(&plane_bounds[id * 4u + 3u], y);
 }
 
 // The plane whose cell range holds plane cell t; the table is sorted by first cell.
@@ -923,18 +960,21 @@ fn plane_cell(id: u32, x: i32, y: i32) -> u32 {
 
 @compute @workgroup_size(8, 8, 1)
 fn scatter_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
-    let z = i32(gid.z);
-    if (!bit_at(x, y, z, 3u)) {
-        return;
-    }
-    let id = plane_of_cell(cell_index(x, y, z));
-    if (id != NO_SEED) {
-        plane_cells_a[plane_cell(id, x, y)] = pack_seed(x, y);
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        if (!bit_at(x, y, z, 3u)) {
+            continue;
+        }
+        let id = plane_of_cell(cell_index(x, y, z));
+        if (id != NO_SEED) {
+            plane_cells_a[plane_cell(id, x, y)] = pack_seed(x, y);
+        }
     }
 }
 
@@ -989,32 +1029,35 @@ fn plane_flood_pass(
 }
 
 // Straight-line distance in meters from each surface cell to the nearest
-// wall cell of its plane, 0 on wall cells, -1 off the surface or on a plane
-// with no wall.
+// wall cell of its plane, 0 on wall cells, -1 on a plane with no wall. Cells
+// off the surface are left as they were.
 @compute @workgroup_size(8, 8, 1)
 fn measure_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
-    let z = i32(gid.z);
-    let c = cell_index(x, y, z);
-    var d = -1.0;
-    if (bit_at(x, y, z, 3u)) {
-        d = 0.0;
-    } else if (is_surface(x, y, z)) {
-        let id = plane_of_cell(c);
-        if (id != NO_SEED) {
-            let seed = plane_read(plane_cell(id, x, y));
-            // A cell stacked over a wall cell of its sheet reads its own
-            // column; any non-wall cell is at least one cell from a wall.
-            if (seed != NO_SEED) {
-                d = max(sqrt(f32(seed_dist_sq(x, y, seed))), 1.0) * sp.voxel_size;
+    var word = 0u;
+    var bits = 0u;
+    for (var z = next_surface(x, y, &word, &bits); z >= 0; z = next_surface(x, y, &word, &bits)) {
+        let c = cell_index(x, y, z);
+        var d = -1.0;
+        if (bit_at(x, y, z, 3u)) {
+            d = 0.0;
+        } else {
+            let id = plane_of_cell(c);
+            if (id != NO_SEED) {
+                let seed = plane_read(plane_cell(id, x, y));
+                // A cell stacked over a wall cell of its sheet reads its own
+                // column; any non-wall cell is at least one cell from a wall.
+                if (seed != NO_SEED) {
+                    d = max(sqrt(f32(seed_dist_sq(x, y, seed))), 1.0) * sp.voxel_size;
+                }
             }
         }
+        wall_distance[c] = d;
     }
-    wall_distance[c] = d;
 }
 
 // The plane id of every surface cell, for inspecting the split.
