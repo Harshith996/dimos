@@ -184,8 +184,9 @@ impl BrickMap {
     pub fn new(gpu: Arc<Gpu>, config: MapConfig) -> Result<Self, String> {
         let cap = config.brick_capacity as u64;
         let voxels = cap * BRICK_VOXELS;
-        // Half-full at capacity keeps linear probes short.
-        let table_entries = (2 * cap).next_power_of_two();
+        // Half-full at capacity, plus room for the slotless keys of the frame
+        // that fills the pool (at most one per point).
+        let table_entries = (2 * cap + config.max_points as u64).next_power_of_two();
         let list_cap = config.list_capacity as u64;
         let limits = gpu.device.limits();
         let largest = (limits.max_storage_buffer_binding_size as u64).min(limits.max_buffer_size);

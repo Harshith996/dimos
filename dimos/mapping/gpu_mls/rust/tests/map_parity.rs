@@ -188,3 +188,28 @@ pub fn summary(d: &common::MapDiff) -> String {
         d.moment_rel_err
     )
 }
+
+#[test]
+fn full_pool_stops_taking_bricks_instead_of_filling_the_table() {
+    let cfg = cpu_config(0.05);
+    // A building-sized room: far more bricks than the pool or its table hold.
+    let scene = Scene::room(60.0, 3.0);
+    let mut rng = Lcg(7);
+    // Small frames keep the table small (its headroom is one frame's points),
+    // so new keys arriving after the pool filled would overflow it.
+    let points = 2_000;
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 64, points as u32))
+        .expect("brick map fits the device");
+    for origin in scene.trajectory(40, 0.4) {
+        let pts = scene.scan(origin, points, &mut rng, 0.01, cfg.max_range + 5.0);
+        map.ingest(origin, &pts);
+    }
+    map.finish();
+    let overflow = map.stats().overflow;
+    assert_ne!(overflow & 512, 0, "the pool should report full");
+    assert_eq!(
+        overflow & 256,
+        0,
+        "a full pool must not fill the hash table"
+    );
+}

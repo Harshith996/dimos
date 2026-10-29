@@ -39,19 +39,33 @@ fn insert_bricks(
         return;
     }
     let key = pack_brick(b);
+    // A full pool takes no new keys: slotless keys would fill the table and
+    // make every lookup probe all of it. Only the frame that fills the pool
+    // adds any, at most one per point, which the table's headroom covers.
+    let full = atomicLoad(&counters[C_BRICKS]) >= params.brick_capacity;
     var entry = hash_key(key) & params.table_mask;
     for (var probe = 0u; probe <= params.table_mask; probe++) {
-        let r = atomicCompareExchangeWeak(&table_keys[entry], EMPTY_KEY, key);
-        if (r.exchanged) {
-            push(L_NEW, C_NEW, entry);
+        let k = atomicLoad(&table_keys[entry]);
+        if (k == key) {
             return;
         }
-        if (r.old_value == key) {
-            return;
-        }
-        // A weak exchange may fail spuriously on an empty entry; retry it.
-        if (r.old_value == EMPTY_KEY) {
-            continue;
+        if (k == EMPTY_KEY) {
+            if (full) {
+                atomicOr(&counters[C_OVERFLOW], OVERFLOW_BRICKS);
+                return;
+            }
+            let r = atomicCompareExchangeWeak(&table_keys[entry], EMPTY_KEY, key);
+            if (r.exchanged) {
+                push(L_NEW, C_NEW, entry);
+                return;
+            }
+            if (r.old_value == key) {
+                return;
+            }
+            // A weak exchange may fail spuriously on an empty entry; retry it.
+            if (r.old_value == EMPTY_KEY) {
+                continue;
+            }
         }
         entry = (entry + 1u) & params.table_mask;
     }
