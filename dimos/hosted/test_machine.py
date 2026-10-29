@@ -121,6 +121,8 @@ def test_without_unit_start_spawns_once_and_stop_signals(monkeypatch: pytest.Mon
             alive.discard(pid)
 
     monkeypatch.setattr(machine.os, "kill", kill)
+    # The fake pid has to be alive or dead by the fake's word: a real pid 12345 on the runner must not answer.
+    monkeypatch.setattr(machine, "is_pid_alive", lambda pid: pid in alive)
     assert machine.start(spawn=spawn).startswith("started (pid 12345)")
     assert machine.start(spawn=spawn) == "already running (pid 12345)"
     assert spawned == [[machine.dimos_executable(), "host", "start", "--foreground"]]
