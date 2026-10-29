@@ -20,9 +20,11 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
+from dimos.navigation.embodiment.r1pro import R1PRO
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
+from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_lidar_odometry,
@@ -103,11 +105,12 @@ r1pro_nav = autoconnect(
     ).remappings(
         [
             (MLSPlannerNative, "global_map", "global_map_unused"),
+            (MLSPlannerNative, "path", "planner_path"),
         ]
     ),
-    DanHolonomicTC.blueprint(control_frequency=10.0).remappings(
-        [(DanHolonomicTC, "odom", "chassis_odom")]
-    ),
+    # MLS's route through the global map; Ivan's planner replans the next few meters of it on the live local map.
+    LocalPlannerNative.blueprint(embodiment=R1PRO),
+    TrajectoryFollowerNative.blueprint(embodiment=R1PRO),
     MovementManager.blueprint(),
 ).global_config(
     # One per module, so no two share a Python process (and its GIL).
