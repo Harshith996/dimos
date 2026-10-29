@@ -26,6 +26,7 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
@@ -210,6 +211,32 @@ def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene:
             time.sleep(0.05)
         after = min(c.ts for c in heard if c.ts >= first.ts)
         assert after - first.ts < CONTACTS_HEARTBEAT_DT + 0.5
+    finally:
+        world.stop()
+
+
+def test_a_waiting_world_publishes_nothing_until_a_scene_is_loaded_and_then_swaps_scenes() -> None:
+    world = SimGo2World(wait_for_scene=True)
+    world.cmd_vel.transport = LCMTransport("/test_go2_sim_world_wait/cmd_vel", Twist)
+    poses: list[PoseStamped] = []
+    drawn: list[LineSegments3D] = []
+    world.ground_truth.subscribe(poses.append)
+    world.scene.subscribe(drawn.append)
+    world.start()
+    try:
+        time.sleep(1.0)
+        assert not poses and not drawn
+        world.load_scene("office", 2, {})
+        deadline = time.monotonic() + 10.0
+        while not poses and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(drawn[-1].segments) == len(scene_edges(office(2)))
+        world.load_scene("office", 3, {})
+        while (
+            len(drawn[-1].segments) != len(scene_edges(office(3))) and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert len(drawn[-1].segments) == len(scene_edges(office(3)))
     finally:
         world.stop()
 

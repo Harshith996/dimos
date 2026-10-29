@@ -24,8 +24,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import math
+from pathlib import Path
 from threading import Event, Thread
 import time
+from typing import Any
 
 import mujoco
 import mujoco.viewer
@@ -55,7 +57,8 @@ from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
-from dimos.simulation.sim_world.body import Body, Rig, Sensor
+from dimos.simulation.sim_world.body import Body, BodyShape, Rig, Sensor
+from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -74,6 +77,8 @@ FLOOR_CHECKER = ((0.62, 0.60, 0.56), (0.70, 0.68, 0.64))
 SCENE_PUBLISH_DT = 2.0
 # contacts go out on change, and on this period so a recording always holds the current set
 CONTACTS_HEARTBEAT_DT = 1.0
+SCENE_SWAP_TIMEOUT_S = 30.0
+ROOT_QUAT = slice(3, 7)
 BASE_FRAME_ID = "base_link"
 STILL = np.zeros(3)
 
@@ -157,9 +162,7 @@ def _dress(spec: mujoco.MjSpec) -> None:
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
 
 
-def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
-    """The scene's boxes, the robot and each Mid-360 housing as a contact box, in one model."""
-    spec = rig.spec()
+def _with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
     _dress(spec)
     add_boxes(spec, scene)
     for i, box in enumerate(scene.boxes):
@@ -168,6 +171,27 @@ def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
             geom.material = "floor"
         else:
             geom.rgba = BOX_RGBA[box.kind]
+    return spec
+
+
+def scene_model(scene: Scene, robot: mujoco.MjSpec) -> mujoco.MjModel:
+    """The scene's boxes and a robot spec, in one model for drawing."""
+    model: mujoco.MjModel = _with_scene(robot, scene).compile()
+    return model
+
+
+def display_spec(rig: Rig) -> mujoco.MjSpec:
+    """The robot alone, its assets found from wherever the spec is saved."""
+    spec = rig.spec()
+    if spec.modelfiledir:
+        spec.meshdir = str(Path(spec.modelfiledir) / spec.meshdir)
+        spec.texturedir = str(Path(spec.modelfiledir) / spec.texturedir)  # type: ignore[attr-defined]
+    return spec
+
+
+def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
+    """The scene's boxes, the robot and each Mid-360 housing as a contact box, in one model."""
+    spec = _with_scene(rig.spec(), scene)
     for sensor in rig.sensors:
         housing = spec.body(rig.base_body).add_geom()
         housing.name = sensor.name
@@ -324,6 +348,8 @@ class SimWorldConfig(ModuleConfig):
     scene_params: Params = {}
     real_time_factor: float = Field(default=1.0, gt=0.0)
     mujoco_viewer: bool = False
+    # idle until load_scene, so nothing from the configured scene reaches the stack
+    wait_for_scene: bool = False
 
 
 class SimWorld(Module):
@@ -340,19 +366,26 @@ class SimWorld(Module):
     joint_state: Out[JointState]
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
+    loaded_map: Out[PointCloud2]
 
     _thread: Thread | None = None
     _reset: tuple[float, float, float, float] | None = None
+    _swap: tuple[Sim, Event] | None = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._started = Event()
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._sim = self._load(self.config.family, self.config.seed, self.config.scene_params)
-        self._hold = CommandHold(self._sim.rig.command_timeout)
+        # no scene yet, so no command is held
+        self._hold = CommandHold(timeout=0.0)
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
+        if not self.config.wait_for_scene:
+            self._begin(self._load(self.config.family, self.config.seed, self.config.scene_params))
+        self._started.set()
 
     @rpc
     def stop(self) -> None:
@@ -365,6 +398,40 @@ class SimWorld(Module):
     def reset_pose(self, x: float, y: float, z: float, yaw: float) -> None:
         """Stand the robot at rest at the pose with its feet on z, before the sim's next tick."""
         self._reset = (x, y, z, yaw)
+
+    @rpc
+    def load_scene(self, family: Family, seed: int, params: Params) -> None:
+        """Swap in the scene with the robot at its start, returning once the sim runs it."""
+        if not self._started.wait(SCENE_SWAP_TIMEOUT_S):
+            raise TimeoutError("the world did not start")
+        sim = self._load(family, seed, params)
+        if self._thread is None:
+            self._begin(sim)
+            return
+        loaded = Event()
+        self._swap = (sim, loaded)
+        if not loaded.wait(SCENE_SWAP_TIMEOUT_S):
+            raise TimeoutError("the sim thread did not take the new scene")
+
+    @rpc
+    def body(self) -> BodyShape:
+        return self._sim.rig.shape
+
+    @rpc
+    def publish_premap(self, route: NDArray[np.float64], objects: bool) -> int:
+        """Publish the Mid-360 returns walking the route on loaded_map, and count them."""
+        sim = self._sim
+        scene = sim.scene if objects else without_objects(sim.scene)
+        cloud = premap_cloud(scene, sim.rig, np.asarray(route, dtype=np.float64))
+        self.loaded_map.publish(
+            PointCloud2.from_numpy(cloud, frame_id=sim.rig.world_frame, timestamp=time.time())
+        )
+        return len(cloud)
+
+    @rpc
+    def export_model(self, path: Path) -> None:
+        """Write the robot alone as MJCF, for drawing it outside the sim."""
+        path.write_text(display_spec(self._sim.rig).to_xml())
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         command = np.array([msg.linear.x, msg.linear.y, msg.angular.z])
@@ -385,6 +452,12 @@ class SimWorld(Module):
         logger.info("Sim world ready", scene=scene.name)
         return sim
 
+    def _begin(self, sim: Sim) -> None:
+        self._sim = sim
+        self._hold = CommandHold(sim.rig.command_timeout)
+        self._thread = Thread(target=self._run, daemon=True)
+        self._thread.start()
+
     def _open_viewer(self, sim: Sim) -> mujoco.viewer.Handle | None:
         if not self.config.mujoco_viewer:
             return None
@@ -395,57 +468,71 @@ class SimWorld(Module):
         PointCloud2.from_numpy(
             np.zeros((0, 3), np.float32), frame_id=self._sim.rig.odom_child_frame
         )
-        viewer = self._open_viewer(self._sim)
         try:
-            self._simulate(self._sim, viewer)
+            self._simulate()
         except Exception:
             logger.exception("Sim thread failed")
+
+    def _simulate(self) -> None:
+        sim = self._sim
+        viewer = self._open_viewer(sim)
+        try:
+            t0 = time.time()
+            last_contacts: list[Contact] | None = None
+            next_contacts_publish = 0.0
+            next_scene_publish = 0.0
+            while not self._stop_event.is_set():
+                restart = False
+                if (swap := self._swap) is not None:
+                    self._swap = None
+                    sim, loaded = swap
+                    self._sim = sim
+                    if viewer is not None:
+                        viewer.close()
+                        viewer = self._open_viewer(sim)
+                    loaded.set()
+                    restart = True
+                if (pose := self._reset) is not None:
+                    self._reset = None
+                    sim.reset(*pose)
+                    restart = True
+                if restart:
+                    self._hold = CommandHold(sim.rig.command_timeout)
+                    t0 = time.time()
+                    last_contacts = None
+                    next_contacts_publish = next_scene_publish = 0.0
+                frame = sim.tick(self._hold.current(time.monotonic()))
+                if viewer is not None:
+                    viewer.sync()
+                stamp = t0 + sim.t / self.config.real_time_factor
+                self._publish_poses(sim, stamp)
+                contacts = sim.contacts()
+                if contacts != last_contacts or sim.t >= next_contacts_publish:
+                    self.contacts.publish(Contacts(contacts, ts=stamp))
+                    last_contacts = contacts
+                    next_contacts_publish = sim.t + CONTACTS_HEARTBEAT_DT
+                if frame is not None:
+                    self.lidar.publish(
+                        PointCloud2.from_numpy(
+                            frame.points, frame_id=sim.rig.odom_child_frame, timestamp=stamp
+                        )
+                    )
+                if sim.t >= next_scene_publish:
+                    self.scene.publish(
+                        LineSegments3D(
+                            ts=stamp, frame_id=sim.rig.world_frame, segments=scene_edges(sim.scene)
+                        )
+                    )
+                    next_scene_publish = sim.t + SCENE_PUBLISH_DT
+                delay = stamp - time.time()
+                if delay > 0:
+                    self._stop_event.wait(delay)
+                elif delay < -1.0:
+                    logger.warning("Sim running slower than real time", behind_s=round(-delay, 1))
+                    t0 -= delay
         finally:
             if viewer is not None:
                 viewer.close()
-
-    def _simulate(self, sim: Sim, viewer: mujoco.viewer.Handle | None) -> None:
-        t0 = time.time()
-        last_contacts: list[Contact] | None = None
-        next_contacts_publish = 0.0
-        next_scene_publish = 0.0
-        while not self._stop_event.is_set():
-            if (pose := self._reset) is not None:
-                self._reset = None
-                self._hold = CommandHold(sim.rig.command_timeout)
-                sim.reset(*pose)
-                t0 = time.time()
-                last_contacts = None
-                next_contacts_publish = next_scene_publish = 0.0
-            frame = sim.tick(self._hold.current(time.monotonic()))
-            if viewer is not None:
-                viewer.sync()
-            stamp = t0 + sim.t / self.config.real_time_factor
-            self._publish_poses(sim, stamp)
-            contacts = sim.contacts()
-            if contacts != last_contacts or sim.t >= next_contacts_publish:
-                self.contacts.publish(Contacts(contacts, ts=stamp))
-                last_contacts = contacts
-                next_contacts_publish = sim.t + CONTACTS_HEARTBEAT_DT
-            if frame is not None:
-                self.lidar.publish(
-                    PointCloud2.from_numpy(
-                        frame.points, frame_id=sim.rig.odom_child_frame, timestamp=stamp
-                    )
-                )
-            if sim.t >= next_scene_publish:
-                self.scene.publish(
-                    LineSegments3D(
-                        ts=stamp, frame_id=sim.rig.world_frame, segments=scene_edges(sim.scene)
-                    )
-                )
-                next_scene_publish = sim.t + SCENE_PUBLISH_DT
-            delay = stamp - time.time()
-            if delay > 0:
-                self._stop_event.wait(delay)
-            elif delay < -1.0:
-                logger.warning("Sim running slower than real time", behind_s=round(-delay, 1))
-                t0 -= delay
 
     def _publish_poses(self, sim: Sim, stamp: float) -> None:
         world, child = sim.rig.world_frame, sim.rig.odom_child_frame
