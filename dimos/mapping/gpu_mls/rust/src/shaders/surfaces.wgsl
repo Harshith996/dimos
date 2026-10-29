@@ -357,11 +357,20 @@ fn fit_cells(
     let slot = group / 2u;
     let first = slot * BRICK_VOXELS + (group % 2u) * TILE_SLABS * 64u;
     let bricks = min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity);
-    // Workgroup memory starts uninitialized (see Gpu::pipeline).
+    // Workgroup memory starts uninitialized (see Gpu::pipeline). Bricks
+    // outside the window, most of a large map's, leave before any work.
     if (li == 0u) {
         atomicStore(&tile_len, 0u);
+        var inside = false;
+        if (slot < bricks) {
+            let lo = (brick_coords[slot].xyz << vec3<u32>(3u)) - sp.window_min.xyz;
+            inside = all(lo + vec3<i32>(7) >= vec3<i32>(0)) && all(lo < vec3<i32>(sp.size.xyz));
+        }
+        tile_any = select(0u, 1u, inside);
     }
-    workgroupBarrier();
+    if (workgroupUniformLoad(&tile_any) == 0u) {
+        return;
+    }
     for (var r = 0u; r < TILE_SLABS; r++) {
         let v = first + r * 64u + li;
         if (slot >= bricks || !voxel_exists(v) || health[v] <= 0) {
