@@ -273,7 +273,9 @@ class EefTrajectoryTask(PoseTargetIKTask):
                     raise ValueError(
                         "EEF final target did not reach measured completion tolerances"
                     )
-            output = super().compute(state)
+            snapshot = self._frame_target_snapshot(state, desired)
+            assert snapshot is not None
+            output = self._compute_snapshot(state, snapshot)
             if output is None:
                 raise ValueError("Bounded Pink IK produced no valid command")
             return output
@@ -281,10 +283,13 @@ class EefTrajectoryTask(PoseTargetIKTask):
             self._finish(TrajectoryState.FAULT, str(exc))
             return None
 
-    def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
+    def _frame_target_snapshot(
+        self, state: CoordinatorState, point: EefTrajectoryPoint | None = None
+    ) -> FrameTargetSnapshot | None:
         if not self.is_active() or self._trajectory is None:
             return None
-        point = self._trajectory.sample(self._clock.elapsed)
+        if point is None:
+            point = self._trajectory.sample(self._clock.elapsed)
         openings = {}
         for name, target in point.grippers.items():
             previous = self._gripper_commands[name]
@@ -353,10 +358,10 @@ class EefTrajectoryTask(PoseTargetIKTask):
         self._duration = 0.0
         return had_state
 
-    def keepalive(self, t_now: float) -> TrajectoryStatus:
+    def keepalive(self) -> TrajectoryStatus:
         """Refresh optional caller supervision and return last-tick execution status."""
         if self.is_active():
-            self._clock.keepalive(t_now)
+            self._clock.keepalive()
         return self.get_status()
 
     def get_state(self) -> TrajectoryState:

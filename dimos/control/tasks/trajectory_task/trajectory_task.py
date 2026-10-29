@@ -521,13 +521,13 @@ class JointTrajectoryTask(BaseControlTask):
         if estopped:
             self.cancel()
 
-    def keepalive(self, t_now: float) -> TrajectoryStatus:
+    def keepalive(self) -> TrajectoryStatus:
         """Refresh the active runs' optional deadmen and return their status."""
         if self.is_active():
             runs = {id(run): run for run, _ in self._motions.values()}.values()
             for run in runs:
-                run.clock.keepalive(t_now)
-        return self.get_status(t_now)
+                run.clock.keepalive()
+        return self.get_status()
 
     def reset(self) -> bool:
         """Reset to idle state.
@@ -561,7 +561,7 @@ class JointTrajectoryTask(BaseControlTask):
         progress, _elapsed, _remaining = self._active_run_status(t_now)
         return progress
 
-    def _active_run_status(self, t_now: float) -> tuple[float, float, float]:
+    def _active_run_status(self, t_now: float | None) -> tuple[float, float, float]:
         """Aggregate timing conservatively across every active trajectory run."""
         runs = {id(run): run for run, _index in self._motions.values()}.values()
         progresses: list[float] = []
@@ -576,7 +576,7 @@ class JointTrajectoryTask(BaseControlTask):
             return 0.0, 0.0, 0.0
         return min(progresses), max(elapsed_times), max(remaining_times)
 
-    def get_status(self, t_now: float) -> TrajectoryStatus:
+    def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
         """Return a non-destructive snapshot of the current execution state."""
 
         if self._state == TrajectoryState.EXECUTING:

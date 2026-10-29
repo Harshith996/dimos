@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass
 import math
+import time
 
 
 @dataclass
@@ -47,12 +48,10 @@ class TrajectoryClock:
         self.elapsed = max(0.0, t_now - self.start_time)
         return self.elapsed
 
-    def keepalive(self, t_now: float) -> None:
-        """Refresh a supervised run without starting its nominal playback clock."""
-        if not math.isfinite(t_now):
-            raise ValueError("keepalive requires finite coordinator time")
+    def keepalive(self) -> None:
+        """Stamp heartbeat receipt with the coordinator process's monotonic clock."""
         if self.deadman_timeout is not None:
-            self.last_keepalive = t_now
+            self.last_keepalive = time.perf_counter()
 
     def expired(self, t_now: float) -> bool:
         """Return whether a supervised run exceeded its heartbeat interval."""

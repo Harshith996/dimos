@@ -80,14 +80,16 @@ def setup_task(mocker):
     return EefTrajectoryTask(config, solver=solver), solver
 
 
-def test_eef_tick_samples_both_frames_once_and_rate_bounds_gripper(setup_task):
+def test_eef_tick_samples_both_frames_once_and_rate_bounds_gripper(setup_task, mocker):
     task, solver = setup_task
     assert (
         execute_with_state(task, trajectory(), state().joints.joint_positions).status
         == TrajectoryExecutionStatus.ACCEPTED
     )
+    sample = mocker.spy(EefTrajectory, "sample")
     assert task.compute(state(t=10)) is not None
     output = task.compute(state(t=10.5))
+    assert sample.call_count == 2
     assert output is not None
     targets = solver.step.call_args.args[0]
     assert {frame: target.x for frame, target in targets.items()} == pytest.approx(
@@ -350,7 +352,7 @@ def test_eef_new_episode_restarts_clock_at_its_first_tick(setup_task):
         (True, TrajectoryState.EXECUTING),
     ],
 )
-def test_eef_deadman_aborts_when_caller_stops_refreshing(setup_task, keepalive, expected):
+def test_eef_deadman_aborts_when_caller_stops_refreshing(setup_task, keepalive, expected, mocker):
     task, _ = setup_task
     assert (
         execute_with_state(
@@ -358,10 +360,12 @@ def test_eef_deadman_aborts_when_caller_stops_refreshing(setup_task, keepalive, 
         ).status
         == TrajectoryExecutionStatus.ACCEPTED
     )
+    receipt_clock = mocker.patch("dimos.control.tasks.trajectory_clock.time.perf_counter")
     for tick in range(101):
         t_now = tick * 0.01
         if keepalive:
-            task.keepalive(t_now)
+            receipt_clock.return_value = t_now
+            task.keepalive()
         task.compute(state(t=t_now))
     assert task.get_state() == expected
 
@@ -413,7 +417,10 @@ def test_coordinator_passes_eef_deadman_and_exposes_keepalive(coordinator, setup
         == TrajectoryExecutionStatus.ACCEPTED
     )
     assert task.compute(state(t=10.0)) is not None
-    status = coordinator.task_invoke("eef_trajectory", "keepalive", {"t_now": 10.4})
+    mocker.patch("dimos.control.tasks.trajectory_clock.time.perf_counter", return_value=10.4)
+    with pytest.raises(TypeError):
+        coordinator.task_invoke("eef_trajectory", "keepalive", {"t_now": 1_700_000_000.0})
+    status = coordinator.task_invoke("eef_trajectory", "keepalive")
     assert status.state == TrajectoryState.EXECUTING
     assert task.compute(state(t=10.6)) is not None
     assert task.compute(state(t=10.9001)) is None
@@ -438,7 +445,10 @@ def test_coordinator_passes_joint_deadman_and_exposes_keepalive(coordinator, moc
         == TrajectoryExecutionStatus.ACCEPTED
     )
     assert task.compute(state(t=10.0)) is not None
-    status = coordinator.task_invoke("joint_trajectory", "keepalive", {"t_now": 10.4})
+    mocker.patch("dimos.control.tasks.trajectory_clock.time.perf_counter", return_value=10.4)
+    with pytest.raises(TypeError):
+        coordinator.task_invoke("joint_trajectory", "keepalive", {"t_now": 1_700_000_000.0})
+    status = coordinator.task_invoke("joint_trajectory", "keepalive")
     assert status.state == TrajectoryState.EXECUTING
     assert task.compute(state(t=10.6)) is not None
     assert task.compute(state(t=10.9001)) is None

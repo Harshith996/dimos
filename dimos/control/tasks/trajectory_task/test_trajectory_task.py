@@ -190,17 +190,19 @@ def _ramp():
         (True, TrajectoryState.EXECUTING),
     ],
 )
-def test_deadman_aborts_trajectory_when_keepalive_stops(keepalive, expected):
+def test_deadman_aborts_trajectory_when_keepalive_stops(keepalive, expected, mocker):
     task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
     joints = JointStateSnapshot(joint_positions={"joint": 0.0})
     assert (
         execute_with_state(task, _ramp(), joints.joint_positions, deadman_timeout=0.5).status
         == TrajectoryExecutionStatus.ACCEPTED
     )
+    receipt_clock = mocker.patch("dimos.control.tasks.trajectory_clock.time.perf_counter")
     for tick in range(1, 101):
         t_now = tick * 0.01
         if keepalive:
-            task.keepalive(t_now)
+            receipt_clock.return_value = t_now
+            task.keepalive()
         task.compute(CoordinatorState(joints=joints, t_now=t_now, dt=0.01))
     assert task.get_state() == expected
 
