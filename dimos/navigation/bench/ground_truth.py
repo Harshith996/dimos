@@ -32,10 +32,9 @@ from scipy.sparse.csgraph import (
 )
 
 from dimos.robot.unitree.go2.constants import ROBOT_WIDTH
-from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
+from dimos.simulation.go2_sim.world import MID360, MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.mjcf import SCENE_GROUPS, add_boxes
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Scene
-from dimos.simulation.sensors.mid360.lidar import SimMid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.simulation.sensors.mujoco_raycaster import (
     INCLUDE_STATIC,
@@ -178,7 +177,7 @@ class GroundTruth:
     def premap_cloud(self, route: NDArray[np.float64]) -> NDArray[np.float32]:
         """What the body's Mid-360 returns walking the route, one world-frame point per voxel."""
         caster = MujocoRaycaster(self._probe.model, self._probe.data, SCENE_GROUPS)
-        lidar = SimMid360.go2(caster, PREMAP_SEED)
+        lidar = MID360.lidar(caster, PREMAP_SEED)
         per_pose = int(POINT_RATE * PREMAP_STEP_M / PREMAP_SPEED)
         lo, hi = self.scene.bounds()
         dims = np.ceil((hi - lo) / self.cell).astype(np.int64) + 3

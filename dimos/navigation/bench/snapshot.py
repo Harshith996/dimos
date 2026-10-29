@@ -27,9 +27,10 @@ from numpy.typing import NDArray
 
 from dimos.navigation.bench.suite import Case, Manifest, Point
 from dimos.simulation.go2_legged.robot import BASE_QUAT
-from dimos.simulation.go2_sim.world import build_model
+from dimos.simulation.go2_sim.world import GO2
 from dimos.simulation.scenes.mjcf import geom_name
 from dimos.simulation.scenes.procedural import WALL_THICKNESS, Box, Rect, Scene
+from dimos.simulation.sim_world.world import build_model
 
 SNAPSHOT_PX = (600, 480)
 ELEVATION_DEG = 55.0
@@ -194,7 +195,7 @@ def render(case: Case) -> NDArray[np.uint8]:
     scene = case.scene()
     seen = view(case, scene)
     floor = scene.start[2]
-    model = build_model(scene)
+    model = build_model(scene, GO2)
     model.vis.global_.offwidth, model.vis.global_.offheight = SNAPSHOT_PX
     model.vis.global_.fovy = FOVY_DEG
     model.vis.headlight.diffuse[:] = HEADLIGHT

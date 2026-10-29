@@ -44,8 +44,8 @@ from dimos.navigation.bench.ground_truth import GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
 from dimos.simulation.go2_sim.world import ODOM_FRAME_ID
-from dimos.simulation.go2_sim.world_spec import SimWorldSpec
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.world_spec import SimWorldSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

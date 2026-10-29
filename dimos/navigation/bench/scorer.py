@@ -36,8 +36,9 @@ from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.suite import Point, Rules
-from dimos.simulation.go2_sim.world import LIDAR_HALF_EXTENTS, MOUNT_R, MOUNT_XYZ
+from dimos.simulation.go2_sim.world import MOUNT_R, MOUNT_XYZ
 from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sensors.mid360.lidar import HOUSING_HALF_EXTENTS
 
 Outcome = Literal[
     "success",
@@ -563,7 +564,7 @@ def _margins(pose: Poses, scene: Scene) -> NDArray[np.float64] | None:
 def _lidar_top(pose: Poses) -> NDArray[np.float64]:
     """Per pose, the height of the top of the Mid-360 on the tilted trunk."""
     tilt = Rotation.from_euler("xyz", pose.rpy).as_matrix()
-    reach = (tilt @ MOUNT_XYZ)[:, 2] + np.abs(tilt @ MOUNT_R)[:, 2] @ LIDAR_HALF_EXTENTS
+    reach = (tilt @ MOUNT_XYZ)[:, 2] + np.abs(tilt @ MOUNT_R)[:, 2] @ HOUSING_HALF_EXTENTS
     top: NDArray[np.float64] = pose.xyz[:, 2] + reach
     return top
 
