@@ -227,3 +227,53 @@ fn an_approach_that_finds_a_dead_end_walks_back_to_the_other_frontier() {
     let full = p.plan_or_truncate(back, goal, &cfg);
     assert_eq!(full.last(), Some(&goal));
 }
+
+/// An 8 m by 6 m walled room split at x = 4.0 by a wall with one gap a single
+/// cell wide, too narrow for the hard clearance, and the floor beyond the wall
+/// unseen from x = 5.0 on.
+fn room_with_a_slot() -> Vec<(f32, f32, f32)> {
+    let half = VS * 0.5;
+    let column = |x: f32, y: f32| (0..13).map(move |iz| (x, y, iz as f32 * VS + half));
+    let mut pts = Vec::new();
+    for ix in 0..100 {
+        for iy in 0..75 {
+            let (x, y) = (ix as f32 * VS + half, iy as f32 * VS + half);
+            let shell = ix == 0 || ix == 99 || iy == 0 || iy == 74;
+            let wall = (4.0..4.16).contains(&x) && iy != 37;
+            if shell || wall {
+                pts.extend(column(x, y));
+            } else if x < 5.0 {
+                pts.push((x, y, half));
+            }
+        }
+    }
+    pts
+}
+
+#[test]
+fn an_approach_never_heads_through_a_gap_too_narrow_to_plan_through() {
+    let cfg = go2();
+    let mut p = planner(&room_with_a_slot(), &cfg);
+    // the frontier past the slot is nearest the goal, but no plan reaches it
+    let path = p.plan_or_truncate((1.0, 3.0, 0.0), (7.0, 3.0, 0.0), &cfg);
+    let end = *path.last().expect("an approach path on the robot's side");
+    assert!(end.0 < 4.0, "approach ends at {end:?}");
+}
+
+#[test]
+fn a_goal_sent_again_starts_without_the_old_dead_ends() {
+    let cfg = go2();
+    let mut p = planner(&walled_corridor(), &cfg);
+    let (start, goal) = ((1.0, 1.0, 0.0), (7.0, 1.0, 0.0));
+    // walk to each approach target until the approach gives up
+    let mut at = start;
+    for _ in 0..planner::MAX_DEAD_ENDS + 2 {
+        match p.plan_or_truncate(at, goal, &cfg).last() {
+            Some(&end) => at = end,
+            None => break,
+        }
+    }
+    assert!(p.plan_or_truncate(start, goal, &cfg).is_empty());
+    p.reset_approach();
+    assert!(!p.plan_or_truncate(start, goal, &cfg).is_empty());
+}

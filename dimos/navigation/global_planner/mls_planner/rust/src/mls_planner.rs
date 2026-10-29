@@ -751,12 +751,23 @@ impl Planner {
                 )
             })
             .flatten();
-        let target = approach.target;
-        self.approach = Some(approach);
-        target
+        let waypoints = approach
+            .target
             .and_then(|target| planner::plan(&self.graph, start, target, config))
             .map(|(waypoints, _)| waypoints)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let (Some(t), true) = (approach.target, waypoints.is_empty()) {
+            // a target no plan reaches is a dead end, so the next pass tries another
+            approach.dead_ends.push((t.0, t.1));
+        }
+        self.approach = Some(approach);
+        waypoints
+    }
+
+    /// Forget the blocked goal's approach, so a goal sent again, even to the
+    /// same spot, starts with no dead ends.
+    pub fn reset_approach(&mut self) {
+        self.approach = None;
     }
 
     pub fn graph(&self) -> &PlannerGraph {

@@ -257,6 +257,8 @@ pub fn plan(
 /// reachable cell is at least `MIN_APPROACH_GAIN_M` closer to the goal than
 /// `from_m`, the robot's distance to it when it was first blocked, so the robot
 /// can walk back from a dead end to a frontier no nearer than where it stands.
+/// Reachable means over edges a plan can take: a passage narrower than the
+/// hard clearance joins the floor but not the search.
 pub fn approach_target(
     plg: &PlannerGraph,
     by_col: &ColumnIz,
@@ -267,6 +269,11 @@ pub fn approach_target(
     config: &Config,
 ) -> Option<(f32, f32, f32)> {
     let voxel_size = config.voxel_size;
+    let dist = &plg.wall_state.dist;
+    let clear_of_walls = |id: CellId| {
+        dist.get(id as usize).copied().unwrap_or(f32::INFINITY) >= config.wall_clearance_m
+    };
+    // the nearest cell the robot can stand on, so the search leaves it the way a plan would
     let start = snap_candidates(
         &plg.surface_lookup,
         start_pose,
@@ -275,7 +282,8 @@ pub fn approach_target(
     )
     .into_iter()
     .take(MAX_SNAP_ATTEMPTS)
-    .find_map(|c| plg.cells.id(c))?;
+    .filter_map(|c| plg.cells.id(c))
+    .find(|&id| clear_of_walls(id))?;
     let to_goal = |p: (f32, f32, f32)| (p.0 - goal_pose.0).hypot(p.1 - goal_pose.1);
     let worth = from_m - MIN_APPROACH_GAIN_M;
     let dead = |p: (f32, f32, f32)| {
@@ -283,7 +291,6 @@ pub fn approach_target(
             .iter()
             .any(|d| (p.0 - d.0).hypot(p.1 - d.1) < DEAD_END_RADIUS_M)
     };
-    let dist = &plg.wall_state.dist;
     let buffered = config.wall_clearance_m + config.wall_buffer_m;
     let reach = ((buffered + FRONTIER_SLACK_M) / voxel_size).ceil() as i32;
     // across floor to a column with nothing in it, before any wall
@@ -311,8 +318,9 @@ pub fn approach_target(
                 best[rank] = Some((d, p));
             }
         }
+        // only edges a plan can take, so every target found is one it reaches
         for e in plg.cells.neighbors(id) {
-            if seen.insert(e.dest) {
+            if e.cost.is_finite() && seen.insert(e.dest) {
                 queue.push_back(e.dest);
             }
         }
