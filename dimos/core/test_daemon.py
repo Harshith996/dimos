@@ -132,12 +132,14 @@ class TestRunEntryCRUD:
             while not done.is_set():
                 listed.append(len(list_runs(alive_only=True)))
 
-        reader = threading.Thread(target=read)
+        reader = threading.Thread(target=read, daemon=True)
         reader.start()
-        for _ in range(2000):
-            entry.save()
-        done.set()
-        reader.join()
+        try:
+            for _ in range(2000):
+                entry.save()
+        finally:
+            done.set()
+            reader.join(timeout=10)
         # list_runs deletes an entry it can't parse, so one read half written would be gone for good
         assert set(listed) == {1}
         assert [path.name for path in tmp_registry.iterdir()] == [entry.registry_path.name]
