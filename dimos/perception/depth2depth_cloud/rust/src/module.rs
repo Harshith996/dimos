@@ -140,11 +140,19 @@ pub struct Depth2DepthCloud {
     #[config]
     config: Config,
 
+    pipeline: Option<Pipeline>,
+}
+
+/// The module's work without its ports: a module with ports of its own (e.g. one per camera) feeds it.
+pub struct Pipeline {
+    config: Config,
+    tf: Tf,
+    output: Output<PointCloud2>,
+    frame_anchors: Option<Arc<dyn FrameAnchors>>,
     shared: Arc<Shared>,
     tasks: Vec<JoinHandle<()>>,
     to_model: Arc<Latest<Picked>>,
     model_thread: Option<std::thread::JoinHandle<()>>,
-    frame_anchors: Option<Arc<dyn FrameAnchors>>,
 }
 
 /// Anchors a module built on this one adds to each frame's lidar anchors before the frame is calibrated.
@@ -255,17 +263,66 @@ struct Scan {
 }
 
 impl Depth2DepthCloud {
-    /// The same module, with `frame_anchors` adding to every frame's anchors.
+    async fn start(&mut self) {
+        let mut pipeline = Pipeline::new(
+            self.config.clone(),
+            self.tf.clone(),
+            self.depth_cloud.clone(),
+        );
+        pipeline.start();
+        self.pipeline = Some(pipeline);
+    }
+
+    async fn stop(&mut self) {
+        if let Some(pipeline) = self.pipeline.as_mut() {
+            pipeline.stop().await;
+        }
+    }
+
+    async fn on_image(&mut self, msg: CompressedImage) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_image(msg);
+        }
+    }
+
+    async fn on_camera_info(&mut self, msg: CameraInfo) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_camera_info(msg);
+        }
+    }
+
+    async fn on_lidar(&mut self, msg: PointCloud2) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.on_lidar(msg);
+        }
+    }
+}
+
+impl Pipeline {
+    pub fn new(config: Config, tf: Tf, output: Output<PointCloud2>) -> Self {
+        Self {
+            config,
+            tf,
+            output,
+            frame_anchors: None,
+            shared: Arc::default(),
+            tasks: Vec::new(),
+            to_model: Arc::default(),
+            model_thread: None,
+        }
+    }
+
+    /// The same pipeline, with `frame_anchors` adding to every frame's anchors.
     pub fn with_frame_anchors(mut self, frame_anchors: Arc<dyn FrameAnchors>) -> Self {
         self.frame_anchors = Some(frame_anchors);
         self
     }
 
-    async fn start(&mut self) {
+    pub fn start(&mut self) {
         let worker = Arc::new(Worker {
             shared: self.shared.clone(),
             tf: self.tf.clone(),
-            output: self.depth_cloud.clone(),
+            output: self.output.clone(),
             runtime: tokio::runtime::Handle::current(),
             config: self.config.clone(),
             to_model: self.to_model.clone(),
@@ -283,7 +340,7 @@ impl Depth2DepthCloud {
     }
 
     /// Stop the stages and let the model thread drop the model while CUDA is still up.
-    async fn stop(&mut self) {
+    pub async fn stop(&mut self) {
         for task in self.tasks.drain(..) {
             task.abort();
         }
@@ -295,7 +352,7 @@ impl Depth2DepthCloud {
         }
     }
 
-    async fn on_image(&mut self, msg: CompressedImage) {
+    pub fn on_image(&self, msg: CompressedImage) {
         let oldest = seconds(&msg.header.stamp) - self.config.max_tf_lag_s;
         let mut frames = self.shared.frames.lock().unwrap();
         frames.push_back(msg);
@@ -309,11 +366,11 @@ impl Depth2DepthCloud {
         self.shared.frame_arrived.notify_one();
     }
 
-    async fn on_camera_info(&mut self, msg: CameraInfo) {
+    pub fn on_camera_info(&self, msg: CameraInfo) {
         *self.shared.camera_info.lock().unwrap() = Some(msg);
     }
 
-    async fn on_lidar(&mut self, msg: PointCloud2) {
+    pub fn on_lidar(&self, msg: PointCloud2) {
         // A blueprint may feed this cloud back on the lidar's port (one mapper input for both); it is no anchor.
         if msg.header.frame_id == self.output_frame() {
             return;
@@ -330,9 +387,7 @@ impl Depth2DepthCloud {
         drop(pending);
         self.shared.scan_arrived.notify_one();
     }
-}
 
-impl Depth2DepthCloud {
     fn output_frame(&self) -> String {
         let info = self.shared.camera_info.lock().unwrap();
         let info_frame = info.as_ref().map_or("", |i| i.header.frame_id.as_str());
