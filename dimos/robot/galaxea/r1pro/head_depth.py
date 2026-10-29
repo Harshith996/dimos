@@ -26,11 +26,13 @@ from pydantic import Field
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.native_module import NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthCloudConfig
+from dimos.perception.depth2depth_cloud.module import Depth2DepthCloudConfig
 from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_WIDTH_M
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
@@ -41,6 +43,9 @@ class R1ProHeadDepthConfig(Depth2DepthCloudConfig, NativeModuleConfig):
     source_dir: str | None = "dimos/robot/galaxea/r1pro/floor_prior/rust"
     executable: str = "result/bin/r1pro_head_depth"
     build_command: str | None = "nix build -L path:."
+    # Which head cameras get depth; each one runs its own model.
+    head_left: bool = True
+    head_right: bool = False
     # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
     floor_anchor_step: int = Field(default=8, ge=1, le=256)
     floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
@@ -49,10 +54,19 @@ class R1ProHeadDepthConfig(Depth2DepthCloudConfig, NativeModuleConfig):
     floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
 
 
-class R1ProHeadDepth(Depth2DepthCloud):
-    """Depth2DepthCloud plus a floor prior: the chassis lidar never sees the near floor, which unanchored reads 2-5x short."""
+class R1ProHeadDepth(NativeModule):
+    """Depth2DepthCloud per enabled head camera plus a floor prior: the chassis lidar never sees the near floor, which unanchored reads 2-5x short."""
 
     config: R1ProHeadDepthConfig
+
+    head_left_color: In[CompressedImage]
+    head_left_info: In[CameraInfo]
+    head_right_color: In[CompressedImage]
+    head_right_info: In[CameraInfo]
+    lidar: In[PointCloud2]
+    tf: In[TFMessage]
+    # Every enabled camera's clouds, each in its own camera's frame.
+    head_depth_raw: Out[PointCloud2]
 
 
 class HeadFloorPriorConfig(ModuleConfig):
@@ -77,7 +91,7 @@ class HeadFloorPrior(Module):
 
     config: HeadFloorPriorConfig
 
-    depth_cloud: In[PointCloud2]
+    head_depth_raw: In[PointCloud2]
     tf: In[TFMessage]
     head_cloud: Out[PointCloud2]
 
@@ -86,7 +100,7 @@ class HeadFloorPrior(Module):
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
 
-    async def handle_depth_cloud(self, cloud: PointCloud2) -> None:
+    async def handle_head_depth_raw(self, cloud: PointCloud2) -> None:
         floor_from_camera = self._lookup(self.config.floor_frame, cloud.frame_id, cloud.ts)
         if floor_from_camera is None:
             return
@@ -206,17 +220,11 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 "anchor_step": 4,
                 **overrides,
             }
-        ).remappings(
-            [
-                (R1ProHeadDepth, "image", "head_left_color"),
-                (R1ProHeadDepth, "camera_info", "head_left_info"),
-                (R1ProHeadDepth, "depth_cloud", "head_depth_raw"),
-            ]
         ),
         HeadFloorPrior.blueprint(
             tf_tolerance_s=tf_tolerance_s,
             footprint_radius_m=R1PRO_CHASSIS_WIDTH_M / 2,
             # The head's lowest ray meets the floor ~0.74 m out (farther with the head raised); unfilled, the start is an island.
             view_fill_reach_m=1.5,
-        ).remappings([(HeadFloorPrior, "depth_cloud", "head_depth_raw")]),
+        ),
     )

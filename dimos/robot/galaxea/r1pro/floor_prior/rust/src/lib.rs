@@ -19,17 +19,21 @@
 use std::sync::Arc;
 
 use dimos_depth2depth_cloud::depth2depth::{Anchor, Calibration};
-use dimos_depth2depth_cloud::module::{Config as DepthConfig, Depth2DepthCloud, FrameAnchors};
+use dimos_depth2depth_cloud::module::{Config as DepthConfig, FrameAnchors, Pipeline};
 use dimos_depth2depth_cloud::undistort::UndistortMap;
-use dimos_module::{Builder, Module, NativeConfig};
+use dimos_module::{Builder, Input, Module, NativeConfig};
+use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2};
 use nalgebra::{Isometry3, Vector3};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use validator::Validate;
 
-/// Depth2DepthCloud's config plus the floor prior's, one flat object as the Python wrapper sends it.
+/// Depth2DepthCloud's config plus the cameras and the floor prior's, one flat object as the Python wrapper sends it.
 #[derive(Debug, Serialize, Validate)]
 pub struct Config {
+    /// Which head cameras get depth; each one runs its own model.
+    pub head_left: bool,
+    pub head_right: bool,
     /// Pixels probed one per block of this many.
     #[validate(range(min = 1, max = 256))]
     pub floor_anchor_step: i64,
@@ -61,6 +65,8 @@ impl<'de> Deserialize<'de> for Config {
                 .remove(name)
                 .ok_or_else(|| D::Error::missing_field(name))
         };
+        let head_left = take("head_left")?;
+        let head_right = take("head_right")?;
         let floor_anchor_step = take("floor_anchor_step")?;
         let floor_tolerance_m = take("floor_tolerance_m")?;
         let floor_min_height_m = take("floor_min_height_m")?;
@@ -70,6 +76,8 @@ impl<'de> Deserialize<'de> for Config {
             .and_then(serde_json::Value::as_f64)
             .ok_or_else(|| D::Error::missing_field("max_range_m"))?;
         Ok(Config {
+            head_left: serde_json::from_value(head_left).map_err(D::Error::custom)?,
+            head_right: serde_json::from_value(head_right).map_err(D::Error::custom)?,
             floor_anchor_step: serde_json::from_value(floor_anchor_step)
                 .map_err(D::Error::custom)?,
             floor_tolerance_m: serde_json::from_value(floor_tolerance_m)
@@ -85,38 +93,83 @@ impl<'de> Deserialize<'de> for Config {
     }
 }
 
-/// Depth2DepthCloud, with FloorPrior adding to every frame's anchors.
+/// A Depth2DepthCloud pipeline per enabled head camera, each with FloorPrior adding to its frames' anchors,
+/// all publishing on `head_depth_raw` (each cloud in its own camera's frame).
 pub struct R1ProHeadDepth {
-    depth: Depth2DepthCloud,
+    head_left_color: Input<CompressedImage>,
+    head_left_info: Input<CameraInfo>,
+    head_right_color: Input<CompressedImage>,
+    head_right_info: Input<CameraInfo>,
+    lidar: Input<PointCloud2>,
+    left: Option<Pipeline>,
+    right: Option<Pipeline>,
 }
 
 impl Module for R1ProHeadDepth {
     type Config = Config;
 
     fn build(builder: &mut Builder, config: Config) -> Self {
-        let floor = FloorPrior {
+        let floor: Arc<dyn FrameAnchors> = Arc::new(FloorPrior {
             step: config.floor_anchor_step as usize,
             tolerance: config.floor_tolerance_m,
             min_height: config.floor_min_height_m,
             rounds: config.floor_anchor_rounds as usize,
             max_range: config.max_range_m,
+        });
+        let tf = builder.tf();
+        let output = builder.output("head_depth_raw", PointCloud2::encode);
+        let pipeline = |enabled: bool| {
+            enabled.then(|| {
+                Pipeline::new(config.depth.clone(), tf.clone(), output.clone())
+                    .with_frame_anchors(floor.clone())
+            })
         };
         Self {
-            depth: Depth2DepthCloud::build(builder, config.depth)
-                .with_frame_anchors(Arc::new(floor)),
+            head_left_color: builder.input("head_left_color", CompressedImage::decode),
+            head_left_info: builder.input("head_left_info", CameraInfo::decode),
+            head_right_color: builder.input("head_right_color", CompressedImage::decode),
+            head_right_info: builder.input("head_right_info", CameraInfo::decode),
+            lidar: builder.input("lidar", PointCloud2::decode),
+            left: pipeline(config.head_left),
+            right: pipeline(config.head_right),
         }
     }
 
     async fn setup(&mut self) {
-        self.depth.setup().await
+        for pipeline in self.left.iter_mut().chain(self.right.iter_mut()) {
+            pipeline.start();
+        }
     }
 
     async fn handle(&mut self) {
-        self.depth.handle().await
+        loop {
+            tokio::select! {
+                Some(msg) = self.head_left_color.recv() => {
+                    if let Some(left) = &self.left { left.on_image(msg) }
+                }
+                Some(msg) = self.head_left_info.recv() => {
+                    if let Some(left) = &self.left { left.on_camera_info(msg) }
+                }
+                Some(msg) = self.head_right_color.recv() => {
+                    if let Some(right) = &self.right { right.on_image(msg) }
+                }
+                Some(msg) = self.head_right_info.recv() => {
+                    if let Some(right) = &self.right { right.on_camera_info(msg) }
+                }
+                Some(msg) = self.lidar.recv() => {
+                    for pipeline in self.left.iter().chain(self.right.iter()) {
+                        pipeline.on_lidar(msg.clone());
+                    }
+                }
+                else => break,
+            }
+        }
     }
 
     async fn teardown(&mut self) {
-        self.depth.teardown().await
+        for pipeline in self.left.iter_mut().chain(self.right.iter_mut()) {
+            pipeline.stop().await;
+        }
     }
 }
 
