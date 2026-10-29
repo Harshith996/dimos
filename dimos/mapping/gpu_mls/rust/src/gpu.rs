@@ -177,7 +177,14 @@ impl Gpu {
                 layout: Some(&layout),
                 module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                // Shaders set their workgroup memory themselves. The automatic
+                // zeroing is done by one thread per workgroup before any code
+                // runs, which made the plane fit's 25 KB tile cost more than the
+                // fit on large maps.
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    zero_initialize_workgroup_memory: false,
+                    ..Default::default()
+                },
                 cache: None,
             })
     }
