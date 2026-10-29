@@ -159,6 +159,11 @@ class mjtLightType:
     mjLIGHT_DIRECTIONAL: int
     mjLIGHT_SPOT: int
 
+class mjtSensor:
+    mjSENS_GYRO: int
+    mjSENS_ACCELEROMETER: int
+    mjSENS_FRAMEQUAT: int
+
 class mjtJoint:
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
