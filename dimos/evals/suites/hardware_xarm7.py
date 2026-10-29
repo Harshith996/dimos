@@ -14,9 +14,10 @@
 
 """A real xArm7 at a table: one pick, graded by the operator who watched it.
 
-The robot's address comes from your dimos config, as for ``dimos run xarm-grasp``.
+The arm's address is the coordinator's ``addresses`` setting, here as an env override:
 
-    dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
+    CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' \
+        dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations

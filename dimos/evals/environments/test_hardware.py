@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import signal
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.evals.environments.hardware import HardwareEnvironment
-from dimos.evals.environments.sim import Sim
+from dimos.evals.environments.live import LiveEnvironment
 from dimos.evals.scorers import human
 
 
@@ -30,7 +31,7 @@ def environment(**kwargs):
 def test_robot_does_not_start_until_the_operator_confirms(mocker):
     prompts = []
     mocker.patch("builtins.input", side_effect=lambda text: prompts.append(text) or "n")
-    launch = mocker.patch.object(Sim, "start")
+    launch = mocker.patch.object(LiveEnvironment, "start")
 
     with pytest.raises(RuntimeError, match="did not confirm"):
         environment().start(())
@@ -44,13 +45,28 @@ def test_stop_halts_the_robot_before_releasing_it(mocker):
     adapter = MagicMock()
     adapter.call_tool.side_effect = lambda name: calls.append(("halt", name))
     mocker.patch("dimos.evals.environments.hardware.McpAdapter", return_value=adapter)
-    mocker.patch.object(Sim, "stop", side_effect=lambda: calls.append(("release",)))
+    mocker.patch.object(LiveEnvironment, "stop", side_effect=lambda: calls.append(("release",)))
     env = environment(stop_tool="cancel")
     env._mcp_url = "http://localhost:9990/mcp"
 
     env.stop()
 
     assert calls == [("halt", "cancel"), ("release",)]
+
+
+@pytest.mark.parametrize("graceful", [True, False])
+def test_dimos_is_stopped_like_dimos_stop_so_modules_stop(graceful):
+    proc = MagicMock()
+    proc.process.poll.return_value = None
+
+    environment(graceful_stop=graceful)._stop_process(proc)
+
+    if graceful:
+        proc.process.send_signal.assert_called_once_with(signal.SIGTERM)
+        proc.process.wait.assert_called_once()
+    else:
+        proc.process.send_signal.assert_not_called()
+    proc.stop.assert_called_once()
 
 
 @pytest.mark.parametrize(("answer", "score"), [("y", 1.0), ("n", 0.0), ("", 0.0)])

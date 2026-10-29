@@ -15,7 +15,8 @@
 """A real robot driven through ``dimos run``, with an operator in the loop.
 
 The operator readies the scene before each case and confirms it; the code never
-moves the robot to reset it. When a case ends the robot is halted in place.
+moves the robot to reset it. When a case ends the robot is halted in place, then
+dimos stops the way ``dimos stop`` does, so each module's stop() runs (a Go2 sits).
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pydantic import Field
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
-from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.evals.environments.live import LiveEnvironment, LiveEnvironmentConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class HardwareEnvironmentConfig(SimConfig):
+class HardwareEnvironmentConfig(LiveEnvironmentConfig):
     task: str
     """The case's instruction, shown to the operator before the robot starts."""
     stop_tool: str | None = None
@@ -48,9 +49,10 @@ class HardwareEnvironmentConfig(SimConfig):
     module_env: dict[str, str] = Field(default_factory=dict)
     at_rest_rad_s: float = 0.02
     launch_timeout_s: float = 300.0
+    graceful_stop: bool = True
 
 
-class HardwareEnvironment(Sim):
+class HardwareEnvironment(LiveEnvironment):
     """A real robot; the operator resets the scene and confirms it is ready."""
 
     config: HardwareEnvironmentConfig

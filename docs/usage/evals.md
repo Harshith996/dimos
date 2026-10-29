@@ -377,8 +377,10 @@ an **error**, not a score; the run continues.
 
 ## Live environments
 
-`Sim` is the abstract base for simulator environments. Use `DimSimEnvironment`
-for DimSim, `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
+`LiveEnvironment` is the abstract base for environments that launch dimos with a
+robot. `Sim` is its simulator branch: use `DimSimEnvironment` for DimSim,
+`HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
+`HardwareEnvironment` runs a real robot (see Hardware below).
 
 `DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
 <blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
@@ -503,19 +505,27 @@ package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 ### Hardware
 
 `HardwareEnvironment` runs a real robot the same way: it launches `dimos --record
-run <blueprint> <modules>` without `--simulation`, so the robot's address comes from
-your dimos config. An operator stays in the loop:
+run <blueprint> <modules>` without `--simulation`. An operator stays in the loop:
 
 - Before each case, it shows the task and asks whether the scene is reset and the
   robot is ready. Anything but `y` fails the case without starting the robot. The code
   never moves the robot to reset it.
 - When the case ends, `stop_tool` (for example the arm's `cancel` skill) halts motion
-  in place before dimos stops. There is no move back to home.
+  in place. There is no move back to home. dimos then stops the way `dimos stop` does
+  (`graceful_stop`), so every module's `stop()` runs: a Go2 sits down and drivers
+  disconnect.
 - `human(task)` grades the run: the operator answers whether the robot succeeded.
 
 `dimos.evals.suites.hardware_xarm7` (pick up a cup, at speed scale 0.3) and
 `dimos.evals.suites.hardware_go2` (walk forward and turn around) hold one case each,
-so one run is one robot and one scene. Keep the e-stop within reach.
+so one run is one robot and one scene. Keep the e-stop within reach. The robot's
+address reaches the launched dimos through the environment: `ROBOT_IP` for the Go2,
+and the coordinator's `addresses` for the xArm:
+
+```bash
+ROBOT_IP=192.168.123.161 dimos evals run dimos.evals.suites.hardware_go2 --agent dimos.evals.agents.pi
+CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' dimos evals run dimos.evals.suites.hardware_xarm7 --agent dimos.evals.agents.pi
+```
 
 ## Running
 

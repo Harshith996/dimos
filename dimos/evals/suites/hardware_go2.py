@@ -14,10 +14,10 @@
 
 """A real Go2: one short move, graded by the operator who watched it.
 
-The robot's address comes from your dimos config, as for ``dimos run unitree-go2``.
-There is no stop tool: the case ends by stopping dimos, which ends the velocity commands.
+There is no stop tool: the case ends by stopping dimos, which sits the robot down.
 
-    dimos evals run dimos.evals.suites.hardware_go2 --agent dimos.evals.agents.pi
+    ROBOT_IP=192.168.123.161 dimos evals run dimos.evals.suites.hardware_go2 \
+        --agent dimos.evals.agents.pi
 """
 
 from __future__ import annotations
