@@ -148,24 +148,35 @@ pub struct Pipeline {
     config: Config,
     tf: Tf,
     output: Output<PointCloud2>,
-    frame_anchors: Option<Arc<dyn FrameAnchors>>,
+    frame_hooks: Option<Arc<dyn FrameHooks>>,
     shared: Arc<Shared>,
     tasks: Vec<JoinHandle<()>>,
     to_model: Arc<Latest<Picked>>,
     model_thread: Option<std::thread::JoinHandle<()>>,
 }
 
-/// Anchors a module built on this one adds to each frame's lidar anchors before the frame is calibrated.
-pub trait FrameAnchors: Send + Sync {
-    /// `visible` are the frame's lidar anchors; `height_from_camera` is set when `height_frame` is.
+/// What a module built on this one adds to each frame; `height_from_camera` is set when `height_frame` is.
+pub trait FrameHooks: Send + Sync {
+    /// Anchors added to the frame's lidar anchors (`visible`) before the frame is calibrated.
     fn anchors(
         &self,
-        calibration: &Calibration,
-        pred: &[f32],
-        map: &UndistortMap,
-        visible: &[Anchor],
-        height_from_camera: Option<&Isometry3<f64>>,
-    ) -> Vec<Anchor>;
+        _calibration: &Calibration,
+        _pred: &[f32],
+        _map: &UndistortMap,
+        _visible: &[Anchor],
+        _height_from_camera: Option<&Isometry3<f64>>,
+    ) -> Vec<Anchor> {
+        Vec::new()
+    }
+
+    /// The frame's camera-frame cloud, after the height crop, as it is to be published.
+    fn points(
+        &self,
+        points: Vec<[f32; 3]>,
+        _height_from_camera: Option<&Isometry3<f64>>,
+    ) -> Vec<[f32; 3]> {
+        points
+    }
 }
 
 /// What the handlers hand the worker.
@@ -304,7 +315,7 @@ impl Pipeline {
             config,
             tf,
             output,
-            frame_anchors: None,
+            frame_hooks: None,
             shared: Arc::default(),
             tasks: Vec::new(),
             to_model: Arc::default(),
@@ -312,9 +323,9 @@ impl Pipeline {
         }
     }
 
-    /// The same pipeline, with `frame_anchors` adding to every frame's anchors.
-    pub fn with_frame_anchors(mut self, frame_anchors: Arc<dyn FrameAnchors>) -> Self {
-        self.frame_anchors = Some(frame_anchors);
+    /// The same pipeline, with `frame_hooks` run on every frame.
+    pub fn with_frame_hooks(mut self, frame_hooks: Arc<dyn FrameHooks>) -> Self {
+        self.frame_hooks = Some(frame_hooks);
         self
     }
 
@@ -327,7 +338,7 @@ impl Pipeline {
             config: self.config.clone(),
             to_model: self.to_model.clone(),
             to_calibrate: Arc::default(),
-            frame_anchors: self.frame_anchors.clone(),
+            frame_hooks: self.frame_hooks.clone(),
         });
         let (picker, resolver, model, calibrator) =
             (worker.clone(), worker.clone(), worker.clone(), worker);
@@ -403,7 +414,7 @@ struct Worker {
     config: Config,
     to_model: Arc<Latest<Picked>>,
     to_calibrate: Arc<Latest<Predicted>>,
-    frame_anchors: Option<Arc<dyn FrameAnchors>>,
+    frame_hooks: Option<Arc<dyn FrameHooks>>,
 }
 
 impl Worker {
@@ -587,8 +598,8 @@ impl Worker {
                 map.height,
                 map.width,
             );
-            if let Some(frame_anchors) = &self.frame_anchors {
-                let extra = frame_anchors.anchors(
+            if let Some(frame_hooks) = &self.frame_hooks {
+                let extra = frame_hooks.anchors(
                     &calibration,
                     &frame.pred,
                     map,
@@ -611,6 +622,9 @@ impl Worker {
                     let height = (pose * Point3::new(x as f64, y as f64, z as f64)).z;
                     (cfg.min_height_m..=cfg.max_height_m).contains(&height)
                 });
+            }
+            if let Some(frame_hooks) = &self.frame_hooks {
+                points = frame_hooks.points(points, poses.height_from_camera.as_ref());
             }
             let calibrated_at = Instant::now();
             let cloud = make_cloud(&points, &frame.header, frame.frame_id);
