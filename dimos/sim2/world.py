@@ -59,6 +59,14 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
             root.mocap = True
         for key in list(spec.keys):
             spec.delete(key)
+        actuators = {actuator.target: actuator for actuator in spec.actuators}
+        for servo in robot.servos:
+            actuator = actuators[servo.joint]
+            torque_limit = actuator.ctrlrange.copy()
+            actuator.set_to_position(kp=servo.kp, kv=servo.kd)
+            actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
+            actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+            actuator.forcerange = torque_limit
         for sensor in sensors:
             if sensor.robot_id == robot.robot_id:
                 _mount(spec, sensor, robot.robot_id)

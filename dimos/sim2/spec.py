@@ -31,6 +31,16 @@ class Mount:
 
 
 @dataclass(frozen=True)
+class Servo:
+    """A joint whose actuator becomes a PD position servo, starting at and holding initial."""
+
+    joint: str
+    kp: float
+    kd: float
+    initial: float = 0.0
+
+
+@dataclass(frozen=True)
 class SimulatedRobot:
     robot_id: str
     model: Path
@@ -38,6 +48,7 @@ class SimulatedRobot:
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
+    servos: tuple[Servo, ...] = ()
 
 
 @dataclass(frozen=True)

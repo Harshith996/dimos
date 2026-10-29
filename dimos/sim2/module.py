@@ -43,7 +43,9 @@ class SimulationSpec(Spec, Protocol):
 
 
 class SimulationConfig(ModuleConfig):
-    scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
+    scene: Path = Field(
+        default_factory=lambda m: m["g"].scene_package or Path(__file__).with_name("logistics.xml")
+    )
     # describe_simulated() results keyed by instance name; filled in by Simulation.autoconnect.
     simulated: dict[str, Simulated] = Field(default_factory=dict)
     # Sim seconds per wall second.
@@ -79,8 +81,6 @@ class Simulation(Module):
     @rpc
     def build(self) -> None:
         super().build()
-        if self.config.scene is None:
-            raise ValueError("Simulation needs a scene; pass scene= or --scene-package")
         self._model = compile_world(self.config.scene, self.config.simulated.values())
         self._directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
         mujoco.mj_saveModel(self._model, str(self.model_path), None)
@@ -96,6 +96,8 @@ class Simulation(Module):
         assert self._model is not None and self._state is not None
         model, state = self._model, self._state
         data = mujoco.MjData(model)
+        self._hold_initial_pose(model, data)
+        state.ctrl[:] = data.ctrl
         mujoco.mj_forward(model, data)
         state.publish(data)
         started = time.monotonic()
@@ -112,6 +114,15 @@ class Simulation(Module):
                 mujoco.mj_step(model, data)
             state.publish(data)
             await asyncio.sleep(0.001)
+
+    def _hold_initial_pose(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        for robot in self.config.simulated.values():
+            if not isinstance(robot, SimulatedRobot):
+                continue
+            for servo in robot.servos:
+                joint = model.joint(f"{robot.robot_id}/{servo.joint}")
+                data.qpos[joint.qposadr[0]] = servo.initial
+                data.ctrl[model.actuator_trnid[:, 0] == joint.id] = servo.initial
 
     @property
     def model_path(self) -> Path:
