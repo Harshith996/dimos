@@ -20,6 +20,9 @@ from dimos.imitation.policy.dreamlabs.camera import DreamlabsCameraModule
 from dimos.imitation.policy.module import PolicyModule, policy_class
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.manipulators.dual_openyam.blueprints.dreamlabs import build_dual_openyam_dreamlabs
+from dimos.robot.manipulators.dual_openyam.blueprints.learning_collection import (
+    build_dual_openyam_collection,
+)
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 
@@ -77,3 +80,18 @@ def test_camera_device_override_preserves_existing_capture_configuration(mocker)
         ) == (800, 600, 30.0)
     finally:
         module.stop()
+
+
+def test_three_camera_collection_matches_rollout_inputs():
+    collection = build_dual_openyam_collection(overhead=True)
+    schema = next(
+        atom.kwargs["recording_schema"]
+        for atom in collection.blueprints
+        if "recording_schema" in atom.kwargs
+    )
+    assert {
+        feature.stream for feature in schema.observation.values() if feature.dtype == "video"
+    } == {"overhead_image", "left_wrist_image", "right_wrist_image"}
+    assert schema.action["action"].stream == "coordinator_joint_command"
+    assert schema.action["action"].source_kind == "joint_position_updates"
+    assert schema.observation["observation.state"].names == list(DUAL_OPENYAM_JOINTS)

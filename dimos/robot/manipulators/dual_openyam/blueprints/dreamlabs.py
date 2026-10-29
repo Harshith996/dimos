@@ -90,5 +90,5 @@ def build_dual_openyam_dreamlabs(*, mode: Literal["joint", "eef"] = "joint") -> 
     )
 
 
-dreamlabs_dual_openyam_manual = autoconnect(build_dual_openyam_dreamlabs())
+dreamlabs_dual_openyam_joint = autoconnect(build_dual_openyam_dreamlabs())
 dreamlabs_dual_openyam_eef = autoconnect(build_dual_openyam_dreamlabs(mode="eef"))

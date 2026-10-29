@@ -19,7 +19,7 @@ Set all three camera device paths explicitly. Omitting CAN ports uses the existi
 mock hardware configuration. Real CAN deployment requires station-specific setup.
 
 ```bash
-uv run dimos run dreamlabs-dual-openyam-manual \
+uv run dimos run dreamlabs-dual-openyam-joint \
   --OverheadCamera.device=/dev/video0 \
   --LeftWristCamera.device=/dev/video2 \
   --RightWristCamera.device=/dev/video4
@@ -113,3 +113,23 @@ uv run --frozen --with pytest --with pytest-mock --with-editable ../../.. \
 
 The pinned SDK tests replace credential loading and transport requests. They do
 not read real credentials, upload images, or contact Dreamlabs.
+
+## Dual YAM learning setup
+
+Use `dual-openyam-dreamlabs-collection` to record overhead and both wrist cameras
+with the existing Quest episode controls. The two-camera
+`dual-openyam-quest-collection` remains available. Configure capture devices through
+`--left-wrist.hardware.camera-index`, `--right-wrist.hardware.camera-index`, and
+`--overhead.hardware.camera-index`, preferably using stable `/dev/v4l/by-id` paths.
+
+Prepare and inspect the saved recording through `dimos imitation prepare` and
+`dimos imitation inspect`. The saved schema records measured state and attempted
+joint commands separately; it does not claim that a commanded pose was reached.
+
+Run `dreamlabs-dual-openyam-joint` or `dreamlabs-dual-openyam-eef` for three-camera
+rollout. Both consume `overhead_image`, `left_wrist_image`, and `right_wrist_image`
+as `overhead`, `wrist_l`, and `wrist_r`. Rollout camera selectors are
+`--OverheadCamera.device`, `--LeftWristCamera.device`, and `--RightWristCamera.device`.
+No policy starts at blueprint startup. Preflight is local; preview requests remote
+inference without actuator dispatch. Explicitly pass `dispatch_actions=True` to
+`start_rollout` to execute. Do not infer execution from the preview counters.
