@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::brick_map::{BrickMap, VoxelKey, MAP_COMMON};
+use crate::brick_map::{unpack_normal, BrickMap, VoxelKey, MAP_COMMON};
 use crate::gpu::{groups_1d, Gpu, PassTimer};
 
 /// The CPU has_support neighborhood: square radius and z tolerance, in cells.
@@ -29,7 +29,7 @@ const SUPPORT_RADIUS: i32 = 3;
 const SUPPORT_Z_TOL: i32 = 3;
 /// The CPU HOLE_SPAN_CELLS: empty columns a gap may span and still be a hole.
 const HOLE_SPAN_CELLS: i32 = 4;
-const SURFACE_BINDINGS: u32 = 10;
+const SURFACE_BINDINGS: u32 = 13;
 const PLANE_BINDINGS: u32 = 7;
 /// Uniform offsets must be 256-byte aligned for dynamic binding.
 const FLOOD_STRIDE: u64 = 256;
@@ -39,15 +39,51 @@ const TILE: u32 = 8;
 /// Flood seeds pack x and y in 16 bits each.
 const MAX_WINDOW_EDGE: u32 = 1 << 16;
 
-/// The MLS planner's surface parameters, in cells.
+/// The MLS planner's surface parameters, in meters, judged against each
+/// cell's plane rather than whole voxels.
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceConfig {
-    /// ceil(robot_height / voxel_size).
-    pub clearance_cells: i32,
-    /// ceil(surface_closing_radius / voxel_size).
-    pub closing_cells: i32,
-    /// floor(step_threshold_m / voxel_size).
-    pub step_cells: i32,
+    /// Clear space a cell needs between its plane and the underside above.
+    pub robot_height_m: f32,
+    /// Hole closing radius; the closing itself runs in whole cells.
+    pub closing_radius_m: f32,
+    /// Largest height change two neighboring cells may link across.
+    pub step_threshold_m: f32,
+    /// Planes tilted further than this are not standable; 90 or more disables the gate.
+    pub max_slope_deg: f32,
+    /// Two stacked voxels whose planes are within this height are one surface.
+    pub plane_merge_m: f32,
+    /// ...and whose normals are within this angle.
+    pub plane_merge_deg: f32,
+}
+
+impl SurfaceConfig {
+    /// The MLS planner module's defaults. 30 degrees is about the steepest
+    /// slope a Go2 or G1 walks reliably; stairs are unaffected since their
+    /// treads are flat. Lidar noise is 1 to 2 cm, so planes 3 cm apart on two
+    /// stacked voxels are one floor straddling a grid line.
+    pub fn mls_defaults() -> Self {
+        Self {
+            robot_height_m: 0.3,
+            closing_radius_m: 0.3,
+            step_threshold_m: 0.16,
+            max_slope_deg: 30.0,
+            plane_merge_m: 0.03,
+            plane_merge_deg: 15.0,
+        }
+    }
+
+    pub fn closing_cells(&self, voxel_size: f32) -> i32 {
+        (self.closing_radius_m / voxel_size).ceil() as i32
+    }
+
+    pub fn step_cells(&self, voxel_size: f32) -> i32 {
+        (self.step_threshold_m / voxel_size).floor() as i32
+    }
+
+    pub fn clearance_cells(&self, voxel_size: f32) -> i32 {
+        (self.robot_height_m / voxel_size).ceil() as i32
+    }
 }
 
 /// A box of voxels: the min corner and the extent along each axis.
@@ -98,13 +134,17 @@ impl Window {
 struct SurfaceParams {
     window_min: [i32; 4],
     size: [u32; 4],
-    clearance_cells: i32,
     closing_cells: i32,
     step_cells: i32,
     hole_span_cells: i32,
     support_radius: i32,
     support_z_tol: i32,
     voxel_size: f32,
+    robot_height_m: f32,
+    step_m: f32,
+    min_up: f32,
+    merge_m: f32,
+    merge_cos: f32,
     pad: i32,
 }
 
@@ -136,6 +176,9 @@ struct Buffers {
     plane_count: wgpu::Buffer,
     plane_bounds: wgpu::Buffer,
     plane_table: wgpu::Buffer,
+    heights: wgpu::Buffer,
+    cell_normals: wgpu::Buffer,
+    planar: wgpu::Buffer,
 }
 
 /// Per-plane-cell buffers, regrown when a frame's planes need more room.
@@ -146,6 +189,8 @@ struct PlaneCells {
 
 struct Pipelines {
     build_occupancy: wgpu::ComputePipeline,
+    fit_cells: wgpu::ComputePipeline,
+    merge_columns: wgpu::ComputePipeline,
     standable_columns: wgpu::ComputePipeline,
     grow_columns: wgpu::ComputePipeline,
     compose_surface: wgpu::ComputePipeline,
@@ -172,6 +217,10 @@ pub struct SurfaceResult {
     pub surface: Vec<VoxelKey>,
     /// Surface cells next to a wall, cliff or drop.
     pub walls: Vec<VoxelKey>,
+    /// Per surface cell, in `surface` order: its height in meters.
+    pub heights: Vec<f32>,
+    /// Per surface cell: its plane's upward normal, None for filled or planeless cells.
+    pub normals: Vec<Option<[f32; 3]>>,
 }
 
 /// One frame's plane split.
@@ -187,6 +236,7 @@ pub struct SurfaceExtractor {
     gpu: Arc<Gpu>,
     pub window: Window,
     pub config: SurfaceConfig,
+    closing_cells: i32,
     buffers: Buffers,
     plane_capacity: u32,
     empty_group: wgpu::BindGroup,
@@ -205,6 +255,7 @@ impl SurfaceExtractor {
     /// binding limit, or its x, y extent does not fit the 16-bit flood seeds.
     pub fn new(map: &BrickMap, window: Window, config: SurfaceConfig) -> Result<Self, String> {
         let gpu = Arc::clone(map.gpu());
+        let voxel_size = map.config.voxel_size;
         let bit_words = 4 * window.columns() * window.words_per_column() as u64;
         let cells = 4 * window.cells();
         let limits = gpu.device.limits();
@@ -237,6 +288,9 @@ impl SurfaceExtractor {
             plane_count: gpu.storage("plane count", 4),
             plane_bounds: gpu.storage("plane bounds", 16 * plane_capacity as u64),
             plane_table: gpu.storage("plane table", 16 * plane_capacity as u64),
+            heights: gpu.storage("heights", cells),
+            cell_normals: gpu.storage("cell normals", cells),
+            planar: gpu.storage("planar", bit_words),
         };
         let params = gpu.uniform(
             "surface params",
@@ -266,13 +320,21 @@ impl SurfaceExtractor {
                     window.size.2,
                     window.words_per_column(),
                 ],
-                clearance_cells: config.clearance_cells,
-                closing_cells: config.closing_cells,
-                step_cells: config.step_cells,
+                closing_cells: config.closing_cells(voxel_size),
+                step_cells: config.step_cells(voxel_size),
                 hole_span_cells: HOLE_SPAN_CELLS,
                 support_radius: SUPPORT_RADIUS,
                 support_z_tol: SUPPORT_Z_TOL,
-                voxel_size: map.config.voxel_size,
+                voxel_size,
+                robot_height_m: config.robot_height_m,
+                step_m: config.step_threshold_m,
+                min_up: if config.max_slope_deg >= 90.0 {
+                    -1.0
+                } else {
+                    config.max_slope_deg.to_radians().cos()
+                },
+                merge_m: config.plane_merge_m,
+                merge_cos: config.plane_merge_deg.to_radians().cos(),
                 pad: 0,
             }),
         );
@@ -310,6 +372,9 @@ impl SurfaceExtractor {
                 &b.seeds_b,
                 &b.wall_distance,
                 &labels,
+                &b.heights,
+                &b.cell_normals,
+                &b.planar,
             ],
         );
         let flood_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -328,7 +393,12 @@ impl SurfaceExtractor {
 
         let module = gpu.module(
             "surfaces",
-            &[MAP_COMMON, include_str!("shaders/surfaces.wgsl")].concat(),
+            &[
+                MAP_COMMON,
+                include_str!("shaders/fit.wgsl"),
+                include_str!("shaders/surfaces.wgsl"),
+            ]
+            .concat(),
         );
         let with_map = [&map.layout, &surface_layout, &flood_layout];
         let with_planes = [&empty_layout, &surface_layout, &flood_layout, &plane_layout];
@@ -336,6 +406,8 @@ impl SurfaceExtractor {
         let plane = |entry: &str| gpu.pipeline(&module, entry, &with_planes);
         let pipelines = Pipelines {
             build_occupancy: column("build_occupancy"),
+            fit_cells: column("fit_cells"),
+            merge_columns: column("merge_columns"),
             standable_columns: column("standable_columns"),
             grow_columns: column("grow_columns"),
             compose_surface: column("compose_surface"),
@@ -357,6 +429,7 @@ impl SurfaceExtractor {
             gpu,
             window,
             config,
+            closing_cells: config.closing_cells(voxel_size),
             buffers,
             plane_capacity,
             empty_group,
@@ -522,12 +595,24 @@ impl SurfaceExtractor {
     ) {
         encoder.clear_buffer(&self.buffers.occupied, 0, None);
         encoder.clear_buffer(&self.buffers.grown, 0, None);
+        encoder.clear_buffer(&self.buffers.planar, 0, None);
         {
-            let mut pass = begin(encoder, "standable", &mut timer);
+            let mut pass = begin(encoder, "plane fit", &mut timer);
             pass.set_bind_group(0, &map.bind_group, &[]);
             map.prepare(&mut pass);
             self.bind(&mut pass, Some(map), 1);
             map.dispatch_pool(&mut pass, &self.pipelines.build_occupancy);
+            map.dispatch_pool(&mut pass, &self.pipelines.fit_cells);
+        }
+        {
+            let mut pass = begin(encoder, "standable", &mut timer);
+            self.run(
+                &mut pass,
+                Some(map),
+                &self.pipelines.merge_columns,
+                self.column_groups(),
+                1,
+            );
             self.run(
                 &mut pass,
                 Some(map),
@@ -537,7 +622,7 @@ impl SurfaceExtractor {
             );
         }
         let mut pass = begin(encoder, "hole fill", &mut timer);
-        if self.config.closing_cells > 0 {
+        if self.closing_cells > 0 {
             self.run(
                 &mut pass,
                 Some(map),
@@ -659,9 +744,24 @@ impl SurfaceExtractor {
     }
 
     pub fn read(&self) -> SurfaceResult {
+        let surface = self.read_bits(&self.buffers.surface);
+        let cells = self.window.cells() as usize;
+        let heights: Vec<f32> = self.gpu.read(&self.buffers.heights, cells);
+        let packed: Vec<u32> = self.gpu.read(&self.buffers.cell_normals, cells);
+        let planar: std::collections::HashSet<VoxelKey> =
+            self.read_bits(&self.buffers.planar).into_iter().collect();
         SurfaceResult {
             standable: self.read_bits(&self.buffers.standable),
-            surface: self.read_bits(&self.buffers.surface),
+            heights: surface.iter().map(|&k| heights[self.cell_of(k)]).collect(),
+            normals: surface
+                .iter()
+                .map(|&k| {
+                    planar
+                        .contains(&k)
+                        .then(|| unpack_normal(packed[self.cell_of(k)]))
+                })
+                .collect(),
+            surface,
             walls: self.read_bits(&self.buffers.wall),
         }
     }

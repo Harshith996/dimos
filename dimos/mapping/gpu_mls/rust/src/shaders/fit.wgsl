@@ -84,12 +84,27 @@ fn outer(a: vec3<f32>, b: vec3<f32>) -> mat3x3<f32> {
     return mat3x3<f32>(a * b.x, a * b.y, a * b.z);
 }
 
+// The pooled plane: its normal (w = 1 when planar), and the mean of the
+// final reweighted neighborhood about the voxel center, a point on it.
+struct PooledFit {
+    normal: vec4<f32>,
+    mean: vec3<f32>,
+}
+
 fn pooled_normal(key: vec3<i32>) -> vec4<f32> {
+    return pooled_fit(key, false).normal;
+}
+
+// With `layered`, the reweighting starts from each neighbor's height off this
+// voxel's own points instead of uniform, so at a step edge the fit settles on
+// the voxel's own level rather than a tilted plane through both.
+fn pooled_fit(key: vec3<i32>, layered: bool) -> PooledFit {
     var counts: array<f32, 27>;
     var sums: array<vec3<f32>, 27>;
     var seconds: array<mat3x3<f32>, 27>;
     var used = 0u;
     var n_raw = 0u;
+    var own = -1;
     let vs = params.voxel_size;
     for (var dx = -1; dx <= 1; dx++) {
         for (var dy = -1; dy <= 1; dy++) {
@@ -113,6 +128,9 @@ fn pooled_normal(key: vec3<i32>) -> vec4<f32> {
                 let m2 = mat3x3<f32>(vec3<f32>(xx, xy, xz), vec3<f32>(xy, yy, yz), vec3<f32>(xz, yz, zz)) * (vs * vs);
                 // Shift this voxel's center-relative moments to the target center.
                 let d = vec3<f32>(f32(dx), f32(dy), f32(dz)) * vs;
+                if (dx == 0 && dy == 0 && dz == 0) {
+                    own = i32(used);
+                }
                 counts[used] = ni;
                 sums[used] = sum + d * ni;
                 seconds[used] = m2 + outer(sum, d) + outer(d, sum) + outer(d, d) * ni;
@@ -122,7 +140,7 @@ fn pooled_normal(key: vec3<i32>) -> vec4<f32> {
         }
     }
     if (n_raw < NORMAL_MIN_POINTS) {
-        return vec4<f32>(0.0);
+        return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
     }
 
     let sigma = PLANE_SIGMA_FRAC * vs;
@@ -130,6 +148,10 @@ fn pooled_normal(key: vec3<i32>) -> vec4<f32> {
     var weights: array<f32, 27>;
     for (var k = 0u; k < used; k++) {
         weights[k] = 1.0;
+        if (layered && own >= 0) {
+            let rise = sums[k].z / counts[k] - sums[own].z / counts[own];
+            weights[k] = exp(-(rise * rise) / two_sig2);
+        }
     }
     var fitted = false;
     var last: Eigen;
@@ -156,13 +178,15 @@ fn pooled_normal(key: vec3<i32>) -> vec4<f32> {
         fitted = true;
     }
     var kept = 0.0;
+    var kept_sum = vec3<f32>(0.0);
     for (var k = 0u; k < used; k++) {
         kept += weights[k] * counts[k];
+        kept_sum += sums[k] * weights[k];
     }
     if (!fitted || kept < MIN_SUPPORT * f32(n_raw)) {
-        return vec4<f32>(0.0);
+        return PooledFit(vec4<f32>(0.0), vec3<f32>(0.0));
     }
-    return classify(last);
+    return PooledFit(classify(last), kept_sum / kept);
 }
 
 @compute @workgroup_size(64)

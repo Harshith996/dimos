@@ -582,8 +582,8 @@ impl BrickMap {
     }
 }
 
-/// The shader's octahedral unpack, for snapshots.
-fn unpack_normal(packed: u32) -> [f32; 3] {
+/// The shader's octahedral unpack, for readbacks.
+pub(crate) fn unpack_normal(packed: u32) -> [f32; 3] {
     let snorm = |bits: u32| ((bits & 0xffff) as u16 as i16 as f32 / 32767.0).max(-1.0);
     let (qx, qy) = (snorm(packed), snorm(packed >> 16));
     let mut n = [qx, qy, 1.0 - qx.abs() - qy.abs()];

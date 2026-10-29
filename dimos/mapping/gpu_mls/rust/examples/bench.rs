@@ -232,8 +232,8 @@ fn main() {
         );
     }
     println!();
-    println!("| map | voxel | window | CPU surfaces | CPU wall dist | GPU standable | GPU hole fill | GPU planes | GPU wall dist | GPU wall clock | surface readback |");
-    println!("|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("| map | voxel | window | CPU surfaces | CPU wall dist | GPU plane fit | GPU standable | GPU hole fill | GPU planes | GPU wall dist | GPU wall clock | surface readback |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
     for row in surface_rows {
         println!("{row}");
     }
@@ -251,28 +251,18 @@ fn bench_surfaces(
         .filter(|v| v.health > 0)
         .map(|v| v.key)
         .collect();
-    let config = SurfaceConfig {
-        clearance_cells: (0.3 / voxel_size).ceil() as i32,
-        closing_cells: (0.3 / voxel_size).ceil() as i32,
-        step_cells: (0.16 / voxel_size).floor() as i32,
-    };
-    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1)
-        .expect("an occupied map");
-    let t = Instant::now();
-    let surface = surface_cells(
-        &occupied,
-        config.clearance_cells,
-        config.closing_cells as u32,
+    let config = SurfaceConfig::mls_defaults();
+    let (clearance, closing, step) = (
+        config.clearance_cells(voxel_size),
+        config.closing_cells(voxel_size),
+        config.step_cells(voxel_size),
     );
+    let window = Window::covering(occupied.iter().copied(), closing + 1).expect("an occupied map");
+    let t = Instant::now();
+    let surface = surface_cells(&occupied, clearance, closing as u32);
     let cpu_surface_ms = ms(t);
     let t = Instant::now();
-    wall_distances(
-        &occupied,
-        &surface,
-        config.clearance_cells,
-        config.step_cells,
-        voxel_size,
-    );
+    wall_distances(&occupied, &surface, clearance, step, voxel_size);
     let cpu_wall_ms = ms(t);
 
     let mut extractor = SurfaceExtractor::new(map, window, config).expect("window fits the device");
@@ -300,12 +290,13 @@ fn bench_surfaces(
         }
     }
     format!(
-        "| {label} | {voxel_size} | {}x{}x{} | {:.1} ms | {:.1} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms |",
+        "| {label} | {voxel_size} | {}x{}x{} | {:.1} ms | {:.1} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms |",
         window.size.0,
         window.size.1,
         window.size.2,
         cpu_surface_ms,
         cpu_wall_ms,
+        mean.get("plane fit"),
         mean.get("standable"),
         mean.get("hole fill"),
         mean.get("planes"),

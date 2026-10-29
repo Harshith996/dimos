@@ -1,13 +1,17 @@
 // Surface extraction over a dense window of columns: occupancy from the
-// brick map, the standable test, bit-parallel round hole closing per z slice
-// (32 slices per word op), and
-// jump-flood wall distance. Appended to map_common.wgsl.
+// brick map, per-cell plane heights, the standable test, bit-parallel round
+// hole closing per z slice (32 slices per word op), and jump-flood wall
+// distance. Appended to map_common.wgsl and fit.wgsl.
+//
+// Heights are sub-voxel: each occupied cell carries the height of its voxel's
+// pooled plane at the column center (its top face when it has no plane), and
+// headroom, slope and step links are judged in meters from those planes.
 //
 // Column bit layout: word (y * W + x) * ZW + z / 32, bit z % 32.
 // Cell layout: (z * H + y) * W + x.
 //
 // Wall distance runs per plane: a connected surface (4-neighbor links with a
-// step of at most step_cells, as the CPU adjacency) projected from above.
+// step of at most step_m between the planes) projected from above.
 // Where a connected surface overlaps itself in x,y (a ramp under a balcony),
 // it splits into sheets: within a column, a cell more than a step above the
 // surface's cell below it starts the next sheet. Each (surface, sheet) piece
@@ -18,13 +22,19 @@ struct SurfaceParams {
     window_min: vec4<i32>,
     // W, H, D, ZW
     size: vec4<u32>,
-    clearance_cells: i32,
     closing_cells: i32,
+    // floor(step_m / voxel_size); links are looked for one cell further.
     step_cells: i32,
     hole_span_cells: i32,
     support_radius: i32,
     support_z_tol: i32,
     voxel_size: f32,
+    robot_height_m: f32,
+    step_m: f32,
+    // A plane whose normal has |z| below this is too steep to stand on; -1 disables the gate.
+    min_up: f32,
+    merge_m: f32,
+    merge_cos: f32,
     _pad: i32,
 }
 
@@ -47,6 +57,10 @@ const NO_SEED: u32 = 0xffffffffu;
 @group(1) @binding(8) var<storage, read_write> wall_distance: array<f32>;
 // Two union-find parent arrays over cells: components, then planes.
 @group(1) @binding(9) var<storage, read_write> labels: array<atomic<u32>>;
+@group(1) @binding(10) var<storage, read_write> heights: array<f32>;
+// Octahedral-packed upward normals, meaningful where the planar bit is set.
+@group(1) @binding(11) var<storage, read_write> cell_normals: array<u32>;
+@group(1) @binding(12) var<storage, read_write> planar: array<atomic<u32>>;
 @group(2) @binding(0) var<uniform> flood: FloodStep;
 
 fn column_word(x: i32, y: i32, z: i32) -> u32 {
@@ -74,6 +88,7 @@ fn bit_at(x: i32, y: i32, z: i32, which: u32) -> bool {
         case 0u: { word = standable[w]; }
         case 1u: { word = surface[w]; }
         case 2u: { word = grown[w]; }
+        case 4u: { word = atomicLoad(&planar[w]); }
         default: { word = wall[w]; }
     }
     return ((word >> (u32(z) & 31u)) & 1u) != 0u;
@@ -130,8 +145,133 @@ fn build_occupancy(
     atomicOr(&occupied[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
 }
 
-// Per column: occupied cells whose next occupied cell above is more than the
-// clearance away, plus the column top.
+fn bottom_face(z: i32) -> f32 {
+    return f32(sp.window_min.z + z) * sp.voxel_size;
+}
+
+fn is_planar(x: i32, y: i32, z: i32) -> bool {
+    return bit_at(x, y, z, 4u);
+}
+
+fn cell_normal(x: i32, y: i32, z: i32) -> vec3<f32> {
+    return unpack_normal(cell_normals[cell_index(x, y, z)]);
+}
+
+fn too_steep(x: i32, y: i32, z: i32) -> bool {
+    return is_planar(x, y, z) && cell_normal(x, y, z).z < sp.min_up;
+}
+
+// The cell's surface height at a horizontal offset (m) from its column
+// center: its plane where it has one, else its stored height. The rise is
+// bounded to a 63 degree slope so a near-vertical plane cannot run away.
+fn height_at(x: i32, y: i32, z: i32, offset: vec2<f32>) -> f32 {
+    let h = heights[cell_index(x, y, z)];
+    if (!is_planar(x, y, z)) {
+        return h;
+    }
+    let n = cell_normal(x, y, z);
+    let reach = 2.0 * max(abs(offset.x), abs(offset.y));
+    return h + clamp(-dot(n.xy, offset) / max(n.z, 1e-3), -reach, reach);
+}
+
+// The lowest point of the cell's surface over its column square, the
+// underside a robot below would meet; its bottom face without a plane.
+fn underside(x: i32, y: i32, z: i32) -> f32 {
+    let bottom = bottom_face(z);
+    if (!is_planar(x, y, z)) {
+        return bottom;
+    }
+    let n = cell_normal(x, y, z);
+    let drop = (abs(n.x) + abs(n.y)) * 0.5 * sp.voxel_size / max(n.z, 1e-3);
+    return clamp(heights[cell_index(x, y, z)] - drop, bottom, bottom + sp.voxel_size);
+}
+
+// The underside of the first occupied cell above z, or far away.
+fn ceiling_above(x: i32, y: i32, z: i32) -> f32 {
+    for (var above = z + 1; above < i32(sp.size.z); above++) {
+        if (occupied_at(x, y, above)) {
+            return underside(x, y, above);
+        }
+    }
+    return 3.0e38;
+}
+
+// Two surface cells, a hop of whole columns apart, meet within a step: their
+// planes evaluated halfway between their column centers differ by at most step_m.
+fn within_step(x: i32, y: i32, z: i32, nx: i32, ny: i32, nz: i32) -> bool {
+    let half = vec2<f32>(f32(nx - x), f32(ny - y)) * (0.5 * sp.voxel_size);
+    return abs(height_at(x, y, z, half) - height_at(nx, ny, nz, -half)) <= sp.step_m;
+}
+
+// Each healthy voxel's surface height and normal from its pooled plane. A
+// voxel inside a solid stack is never a surface nor an underside, so it
+// keeps its top face and skips the fit.
+@compute @workgroup_size(64)
+fn fit_cells(
+    @builtin(workgroup_id) wg: vec3<u32>,
+    @builtin(num_workgroups) nwg: vec3<u32>,
+    @builtin(local_invocation_index) li: u32,
+) {
+    let v = thread_index(wg, nwg, li);
+    if (v >= min(atomicLoad(&counters[C_BRICKS]), params.brick_capacity) * BRICK_VOXELS) {
+        return;
+    }
+    if (!voxel_exists(v) || health[v] <= 0) {
+        return;
+    }
+    let key = key_of_voxel(v);
+    let local = key - sp.window_min.xyz;
+    if (any(local < vec3<i32>(0)) || any(vec3<u32>(local) >= sp.size.xyz)) {
+        return;
+    }
+    let i = cell_index(local.x, local.y, local.z);
+    let bottom = bottom_face(local.z);
+    heights[i] = bottom + sp.voxel_size;
+    cell_normals[i] = 0u;
+    if (occupied_at(local.x, local.y, local.z - 1) && occupied_at(local.x, local.y, local.z + 1)) {
+        return;
+    }
+    let fit = pooled_fit(key, true);
+    if (fit.normal.w <= 0.0) {
+        return;
+    }
+    let n = select(fit.normal.xyz, -fit.normal.xyz, fit.normal.z < 0.0);
+    if (n.z > 1e-3) {
+        // The plane through the pooled mean, at the column center; kept within
+        // half a voxel of this one so a sparse voxel cannot drift off.
+        let h = voxel_center(key).z + fit.mean.z + dot(n.xy, fit.mean.xy) / n.z;
+        heights[i] = clamp(h, bottom - 0.5 * sp.voxel_size, bottom + 1.5 * sp.voxel_size);
+    }
+    cell_normals[i] = pack_normal(n);
+    atomicOr(&planar[column_word(local.x, local.y, local.z)], 1u << (u32(local.z) & 31u));
+}
+
+// A voxel and the one above it holding the same plane (a floor on a grid
+// line) are one surface: the upper takes their mean height and the lower
+// stops being an obstacle under it.
+@compute @workgroup_size(8, 8, 1)
+fn merge_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
+        return;
+    }
+    let x = i32(gid.x);
+    let y = i32(gid.y);
+    for (var z = 0; z + 1 < i32(sp.size.z); z++) {
+        if (!occupied_at(x, y, z) || !occupied_at(x, y, z + 1) || !is_planar(x, y, z) || !is_planar(x, y, z + 1)) {
+            continue;
+        }
+        let lower = cell_index(x, y, z);
+        let upper = cell_index(x, y, z + 1);
+        let agree = dot(cell_normal(x, y, z), cell_normal(x, y, z + 1)) >= sp.merge_cos;
+        if (agree && abs(heights[upper] - heights[lower]) <= sp.merge_m) {
+            heights[upper] = 0.5 * (heights[upper] + heights[lower]);
+            atomicAnd(&occupied[column_word(x, y, z)], ~(1u << (u32(z) & 31u)));
+        }
+    }
+}
+
+// Per column: occupied cells with robot_height of clear space between their
+// plane and the underside of the next occupied cell above, unless too steep.
 @compute @workgroup_size(8, 8, 1)
 fn standable_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
@@ -143,16 +283,34 @@ fn standable_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var w = 0u; w < sp.size.w; w++) {
         standable[base + w] = 0u;
     }
-    var next_above = 0x3fffffff;
+    var ceiling = 3.0e38;
     for (var z = i32(sp.size.z) - 1; z >= 0; z--) {
         if (!occupied_at(x, y, z)) {
             continue;
         }
-        if (next_above - z > sp.clearance_cells) {
+        if (!too_steep(x, y, z) && ceiling - heights[cell_index(x, y, z)] >= sp.robot_height_m) {
             standable[base + u32(z) / 32u] |= 1u << (u32(z) & 31u);
         }
-        next_above = z;
+        ceiling = underside(x, y, z);
     }
+}
+
+// A filled cell's height: the mean of the standable heights in its slice
+// within the closing radius, one of which closing guarantees.
+fn filled_height(x: i32, y: i32, z: i32) -> f32 {
+    let n = sp.closing_cells;
+    var sum = 0.0;
+    var count = 0.0;
+    for (var dy = -n; dy <= n; dy++) {
+        for (var dx = -n; dx <= n; dx++) {
+            if (dx * dx + dy * dy > n * n || !bit_at(x + dx, y + dy, z, 0u)) {
+                continue;
+            }
+            sum += heights[cell_index(x + dx, y + dy, z)];
+            count += 1.0;
+        }
+    }
+    return select(bottom_face(z) + sp.voxel_size, sum / count, count > 0.0);
 }
 
 // The bits of column (x, y) at z + shift, aligned to word `word`'s z range:
@@ -184,9 +342,7 @@ fn column_bits(which: u32, w: u32) -> u32 {
     }
 }
 
-const BITS_STANDABLE: u32 = 0u;
-const BITS_GROWN: u32 = 2u;
-const BITS_OCCUPIED: u32 = 4u;
+const BITS_OCCUPIED: u32 = 5u;
 
 // Grow: a cell is grown when a standable cell of its slice lies within the
 // closing radius (Euclidean, in cells). 32 slices per word op.
@@ -244,13 +400,6 @@ fn compose_surface(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         var added = closed & ~original;
         if (added != 0u) {
-            var above = 0u;
-            for (var k = 1; k <= sp.clearance_cells; k++) {
-                above |= shifted_word(BITS_OCCUPIED, x, y, i32(w), k);
-            }
-            added &= ~above;
-        }
-        if (added != 0u) {
             var support = 0u;
             let r = sp.support_radius;
             for (var dy = -r; dy <= r; dy++) {
@@ -262,14 +411,28 @@ fn compose_surface(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             added &= support;
         }
+        // Headroom in meters, from a height borrowed off the standable cells around.
+        var candidates = added;
+        while (candidates != 0u) {
+            let bit = firstTrailingBit(candidates);
+            candidates &= candidates - 1u;
+            let z = i32(w * 32u + bit);
+            let h = filled_height(x, y, z);
+            if (ceiling_above(x, y, z) - h >= sp.robot_height_m) {
+                heights[cell_index(x, y, z)] = h;
+            } else {
+                added &= ~(1u << bit);
+            }
+        }
         surface[base + w] = original | added;
     }
 }
 
-// The neighbor column holds a surface cell within a step of z.
-fn surface_linked(x: i32, y: i32, z: i32) -> bool {
-    for (var dz = -sp.step_cells; dz <= sp.step_cells; dz++) {
-        if (bit_at(x, y, z + dz, 1u)) {
+// The neighbor column holds a surface cell within a step of this one.
+fn surface_linked(x: i32, y: i32, z: i32, nx: i32, ny: i32) -> bool {
+    let reach = sp.step_cells + 1;
+    for (var dz = -reach; dz <= reach; dz++) {
+        if (bit_at(nx, ny, z + dz, 1u) && within_step(x, y, z, nx, ny, z + dz)) {
             return true;
         }
     }
@@ -285,8 +448,9 @@ fn edge_in_direction(x: i32, y: i32, z: i32, dx: i32, dy: i32) -> bool {
         if (!column_has_occupied(nx, ny)) {
             continue;
         }
-        for (var dz = -sp.step_cells; dz <= sp.step_cells; dz++) {
-            if (bit_at(nx, ny, z + dz, 0u)) {
+        let reach = sp.step_cells + 1;
+        for (var dz = -reach; dz <= reach; dz++) {
+            if (bit_at(nx, ny, z + dz, 0u) && within_step(x, y, z, nx, ny, z + dz)) {
                 return false;
             }
         }
@@ -314,7 +478,7 @@ fn find_walls(@builtin(global_invocation_id) gid: vec3<u32>) {
         var is_wall = false;
         for (var k = 0; k < 4; k++) {
             let d = dirs[k];
-            if (!surface_linked(x + d.x, y + d.y, z) && edge_in_direction(x, y, z, d.x, d.y)) {
+            if (!surface_linked(x, y, z, x + d.x, y + d.y) && edge_in_direction(x, y, z, d.x, d.y)) {
                 is_wall = true;
                 break;
             }
@@ -386,15 +550,16 @@ fn uf_init(@builtin(global_invocation_id) gid: vec3<u32>) {
 // the component in this column within a step of the one beneath share a sheet.
 fn component_rank(x: i32, y: i32, z: i32, component: u32) -> u32 {
     var rank = 0u;
-    var previous = -1;
+    var previous = -1.0e38;
     for (var below = 0; below <= z; below++) {
         if (!is_surface(x, y, below) || atomicLoad(&labels[cell_index(x, y, below)]) != component) {
             continue;
         }
-        if (previous >= 0 && below - previous > sp.step_cells) {
+        let h = heights[cell_index(x, y, below)];
+        if (previous > -1.0e37 && h - previous > sp.step_m) {
             rank += 1u;
         }
-        previous = below;
+        previous = h;
     }
     return rank;
 }
@@ -423,9 +588,10 @@ fn link_neighbors(gid: vec3<u32>, planes: bool) {
     for (var k = 0; k < 2; k++) {
         let nx = x + dirs[k].x;
         let ny = y + dirs[k].y;
-        for (var dz = -sp.step_cells; dz <= sp.step_cells; dz++) {
+        let reach = sp.step_cells + 1;
+        for (var dz = -reach; dz <= reach; dz++) {
             let nz = z + dz;
-            if (!is_surface(nx, ny, nz)) {
+            if (!is_surface(nx, ny, nz) || !within_step(x, y, z, nx, ny, nz)) {
                 continue;
             }
             if (planes && component_rank(nx, ny, nz, component) != rank) {
