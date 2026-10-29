@@ -192,3 +192,20 @@ class WorldConfig:
             raise ValueError("world sensor names must be nonempty and unique")
         if any(not math.isfinite(s.rate_hz) or s.rate_hz <= 0 for s in sensors):
             raise ValueError("sensor rates must be finite and positive")
+
+
+@dataclass(frozen=True)
+class SimulatedRobot:
+    """What a simulated robot module's describe_simulated() returns; spawn names a scene support."""
+
+    robot_id: str
+    robot: RobotInstance
+    spawn: str | None = None
+
+
+@dataclass(frozen=True)
+class SimulatedSensor:
+    """What a sensor module's describe_simulated() returns; robot_id None mounts it in the scene."""
+
+    robot_id: str | None
+    sensor: Sensor

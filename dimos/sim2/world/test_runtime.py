@@ -48,7 +48,7 @@ def test_run_evidence_survives_shutdown_without_copying_assets(world_config, tmp
     )
     module = Simulation(world=world, evidence_dir=tmp_path / "evidence")
     try:
-        module.compile()
+        module.build()
         description = module.describe()
         record_path = Path(description["run_record"])
         record = json.loads(record_path.read_text())
@@ -74,7 +74,7 @@ def test_cli_run_uses_existing_log_directory_and_makes_no_calibration_claim(
     monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
     module = Simulation(world=world_config)
     try:
-        module.compile()
+        module.build()
         path = Path(module.describe()["run_record"])
         assert path.parent == tmp_path / "sim2"
         assert module.describe_run()["resolved_world"]["calibration_evidence"] == {}

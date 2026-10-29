@@ -43,7 +43,7 @@ their owner; cross-sensor acquisition tests stay in `sensors/test_sensors.py`.
 | `SimRobotClient` | One robot's internal command/observation channel; not a Module |
 | `CameraDevice`, `LidarDevice`, `ImuDevice` | Measurement acquisition, simulation-time scheduling, delayed delivery |
 | Sensor modules | Worker lifecycle, a local `WorldReader`, publication of device measurements |
-| Simulated robot module (`Go2Sim`) | Robot registration, controller, the real connection's streams and RPCs |
+| Simulated robot module (`Go2Sim`) | `describe_simulated`, controller, the real connection's streams and RPCs |
 
 `simulation(world=WorldConfig(...))` returns a normal `Blueprint` containing one
 world and the declared sensors. It does not return `HardwareComponent` entries,
@@ -59,21 +59,21 @@ one or the other:
 ```python skip
 go2 = autoconnect(GO2Connection.blueprint())
 
-go2_sim = autoconnect(
-    Simulation.blueprint(scene="logistics.xml"),
+go2_sim = Simulation.autoconnect(
     Go2Sim.blueprint(),
     SimRGBDCameraModule.blueprint(robot_id="go2", sensor=go2_camera()),
     LidarModule.blueprint(robot_id="go2", sensor=go2_lidar(), root_body="base"),
+    scene="logistics.xml",
 ).remappings([(LidarModule, "pointcloud", "lidar")])
 ```
 
-MuJoCo compiles every robot together, so robots and sensors register before
-the world starts: in `build()`, `Go2Sim` calls `Simulation.add_robot(robot_id,
-RobotInstance, spawn=...)` and each sensor module calls `add_sensor`. Every
-module's `build()` finishes before any `start()`, so `Simulation.start()`
-compiles the complete world, and `describe()` blocks until it has. Nothing is
-collected by the coordinator. A robot added to a running blueprint is rejected;
-rebuild the complete blueprint instead.
+MuJoCo compiles every robot together. A simulated module therefore has a static
+`describe_simulated(config)` returning a `SimulatedRobot` or `SimulatedSensor`.
+`Simulation.autoconnect` reads these from the blueprint's atoms before anything
+is deployed and passes them to `Simulation` as its `simulated` config, so the
+world compiles in `build()`. Descriptions come from the blueprint's own kwargs:
+set spawn and sensor mounts there, not as CLI overrides. Add robots by
+rebuilding the complete blueprint.
 
 `Simulation`'s scene defaults to `--scene-package`, then `logistics.xml`. An
 explicit `world=WorldConfig(...)` can also preset robots, timestep and

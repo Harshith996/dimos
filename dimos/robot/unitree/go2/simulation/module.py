@@ -36,7 +36,7 @@ from dimos.robot.unitree.go2.simulation.model import CONTROL_IMU, go2_definition
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.pacing import wait_until
-from dimos.sim2.spec import RobotInstance
+from dimos.sim2.spec import RobotInstance, SimulatedRobot
 from dimos.simulation.go2_legged.policy import Go2Policy, Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity
 from dimos.utils.data import LfsPath
@@ -73,10 +73,9 @@ class Go2Sim(Module):
         self._thread: Thread | None = None
         self._error: str | None = None
 
-    @rpc
-    def build(self) -> None:
-        super().build()
-        policy = self._policy
+    @staticmethod
+    def describe_simulated(config: Go2SimConfig) -> SimulatedRobot:
+        policy = load_policy(config.policy)
         robot = RobotInstance(
             go2_definition(),
             initial_positions=dict(
@@ -90,10 +89,10 @@ class Go2Sim(Module):
             wait_for_first_command=True,
             controller={
                 "implementation": type(policy).__name__,
-                "weights": str(self.config.policy or LfsPath("go2_sim/go2_policy/policy.onnx")),
+                "weights": str(config.policy or LfsPath("go2_sim/go2_policy/policy.onnx")),
             },
         )
-        self._simulation.add_robot(self.config.robot_id, robot, spawn=self.config.spawn)
+        return SimulatedRobot(config.robot_id, robot, spawn=config.spawn)
 
     @rpc
     def start(self) -> None:
@@ -162,6 +161,11 @@ class Go2Sim(Module):
                         ),
                         observed=frame,
                     )
+                except TimeoutError:
+                    # Physics stalled past the feedback timeout; act again on the next sample.
+                    logger.warning("Go2 sim skipped a stale policy step")
+                    wait_until(self._stop_event, time.monotonic() + CONTROL_DT)
+                    continue
                 except RuntimeError:
                     # A reset during inference invalidates this result, not the policy loop.
                     if client.read().metadata.episode_id != episode:

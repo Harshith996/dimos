@@ -30,6 +30,7 @@ from dimos.sim2.pacing import wait_until
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.reader import WorldReader
+from dimos.sim2.spec import SimulatedSensor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -65,10 +66,9 @@ class SensorModule(Module):
         self.reader: WorldReader
         self.device: SensorDevice[Any]
 
-    @rpc
-    def build(self) -> None:
-        super().build()
-        self._simulation.add_sensor(self.config.robot_id, self.config.sensor)
+    @staticmethod
+    def describe_simulated(config: SensorModuleConfig) -> SimulatedSensor:
+        return SimulatedSensor(config.robot_id, config.sensor)
 
     @rpc
     def start(self) -> None:

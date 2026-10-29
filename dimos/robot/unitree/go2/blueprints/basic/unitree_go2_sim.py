@@ -25,7 +25,6 @@ from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
 from dimos.sim2.sensors.lidar.module import LidarModule
 
 _go2_sim = autoconnect(
-    Simulation.blueprint(),
     Go2Sim.blueprint(),
     SimRGBDCameraModule.blueprint(robot_id="go2", sensor=go2_camera()),
     LidarModule.blueprint(robot_id="go2", sensor=go2_lidar(), root_body="base"),
@@ -36,6 +35,8 @@ _go2_sim = autoconnect(
     ]
 )
 
-unitree_go2_basic_sim = autoconnect(unitree_go2_basic.disabled_modules(GO2Connection), _go2_sim)
+unitree_go2_basic_sim = Simulation.autoconnect(
+    unitree_go2_basic.disabled_modules(GO2Connection), _go2_sim
+)
 
-unitree_go2_sim = autoconnect(unitree_go2.disabled_modules(GO2Connection), _go2_sim)
+unitree_go2_sim = Simulation.autoconnect(unitree_go2.disabled_modules(GO2Connection), _go2_sim)

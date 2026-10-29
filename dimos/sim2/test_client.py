@@ -26,7 +26,6 @@ from unittest.mock import Mock
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -36,11 +35,12 @@ from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.spec import RobotConfig, RobotInstance
+from dimos.sim2.spec import RobotConfig, RobotInstance, SimulatedRobot, SimulatedSensor
 
 
 class _RobotConfig(ModuleConfig):
     robot: RobotConfig
+    robot_id: str
     x: float = 0.0
 
 
@@ -48,17 +48,14 @@ class _SimRobot(Module):
     config: _RobotConfig
     _simulation: SimulationSpec
 
-    @rpc
-    def build(self):
-        super().build()
-        self._simulation.add_robot(
-            self.config.instance_name, RobotInstance(self.config.robot, xyz=(self.config.x, 0, 0.3))
-        )
+    @staticmethod
+    def describe_simulated(config):
+        return SimulatedRobot(config.robot_id, RobotInstance(config.robot, xyz=(config.x, 0, 0.3)))
 
     @rpc
     def start(self):
         super().start()
-        self._client = SimRobotClient(world=self._simulation, robot_id=self.config.instance_name)
+        self._client = SimRobotClient(world=self._simulation, robot_id=self.config.robot_id)
         self._client.connect()
 
     @rpc
@@ -73,49 +70,59 @@ class _SimRobot(Module):
         super().stop()
 
 
-def test_added_robots_and_sensors_compile_into_one_world(world_config):
+def test_described_robots_and_sensors_compile_into_one_world(world_config):
     robot = world_config.robots["left"]
     imu = Imu("extra_imu", Mount(robot.config.root_body))
-    module = Simulation(world=replace(world_config, robots={}, timestep=0.01))
+    module = Simulation(
+        world=replace(world_config, robots={}, timestep=0.01),
+        simulated={
+            "left": SimulatedRobot("left", robot),
+            "extra": SimulatedSensor("left", imu),
+            "same": SimulatedSensor("left", robot.config.sensors[0]),
+        },
+    )
     try:
-        module.add_robot("left", robot)
-        module.add_sensor("left", imu)
-        module.add_sensor("left", robot.config.sensors[0])
-        with pytest.raises(ValueError, match="duplicate simulated robot"):
-            module.add_robot("left", robot)
-        module.compile()
+        module.build()
         assert set(module.describe()["robots"]) == {"left"}
         world = module.describe_run()["resolved_world"]
         assert world["timestep"] == robot.config.max_timestep
         assert "extra_imu" in json.dumps(world["robots"]["left"])
-        with pytest.raises(RuntimeError, match="before the world starts"):
-            module.add_robot("late", robot)
     finally:
         module.stop()
 
 
 def test_sensor_on_unknown_robot_is_rejected(world_config):
-    module = Simulation(world=replace(world_config, robots={}))
+    module = Simulation(
+        world=replace(world_config, robots={}),
+        simulated={"imu": SimulatedSensor("missing", Imu("imu", Mount("base")))},
+    )
     try:
-        module.add_sensor("missing", Imu("imu", Mount("base")))
         with pytest.raises(ValueError, match="unknown robot"):
-            module.compile()
+            module.build()
     finally:
         module.stop()
+
+
+def test_autoconnect_reads_descriptions_from_atoms(world_config):
+    blueprint = Simulation.autoconnect(
+        _SimRobot.blueprint(robot=world_config.robots["left"].config, robot_id="a", x=2.5),
+        scene=world_config.scene,
+    )
+    world = next(a for a in blueprint.active_blueprints if a.module is Simulation)
+    assert world.kwargs["simulated"]["_simrobot"].robot.xyz == (2.5, 0, 0.3)
 
 
 @pytest.mark.native_e2e
 def test_two_namespaced_robots_deploy_into_one_world(world_config):
     robot = world_config.robots["left"].config
     robot = replace(robot, sensors=robot.sensors[:1])
-    sim_robot = _SimRobot.blueprint(robot=robot, instance_name="robot")
-    blueprint = autoconnect(
-        Simulation.blueprint(scene=world_config.scene),
-        sim_robot.namespace("left"),
-        sim_robot.namespace("right"),
+    blueprint = Simulation.autoconnect(
+        _SimRobot.blueprint(robot=robot, robot_id="left", x=-1.0).namespace("left"),
+        _SimRobot.blueprint(robot=robot, robot_id="right", x=1.0).namespace("right"),
+        scene=world_config.scene,
     )
     parsed = BlueprintConfigParser(blueprint).parse(
-        ["--left/robot.x=-1.0", "--right/robot.x=1.0"],
+        [],
         environ={},
         global_overrides={"n_workers": 1, "transport": "zenoh", "viewer": "none"},
     )
@@ -123,9 +130,11 @@ def test_two_namespaced_robots_deploy_into_one_world(world_config):
         coordinator = ModuleCoordinator.build(blueprint, parsed)
         stack.callback(coordinator.stop)
         world = coordinator.get_instance(Simulation)
-        assert set(world.describe()["robots"]) == {"left/robot", "right/robot"}
-        assert coordinator.get_instance("left/robot").read_position() == pytest.approx([-1, 0, 0.3])
-        assert coordinator.get_instance("right/robot").read_position() == pytest.approx([1, 0, 0.3])
+        assert set(world.describe()["robots"]) == {"left", "right"}
+        left = coordinator.get_instance("left/_simrobot")
+        right = coordinator.get_instance("right/_simrobot")
+        assert left.read_position() == pytest.approx([-1, 0, 0.3])
+        assert right.read_position() == pytest.approx([1, 0, 0.3])
 
 
 def command():

@@ -25,18 +25,19 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import mujoco
 from pydantic import Field
 
+from dimos.core.coordination.blueprint_config.fields import module_config_cls
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.sim2.messages import StreamDescriptor
 from dimos.sim2.pacing import wait_until
-from dimos.sim2.sensors.composition import Sensor
-from dimos.sim2.spec import RobotInstance, WorldConfig
+from dimos.sim2.spec import SimulatedRobot, SimulatedSensor, WorldConfig
 from dimos.sim2.world.evidence import run_record, write_record
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene import scene_path, scene_robot
@@ -52,10 +53,6 @@ class SimulationSpec(Spec, Protocol):
 
     def describe_robot(self, robot_id: str) -> StreamDescriptor: ...
 
-    def add_robot(self, robot_id: str, robot: RobotInstance, spawn: str | None = None) -> None: ...
-
-    def add_sensor(self, robot_id: str | None, sensor: Sensor) -> None: ...
-
 
 class SimulationConfig(ModuleConfig):
     # An explicit world takes precedence over the scene name/path.
@@ -65,13 +62,32 @@ class SimulationConfig(ModuleConfig):
     sim_id: str = "sim"
     viewer: bool = False
     evidence_dir: Path | None = None
-    describe_timeout: float = 120.0
+    # describe_simulated() results, filled in by Simulation.autoconnect(); keyed by instance name.
+    simulated: dict[str, SimulatedRobot | SimulatedSensor] = Field(default_factory=dict)
 
 
 class Simulation(Module):
     config: SimulationConfig
     dedicated_worker = True
     sim_truth: Out[SceneState]
+
+    @classmethod
+    def autoconnect(cls, *blueprints: Blueprint, **config: Any) -> Blueprint:
+        """autoconnect(*blueprints) plus one Simulation holding every module's describe_simulated().
+
+        MuJoCo compiles all robots and sensors at once, so they are read from the blueprint's
+        atoms before anything is deployed. Descriptions use the blueprint's own kwargs, so set
+        simulation-relevant options (spawn, sensor mounts) there, not as CLI overrides.
+        """
+        composed = autoconnect(*blueprints)
+        described = {
+            atom.name: cast("Any", atom.module).describe_simulated(
+                module_config_cls(atom)(**atom.kwargs)
+            )
+            for atom in composed.active_blueprints
+            if callable(getattr(atom.module, "describe_simulated", None))
+        }
+        return autoconnect(composed, cls.blueprint(simulated=described, **config))
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -93,41 +109,26 @@ class Simulation(Module):
             ),
             {},
         )
-        self._added_robots: dict[str, tuple[RobotInstance, str | None]] = {}
-        self._added_sensors: list[tuple[str | None, Sensor]] = []
-        self._compiled = threading.Event()
-
-    @rpc
-    def add_robot(self, robot_id: str, robot: RobotInstance, spawn: str | None = None) -> None:
-        """Called from a simulated robot's build(); MuJoCo compiles every robot on start().
-
-        A spawn name places the robot on that scene support instead of robot.xyz/rpy.
-        """
-        with self._lifecycle_lock:
-            if self._runtime is not None:
-                raise RuntimeError("robots must be added before the world starts")
-            if robot_id in self._world.robots or robot_id in self._added_robots:
-                raise ValueError(f"duplicate simulated robot {robot_id!r}")
-            self._added_robots[robot_id] = (robot, spawn)
-
-    @rpc
-    def add_sensor(self, robot_id: str | None, sensor: Sensor) -> None:
-        """Called from a sensor module's build(); robot_id None mounts it in the scene."""
-        with self._lifecycle_lock:
-            if self._runtime is not None:
-                raise RuntimeError("sensors must be added before the world starts")
-            self._added_sensors.append((robot_id, sensor))
 
     def _resolved_world(self) -> WorldConfig:
         world = self._world
         robots = dict(world.robots)
-        for robot_id, (robot, spawn) in self._added_robots.items():
-            if spawn is not None:
-                placed = scene_robot(world.scene, robot.config, spawn, default=robot.xyz)
+        sensors: list[SimulatedSensor] = []
+        for description in self.config.simulated.values():
+            if isinstance(description, SimulatedSensor):
+                sensors.append(description)
+                continue
+            robot = description.robot
+            if description.robot_id in robots:
+                raise ValueError(f"duplicate simulated robot {description.robot_id!r}")
+            if description.spawn is not None:
+                placed = scene_robot(
+                    world.scene, robot.config, description.spawn, default=robot.xyz
+                )
                 robot = replace(robot, xyz=placed.xyz, rpy=placed.rpy)
-            robots[robot_id] = robot
+            robots[description.robot_id] = robot
         scene_sensors = {sensor.name: sensor for sensor in world.sensors}
-        for owner, sensor in self._added_sensors:
+        for owner, sensor in ((d.robot_id, d.sensor) for d in sensors):
             if owner is not None and owner not in robots:
                 raise ValueError(f"sensor {sensor.name!r} is mounted on unknown robot {owner!r}")
             mounted = (
@@ -151,7 +152,7 @@ class Simulation(Module):
         )
 
     @rpc
-    def compile(self) -> None:
+    def build(self) -> None:
         with self._lifecycle_lock:
             if self._runtime is not None:
                 return
@@ -173,20 +174,14 @@ class Simulation(Module):
                 directory.cleanup()
                 raise
             self._runtime, self._directory = runtime, directory
-            self._compiled.set()
             (Path(directory.name) / "world.json").write_text(json.dumps(self.describe()))
             logger.info("sim2 world prepared", robots=list(world.robots), nq=runtime.model.nq)
 
-    def _wait_compiled(self) -> None:
-        if not self._compiled.wait(self.config.describe_timeout):
-            raise RuntimeError("the sim2 world did not start; is Simulation running?")
-
     @rpc
     def describe(self) -> dict[str, Any]:
-        self._wait_compiled()
         with self._lifecycle_lock:
             if self._runtime is None or self._directory is None:
-                raise RuntimeError("the sim2 world has stopped")
+                raise RuntimeError("Simulation.build() has not completed")
             return {
                 "model": str(Path(self._directory.name) / "world.mjb"),
                 "snapshot": self._runtime.snapshot_descriptor.to_dict(),
@@ -200,7 +195,6 @@ class Simulation(Module):
     @rpc
     def describe_robot(self, robot_id: str) -> StreamDescriptor:
         """Internal client discovery for a robot in this running world."""
-        self._wait_compiled()
         with self._lifecycle_lock:
             return self._require_runtime().robots[robot_id].channel.descriptor
 
@@ -209,13 +203,13 @@ class Simulation(Module):
         """Resolved parameters/provenance and initial state, not agent-visible observations."""
         with self._lifecycle_lock:
             if self._run_record is None:
-                raise RuntimeError("Simulation.compile() has not completed")
+                raise RuntimeError("Simulation.build() has not completed")
             return self._run_record
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.compile()
+        self.build()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
         self._thread.start()
