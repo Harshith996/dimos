@@ -1,4 +1,0 @@
-[env]
-# The Jetson Orin's driver can hang in a fence wait when parallel tests drive
-# the GPU at once, so tests take turns.
-RUST_TEST_THREADS = "1"

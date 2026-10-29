@@ -35,8 +35,15 @@ pub struct Gpu {
 impl Gpu {
     /// The high-performance adapter with its full limits, headless.
     pub fn new() -> Result<Arc<Self>, String> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        // No GL backend: on Jetson, dropping its EGL context while another
+        // thread drives Vulkan deadlocks inside the shared NVIDIA driver.
+        let instance = wgpu::Instance::new(
+            wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            }
+            .with_env(),
+        );
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
