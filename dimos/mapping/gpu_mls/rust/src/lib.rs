@@ -14,6 +14,21 @@
 
 //! GPU-resident voxel mapping and MLS surface extraction on wgpu compute: a
 //! port of the ray tracer's update_map and the MLS planner's surface stages.
+//!
+//! # Jetson (Vulkan)
+//!
+//! Build and run with the host toolchain, not `nix develop`. The nix shell's
+//! glibc (2.39) cannot load the Tegra Vulkan driver, so wgpu silently falls
+//! back to llvmpipe on the CPU:
+//!
+//! ```text
+//! export PATH=$HOME/.cargo/bin:$PATH
+//! cargo test --release && cargo run --release --example bench
+//! ```
+//!
+//! Check the `adapter:` line the tests print: it must name the Orin, not
+//! llvmpipe. Brick pools are bounded by the adapter's storage binding limit
+//! (about 2 GB on Orin); see `BrickMap::max_brick_capacity`.
 
 pub mod brick_map;
 pub mod gpu;

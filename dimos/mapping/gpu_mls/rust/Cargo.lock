@@ -648,6 +648,7 @@ name = "dimos-gpu-mls"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "ash",
  "bytemuck",
  "dimos-mls-planner",
  "dimos-voxel-ray-tracing",

@@ -14,6 +14,10 @@ wgpu = "30"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 
+# Raw Vulkan for the host-read barrier wgpu leaves out; see Gpu::host_read_barrier.
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = "0.38"
+
 [dev-dependencies]
 dimos-voxel-ray-tracing = { path = "../../ray_tracing/rust" }
 dimos-mls-planner = { path = "../../../navigation/global_planner/mls_planner/rust" }

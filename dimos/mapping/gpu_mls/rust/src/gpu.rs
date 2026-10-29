@@ -43,6 +43,7 @@ impl Gpu {
         }))
         .map_err(|e| format!("no GPU adapter: {e}"))?;
         let timestamps = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let info = adapter.get_info();
         let required_features = if timestamps {
             wgpu::Features::TIMESTAMP_QUERY
         } else {
@@ -59,7 +60,7 @@ impl Gpu {
         Ok(Arc::new(Self {
             device,
             queue,
-            adapter_info: adapter.get_info(),
+            adapter_info: info,
             timestamp_period,
         }))
     }
@@ -190,6 +191,7 @@ impl Gpu {
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, bytes.next_multiple_of(4));
         self.queue.submit([encoder.finish()]);
+        self.host_read_barrier();
         let slice = staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |r| r.expect("readback map failed"));
         self.wait();
@@ -199,6 +201,48 @@ impl Gpu {
         staging.unmap();
         out
     }
+}
+
+impl Gpu {
+    /// Make every earlier device write visible to host reads. wgpu records no
+    /// host-read barrier before a mapped read, which Vulkan requires; desktop
+    /// drivers forgive it, but on Tegra the read returns stale bytes, often a
+    /// previous readback's.
+    #[cfg(target_os = "linux")]
+    fn host_read_barrier(&self) {
+        use ash::vk;
+        use wgpu::hal::api::Vulkan;
+        if self.adapter_info.backend != wgpu::Backend::Vulkan {
+            return;
+        }
+        let Some(raw_device) =
+            (unsafe { self.device.as_hal::<Vulkan>() }).map(|d| d.raw_device().clone())
+        else {
+            return;
+        };
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        unsafe {
+            encoder.as_hal_mut::<Vulkan, _, _>(|hal_encoder| {
+                let hal_encoder = hal_encoder.expect("an open Vulkan command encoder");
+                let barrier = vk::MemoryBarrier::default()
+                    .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
+                    .dst_access_mask(vk::AccessFlags::HOST_READ);
+                raw_device.cmd_pipeline_barrier(
+                    hal_encoder.raw_handle(),
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::HOST,
+                    vk::DependencyFlags::empty(),
+                    &[barrier],
+                    &[],
+                    &[],
+                );
+            });
+        }
+        self.queue.submit([encoder.finish()]);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn host_read_barrier(&self) {}
 }
 
 /// Workgroup counts covering `threads` 1D threads, folded into y past the

@@ -24,6 +24,8 @@ use dimos_voxel_ray_tracing::voxel_ray_tracer::{seed_points, update_map, Config,
 const FRAMES: usize = 8;
 const POINTS_PER_FRAME: usize = 20_000;
 const MOMENT_TOLERANCE: f64 = 1e-4;
+const LONG_RUN_ROOM_M: f32 = 30.0;
+const LONG_RUN_FRAMES: usize = 30;
 /// Metal fuses `p - k * v` into one fma, so a point on a fine-cell boundary
 /// can land in the neighboring fine cell. Allowed per voxel, as a fraction.
 const FINE_TOLERANCE: f64 = 1e-4;
@@ -105,6 +107,48 @@ fn ray_traced_clearing_matches_cpu() {
             summary(&d)
         );
         assert!(d.moment_rel_err < MOMENT_TOLERANCE, "{}", summary(&d));
+    }
+}
+
+/// Every voxel a long run creates lies in the scene. On the Jetson a bad
+/// voxel index once wrote fine-cell bits into brick coordinates, which
+/// surfaced as keys millions of cells away and a garbage surface window.
+#[test]
+fn long_run_keys_stay_in_the_scene() {
+    let cfg = cpu_config(0.05);
+    let scene = Scene::room(LONG_RUN_ROOM_M, 3.0);
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 15, POINTS_PER_FRAME as u32))
+        .expect("brick map fits the device");
+    let mut rng = Lcg(3);
+    let margin = 1.0;
+    let lo = (-margin / cfg.voxel_size) as i32;
+    let hi = ((LONG_RUN_ROOM_M + margin) / cfg.voxel_size) as i32;
+    for (frame, origin) in scene
+        .trajectory(LONG_RUN_FRAMES, 0.4)
+        .into_iter()
+        .enumerate()
+    {
+        let pts = scene.scan(
+            origin,
+            POINTS_PER_FRAME,
+            &mut rng,
+            0.01,
+            cfg.max_range + 5.0,
+        );
+        map.integrate(origin, &pts);
+        map.finish();
+        let stray: Vec<_> = map
+            .snapshot()
+            .into_iter()
+            .map(|v| v.key)
+            .filter(|k| k.0 < lo || k.0 > hi || k.1 < lo || k.1 > hi || k.2 < lo || k.2 > hi)
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "frame {frame}: {} voxels outside the scene, e.g. {:?}",
+            stray.len(),
+            &stray[..stray.len().min(4)]
+        );
     }
 }
 
