@@ -77,7 +77,10 @@ class HardwareEnvironment(LiveEnvironment):
         try:
             if self.config.stop_tool is not None and self._mcp_url is not None:
                 try:
-                    McpAdapter(self._mcp_url).call_tool(self.config.stop_tool)
+                    result = McpAdapter(self._mcp_url).call_tool(self.config.stop_tool)
+                    # A tool that raises comes back as an error result, not an exception.
+                    if result.get("isError"):
+                        raise RuntimeError(f"{self.config.stop_tool}: {result.get('content')}")
                 except Exception as e:
                     logger.error(
                         "HALT FAILED: the robot may still be moving, use the e-stop",

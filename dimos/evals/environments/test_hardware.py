@@ -45,7 +45,7 @@ def test_robot_does_not_start_until_the_operator_confirms(mocker):
 def test_stop_halts_the_robot_before_releasing_it(mocker):
     calls = []
     adapter = MagicMock()
-    adapter.call_tool.side_effect = lambda name: calls.append(("halt", name))
+    adapter.call_tool.side_effect = lambda name: calls.append(("halt", name)) or {"content": []}
     mocker.patch("dimos.evals.environments.hardware.McpAdapter", return_value=adapter)
     mocker.patch.object(LiveEnvironment, "stop", side_effect=lambda: calls.append(("release",)))
     env = environment(stop_tool="cancel")
@@ -54,6 +54,21 @@ def test_stop_halts_the_robot_before_releasing_it(mocker):
     env.stop()
 
     assert calls == [("halt", "cancel"), ("release",)]
+
+
+def test_a_failed_halt_warns_the_operator_and_still_stops_dimos(mocker):
+    adapter = MagicMock()
+    adapter.call_tool.return_value = {"isError": True, "content": [{"text": "not confirmed"}]}
+    mocker.patch("dimos.evals.environments.hardware.McpAdapter", return_value=adapter)
+    release = mocker.patch.object(LiveEnvironment, "stop")
+    error = mocker.patch("dimos.evals.environments.hardware.logger.error")
+    env = environment(stop_tool="cancel")
+    env._mcp_url = "http://localhost:9990/mcp"
+
+    env.stop()
+
+    assert "HALT FAILED" in error.call_args.args[0]
+    release.assert_called_once()
 
 
 def test_the_real_robot_is_launched_without_simulation():
