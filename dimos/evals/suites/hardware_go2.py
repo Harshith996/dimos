@@ -14,7 +14,7 @@
 
 """A real Go2: one short move, graded by the operator who watched it.
 
-There is no stop tool: the case ends by stopping dimos, which sits the robot down.
+There is no stop tool: stopping dimos lays the Go2 down.
 
     ROBOT_IP=192.168.123.161 dimos evals run dimos.evals.suites.hardware_go2 \
         --agent dimos.evals.agents.pi

@@ -18,13 +18,15 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Sequence
+import contextlib
 import math
+import os
 from pathlib import Path
 import signal
 import socket
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
@@ -61,7 +63,10 @@ class LiveEnvironmentConfig(EnvironmentConfig):
     at_rest_m: float = 0.05
     at_rest_s: float = 2.0
     settle_poll_s: float = 0.5
-    # Stop the owned dimos like `dimos stop`, so every module's stop() runs (a robot sits,
+    # An arm settles on joint velocity (coordinator_joint_state); otherwise settling uses odom.
+    settle_on_joints: bool = False
+    at_rest_rad_s: float = 0.02
+    # Stop the owned dimos like `dimos stop`, so every module's stop() runs (a Go2 lies down,
     # drivers disconnect); the process group is killed only after graceful_stop_s.
     graceful_stop: bool = False
     graceful_stop_s: float = 30.0
@@ -91,6 +96,7 @@ class LiveEnvironment(Environment):
         super().__init__(**kwargs)
         self._recording: Store | None = None
         self._raw_endpoint = RAW_ENDPOINT  # an attached dimos runs its bridge on the default
+        self._mcp_url: str | None = None
 
     @abstractmethod
     def configure_launch(self, proc: DimosCliCall) -> None:
@@ -103,9 +109,11 @@ class LiveEnvironment(Environment):
         """Wait for first observations and return extra artifacts, if needed."""
         return {}
 
-    @abstractmethod
     def latest_pose(self, recording: Store) -> PoseStamped:
         """Return achieved pose for settling; raise LookupError before the first sample."""
+        if "odom" not in recording.streams:
+            raise LookupError("No odometry recorded")
+        return cast("PoseStamped", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
         if self.config.attach:
@@ -160,6 +168,7 @@ class LiveEnvironment(Environment):
                     raise TimeoutError(f"MCP at {mcp_url} not ready before the launch deadline")
         elif not adapter.wait_for_ready(timeout=self.config.launch_timeout_s, interval=2.0):
             raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
+        self._mcp_url = mcp_url
         self.setup_scene()
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
@@ -194,6 +203,9 @@ class LiveEnvironment(Environment):
         """Wait until the robot is at rest after skills that start asynchronous motion."""
         if self._recording is None:
             return
+        if self.config.settle_on_joints and "coordinator_joint_state" in self._recording.streams:
+            self._settle_joints(self._recording, budget_s)
+            return
         anchor = None
         anchor_t = 0.0
         deadline = time.monotonic() + budget_s
@@ -212,6 +224,24 @@ class LiveEnvironment(Environment):
                 return
             time.sleep(self.config.settle_poll_s)
 
+    def _settle_joints(self, recording: Store, budget_s: float) -> None:
+        """At rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``."""
+        rest_since: float | None = None
+        deadline = time.monotonic() + budget_s
+        while time.monotonic() < deadline:
+            try:
+                state = recording.streams.coordinator_joint_state.last().data
+            except LookupError:
+                return
+            now = time.monotonic()
+            if any(abs(v) > self.config.at_rest_rad_s for v in state.velocity):
+                rest_since = None
+            elif rest_since is None:
+                rest_since = now
+            elif now - rest_since >= self.config.at_rest_s:
+                return
+            time.sleep(self.config.settle_poll_s)
+
     def _stop_process(self, proc: DimosCliCall) -> None:
         process = proc.process
         if self.config.graceful_stop and process is not None and process.poll() is None:
@@ -221,6 +251,11 @@ class LiveEnvironment(Environment):
                 process.wait(timeout=self.config.graceful_stop_s)
             except subprocess.TimeoutExpired:
                 logger.warning("dimos did not stop in time; killing it", pid=process.pid)
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            # Stopped and reaped; DimosCliCall.stop would signal a group that may be reused.
+            proc.process = None
         proc.stop()
 
     def stop(self) -> None:
@@ -228,6 +263,7 @@ class LiveEnvironment(Environment):
             super().stop()
         finally:
             self._recording = None
+            self._mcp_url = None
 
 
 def _free_port() -> int:

@@ -16,13 +16,13 @@
 
 The operator readies the scene before each case and confirms it; the code never
 moves the robot to reset it. When a case ends the robot is halted in place, then
-dimos stops the way ``dimos stop`` does, so each module's stop() runs (a Go2 sits).
+dimos stops the way ``dimos stop`` does, so each module's stop() runs (a Go2 lies down).
 """
 
 from __future__ import annotations
 
-import time
-from typing import TYPE_CHECKING, Any, cast
+import sys
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
@@ -34,9 +34,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+    from dimos.evals.agents.base import EvalSubject
     from dimos.evals.types import RunningEnvironment
-    from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -47,7 +46,6 @@ class HardwareEnvironmentConfig(LiveEnvironmentConfig):
     stop_tool: str | None = None
     """MCP tool that halts motion before the robot disconnects, e.g. ``cancel``."""
     module_env: dict[str, str] = Field(default_factory=dict)
-    at_rest_rad_s: float = 0.02
     launch_timeout_s: float = 300.0
     graceful_stop: bool = True
 
@@ -57,9 +55,10 @@ class HardwareEnvironment(LiveEnvironment):
 
     config: HardwareEnvironmentConfig
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._mcp_url: str | None = None
+    def preflight(self, agent: EvalSubject) -> None:
+        if not sys.stdin.isatty():
+            raise RuntimeError("hardware evals need an operator at an interactive terminal")
+        super().preflight(agent)
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         answer = input(
@@ -68,39 +67,11 @@ class HardwareEnvironment(LiveEnvironment):
         )
         if not answer.strip().lower().startswith("y"):
             raise RuntimeError("operator did not confirm the robot is ready")
-        running = super().start(modules)
-        self._mcp_url = running.mcp_url
-        return running
+        return super().start(modules)
 
     def configure_launch(self, proc: DimosCliCall) -> None:
+        proc.simulator = None  # the real robot: no --simulation
         proc.extra_env.update(self.config.module_env)
-
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        if "odom" not in recording.streams:
-            raise LookupError("No odometry recorded")
-        return cast("PoseStamped", recording.streams.odom.last().data)
-
-    def settle(self, budget_s: float) -> None:
-        """An arm is at rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``."""
-        recording = self._recording
-        if recording is None or "coordinator_joint_state" not in recording.streams:
-            super().settle(budget_s)
-            return
-        rest_since: float | None = None
-        deadline = time.monotonic() + budget_s
-        while time.monotonic() < deadline:
-            try:
-                state = recording.streams.coordinator_joint_state.last().data
-            except LookupError:
-                return
-            now = time.monotonic()
-            if any(abs(v) > self.config.at_rest_rad_s for v in state.velocity):
-                rest_since = None
-            elif rest_since is None:
-                rest_since = now
-            elif now - rest_since >= self.config.at_rest_s:
-                return
-            time.sleep(self.config.settle_poll_s)
 
     def stop(self) -> None:
         try:
@@ -108,7 +79,10 @@ class HardwareEnvironment(LiveEnvironment):
                 try:
                     McpAdapter(self._mcp_url).call_tool(self.config.stop_tool)
                 except Exception as e:
-                    logger.warning("could not halt the robot", tool=self.config.stop_tool, error=e)
+                    logger.error(
+                        "HALT FAILED: the robot may still be moving, use the e-stop",
+                        tool=self.config.stop_tool,
+                        error=e,
+                    )
         finally:
-            self._mcp_url = None
             super().stop()

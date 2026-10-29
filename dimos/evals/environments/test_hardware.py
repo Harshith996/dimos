@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import signal
+import subprocess
 from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.hardware import HardwareEnvironment
 from dimos.evals.environments.live import LiveEnvironment
 from dimos.evals.scorers import human
@@ -54,18 +56,38 @@ def test_stop_halts_the_robot_before_releasing_it(mocker):
     assert calls == [("halt", "cancel"), ("release",)]
 
 
-@pytest.mark.parametrize("graceful", [True, False])
-def test_dimos_is_stopped_like_dimos_stop_so_modules_stop(graceful):
+def test_the_real_robot_is_launched_without_simulation():
+    proc = DimosCliCall()
+
+    environment(module_env={"A__B": "1"}).configure_launch(proc)
+
+    assert proc.simulator is None
+    assert proc.extra_env["A__B"] == "1"
+
+
+def test_hardware_needs_an_operator_terminal(mocker):
+    mocker.patch("sys.stdin.isatty", return_value=False)
+    with pytest.raises(RuntimeError, match="interactive terminal"):
+        environment().preflight(MagicMock())
+
+
+@pytest.mark.parametrize("stops_in_time", [True, False])
+def test_dimos_is_stopped_like_dimos_stop_then_killed_if_it_hangs(mocker, stops_in_time):
+    killpg = mocker.patch("dimos.evals.environments.live.os.killpg")
     proc = MagicMock()
-    proc.process.poll.return_value = None
+    process = proc.process
+    process.poll.return_value = None
+    if not stops_in_time:
+        process.wait.side_effect = [subprocess.TimeoutExpired("dimos", 30.0), 0]
 
-    environment(graceful_stop=graceful)._stop_process(proc)
+    environment()._stop_process(proc)
 
-    if graceful:
-        proc.process.send_signal.assert_called_once_with(signal.SIGTERM)
-        proc.process.wait.assert_called_once()
+    process.send_signal.assert_called_once_with(signal.SIGTERM)
+    if stops_in_time:
+        killpg.assert_not_called()
     else:
-        proc.process.send_signal.assert_not_called()
+        killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+    assert proc.process is None  # reaped; DimosCliCall.stop has no group left to signal
     proc.stop.assert_called_once()
 
 

@@ -36,6 +36,7 @@ SUITE: Suite = [
             blueprint=["xarm-grasp", "mcp-server", "observe-skill"],
             task=TASK,
             stop_tool="cancel",
+            settle_on_joints=True,
             module_env={"MANIPULATIONMODULE__DEFAULT_SPEED_SCALE": "0.3"},
         ),
         grade=human(TASK),

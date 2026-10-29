@@ -261,7 +261,7 @@ def human(task: str) -> Callable[[Outcome], float]:
     def grade(outcome: Outcome) -> float:
         answer = input(
             f"\nTask: {task}\nAgent's final answer: {outcome.trajectory.final_answer!r}\n"
-            "Did the robot succeed? [y/N] "
+            "Did the robot succeed by the end of the agent's run? [y/N] "
         )
         return 1.0 if answer.strip().lower().startswith("y") else 0.0
 
