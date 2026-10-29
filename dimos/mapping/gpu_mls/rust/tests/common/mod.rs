@@ -16,7 +16,6 @@
 
 #![allow(dead_code)]
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use ahash::AHashMap;
@@ -143,9 +142,7 @@ pub fn diff_maps(cpu: &VoxelMap, gpu: &[VoxelSnapshot], voxel_size: f32) -> MapD
 
 /// A real map cloud from the repo's LFS data, None when it is not pulled.
 pub fn lfs_cloud(name: &str) -> Option<Vec<(f32, f32, f32)>> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../data")
-        .join(name);
+    let path = dimos_gpu_mls::data_dir().join(name);
     let bytes = std::fs::read(&path).ok()?;
     Some(decode_pointcloud2_xyz(&bytes))
 }

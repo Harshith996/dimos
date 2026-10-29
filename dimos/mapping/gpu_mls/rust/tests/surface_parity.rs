@@ -360,7 +360,10 @@ fn synthetic_room_surfaces_match_cpu() {
 #[test]
 fn real_map_surfaces_match_cpu() {
     let Some(cloud) = lfs_cloud(REAL_MAP) else {
-        eprintln!("skipping: data/{REAL_MAP} is not pulled");
+        eprintln!(
+            "skipping: {} is missing; set DIMOS_DATA_DIR",
+            dimos_gpu_mls::data_dir().join(REAL_MAP).display()
+        );
         return;
     };
     for voxel_size in [0.05, 0.08] {

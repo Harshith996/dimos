@@ -197,9 +197,7 @@ fn main() {
             }
         }
     }
-    let real = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../../data")
-        .join(REAL_MAP);
+    let real = dimos_gpu_mls::data_dir().join(REAL_MAP);
     if let Ok(bytes) = std::fs::read(&real) {
         let cloud = pointcloud2_xyz(&bytes);
         for voxel_size in [0.05f32, 0.08] {
@@ -227,6 +225,11 @@ fn main() {
             map.timer.as_mut().map(|tm| tm.take(&gpu));
             surface_rows.push(bench_surfaces(&gpu, &mut map, voxel_size, REAL_MAP));
         }
+    } else {
+        eprintln!(
+            "skipping the real map: {} is missing; set DIMOS_DATA_DIR",
+            real.display()
+        );
     }
     println!();
     println!("| map | voxel | window | CPU surfaces | CPU wall dist | GPU standable | GPU hole fill | GPU planes | GPU wall dist | GPU wall clock | surface readback |");
