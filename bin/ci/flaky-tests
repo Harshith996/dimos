@@ -8,7 +8,7 @@ authors' PRs they failed on, then by how many PRs. The authors matter because
 one author's PRs can be a stack carrying the same change, so a test
 failing on ten of them is broken by that change, not flaky.
 
-  GITHUB_REPOSITORY=dimensionalOS/dimos bin/flaky-tests --days 1
+  GITHUB_REPOSITORY=dimensionalOS/dimos bin/ci/flaky-tests --days 1
 
 With --create-issues (the daily flaky-tests workflow) a test that failed on the
 PRs of MIN_AUTHORS or more authors gets an issue; one per test while it stays
@@ -112,7 +112,7 @@ def file_issues(
     except urllib.error.HTTPError as err:
         if err.code != 404:
             raise
-        label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/flaky-tests"}
+        label = {"name": LABEL, "color": "d93f0b", "description": "Filed by bin/ci/flaky-tests"}
         fetch(f"{API}/repos/{repo}/labels", token, label)
     window = "day" if days == 1 else f"{days} days"
 

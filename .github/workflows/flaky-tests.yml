@@ -23,4 +23,4 @@ jobs:
       - name: List the tests that failed across pull requests and file issues
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 bin/flaky-tests --days 1 --create-issues
+        run: python3 bin/ci/flaky-tests --days 1 --create-issues
