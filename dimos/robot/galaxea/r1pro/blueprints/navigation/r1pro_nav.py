@@ -21,7 +21,6 @@ from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
-from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
@@ -104,15 +103,8 @@ r1pro_nav = autoconnect(
     ).remappings(
         [
             (MLSPlannerNative, "global_map", "global_map_unused"),
-            (MLSPlannerNative, "path", "planner_path"),
         ]
     ),
-    DanLocalPlanner.blueprint(
-        # No commit window: MLS's obstacle truncations must reach the follower at once.
-        lock_replan=0.0,
-        # Keep MLS's 3D waypoints; the 2D resampler zeroes every Z.
-        resample_spacing_m=0.0,
-    ).remappings([(DanLocalPlanner, "odom", "chassis_odom")]),
     DanHolonomicTC.blueprint(control_frequency=10.0).remappings(
         [(DanHolonomicTC, "odom", "chassis_odom")]
     ),
