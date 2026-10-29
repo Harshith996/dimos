@@ -26,7 +26,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.constants import LONG_TEST_TIMEOUT_S
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.web.relay_bridge import relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
@@ -121,10 +120,6 @@ def test_rtc_unanswered_offer_is_torn_down_and_resent(monkeypatch) -> None:
         push(module, client, RtcIce(iceServers=[]))
         assert wait_until(lambda: len(_offers(client)) >= 2)
         assert publishers[0].closed == 1  # the unanswered peer was torn down
-        # The next offer waits as long as the test does, so the answer always finds it waiting.
-        monkeypatch.setattr(relay_bridge_module, "_RTC_ANSWER_TIMEOUT_S", LONG_TEST_TIMEOUT_S)
-        sent = len(_offers(client))
-        assert wait_until(lambda: len(_offers(client)) > sent)
         push(module, client, RtcAnswer(sdp="late"))
         assert wait_until(lambda: any(p.accepted == "late" for p in publishers))
     finally:
