@@ -36,13 +36,22 @@ fn sym3_eigen(m: mat3x3<f32>) -> Eigen {
             let tt = select(t, 1.0, theta == 0.0);
             let c = 1.0 / sqrt(tt * tt + 1.0);
             let s = tt * c;
-            var rot = mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
-            rot[p][p] = c;
-            rot[q][q] = c;
-            rot[q][p] = s;
-            rot[p][q] = -s;
-            a = transpose(rot) * a * rot;
-            vecs = vecs * rot;
+            // The rotation touches only rows and columns p and q.
+            let r = 3 - p - q;
+            let arp = a[r][p];
+            let arq = a[r][q];
+            a[p][p] -= tt * apq;
+            a[q][q] += tt * apq;
+            a[p][q] = 0.0;
+            a[q][p] = 0.0;
+            a[r][p] = c * arp - s * arq;
+            a[p][r] = a[r][p];
+            a[r][q] = s * arp + c * arq;
+            a[q][r] = a[r][q];
+            let vp = vecs[p];
+            let vq = vecs[q];
+            vecs[p] = c * vp - s * vq;
+            vecs[q] = s * vp + c * vq;
         }
     }
     var values = vec3<f32>(a[0][0], a[1][1], a[2][2]);
