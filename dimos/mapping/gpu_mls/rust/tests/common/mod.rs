@@ -16,7 +16,7 @@
 
 #![allow(dead_code)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ahash::AHashMap;
 use dimos_gpu_mls::brick_map::{MapConfig, VoxelKey, VoxelSnapshot};
@@ -69,13 +69,35 @@ pub fn gpu_config(cfg: &Config, brick_capacity: u32, max_points: u32) -> MapConf
     }
 }
 
+static GPU: Mutex<Option<Arc<Gpu>>> = Mutex::new(None);
+
+unsafe extern "C" {
+    fn atexit(callback: extern "C" fn()) -> i32;
+}
+
+/// Drops the shared device before the driver unloads, whose worker thread
+/// otherwise runs into the unloaded library and segfaults the exit.
+extern "C" fn drop_gpu() {
+    GPU.lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+}
+
+/// One device for the whole test binary: on Jetson, destroying a device while
+/// another thread submits to its own deadlocks the driver.
 pub fn gpu() -> Arc<Gpu> {
-    let gpu = Gpu::new().expect("these tests need a GPU");
-    eprintln!(
-        "adapter: {} ({:?})",
-        gpu.adapter_info.name, gpu.adapter_info.backend
-    );
-    gpu
+    let mut slot = GPU.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    slot.get_or_insert_with(|| {
+        let gpu = Gpu::new().expect("these tests need a GPU");
+        eprintln!(
+            "adapter: {} ({:?})",
+            gpu.adapter_info.name, gpu.adapter_info.backend
+        );
+        // Registered after the driver loaded, so it runs before the driver's own teardown.
+        unsafe { atexit(drop_gpu) };
+        gpu
+    })
+    .clone()
 }
 
 /// How a GPU map differs from a CPU one, voxel by voxel.

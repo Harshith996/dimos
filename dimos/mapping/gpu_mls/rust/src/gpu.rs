@@ -15,7 +15,7 @@
 //! Headless wgpu device plus the buffer, pipeline and readback helpers the
 //! map and surface stages share.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bytemuck::Pod;
 
@@ -35,15 +35,20 @@ pub struct Gpu {
 impl Gpu {
     /// The high-performance adapter with its full limits, headless.
     pub fn new() -> Result<Arc<Self>, String> {
-        // No GL backend: on Jetson, dropping its EGL context while another
-        // thread drives Vulkan deadlocks inside the shared NVIDIA driver.
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::PRIMARY,
-                ..wgpu::InstanceDescriptor::new_without_display_handle()
-            }
-            .with_env(),
-        );
+        // One instance per process, with no GL backend. On Jetson, creating an
+        // instance while another thread destroys one crashes the Vulkan loader,
+        // and dropping a GL context while another thread drives Vulkan
+        // deadlocks inside the shared NVIDIA driver.
+        static INSTANCE: OnceLock<wgpu::Instance> = OnceLock::new();
+        let instance = INSTANCE.get_or_init(|| {
+            wgpu::Instance::new(
+                wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::PRIMARY,
+                    ..wgpu::InstanceDescriptor::new_without_display_handle()
+                }
+                .with_env(),
+            )
+        });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
