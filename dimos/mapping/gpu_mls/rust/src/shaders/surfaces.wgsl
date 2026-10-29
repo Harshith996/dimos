@@ -1,5 +1,6 @@
 // Surface extraction over a dense window of columns: occupancy from the
-// brick map, the standable test, jump-flood hole closing per z slice, and
+// brick map, the standable test, bit-parallel round hole closing per z slice
+// (32 slices per word op), and
 // jump-flood wall distance. Appended to map_common.wgsl.
 //
 // Column bit layout: word (y * W + x) * ZW + z / 32, bit z % 32.
@@ -38,7 +39,7 @@ const NO_SEED: u32 = 0xffffffffu;
 @group(1) @binding(0) var<uniform> sp: SurfaceParams;
 @group(1) @binding(1) var<storage, read_write> occupied: array<atomic<u32>>;
 @group(1) @binding(2) var<storage, read_write> standable: array<u32>;
-@group(1) @binding(3) var<storage, read_write> grown: array<atomic<u32>>;
+@group(1) @binding(3) var<storage, read_write> grown: array<u32>;
 @group(1) @binding(4) var<storage, read_write> surface: array<u32>;
 @group(1) @binding(5) var<storage, read_write> wall: array<u32>;
 @group(1) @binding(6) var<storage, read_write> seeds_a: array<u32>;
@@ -72,7 +73,7 @@ fn bit_at(x: i32, y: i32, z: i32, which: u32) -> bool {
     switch which {
         case 0u: { word = standable[w]; }
         case 1u: { word = surface[w]; }
-        case 2u: { word = atomicLoad(&grown[w]); }
+        case 2u: { word = grown[w]; }
         default: { word = wall[w]; }
     }
     return ((word >> (u32(z) & 31u)) & 1u) != 0u;
@@ -154,106 +155,66 @@ fn standable_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-fn flood_read(i: u32) -> u32 {
-    if (flood.a_to_b != 0u) {
-        return seeds_a[i];
+// The bits of column (x, y) at z + shift, aligned to word `word`'s z range:
+// bit b holds z = 32 * word + b + shift. Outside the window reads empty.
+fn shifted_word(which: u32, x: i32, y: i32, word: i32, shift: i32) -> u32 {
+    if (!in_window_xy(x, y)) {
+        return 0u;
     }
-    return seeds_b[i];
+    let base = column_word(x, y, 0);
+    let words = i32(sp.size.w);
+    let start = word * 32 + shift;
+    let first = start >> 5u;
+    let offset = u32(start & 31);
+    var out = 0u;
+    if (first >= 0 && first < words) {
+        out = column_bits(which, base + u32(first)) >> offset;
+    }
+    if (offset != 0u && first + 1 >= 0 && first + 1 < words) {
+        out |= column_bits(which, base + u32(first + 1)) << (32u - offset);
+    }
+    return out;
 }
 
-fn flood_write(i: u32, seed: u32) {
-    if (flood.a_to_b != 0u) {
-        seeds_b[i] = seed;
-    } else {
-        seeds_a[i] = seed;
+fn column_bits(which: u32, w: u32) -> u32 {
+    switch which {
+        case 0u: { return standable[w]; }
+        case 2u: { return grown[w]; }
+        default: { return atomicLoad(&occupied[w]); }
     }
 }
 
-// One jump-flood pass within each z slice.
+const BITS_STANDABLE: u32 = 0u;
+const BITS_GROWN: u32 = 2u;
+const BITS_OCCUPIED: u32 = 4u;
+
+// Grow: a cell is grown when a standable cell of its slice lies within the
+// closing radius (Euclidean, in cells). 32 slices per word op.
 @compute @workgroup_size(8, 8, 1)
-fn flood_pass(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
+fn grow_columns(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
         return;
     }
     let x = i32(gid.x);
     let y = i32(gid.y);
-    let z = i32(gid.z);
-    var best = flood_read(cell_index(x, y, z));
-    var best_d = seed_dist_sq(x, y, best);
-    for (var oy = -1; oy <= 1; oy++) {
-        for (var ox = -1; ox <= 1; ox++) {
-            let nx = x + ox * flood.step;
-            let ny = y + oy * flood.step;
-            if ((ox == 0 && oy == 0) || !in_window_xy(nx, ny)) {
-                continue;
-            }
-            let seed = flood_read(cell_index(nx, ny, z));
-            let d = seed_dist_sq(x, y, seed);
-            if (d < best_d) {
-                best = seed;
-                best_d = d;
-            }
-        }
-    }
-    flood_write(cell_index(x, y, z), best);
-}
-
-@compute @workgroup_size(8, 8, 1)
-fn seed_standable(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
-        return;
-    }
-    let x = i32(gid.x);
-    let y = i32(gid.y);
-    let z = i32(gid.z);
-    seeds_a[cell_index(x, y, z)] = select(NO_SEED, pack_seed(x, y), bit_at(x, y, z, 0u));
-}
-
-// Grown cells are within the closing radius of a standable cell; the rest
-// seed the shrink flood.
-@compute @workgroup_size(8, 8, 1)
-fn seed_ungrown(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= sp.size.x || gid.y >= sp.size.y || gid.z >= sp.size.z) {
-        return;
-    }
-    let x = i32(gid.x);
-    let y = i32(gid.y);
-    let z = i32(gid.z);
-    let i = cell_index(x, y, z);
-    let is_grown = seed_dist_sq(x, y, flood_read(i)) <= sp.closing_cells * sp.closing_cells;
-    if (is_grown) {
-        atomicOr(&grown[column_word(x, y, z)], 1u << (u32(z) & 31u));
-    }
-    flood_write(i, select(pack_seed(x, y), NO_SEED, is_grown));
-}
-
-// An occupied voxel within the support square at a compatible height.
-fn has_support(x: i32, y: i32, z: i32) -> bool {
-    let r = sp.support_radius;
-    for (var dy = -r; dy <= r; dy++) {
-        for (var dx = -r; dx <= r; dx++) {
-            for (var dz = -sp.support_z_tol; dz <= sp.support_z_tol; dz++) {
-                if (occupied_at(x + dx, y + dy, z + dz)) {
-                    return true;
+    let n = sp.closing_cells;
+    let base = column_word(x, y, 0);
+    for (var w = 0u; w < sp.size.w; w++) {
+        var bits = 0u;
+        for (var dy = -n; dy <= n; dy++) {
+            for (var dx = -n; dx <= n; dx++) {
+                if (dx * dx + dy * dy > n * n || !in_window_xy(x + dx, y + dy)) {
+                    continue;
                 }
+                bits |= standable[column_word(x + dx, y + dy, 0) + w];
             }
         }
+        grown[base + w] = bits;
     }
-    return false;
 }
 
-// No occupied cell in the clearance above.
-fn clear_above(x: i32, y: i32, z: i32) -> bool {
-    for (var k = 1; k <= sp.clearance_cells; k++) {
-        if (occupied_at(x, y, z + k)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Per column: standable cells plus closed cells that pass the headroom and
-// support filters. Outside the window counts as unfilled.
+// Shrink the grown set by the same disk, outside the window unfilled, then
+// keep the filled cells with headroom and nearby support, as close_at_z.
 @compute @workgroup_size(8, 8, 1)
 fn compose_surface(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= sp.size.x || gid.y >= sp.size.y) {
@@ -262,20 +223,46 @@ fn compose_surface(@builtin(global_invocation_id) gid: vec3<u32>) {
     let x = i32(gid.x);
     let y = i32(gid.y);
     let n = sp.closing_cells;
-    let border = min(min(x + 1, i32(sp.size.x) - x), min(y + 1, i32(sp.size.y) - y));
     let base = column_word(x, y, 0);
     for (var w = 0u; w < sp.size.w; w++) {
-        surface[base + w] = 0u;
-    }
-    for (var z = 0; z < i32(sp.size.z); z++) {
-        var keep = bit_at(x, y, z, 0u);
-        if (!keep && n > 0 && border > n && bit_at(x, y, z, 2u)) {
-            let ungrown_d = seed_dist_sq(x, y, flood_read(cell_index(x, y, z)));
-            keep = ungrown_d > n * n && clear_above(x, y, z) && has_support(x, y, z);
+        let original = standable[base + w];
+        var closed = 0u;
+        if (n > 0) {
+            closed = grown[base + w];
+            for (var dy = -n; dy <= n && closed != 0u; dy++) {
+                for (var dx = -n; dx <= n; dx++) {
+                    if (dx * dx + dy * dy > n * n) {
+                        continue;
+                    }
+                    if (!in_window_xy(x + dx, y + dy)) {
+                        closed = 0u;
+                        break;
+                    }
+                    closed &= grown[column_word(x + dx, y + dy, 0) + w];
+                }
+            }
         }
-        if (keep) {
-            surface[base + u32(z) / 32u] |= 1u << (u32(z) & 31u);
+        var added = closed & ~original;
+        if (added != 0u) {
+            var above = 0u;
+            for (var k = 1; k <= sp.clearance_cells; k++) {
+                above |= shifted_word(BITS_OCCUPIED, x, y, i32(w), k);
+            }
+            added &= ~above;
         }
+        if (added != 0u) {
+            var support = 0u;
+            let r = sp.support_radius;
+            for (var dy = -r; dy <= r; dy++) {
+                for (var dx = -r; dx <= r; dx++) {
+                    for (var dz = -sp.support_z_tol; dz <= sp.support_z_tol; dz++) {
+                        support |= shifted_word(BITS_OCCUPIED, x + dx, y + dy, i32(w), dz);
+                    }
+                }
+            }
+            added &= support;
+        }
+        surface[base + w] = original | added;
     }
 }
 

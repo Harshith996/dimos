@@ -13,8 +13,9 @@
 // limitations under the License.
 
 //! MLS surface extraction on the GPU over a dense window of columns read
-//! from the brick map: the standable test, jump-flood hole closing per z
-//! slice, and jump-flood wall distance per connected surface seen from above.
+//! from the brick map: the standable test, exact bit-parallel round hole
+//! closing per z slice, and jump-flood wall distance per connected surface
+//! seen from above.
 
 use std::sync::Arc;
 
@@ -146,9 +147,7 @@ struct PlaneCells {
 struct Pipelines {
     build_occupancy: wgpu::ComputePipeline,
     standable_columns: wgpu::ComputePipeline,
-    flood_pass: wgpu::ComputePipeline,
-    seed_standable: wgpu::ComputePipeline,
-    seed_ungrown: wgpu::ComputePipeline,
+    grow_columns: wgpu::ComputePipeline,
     compose_surface: wgpu::ComputePipeline,
     find_walls: wgpu::ComputePipeline,
     uf_init: wgpu::ComputePipeline,
@@ -338,9 +337,7 @@ impl SurfaceExtractor {
         let pipelines = Pipelines {
             build_occupancy: column("build_occupancy"),
             standable_columns: column("standable_columns"),
-            flood_pass: column("flood_pass"),
-            seed_standable: column("seed_standable"),
-            seed_ungrown: column("seed_ungrown"),
+            grow_columns: column("grow_columns"),
             compose_surface: column("compose_surface"),
             find_walls: plane("find_walls"),
             uf_init: plane("uf_init"),
@@ -477,20 +474,6 @@ impl SurfaceExtractor {
         steps
     }
 
-    /// Flood every z slice of the window from the current seeds.
-    fn flood_slices(&mut self, pass: &mut wgpu::ComputePass, map: &BrickMap, start: u32) {
-        for step in Self::flood_steps(start) {
-            self.run(
-                pass,
-                Some(map),
-                &self.pipelines.flood_pass,
-                self.cell_groups(),
-                step,
-            );
-            self.current_in_a = !self.current_in_a;
-        }
-    }
-
     /// Standable test, hole fill and wall distance. The plane split is read
     /// back between the two submits to size the wall-distance flood.
     pub fn extract(&mut self, map: &mut BrickMap) {
@@ -554,26 +537,14 @@ impl SurfaceExtractor {
             );
         }
         let mut pass = begin(encoder, "hole fill", &mut timer);
-        let n = self.config.closing_cells.max(0) as u32;
-        if n > 0 {
-            self.current_in_a = true;
+        if self.config.closing_cells > 0 {
             self.run(
                 &mut pass,
                 Some(map),
-                &self.pipelines.seed_standable,
-                self.cell_groups(),
+                &self.pipelines.grow_columns,
+                self.column_groups(),
                 1,
             );
-            self.flood_slices(&mut pass, map, n.next_power_of_two());
-            self.run(
-                &mut pass,
-                Some(map),
-                &self.pipelines.seed_ungrown,
-                self.cell_groups(),
-                1,
-            );
-            self.current_in_a = !self.current_in_a;
-            self.flood_slices(&mut pass, map, n.next_power_of_two());
         }
         self.run(
             &mut pass,

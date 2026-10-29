@@ -179,10 +179,7 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         "gpu",
         &gpu_surface,
     );
-    assert!(
-        (a + b) as f64 <= 1e-3 * reference.len() as f64,
-        "jump flooding strays from the exact Euclidean closing"
-    );
+    assert_eq!((a, b), (0, 0), "the round closing is exact");
     let cpu_surface: AHashSet<VoxelKey> = surface_cells(
         &occupied,
         config.clearance_cells,
