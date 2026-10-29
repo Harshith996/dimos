@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimOS lifecycle owner of the emulator, including its disposable model snapshot."""
+"""One simulated world, built from every module in the blueprint that describes itself."""
 
-from __future__ import annotations
-
-from dataclasses import replace
-import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
-import threading
-import time
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 import mujoco
 from pydantic import Field
@@ -34,333 +25,76 @@ from dimos.core.coordination.blueprint_config.fields import module_config_cls
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
-from dimos.sim2.messages import StreamDescriptor
-from dimos.sim2.pacing import wait_until
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor, WorldConfig
-from dimos.sim2.world.evidence import run_record, write_record
-from dimos.sim2.world.runtime import SimulationRuntime
-from dimos.sim2.world.scene import scene_path, scene_robot
-from dimos.sim2.world.scene_types import SceneDescription, SceneState, SceneUpdate
-from dimos.spec.utils import Spec
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-
-class SimulationSpec(Spec, Protocol):
-    def describe(self) -> dict[str, Any]: ...
-
-    def describe_robot(self, robot_id: str) -> StreamDescriptor: ...
+from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor
+from dimos.sim2.world import compile_world
 
 
 class SimulationConfig(ModuleConfig):
-    # An explicit world takes precedence over the scene name/path.
-    world: WorldConfig | None = None
-    scene: str | Path | None = Field(default_factory=lambda m: m["g"].scene_package)
-    sim_id: str = "sim"
-    viewer: bool = False
-    evidence_dir: Path | None = None
-    # describe_simulated() results, filled in by Simulation.autoconnect(); keyed by instance name.
-    simulated: dict[str, SimulatedRobot | SimulatedSensor] = Field(default_factory=dict)
+    scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
+    # describe_simulated() results keyed by instance name; filled in by Simulation.autoconnect.
+    simulated: dict[str, Simulated] = Field(default_factory=dict)
 
 
 class Simulation(Module):
     config: SimulationConfig
-    dedicated_worker = True
-    sim_truth: Out[SceneState]
 
     @classmethod
     def autoconnect(cls, *blueprints: Blueprint, **config: Any) -> Blueprint:
-        """autoconnect(*blueprints) plus one Simulation holding every module's describe_simulated().
+        """autoconnect(*blueprints) plus a Simulation of every module with describe_simulated.
 
-        MuJoCo compiles all robots and sensors at once, so they are read from the blueprint's
-        atoms before anything is deployed. Descriptions use the blueprint's own kwargs, so set
-        simulation-relevant options (spawn, sensor mounts) there, not as CLI overrides.
+        MuJoCo compiles every robot together, so descriptions are read from the blueprint's
+        atoms before anything is deployed. They see the blueprint's kwargs, not CLI overrides.
         """
         composed = autoconnect(*blueprints)
-        described = {
+        simulated = {
             atom.name: cast("Any", atom.module).describe_simulated(
                 module_config_cls(atom)(**atom.kwargs)
             )
             for atom in composed.active_blueprints
             if callable(getattr(atom.module, "describe_simulated", None))
         }
-        return autoconnect(composed, cls.blueprint(simulated=described, **config))
+        return autoconnect(composed, cls.blueprint(simulated=simulated, **config))
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._runtime: SimulationRuntime | None = None
+        self._model: mujoco.MjModel | None = None
         self._directory: tempfile.TemporaryDirectory[str] | None = None
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._viewer: subprocess.Popen[bytes] | None = None
-        self._lifecycle_lock = threading.RLock()
-        self._failure: str | None = None
-        self._truth_enabled = False
-        self._truth_thread: threading.Thread | None = None
-        self._run_record: dict[str, Any] | None = None
-        self._record_path: Path | None = None
-        if self.config.world is None and self.config.scene is None:
-            raise ValueError("Simulation needs a scene (or world); pass scene= or --scene-package")
-        self._world = self.config.world or WorldConfig(scene_path(str(self.config.scene)), {})
-
-    def _resolved_world(self) -> WorldConfig:
-        world = self._world
-        robots = dict(world.robots)
-        sensors: list[SimulatedSensor] = []
-        for description in self.config.simulated.values():
-            if isinstance(description, SimulatedSensor):
-                sensors.append(description)
-                continue
-            robot = description.robot
-            if description.robot_id in robots:
-                raise ValueError(f"duplicate simulated robot {description.robot_id!r}")
-            if description.spawn is not None:
-                placed = scene_robot(
-                    world.scene, robot.config, description.spawn, default=robot.xyz
-                )
-                robot = replace(robot, xyz=placed.xyz, rpy=placed.rpy)
-            robots[description.robot_id] = robot
-        scene_sensors = {sensor.name: sensor for sensor in world.sensors}
-        for owner, sensor in ((d.robot_id, d.sensor) for d in sensors):
-            if owner is not None and owner not in robots:
-                raise ValueError(f"sensor {sensor.name!r} is mounted on unknown robot {owner!r}")
-            mounted = (
-                scene_sensors
-                if owner is None
-                else {s.name: s for s in robots[owner].config.sensors}
-            )
-            existing = mounted.get(sensor.name)
-            if existing == sensor:
-                continue
-            if existing is not None:
-                raise ValueError(f"conflicting definitions for sensor {sensor.name!r}")
-            if owner is None:
-                scene_sensors[sensor.name] = sensor
-            else:
-                robot = robots[owner]
-                robots[owner] = replace(robot, config=robot.config.with_sensor(sensor))
-        timestep = min([world.timestep, *(r.config.max_timestep for r in robots.values())])
-        return replace(
-            world, robots=robots, sensors=tuple(scene_sensors.values()), timestep=timestep
-        )
 
     @rpc
     def build(self) -> None:
-        with self._lifecycle_lock:
-            if self._runtime is not None:
-                return
-            world = self._resolved_world()
-            runtime = SimulationRuntime(world, self.config.sim_id)
-            directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
-            try:
-                model = Path(directory.name) / "world.mjb"
-                mujoco.mj_saveModel(runtime.model, str(model), None)
-                self._run_record = run_record(runtime, model)
-                evidence_dir = self.config.evidence_dir
-                if evidence_dir is None and (log_dir := os.environ.get("DIMOS_RUN_LOG_DIR")):
-                    evidence_dir = Path(log_dir) / "sim2"
-                if evidence_dir is not None:
-                    self._record_path = evidence_dir / f"{runtime.world_id}.json"
-                    write_record(self._record_path, self._run_record)
-            except BaseException:
-                runtime.close()
-                directory.cleanup()
-                raise
-            self._runtime, self._directory = runtime, directory
-            (Path(directory.name) / "world.json").write_text(json.dumps(self.describe()))
-            logger.info("sim2 world prepared", robots=list(world.robots), nq=runtime.model.nq)
+        super().build()
+        if self.config.scene is None:
+            raise ValueError("Simulation needs a scene; pass scene= or --scene-package")
+        self._model = compile_world(self.config.scene, self.config.simulated.values())
+        self._directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
+        mujoco.mj_saveModel(self._model, str(self.model_path), None)
+
+    @property
+    def model_path(self) -> Path:
+        if self._directory is None:
+            raise RuntimeError("Simulation.build() has not run")
+        return Path(self._directory.name) / "world.mjb"
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        with self._lifecycle_lock:
-            if self._runtime is None or self._directory is None:
-                raise RuntimeError("Simulation.build() has not completed")
-            return {
-                "model": str(Path(self._directory.name) / "world.mjb"),
-                "snapshot": self._runtime.snapshot_descriptor.to_dict(),
-                "robots": {
-                    name: binding.channel.descriptor.to_dict()
-                    for name, binding in self._runtime.robots.items()
-                },
-                "run_record": str(self._record_path) if self._record_path else None,
-            }
-
-    @rpc
-    def describe_robot(self, robot_id: str) -> StreamDescriptor:
-        """Internal client discovery for a robot in this running world."""
-        with self._lifecycle_lock:
-            return self._require_runtime().robots[robot_id].channel.descriptor
-
-    @rpc
-    def describe_run(self) -> dict[str, Any]:
-        """Resolved parameters/provenance and initial state, not agent-visible observations."""
-        with self._lifecycle_lock:
-            if self._run_record is None:
-                raise RuntimeError("Simulation.build() has not completed")
-            return self._run_record
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.build()
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
-        self._thread.start()
-        if self.config.viewer:
-            description = self.describe()
-            executable = Path(sys.executable)
-            if sys.platform == "darwin":
-                executable = executable.with_name("mjpython")
-            self._viewer = subprocess.Popen(
-                [
-                    str(executable),
-                    "-m",
-                    "dimos.sim2.world.viewer",
-                    str(Path(description["model"]).with_suffix(".json")),
-                ]
-            )
-
-    def _run(self) -> None:
-        runtime = self._runtime
-        assert runtime is not None
-        deadline = time.monotonic()
-        try:
-            while not self._stop.is_set():
-                runtime.step()
-                deadline += runtime.config.timestep
-                now = time.monotonic()
-                if now - deadline > 0.1:
-                    deadline = now
-                wait_until(self._stop, deadline)
-        except Exception as error:
-            logger.exception("sim2 physics stopped")
-            with self._lifecycle_lock:
-                self._failure = str(error)
-            runtime.snapshots.set_lifecycle("faulted")
-            for binding in runtime.robots.values():
-                binding.channel.set_lifecycle("faulted")
-
-    def _publish_truth(self) -> None:
-        while not self._stop.wait(0.1):
-            if self._truth_enabled:
-                try:
-                    self.sim_truth.publish(self.scene_state())
-                except Exception:
-                    logger.exception("sim2 evaluation truth publication failed")
-                    self._truth_enabled = False
-                    return
-
-    @rpc
-    def set_truth_enabled(self, enabled: bool) -> None:
-        """Enable the privileged 10 Hz sim_truth stream for explicit evaluation recording."""
-        with self._lifecycle_lock:
-            self._require_runtime()
-            if enabled and (self._truth_thread is None or not self._truth_thread.is_alive()):
-                self._truth_thread = threading.Thread(target=self._publish_truth, daemon=True)
-                self._truth_thread.start()
-            self._truth_enabled = enabled
-
-    def _require_runtime(self) -> SimulationRuntime:
-        if self._runtime is None:
-            raise RuntimeError("simulation is not running")
-        if self._failure is not None:
-            raise RuntimeError(f"simulation physics failed: {self._failure}")
-        return self._runtime
-
-    @rpc
-    def describe_scene(self) -> SceneDescription:
-        """List named entities, fixture joints, regions and authored defaults."""
-        with self._lifecycle_lock:
-            return self._require_runtime().description
-
-    @rpc
-    def scene_state(self) -> SceneState:
-        """Inspect one coherent privileged physical snapshot, including contact pairs."""
-        with self._lifecycle_lock:
-            return self._require_runtime().scene_state()
-
-    @rpc
-    def set_scene_state(self, update: SceneUpdate) -> SceneState:
-        """Edit existing named bodies/joints atomically; does not reset controllers."""
-        with self._lifecycle_lock:
-            return self._require_runtime().set_scene_state(SceneUpdate.model_validate(update))
-
-    @rpc
-    def set_paused(self, paused: bool) -> None:
-        """Pause only physics, keeping module RPCs and state inspection available."""
-        with self._lifecycle_lock:
-            self._require_runtime().set_paused(paused)
-
-    @rpc
-    def status(self) -> dict[str, Any]:
-        with self._lifecycle_lock:
-            runtime = self._runtime
-            if runtime is None:
-                return {"running": False, "error": self._failure}
-            with runtime.lock:
-                return {
-                    "running": self._failure is None
-                    and not self._stop.is_set()
-                    and self._thread is not None
-                    and self._thread.is_alive(),
-                    "sim_time": float(runtime.data.time),
-                    "steps": runtime.tick,
-                    "episode": runtime.episode,
-                    "generation": runtime.generation,
-                    "paused": runtime.paused,
-                    "waiting_for_control": sorted(runtime.waiting_for_control),
-                    "truth_enabled": self._truth_enabled,
-                    "error": self._failure,
-                    "robots": {
-                        name: runtime.data.xpos[b.root].tolist()
-                        for name, b in runtime.robots.items()
-                    },
-                }
-
-    @rpc
-    def reset(self, initial: SceneUpdate | None = None) -> SceneState:
-        """Restore authored physical state, then overrides; controller reset is application-owned."""
-        with self._lifecycle_lock:
-            return self._require_runtime().reset(
-                SceneUpdate.model_validate(initial) if initial is not None else None
-            )
-
-    @rpc
-    def set_spawn(
-        self,
-        robot_id: str,
-        xyz: tuple[float, float, float],
-        rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
-    ) -> None:
-        with self._lifecycle_lock:
-            self._require_runtime().set_spawn(robot_id, xyz, rpy)
+        """The compiled model's path and what went into it."""
+        if self._model is None:
+            raise RuntimeError("Simulation.build() has not run")
+        values = self.config.simulated.values()
+        return {
+            "model": str(self.model_path),
+            "robots": sorted(d.robot_id for d in values if isinstance(d, SimulatedRobot)),
+            "sensors": sorted(
+                f"{d.robot_id or 'world'}/{d.name}"
+                for d in values
+                if isinstance(d, SimulatedSensor)
+            ),
+            "bodies": self._model.nbody,
+        }
 
     @rpc
     def stop(self) -> None:
-        self._stop.set()
-        if self._truth_thread is not None:
-            self._truth_thread.join(timeout=5)
-            if self._truth_thread.is_alive():
-                raise RuntimeError("evaluation truth publisher did not stop")
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            if self._thread.is_alive():
-                raise RuntimeError("sim2 physics did not stop")
-        if self._viewer is not None:
-            self._viewer.terminate()
-            try:
-                self._viewer.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._viewer.kill()
-                self._viewer.wait()
-            self._viewer = None
-        with self._lifecycle_lock:
-            if self._runtime is not None:
-                self._runtime.close()
-                self._runtime = None
-            if self._directory is not None:
-                self._directory.cleanup()
-                self._directory = None
+        if self._directory is not None:
+            self._directory.cleanup()
+            self._directory = None
         super().stop()
