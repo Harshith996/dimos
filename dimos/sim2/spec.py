@@ -32,11 +32,11 @@ class Mount:
 
 @dataclass(frozen=True)
 class Servo:
-    """A joint whose actuator becomes a PD position servo, starting at and holding initial."""
+    """A joint that starts at, and is held at, initial; with gains its actuator becomes a PD servo."""
 
     joint: str
-    kp: float
-    kd: float
+    kp: float | None = None
+    kd: float = 0.0
     initial: float = 0.0
 
 
@@ -49,6 +49,8 @@ class SimulatedRobot:
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
     servos: tuple[Servo, ...] = ()
+    # A directory whose files the model may name by file name, like its meshes.
+    assets: Path | None = None
 
 
 @dataclass(frozen=True)

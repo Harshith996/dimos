@@ -48,7 +48,9 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
 
     world = mujoco.MjSpec.from_file(str(scene))
     for robot in robots:
-        spec = mujoco.MjSpec.from_file(str(robot.model))
+        assets = {f.name: f.read_bytes() for f in robot.assets.iterdir()} if robot.assets else None
+        spec = mujoco.MjSpec.from_file(str(robot.model), assets=assets)
+        robot_geoms = {geom.name for geom in spec.geoms}
         root = spec.body(robot.root_body)
         if root is None:
             raise ValueError(f"{robot.robot_id}: no body {robot.root_body!r} in {robot.model}")
@@ -61,6 +63,8 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
             spec.delete(key)
         actuators = {actuator.target: actuator for actuator in spec.actuators}
         for servo in robot.servos:
+            if servo.kp is None:
+                continue
             actuator = actuators[servo.joint]
             torque_limit = actuator.ctrlrange.copy()
             actuator.set_to_position(kp=servo.kp, kv=servo.kd)
@@ -72,6 +76,12 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
                 _mount(spec, sensor, robot.robot_id)
         frame = world.worldbody.add_frame(pos=robot.xyz, quat=_quaternion(robot.rpy))
         world.attach(spec, prefix=f"{robot.robot_id}/", frame=frame)
+        # Contact pairs naming a geom the robot lacks (its floor) mean the scene's geom of that name.
+        for pair in world.pairs:
+            for side in ("geomname1", "geomname2"):
+                name = getattr(pair, side).removeprefix(f"{robot.robot_id}/")
+                if getattr(pair, side) != name and name not in robot_geoms:
+                    setattr(pair, side, name)
     for sensor in sensors:
         if sensor.robot_id is None:
             _mount(world, sensor, "world", prefix="world/")
