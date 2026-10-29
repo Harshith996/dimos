@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The R1 Pro's head depth: Depth Anything on the left head camera, calibrated to the chassis lidar, with a floor prior."""
+"""The R1 Pro's head depth: Depth Anything on the left head camera, calibrated to the chassis lidar, with a floor prior.
+
+bin/native-modules only opens files with a line like the next one, so this says it for R1ProHeadDepthConfig:
+class R1ProHeadDepthConfig(NativeModuleConfig)
+"""
 
 from __future__ import annotations
 
@@ -22,44 +26,31 @@ from pydantic import Field
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.native_module import NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.perception.depth2depth_cloud.module import Depth2DepthSettings
+from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud, Depth2DepthCloudConfig
 from dimos.robot.galaxea.r1pro.config import R1PRO_CHASSIS_WIDTH_M
 from dimos.robot.galaxea.r1pro.lio import R1ProLioConfig
 
 BASE_FRAME = R1ProLioConfig.model_fields["base_frame"].default
 
 
-class R1ProHeadDepthConfig(NativeModuleConfig, Depth2DepthSettings):
+class R1ProHeadDepthConfig(Depth2DepthCloudConfig, NativeModuleConfig):
     source_dir: str | None = "dimos/robot/galaxea/r1pro/floor_prior/rust"
     executable: str = "result/bin/r1pro_head_depth"
-    # Builds for the CPU (Metal on a Mac); with an NVIDIA GPU it becomes path:.#tensorrt (see Depth2DepthSettings).
     build_command: str | None = "nix build -L path:."
-    stdin_config: bool = True
-    # frame_id is also a NativeModuleConfig field; listed so it still crosses to the Rust config.
-    base_fields: frozenset[str] = frozenset({"frame_id"})
-    frame_id: str = ""
     # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
     floor_anchor_step: int = Field(default=8, ge=1, le=256)
     floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
     floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
 
 
-class R1ProHeadDepth(NativeModule):
+class R1ProHeadDepth(Depth2DepthCloud):
     """Depth2DepthCloud plus a floor prior: the chassis lidar never sees the near floor, which unanchored reads 2-5x short."""
 
     config: R1ProHeadDepthConfig
-
-    image: In[CompressedImage]
-    camera_info: In[CameraInfo]
-    lidar: In[PointCloud2]
-    tf: In[TFMessage]
-    depth_cloud: Out[PointCloud2]
 
 
 class HeadFloorPriorConfig(ModuleConfig):
