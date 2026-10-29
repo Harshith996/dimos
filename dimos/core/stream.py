@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import enum
+import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -26,9 +27,7 @@ from typing import (
 
 from pydantic import BaseModel
 import reactivex as rx
-from reactivex import operators as ops
 from reactivex.disposable import Disposable
-from reactivex.scheduler import TimeoutScheduler
 
 from dimos.core.resource import Resource
 from dimos.utils import colors
@@ -53,17 +52,23 @@ StreamDirection: TypeAlias = Literal["in", "out", "inout"]
 
 class ObservableMixin(Generic[T]):
     # subscribes and returns the first value it receives
-    # might be nicer to write without rxpy but had this snippet ready
     def get_next(self, timeout: float = 10.0) -> T:
-        source = self.observable().pipe(ops.first())
-        if timeout is not None:
-            # An explicit scheduler: the default one keeps its cancelled timer thread
-            # sleeping for the whole timeout after the value has arrived.
-            source = source.pipe(ops.timeout(timeout, scheduler=TimeoutScheduler.singleton()))
+        received: list[T] = []
+        arrived = threading.Event()
+
+        def on_value(value: T) -> None:
+            if not received:
+                received.append(value)
+                arrived.set()
+
+        unsubscribe = self.subscribe(on_value)  # type: ignore[attr-defined]
         try:
-            return source.run()  # type: ignore[no-any-return]
-        except Exception as e:
-            raise Exception(f"No value received after {timeout} seconds") from e
+            if not arrived.wait(timeout):
+                raise Exception(f"No value received after {timeout} seconds")
+            return received[0]
+        finally:
+            # Released before returning, so a caller never sees the subscription outlive the wait.
+            unsubscribe()
 
     def hot_latest(self) -> Callable[[], T]:
         return reactive.getter_streaming(self.observable())
