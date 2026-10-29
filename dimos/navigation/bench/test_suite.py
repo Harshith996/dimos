@@ -100,6 +100,9 @@ def test_premap_cloud_is_what_the_lidar_sees_along_the_route() -> None:
     assert np.mean(np.abs(cloud[:, 2] - z0) < 0.05) > 0.1 and np.any(cloud[:, 2] > z0 + 2.5)
 
 
+# Freezing a probe builds its scenes and routes, 30-90 s each: with the file on one xdist worker (--dist=loadfile)
+# they pushed the hosted test jobs past their timeout, so they run on the self-hosted runners.
+@pytest.mark.self_hosted
 def test_freeze_bins_routable_cases_that_round_trip(tmp_path: Path) -> None:
     steps: list[tuple[int, int, str]] = []
     manifest = freeze(SMALL, lambda *step: steps.append(step))
@@ -170,6 +173,7 @@ def test_probe_freezes_every_level_in_every_seed(tmp_path: Path) -> None:
     loaded.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
     probe = replace(DOORWAY, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -186,6 +190,7 @@ def test_door_width_probe_sets_the_door_and_puts_the_goal_past_it() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
     probe = replace(LEG_WIDTH, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -211,6 +216,7 @@ def test_leg_width_probe_aims_the_direct_line_through_a_table_leg() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_pole_width_probe_aims_one_line_through_every_width_of_pole() -> None:
     probe = replace(POLE, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -230,6 +236,7 @@ def test_pole_width_probe_aims_one_line_through_every_width_of_pole() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_bar_width_probe_aims_one_line_between_the_posts() -> None:
     probe = replace(BAR, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -244,6 +251,7 @@ def test_bar_width_probe_aims_one_line_between_the_posts() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
     probe = replace(BLOCK_HEIGHT, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -261,6 +269,7 @@ def test_block_height_probe_aims_the_direct_line_through_the_block() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
     probe = replace(SMALL_OBJECT, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -281,6 +290,7 @@ def test_small_object_probe_aims_the_direct_line_over_the_object() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() -> None:
     probe = replace(HIDDEN_OBJECT, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -300,6 +310,7 @@ def test_hidden_object_probe_marks_the_object_on_the_way_through_the_corridor() 
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_hidden_pole_probe_marks_the_pole_on_the_way_through_the_corridor() -> None:
     probe = replace(HIDDEN_POLE, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -317,6 +328,7 @@ def test_hidden_pole_probe_marks_the_pole_on_the_way_through_the_corridor() -> N
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_hidden_clutter_probe_only_adds_boxes_in_the_far_room() -> None:
     probe = replace(HIDDEN_CLUTTER, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -337,6 +349,7 @@ def test_hidden_clutter_probe_only_adds_boxes_in_the_far_room() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_overhang_probe_aims_the_direct_line_under_the_slab() -> None:
     probe = replace(OVERHANG, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -356,6 +369,7 @@ def test_overhang_probe_aims_the_direct_line_under_the_slab() -> None:
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 @pytest.mark.parametrize("probe", [CORRIDOR, CORRIDOR_TURN])
 def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: Probe) -> None:
     probe = replace(probe, seeds=(1, 2))
@@ -387,6 +401,7 @@ def test_corridor_probes_set_the_width_and_put_the_goal_in_the_far_room(probe: P
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -> None:
     probe = replace(CLUTTER, seeds=(1, 2))
     manifest = freeze_probe(probe)
@@ -410,6 +425,7 @@ def test_clutter_count_probe_only_adds_boxes_between_the_same_start_and_goal() -
     manifest.check_drift()
 
 
+@pytest.mark.self_hosted
 def test_barrier_height_probe_crosses_the_strip_between_start_and_goal() -> None:
     probe = replace(BARRIER_HEIGHT, seeds=(1, 2))
     manifest = freeze_probe(probe)
