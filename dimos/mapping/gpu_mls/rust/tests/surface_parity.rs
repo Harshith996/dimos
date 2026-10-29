@@ -55,7 +55,8 @@ fn synthetic_cloud() -> Vec<(f32, f32, f32)> {
 /// Seed `cloud` on the GPU and run the surface stages over the map's box.
 fn extract(cloud: &[(f32, f32, f32)], voxel_size: f32) -> (AHashSet<VoxelKey>, SurfaceExtractor) {
     let cfg = cpu_config(voxel_size);
-    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 16, cloud.len() as u32));
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 1 << 16, cloud.len() as u32))
+        .expect("brick map fits the device");
     map.seed(cloud);
     let occupied: AHashSet<VoxelKey> = map
         .snapshot()
@@ -64,8 +65,9 @@ fn extract(cloud: &[(f32, f32, f32)], voxel_size: f32) -> (AHashSet<VoxelKey>, S
         .map(|v| v.key)
         .collect();
     let config = surface_config(voxel_size);
-    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1);
-    let mut surfaces = SurfaceExtractor::new(&map, window, config);
+    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1)
+        .expect("an occupied map");
+    let mut surfaces = SurfaceExtractor::new(&map, window, config).expect("window fits the device");
     surfaces.extract(&mut map);
     map.finish();
     (occupied, surfaces)

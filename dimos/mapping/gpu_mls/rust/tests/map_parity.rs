@@ -51,7 +51,8 @@ fn ingest_without_clearing_matches_cpu() {
         };
         let scene = Scene::room(12.0, 2.5);
         let mut cpu = VoxelMap::default();
-        let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, POINTS_PER_FRAME as u32));
+        let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, POINTS_PER_FRAME as u32))
+            .expect("brick map fits the device");
         for (origin, pts) in frames(&scene, &cfg) {
             update_map(&mut cpu, origin, &pts, &cfg);
             map.ingest(origin, &pts);
@@ -77,7 +78,8 @@ fn ray_traced_clearing_matches_cpu() {
         let cfg = cpu_config(voxel_size);
         let scene = Scene::room(12.0, 2.5);
         let mut cpu = VoxelMap::default();
-        let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, POINTS_PER_FRAME as u32));
+        let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, POINTS_PER_FRAME as u32))
+            .expect("brick map fits the device");
         let mut misses = 0;
         for (origin, pts) in frames(&scene, &cfg) {
             update_map(&mut cpu, origin, &pts, &cfg);
@@ -116,7 +118,8 @@ fn seed_matches_cpu() {
         .collect();
     let mut cpu = VoxelMap::default();
     seed_points(&mut cpu, &cloud, &cfg);
-    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, cloud.len() as u32));
+    let mut map = BrickMap::new(gpu(), gpu_config(&cfg, 16384, cloud.len() as u32))
+        .expect("brick map fits the device");
     map.seed(&cloud);
     // A second seed over existing voxels must change nothing.
     seed_points(&mut cpu, &cloud[..1000], &cfg);

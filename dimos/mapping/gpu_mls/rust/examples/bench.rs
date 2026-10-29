@@ -140,7 +140,8 @@ fn main() {
                     max_points: points as u32 + 64,
                     list_capacity: 1 << 22,
                 },
-            );
+            )
+            .expect("brick map fits the device");
             map.timer = PassTimer::new(&gpu, 16);
             let mut mean = Mean::default();
             for (i, (origin, pts)) in frames.iter().enumerate() {
@@ -218,7 +219,8 @@ fn main() {
                     max_points: cloud.len() as u32,
                     list_capacity: 1 << 22,
                 },
-            );
+            )
+            .expect("brick map fits the device");
             map.timer = PassTimer::new(&gpu, 16);
             map.seed(&cloud);
             map.finish();
@@ -251,7 +253,8 @@ fn bench_surfaces(
         closing_cells: (0.3 / voxel_size).ceil() as i32,
         step_cells: (0.16 / voxel_size).floor() as i32,
     };
-    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1);
+    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1)
+        .expect("an occupied map");
     let t = Instant::now();
     let surface = surface_cells(
         &occupied,
@@ -269,7 +272,7 @@ fn bench_surfaces(
     );
     let cpu_wall_ms = ms(t);
 
-    let mut extractor = SurfaceExtractor::new(map, window, config);
+    let mut extractor = SurfaceExtractor::new(map, window, config).expect("window fits the device");
     let mut mean = Mean::default();
     for i in 0..6 {
         let t = Instant::now();

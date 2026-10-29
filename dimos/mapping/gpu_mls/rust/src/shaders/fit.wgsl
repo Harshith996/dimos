@@ -176,6 +176,12 @@ fn fit_normals(
         return;
     }
     let v = lists[L_FITS * params.list_capacity + i];
-    normals[v] = pooled_normal(key_of_voxel(v));
+    let fit = pooled_normal(key_of_voxel(v));
+    normals[v] = pack_normal(select(vec3<f32>(0.0, 0.0, 1.0), fit.xyz, fit.w > 0.0));
+    if (fit.w > 0.0) {
+        atomicOr(&voxel_state[v], S_PLANAR);
+    } else {
+        atomicAnd(&voxel_state[v], ~S_PLANAR);
+    }
     atomicAnd(&voxel_state[v], ~S_STALE);
 }

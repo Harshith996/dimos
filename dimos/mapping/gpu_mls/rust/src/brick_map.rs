@@ -25,7 +25,7 @@ use crate::gpu::{groups_1d, Gpu, PassTimer};
 pub type VoxelKey = (i32, i32, i32);
 
 const BRICK_VOXELS: u64 = 512;
-const MOMENT_WORDS: u64 = 19;
+const MOMENT_WORDS: u64 = 10;
 const STAMPS_PER_VOXEL: u64 = 3;
 const FINE_WORDS: u64 = 2;
 const LISTS: u64 = 5;
@@ -33,10 +33,11 @@ const COUNTERS: u64 = 8;
 /// Indirect argument slots: the five lists, then the brick pool.
 const DISPATCH_SLOTS: u64 = 6;
 const POOL_DISPATCH_SLOT: u64 = 5;
-const FIXED_SCALE: f64 = (1u64 << 24) as f64;
+const FIXED_SCALE: f64 = (1u64 << 16) as f64;
 const EMPTY_KEY: u32 = u32::MAX;
 const S_EXISTS: u32 = 1;
 const S_STALE: u32 = 2;
+const S_PLANAR: u32 = 8;
 /// Brick coordinates the 32-bit table key can hold, per axis, half-open.
 const BRICK_RANGE_XY: (i32, i32) = (-1024, 1023);
 const BRICK_RANGE_Z: (i32, i32) = (-512, 511);
@@ -167,12 +168,42 @@ pub(crate) const MAP_COMMON: &str = include_str!("shaders/map_common.wgsl");
 pub(crate) const MAP_BINDINGS: u32 = 14;
 
 impl BrickMap {
-    pub fn new(gpu: Arc<Gpu>, config: MapConfig) -> Self {
+    /// Bytes each voxel holds across the per-voxel buffers.
+    pub const VOXEL_BYTES: u64 = 4 * (1 + 1 + STAMPS_PER_VOXEL + FINE_WORDS + MOMENT_WORDS + 1 + 1);
+
+    /// The largest brick pool whose widest buffer, the moments, fits one
+    /// storage binding on this device.
+    pub fn max_brick_capacity(gpu: &Gpu) -> u32 {
+        let limits = gpu.device.limits();
+        let largest = (limits.max_storage_buffer_binding_size as u64).min(limits.max_buffer_size);
+        (largest / (4 * MOMENT_WORDS * BRICK_VOXELS)).min(u32::MAX as u64 / BRICK_VOXELS) as u32
+    }
+
+    /// Fails, without touching the device, when a buffer the config asks for
+    /// exceeds this device's binding or buffer limits.
+    pub fn new(gpu: Arc<Gpu>, config: MapConfig) -> Result<Self, String> {
         let cap = config.brick_capacity as u64;
         let voxels = cap * BRICK_VOXELS;
         // Half-full at capacity keeps linear probes short.
         let table_entries = (2 * cap).next_power_of_two();
         let list_cap = config.list_capacity as u64;
+        let limits = gpu.device.limits();
+        let largest = (limits.max_storage_buffer_binding_size as u64).min(limits.max_buffer_size);
+        for (label, bytes) in [
+            ("moments", 4 * MOMENT_WORDS * voxels),
+            ("lists", 4 * LISTS * list_cap),
+            ("points", 16 * config.max_points as u64),
+            ("table", 4 * table_entries),
+        ] {
+            if bytes > largest {
+                return Err(format!(
+                    "brick map {label} buffer needs {bytes} bytes but {} allows {largest} per binding; \
+                     lower brick_capacity to at most {} (or max_points / list_capacity)",
+                    gpu.adapter_info.name,
+                    Self::max_brick_capacity(&gpu)
+                ));
+            }
+        }
         let buffers = MapBuffers {
             params: gpu.uniform("map params", std::mem::size_of::<MapParams>() as u64),
             miss_params: gpu.uniform("miss params", std::mem::size_of::<MapParams>() as u64),
@@ -188,7 +219,7 @@ impl BrickMap {
             fine: gpu.storage("fine", 4 * FINE_WORDS * voxels),
             moments: gpu.storage("moments", 4 * MOMENT_WORDS * voxels),
             next_fit: gpu.storage("next fit", 4 * voxels),
-            normals: gpu.storage("normals", 16 * voxels),
+            normals: gpu.storage("normals", 4 * voxels),
             dispatch: gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("dispatch args"),
                 size: 12 * DISPATCH_SLOTS,
@@ -255,7 +286,7 @@ impl BrickMap {
             fit_normals: gpu.pipeline(&fit, "fit_normals", &map_only),
         };
 
-        Self {
+        Ok(Self {
             gpu,
             config,
             buffers,
@@ -267,7 +298,7 @@ impl BrickMap {
             table_mask: (table_entries - 1) as u32,
             frame: 0,
             timer: None,
-        }
+        })
     }
 
     pub fn gpu(&self) -> &Arc<Gpu> {
@@ -497,12 +528,10 @@ impl BrickMap {
         let health: Vec<i32> = gpu.read(&self.buffers.health, voxels);
         let fine: Vec<u32> = gpu.read(&self.buffers.fine, voxels * FINE_WORDS as usize);
         let moments: Vec<u32> = gpu.read(&self.buffers.moments, voxels * MOMENT_WORDS as usize);
-        let normals: Vec<[f32; 4]> = gpu.read(&self.buffers.normals, voxels);
+        let normals: Vec<u32> = gpu.read(&self.buffers.normals, voxels);
         let vs = self.config.voxel_size as f64;
         let fixed = |v: usize, word: usize| {
-            let base = v * MOMENT_WORDS as usize + 1 + 2 * word;
-            let raw = (moments[base] as u64) | ((moments[base + 1] as u64) << 32);
-            raw as i64 as f64 / FIXED_SCALE
+            moments[v * MOMENT_WORDS as usize + 1 + word] as i32 as f64 / FIXED_SCALE
         };
         let mut out = Vec::new();
         for (v, &s) in state.iter().enumerate() {
@@ -516,7 +545,6 @@ impl BrickMap {
                 (b[1] << 3) | ((l >> 3) & 7),
                 (b[2] << 3) | (l & 7),
             );
-            let n = normals[v];
             out.push(VoxelSnapshot {
                 key,
                 health: health[v],
@@ -525,7 +553,7 @@ impl BrickMap {
                 m2: [3, 4, 5, 6, 7, 8].map(|w| fixed(v, w) * vs * vs),
                 fine: (fine[2 * v] as u64) | ((fine[2 * v + 1] as u64) << 32),
                 stale: s & S_STALE != 0,
-                normal: (n[3] > 0.0).then_some([n[0], n[1], n[2]]),
+                normal: (s & S_PLANAR != 0).then(|| unpack_normal(normals[v])),
             });
         }
         out
@@ -552,4 +580,16 @@ impl BrickMap {
         .map(|b| b.size())
         .sum()
     }
+}
+
+/// The shader's octahedral unpack, for snapshots.
+fn unpack_normal(packed: u32) -> [f32; 3] {
+    let snorm = |bits: u32| ((bits & 0xffff) as u16 as i16 as f32 / 32767.0).max(-1.0);
+    let (qx, qy) = (snorm(packed), snorm(packed >> 16));
+    let mut n = [qx, qy, 1.0 - qx.abs() - qy.abs()];
+    let t = (-n[2]).max(0.0);
+    n[0] += if n[0] >= 0.0 { -t } else { t };
+    n[1] += if n[1] >= 0.0 { -t } else { t };
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    n.map(|c| c / len)
 }

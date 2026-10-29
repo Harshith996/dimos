@@ -172,8 +172,7 @@ fn trace_rays(
             }
             continue;
         }
-        let normal = normals[v];
-        let spare = normal.w > 0.0 && abs(dot(ray_unit, normal.xyz)) < params.graze_cos;
+        let spare = (state & S_PLANAR) != 0u && abs(dot(ray_unit, unpack_normal(normals[v]))) < params.graze_cos;
         if (!spare && atomicExchange(&stamps[v * 3u + STAMP_MISS], params.frame) != params.frame) {
             push(L_MISSES, C_MISSES, v);
         }

@@ -35,6 +35,8 @@ const FLOOD_STRIDE: u64 = 256;
 /// Flood steps a uniform slot is kept for: both directions of every power of two.
 const FLOOD_SLOTS: u64 = 2 * 17;
 const TILE: u32 = 8;
+/// Flood seeds pack x and y in 16 bits each.
+const MAX_WINDOW_EDGE: u32 = 1 << 16;
 
 /// The MLS planner's surface parameters, in cells.
 #[derive(Clone, Copy, Debug)]
@@ -55,22 +57,26 @@ pub struct Window {
 }
 
 impl Window {
-    /// The box covering `keys`, padded by `pad` columns in x and y.
-    pub fn covering(keys: impl IntoIterator<Item = VoxelKey>, pad: i32) -> Self {
-        let mut lo = (i32::MAX, i32::MAX, i32::MAX);
-        let mut hi = (i32::MIN, i32::MIN, i32::MIN);
+    /// The box covering `keys`, padded by `pad` columns in x and y. None
+    /// when `keys` is empty.
+    pub fn covering(keys: impl IntoIterator<Item = VoxelKey>, pad: i32) -> Option<Self> {
+        let mut bounds: Option<(VoxelKey, VoxelKey)> = None;
         for (x, y, z) in keys {
-            lo = (lo.0.min(x), lo.1.min(y), lo.2.min(z));
-            hi = (hi.0.max(x), hi.1.max(y), hi.2.max(z));
+            let (lo, hi) = bounds.get_or_insert(((x, y, z), (x, y, z)));
+            *lo = (lo.0.min(x), lo.1.min(y), lo.2.min(z));
+            *hi = (hi.0.max(x), hi.1.max(y), hi.2.max(z));
         }
-        Self {
+        let (lo, hi) = bounds?;
+        let extent =
+            |lo: i32, hi: i32, pad: i32| (hi as i64 - lo as i64 + 1 + 2 * pad as i64) as u32;
+        Some(Self {
             min: (lo.0 - pad, lo.1 - pad, lo.2),
             size: (
-                (hi.0 - lo.0 + 1 + 2 * pad) as u32,
-                (hi.1 - lo.1 + 1 + 2 * pad) as u32,
-                (hi.2 - lo.2 + 1) as u32,
+                extent(lo.0, hi.0, pad),
+                extent(lo.1, hi.1, pad),
+                extent(lo.2, hi.2, 0),
             ),
-        }
+        })
     }
 
     fn words_per_column(&self) -> u32 {
@@ -196,10 +202,28 @@ pub struct SurfaceExtractor {
 }
 
 impl SurfaceExtractor {
-    pub fn new(map: &BrickMap, window: Window, config: SurfaceConfig) -> Self {
+    /// Fails when the window's per-cell buffers exceed the device's
+    /// binding limit, or its x, y extent does not fit the 16-bit flood seeds.
+    pub fn new(map: &BrickMap, window: Window, config: SurfaceConfig) -> Result<Self, String> {
         let gpu = Arc::clone(map.gpu());
         let bit_words = 4 * window.columns() * window.words_per_column() as u64;
         let cells = 4 * window.cells();
+        let limits = gpu.device.limits();
+        let largest = (limits.max_storage_buffer_binding_size as u64).min(limits.max_buffer_size);
+        if window.size.0 > MAX_WINDOW_EDGE || window.size.1 > MAX_WINDOW_EDGE {
+            return Err(format!(
+                "surface window {:?} is wider than {MAX_WINDOW_EDGE} columns",
+                window.size
+            ));
+        }
+        if 2 * cells > largest {
+            return Err(format!(
+                "surface window {:?} needs {} bytes of labels but {} allows {largest} per binding",
+                window.size,
+                2 * cells,
+                gpu.adapter_info.name
+            ));
+        }
         // Planes past one per column overflow; their cells get no wall distance.
         let plane_capacity = window.columns().min(u32::MAX as u64) as u32;
         let buffers = Buffers {
@@ -349,7 +373,7 @@ impl SurfaceExtractor {
         };
         extractor.ensure_plane_cells(1);
         extractor.write_plane_info(0, 0);
-        extractor
+        Ok(extractor)
     }
 
     /// Room for `cells` plane cells, regrowing the buffers and their group.
@@ -722,5 +746,23 @@ impl SurfaceExtractor {
             .into_iter()
             .map(|k| (k, ids[self.cell_of(k)]))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Window;
+
+    #[test]
+    fn empty_keys_have_no_window() {
+        assert_eq!(Window::covering(std::iter::empty(), 4), None);
+    }
+
+    #[test]
+    fn window_spans_the_extremes_without_overflow() {
+        let w = Window::covering([(i32::MIN + 8, -3, 0), (i32::MAX - 8, 5, 2)], 4).unwrap();
+        assert_eq!(w.min, (i32::MIN + 4, -7, 0));
+        assert_eq!(w.size.1, 17);
+        assert_eq!(w.size.2, 3);
     }
 }

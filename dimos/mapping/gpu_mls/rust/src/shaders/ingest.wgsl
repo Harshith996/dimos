@@ -108,7 +108,7 @@ fn mark_hits(
         atomicStore(&voxel_state[v], S_EXISTS | S_STALE | S_CREATED);
         health[v] = select(params.min_health, SEED_HEALTH, params.mode == MODE_SEED);
         next_fit[v] = NORMAL_MIN_POINTS;
-        normals[v] = vec4<f32>(0.0);
+        normals[v] = 0u;
     }
 }
 
@@ -126,15 +126,8 @@ fn apply_hits(
     health[v] = min(health[v] + 1, params.max_health);
 }
 
-// Add a 32-bit signed value into a 64-bit two's complement word pair.
-fn add_fixed(base: u32, value: i32) {
-    let lo = bitcast<u32>(value);
-    let old = atomicAdd(&moments[base], lo);
-    let carry = select(0u, 1u, old + lo < old);
-    let hi = select(0u, 0xffffffffu, value < 0);
-    if (hi + carry != 0u) {
-        atomicAdd(&moments[base + 1u], hi + carry);
-    }
+fn add_fixed(word: u32, value: i32) {
+    atomicAdd(&moments[word], bitcast<u32>(value));
 }
 
 fn to_fixed(x: f32) -> i32 {
@@ -164,14 +157,14 @@ fn accumulate(
     let base = v * MOMENT_WORDS;
     atomicAdd(&moments[base], 1u);
     add_fixed(base + 1u, to_fixed(u.x));
-    add_fixed(base + 3u, to_fixed(u.y));
-    add_fixed(base + 5u, to_fixed(u.z));
-    add_fixed(base + 7u, to_fixed(u.x * u.x));
-    add_fixed(base + 9u, to_fixed(u.x * u.y));
-    add_fixed(base + 11u, to_fixed(u.x * u.z));
-    add_fixed(base + 13u, to_fixed(u.y * u.y));
-    add_fixed(base + 15u, to_fixed(u.y * u.z));
-    add_fixed(base + 17u, to_fixed(u.z * u.z));
+    add_fixed(base + 2u, to_fixed(u.y));
+    add_fixed(base + 3u, to_fixed(u.z));
+    add_fixed(base + 4u, to_fixed(u.x * u.x));
+    add_fixed(base + 5u, to_fixed(u.x * u.y));
+    add_fixed(base + 6u, to_fixed(u.x * u.z));
+    add_fixed(base + 7u, to_fixed(u.y * u.y));
+    add_fixed(base + 8u, to_fixed(u.y * u.z));
+    add_fixed(base + 9u, to_fixed(u.z * u.z));
 
     let divisor = i32(params.fine_divisor);
     if (divisor >= 2) {
@@ -202,6 +195,15 @@ fn settle_hits(
     while (milestone <= count) {
         crossed = true;
         milestone += max(milestone / 2u, 1u);
+    }
+    // Halving keeps the mean and covariance, so the fit is unchanged.
+    if (count >= MOMENT_HALVING_COUNT) {
+        let base = v * MOMENT_WORDS;
+        atomicStore(&moments[base], count >> 1u);
+        for (var w = 1u; w < MOMENT_WORDS; w++) {
+            atomicStore(&moments[base + w], bitcast<u32>(bitcast<i32>(atomicLoad(&moments[base + w])) >> 1u));
+        }
+        milestone = max(milestone >> 1u, (count >> 1u) + 1u);
     }
     next_fit[v] = milestone;
     let created = (atomicAnd(&voxel_state[v], ~S_CREATED) & S_CREATED) != 0u;
@@ -234,7 +236,7 @@ fn apply_misses(
     atomicStore(&fine[v * 2u], 0u);
     atomicStore(&fine[v * 2u + 1u], 0u);
     next_fit[v] = NORMAL_MIN_POINTS;
-    normals[v] = vec4<f32>(0.0);
+    normals[v] = 0u;
     push(L_CHANGED, C_CHANGED, v);
 }
 

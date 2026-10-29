@@ -46,14 +46,20 @@ const L_CHANGED: u32 = 4u;
 const S_EXISTS: u32 = 1u;
 const S_STALE: u32 = 2u;
 const S_CREATED: u32 = 4u;
+// The cached normal is a plane; clear when the fit found none.
+const S_PLANAR: u32 = 8u;
 
 const STAMP_HIT: u32 = 0u;
 const STAMP_FIT: u32 = 1u;
 const STAMP_MISS: u32 = 2u;
 
-// Count, then sum (3) and second moment (xx, xy, xz, yy, yz, zz) as 64-bit fixed point.
-const MOMENT_WORDS: u32 = 19u;
-const FIXED_SCALE: f32 = 16777216.0;
+// Count, then sum (3) and second moment (xx, xy, xz, yy, yz, zz) about the
+// voxel center in voxel units, as 32-bit fixed point. A point adds at most
+// FIXED_SCALE / 2 to any word, and settle_hits halves a voxel's moments once
+// its count reaches MOMENT_HALVING_COUNT, so no word overflows.
+const MOMENT_WORDS: u32 = 10u;
+const FIXED_SCALE: f32 = 65536.0;
+const MOMENT_HALVING_COUNT: u32 = 16384u;
 
 const NORMAL_MIN_POINTS: u32 = 3u;
 
@@ -70,7 +76,8 @@ const NORMAL_MIN_POINTS: u32 = 3u;
 @group(0) @binding(10) var<storage, read_write> fine: array<atomic<u32>>;
 @group(0) @binding(11) var<storage, read_write> moments: array<atomic<u32>>;
 @group(0) @binding(12) var<storage, read_write> next_fit: array<u32>;
-@group(0) @binding(13) var<storage, read_write> normals: array<vec4<f32>>;
+// Octahedral-packed unit normals, meaningful where S_PLANAR is set.
+@group(0) @binding(13) var<storage, read_write> normals: array<u32>;
 
 fn thread_index(wg: vec3<u32>, nwg: vec3<u32>, local: u32) -> u32 {
     return (wg.y * nwg.x + wg.x) * 64u + local;
@@ -167,18 +174,28 @@ fn key_of_voxel(v: u32) -> vec3<i32> {
     return (b << vec3<u32>(3u)) | vec3<i32>(i32(l >> 6u), i32((l >> 3u) & 7u), i32(l & 7u));
 }
 
-// Read a 64-bit fixed-point moment word pair as f32 in voxel units.
+// Read a fixed-point moment word as f32 in voxel units.
 fn moment_value(v: u32, word: u32) -> f32 {
-    let base = v * MOMENT_WORDS + 1u + word * 2u;
-    var lo = atomicLoad(&moments[base]);
-    var hi = atomicLoad(&moments[base + 1u]);
-    let negative = (hi & 0x80000000u) != 0u;
-    if (negative) {
-        lo = ~lo + 1u;
-        hi = ~hi + select(0u, 1u, lo == 0u);
-    }
-    let magnitude = (f32(hi) * 4294967296.0 + f32(lo)) / FIXED_SCALE;
-    return select(magnitude, -magnitude, negative);
+    return f32(bitcast<i32>(atomicLoad(&moments[v * MOMENT_WORDS + 1u + word]))) / FIXED_SCALE;
+}
+
+fn sign_not_zero(p: vec2<f32>) -> vec2<f32> {
+    return select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+}
+
+fn pack_normal(n: vec3<f32>) -> u32 {
+    let p = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+    let q = select(p, (vec2<f32>(1.0) - abs(p.yx)) * sign_not_zero(p), n.z < 0.0);
+    return pack2x16snorm(q);
+}
+
+fn unpack_normal(packed: u32) -> vec3<f32> {
+    let q = unpack2x16snorm(packed);
+    var n = vec3<f32>(q, 1.0 - abs(q.x) - abs(q.y));
+    let t = max(-n.z, 0.0);
+    n.x += select(t, -t, n.x >= 0.0);
+    n.y += select(t, -t, n.y >= 0.0);
+    return normalize(n);
 }
 
 fn moment_count(v: u32) -> u32 {
