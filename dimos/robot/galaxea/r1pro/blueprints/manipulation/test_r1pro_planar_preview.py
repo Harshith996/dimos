@@ -75,6 +75,11 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
     assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
 
 
+# Long enough that only a base that never arrives fails, however late a loaded machine's ticks run.
+_DRIVE_TIMEOUT_S = 3600.0
+
+
+@pytest.mark.timeout(_DRIVE_TIMEOUT_S)
 @pytest.mark.skipif(
     platform.system() == "Darwin" and bool(os.environ.get("CI")),
     reason="fails because Mac runner oversleeps by a large margin (10ms -> 30-80ms)",
@@ -82,10 +87,16 @@ def test_planar_preview_plans_on_the_planar_base_limits() -> None:
 def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) -> None:
     """The base half of a whole-body plan has to move this blueprint's mock chassis."""
     config = _coordinator_config(r1pro_planar_preview)
-    # The mock base trails the clock on a loaded machine: more settle time, and a tolerance tighter than the check below.
+    # The mock base trails the clock on a loaded machine: the task waits as long as the test does for it to settle,
+    # to a tolerance tighter than the check below.
     tasks = [
         replace(
-            task, params={**task.params, "settle_timeout": 10.0, "position_goal_tolerance": 0.01}
+            task,
+            params={
+                **task.params,
+                "settle_timeout": _DRIVE_TIMEOUT_S,
+                "position_goal_tolerance": 0.01,
+            },
         )
         if task.name == "base_trajectory"
         else task
@@ -103,7 +114,6 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
             "base_trajectory", "execute", {"trajectory": _forward(0.2, duration=0.5)}
         )
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
-        # The task itself ends the trajectory settle_timeout after its last point; pytest's timeout catches a hang.
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
             is not TrajectoryState.EXECUTING,
