@@ -183,6 +183,7 @@ def _install_generated_plan(
             for point in points
         ],
     )
+    module._state = OperationStatus.HAS_PLAN
     module._initialize_execution()
 
 
@@ -694,7 +695,7 @@ class TestPlanningInitialization:
             status=PlanningStatus.SUCCESS,
         )
         module._pending_plan = pending_plan
-        module._state = OperationStatus.IDLE
+        module._state = OperationStatus.HAS_PLAN
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
@@ -706,7 +707,7 @@ class TestPlanningInitialization:
 
         assert result is expected
         assert module._pending_plan is pending_plan
-        assert module._state == OperationStatus.IDLE
+        assert module._state == OperationStatus.HAS_PLAN
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.current_model_joint_state.assert_not_called()
@@ -1167,7 +1168,9 @@ def test_planning_always_finishes_and_can_retry(state_module, failure):
 
     result = module.plan_to_joints(target)
 
-    assert module.get_operation_status() is OperationStatus.IDLE
+    assert module.get_operation_status() is (
+        OperationStatus.HAS_PLAN if failure is None else OperationStatus.IDLE
+    )
     if failure is None:
         assert result.succeeded
         assert module.has_planned_path()
@@ -1199,7 +1202,7 @@ def test_rejected_requests_preserve_workflow_and_plan(state_module, state, comma
         result = module.plan_to_joints({"manipulator": JointState(position=[0.1, 0.2])})
     elif command == "timeout":
         result = module.execute(timeout=-1)
-    elif state is OperationStatus.IDLE:
+    elif state in {OperationStatus.IDLE, OperationStatus.HAS_PLAN}:
         result = module.execute(plan_id="wrong")
     else:
         result = module.execute()
@@ -1238,7 +1241,7 @@ def test_old_planning_result_cannot_replace_new_plan(state_module, invalidate):
             release.set()
         assert not old.result(timeout=3).succeeded
     assert module._pending_plan is pending
-    assert module._state is OperationStatus.IDLE
+    assert module._state is OperationStatus.HAS_PLAN
 
 
 def test_cancel_waits_for_dispatch_but_not_execution(state_module, mocker):
@@ -1414,7 +1417,7 @@ def test_next_plan_refreshes_finished_nonblocking_execution(state_module, mocker
     result = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
 
     assert result.succeeded
-    assert module._state is OperationStatus.IDLE
+    assert module._state is OperationStatus.HAS_PLAN
     assert module.has_planned_path()
 
 
@@ -1452,3 +1455,74 @@ def test_new_plan_cannot_replace_still_active_execution(state_module, mocker):
     assert "EXECUTING" in result.message
     assert module._state is OperationStatus.EXECUTING
     module._planner.plan_selected_joint_path.assert_not_called()
+
+
+def test_plan_lifecycle_has_one_pending_state(state_module, mocker):
+    module = state_module
+    target = {"manipulator": JointState(position=[0.1])}
+    module.clear_planned_path()
+    assert module.get_state().operation_status is OperationStatus.IDLE
+    assert not module.get_state().has_pending_plan
+
+    assert module.plan_to_joints(target).succeeded
+    assert module.get_state().operation_status is OperationStatus.HAS_PLAN
+    assert module.get_state().has_pending_plan
+    pending = module._pending_plan
+    assert module.plan_to_joints({}, speed_scale=0).status is PlanStatus.INVALID_TARGET
+    assert module._pending_plan is pending
+    assert module.get_operation_status() is OperationStatus.HAS_PLAN
+
+    assert module.plan_to_joints(target).succeeded
+    mocker.patch.object(
+        module._execution_manager, "execute", return_value=ExecutionResult(ExecutionStatus.ACCEPTED)
+    )
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.EXECUTING)
+    )
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+    assert module.get_state().operation_status is OperationStatus.EXECUTING
+    assert not module.get_state().has_pending_plan
+    assert module._pending_plan is None
+
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(ExecutionStatus.COMPLETED)
+    )
+    assert module.wait_for_execution().status is ExecutionStatus.COMPLETED
+    assert module.get_operation_status() is OperationStatus.IDLE
+    assert module.plan_to_joints(target).succeeded
+    assert module.clear_planned_path().succeeded
+    assert module.get_operation_status() is OperationStatus.IDLE
+    assert module._pending_plan is None
+
+
+@pytest.mark.parametrize("outcome", [ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT])
+def test_unconfirmed_stop_blocks_new_motion_until_cancel_confirms(state_module, mocker, outcome):
+    module = state_module
+    mocker.patch.object(
+        module._execution_manager,
+        "execute",
+        return_value=ExecutionResult(outcome, "stop unconfirmed"),
+    )
+    mocker.patch.object(
+        module._execution_manager, "wait", return_value=ExecutionResult(outcome, "stop unconfirmed")
+    )
+    assert module.execute(blocking=False).status is outcome
+    assert module.get_operation_status() is OperationStatus.EXECUTING
+    assert not module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert not module.execute(blocking=False).succeeded
+    module.clear_planned_path()
+    assert module.get_operation_status() is OperationStatus.EXECUTING
+    mocker.patch.object(
+        module._execution_manager, "cancel", return_value=ExecutionResult(ExecutionStatus.ABORTED)
+    )
+    assert module.cancel().status is ExecutionStatus.ABORTED
+    assert module.get_operation_status() is OperationStatus.IDLE
+    assert module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+
+
+def test_cleared_plan_cannot_be_executed_by_operator(state_module):
+    module = state_module
+    plan = module._pending_plan
+    assert module.clear_planned_path().succeeded
+    assert not module._execute_generated_plan(plan)
+    assert module.get_operation_status() is OperationStatus.IDLE

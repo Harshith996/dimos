@@ -151,7 +151,7 @@ class TestManipulationModuleIntegration:
         result = module.plan_to_joints({"manipulator": target})
 
         assert result.succeeded, result.message
-        assert module._state == OperationStatus.IDLE
+        assert module._state == OperationStatus.HAS_PLAN
         assert module.has_planned_path() is True
 
         assert module._pending_plan is not None
@@ -166,7 +166,7 @@ class TestManipulationModuleIntegration:
         result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
 
         assert result.succeeded, result.message
-        assert module._state == OperationStatus.IDLE
+        assert module._state == OperationStatus.HAS_PLAN
         assert module._pending_plan is not None
         assert module._pending_plan.group_ids == ("manipulator",)
         assert module.has_planned_path() is True
@@ -270,10 +270,10 @@ class TestCoordinatorIntegration:
 
         module._on_joint_state(joint_state_zeros)
 
-        # Plan - should go through PLANNING -> COMPLETED
+        # Plan - should go through PLANNING -> HAS_PLAN
         result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
         assert result.succeeded, result.message
-        assert module._state == OperationStatus.IDLE
+        assert module._state == OperationStatus.HAS_PLAN
 
         assert module.clear_planned_path().succeeded
         assert not module.has_planned_path()
@@ -283,7 +283,7 @@ class TestCoordinatorIntegration:
         result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
         assert result.succeeded, result.message
 
-        # Execute - should go to EXECUTING then COMPLETED
+        # Execute - should go to EXECUTING then IDLE
         assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
         assert module._state == OperationStatus.EXECUTING
         assert module.wait_for_execution().status is ExecutionStatus.COMPLETED

@@ -439,7 +439,7 @@ class ManipulationModule(Module):
         with self._lock:
             operation_status = self._state
             error = self._error_message or None
-            has_pending_plan = self._pending_plan is not None
+            has_pending_plan = self._state is OperationStatus.HAS_PLAN
         execution_status = (
             self._execution_manager.status
             if hasattr(self, "_execution_manager")
@@ -595,7 +595,12 @@ class ManipulationModule(Module):
     def _begin(self, phase: OperationStatus) -> int | None:
         """Admit a workflow under _command_lock without mutating rejected requests."""
         with self._lock:
-            if not self._started or self._state is not OperationStatus.IDLE:
+            allowed = (
+                {OperationStatus.IDLE, OperationStatus.HAS_PLAN}
+                if phase is OperationStatus.PLANNING
+                else {OperationStatus.HAS_PLAN}
+            )
+            if not self._started or self._state not in allowed:
                 return None
             self._state_epoch += 1
             self._pending_plan = None
@@ -612,6 +617,8 @@ class ManipulationModule(Module):
                 self._state_epoch += 1
                 if planning_only:
                     self._state = OperationStatus.IDLE
+            if planning_only and previous is OperationStatus.HAS_PLAN:
+                self._state = OperationStatus.IDLE
             return self._state_epoch, previous
 
     def _finish(
@@ -629,7 +636,13 @@ class ManipulationModule(Module):
                 return False
             self._pending_plan = plan
             self._error_message = message
-            self._state = OperationStatus.EXECUTING if active else OperationStatus.IDLE
+            self._state = (
+                OperationStatus.EXECUTING
+                if active
+                else OperationStatus.HAS_PLAN
+                if plan is not None
+                else OperationStatus.IDLE
+            )
             return True
 
     def _require_unique_pose_group_id(self) -> PlanningGroupID:
@@ -987,7 +1000,8 @@ class ManipulationModule(Module):
         Returns:
             True if a path is planned and ready
         """
-        return self._pending_plan is not None and bool(self._pending_plan.path)
+        with self._lock:
+            return self._state is OperationStatus.HAS_PLAN
 
     @rpc
     def get_visualization_url(self) -> str | None:
@@ -1135,7 +1149,11 @@ class ManipulationModule(Module):
         with self._lock:
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan"), None
-            if plan_id is not None and target_plan.plan_id != plan_id:
+            if (
+                self._pending_plan is None
+                or self._pending_plan.plan_id != target_plan.plan_id
+                or (plan_id is not None and target_plan.plan_id != plan_id)
+            ):
                 return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced"), None
             bound = {
                 joint for joints in self.config.trajectory_tasks.values() for joint in joints
@@ -1195,6 +1213,8 @@ class ManipulationModule(Module):
                 ExecutionStatus.ACCEPTED,
                 ExecutionStatus.EXECUTING,
                 ExecutionStatus.TIMED_OUT,
+                ExecutionStatus.UNCERTAIN,
+                ExecutionStatus.FAULT,
             },
         )
 
@@ -1202,6 +1222,13 @@ class ManipulationModule(Module):
         """Use the same admission rules for the visualization operator."""
         with self._command_lock:
             result, _ = self._dispatch_plan(plan, plan.plan_id)
+        if result.status is not ExecutionStatus.ACCEPTED:
+            logger.warning(
+                "Viser plan execution rejected",
+                plan_id=plan.plan_id,
+                status=result.status.name,
+                reason=result.message,
+            )
         return result.status is ExecutionStatus.ACCEPTED
 
     @property
