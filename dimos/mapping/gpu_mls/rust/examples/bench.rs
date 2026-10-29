@@ -35,6 +35,8 @@ const WARMUP: usize = 5;
 const REAL_MAP: &str = "go2_hongkong_office_twopass_map.pc2.lcm";
 
 type Point = (f32, f32, f32);
+/// MapStats::overflow's bit for a full brick pool.
+const POOL_FULL: u32 = 512;
 /// A recording's surfaces are timed in a box this big (x, y, z meters)...
 const CROP_M: Point = (20.0, 20.0, 9.0);
 /// ...centered on the largest height change over this many frames (5 s of Mid-360).
@@ -337,7 +339,7 @@ fn bench_frames(
     }
     let stats = map.stats();
     println!(
-        "| {voxel_size} | {points} | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} / {:.2} ({:.0} voxels) / {:.2} ms | {:.2} ms | {} (bricks {}) |",
+        "| {voxel_size} | {points} | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} ms | {:.2} / {:.2} ({:.0} voxels) / {:.2} ms | {:.2} ms | {} (bricks {}{}) |",
         mean.get("cpu"),
         mean.get("wall"),
         mean.get("submit"),
@@ -349,8 +351,10 @@ fn bench_frames(
         mean.get("update"),
         map.gpu_bytes() / (1 << 20),
         stats.bricks,
+        if stats.overflow & POOL_FULL != 0 { ", pool full" } else { "" },
     );
-    assert_eq!(stats.overflow, 0, "lists or pool overflowed");
+    // A full pool stops the map growing, which a long recording can reach.
+    assert_eq!(stats.overflow & !POOL_FULL, 0, "lists or table overflowed");
     map
 }
 
