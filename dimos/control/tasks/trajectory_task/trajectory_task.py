@@ -247,7 +247,7 @@ class JointTrajectoryTask(BaseControlTask):
             joint_names=[name for name, _ in selected],
             points=[TrajectoryPoint(positions=[position for _, position in selected])],
         )
-        return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        return self.execute(trajectory).status is TrajectoryExecutionStatus.ACCEPTED
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
@@ -391,13 +391,11 @@ class JointTrajectoryTask(BaseControlTask):
     def execute(
         self,
         trajectory: JointTrajectory,
-        current_positions: Mapping[str, float],
     ) -> TrajectoryExecutionResult:
         """Start executing a trajectory.
 
         Args:
             trajectory: Trajectory to execute
-            current_positions: Authoritative positions from the coordinator.
 
         Returns:
             Semantic execution acceptance result.
@@ -427,6 +425,11 @@ class JointTrajectoryTask(BaseControlTask):
                 TrajectoryExecutionStatus.INVALID_TRAJECTORY,
                 "Trajectory structure or joints are invalid",
             )
+
+        current_positions: Mapping[str, float] = {}
+        if len(trajectory.points) > 1:
+            state = self.context.get_state()
+            current_positions = state.joints.joint_positions if state is not None else {}
 
         first_positions = list(trajectory.points[0].positions)
         anchored = False
