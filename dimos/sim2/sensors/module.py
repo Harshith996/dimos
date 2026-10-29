@@ -25,10 +25,10 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.sim2.module import SimulationSpec
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.reader import WorldReader
-from dimos.sim2.world.spec import SimulationSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

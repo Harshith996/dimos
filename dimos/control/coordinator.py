@@ -74,7 +74,6 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.robot.assets.model import RobotModel
-from dimos.sim2.world.spec import SimulationSpec
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -196,9 +195,6 @@ class ControlCoordinator(Module):
     # Injected when the blueprint has a MujocoSimModule: the scene that
     # simulated manipulator adapters without one of their own attach to.
     _mujoco_sim: MujocoSimSpec | None = None
-    # Injected when the blueprint has a sim2 SimulationModule: the world the
-    # ``sim2`` whole-body adapter attaches its robot client to.
-    _sim2: SimulationSpec | None = None
 
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
@@ -374,14 +370,12 @@ class ControlCoordinator(Module):
         """Create a whole-body adapter from component config."""
         from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-        simulation = {} if self._sim2 is None else {"simulation": self._sim2}
         return whole_body_adapter_registry.create(
             component.adapter_type,
             dof=len(component.joints),
             hardware_id=component.hardware_id,
             address=component.address,
             domain_id=component.domain_id,
-            **simulation,
             **component.adapter_kwargs,
         )
 

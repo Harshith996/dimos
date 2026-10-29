@@ -24,7 +24,7 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, Protocol
 
 import mujoco
 
@@ -36,9 +36,16 @@ from dimos.sim2.spec import WorldConfig
 from dimos.sim2.world.evidence import run_record, write_record
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription, SceneState, SceneUpdate
+from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+class SimulationSpec(Spec, Protocol):
+    def describe(self) -> dict[str, Any]: ...
+
+    def describe_robot(self, robot_id: str) -> StreamDescriptor: ...
 
 
 class SimulationModuleConfig(ModuleConfig):
