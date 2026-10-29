@@ -14,9 +14,12 @@
 
 """One simulated world, built from every module in the blueprint that describes itself."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 import tempfile
-from typing import Any, cast
+import time
+from typing import Any, Protocol, cast
 
 import mujoco
 from pydantic import Field
@@ -26,13 +29,25 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor
+from dimos.sim2.state import SharedState
 from dimos.sim2.world import compile_world
+from dimos.spec.utils import Spec
+
+# Physics catches up to the wall clock in bursts, publishing after each, since macOS oversleeps short
+# waits. Lag past one burst is dropped: a controller's command must not land a whole control period late.
+_MAX_BURST_SECONDS = 0.01
+
+
+class SimulationSpec(Spec, Protocol):
+    def describe(self) -> dict[str, Any]: ...
 
 
 class SimulationConfig(ModuleConfig):
     scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
     # describe_simulated() results keyed by instance name; filled in by Simulation.autoconnect.
     simulated: dict[str, Simulated] = Field(default_factory=dict)
+    # Sim seconds per wall second.
+    speed: float = 1.0
 
 
 class Simulation(Module):
@@ -59,6 +74,7 @@ class Simulation(Module):
         super().__init__(**kwargs)
         self._model: mujoco.MjModel | None = None
         self._directory: tempfile.TemporaryDirectory[str] | None = None
+        self._state: SharedState | None = None
 
     @rpc
     def build(self) -> None:
@@ -68,6 +84,34 @@ class Simulation(Module):
         self._model = compile_world(self.config.scene, self.config.simulated.values())
         self._directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
         mujoco.mj_saveModel(self._model, str(self.model_path), None)
+        self._state = SharedState(
+            self._model, Path(self._directory.name) / "state.bin", create=True
+        )
+
+    async def main(self) -> AsyncIterator[None]:
+        self._stepping = asyncio.create_task(self._step_in_real_time())
+        yield
+
+    async def _step_in_real_time(self) -> None:
+        assert self._model is not None and self._state is not None
+        model, state = self._model, self._state
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        state.publish(data)
+        started = time.monotonic()
+        max_steps = max(1, int(_MAX_BURST_SECONDS / model.opt.timestep))
+        while True:
+            steps = int(
+                ((time.monotonic() - started) * self.config.speed - data.time) / model.opt.timestep
+            )
+            if steps > max_steps:
+                started += (steps - max_steps) * model.opt.timestep / self.config.speed
+                steps = max_steps
+            for _ in range(steps):
+                data.ctrl[:] = state.ctrl
+                mujoco.mj_step(model, data)
+            state.publish(data)
+            await asyncio.sleep(0.001)
 
     @property
     def model_path(self) -> Path:
@@ -90,11 +134,13 @@ class Simulation(Module):
                 if isinstance(d, SimulatedSensor)
             ),
             "bodies": self._model.nbody,
+            "state": str(self._state.path) if self._state is not None else None,
         }
 
     @rpc
     def stop(self) -> None:
+        super().stop()
+        self._state = None
         if self._directory is not None:
             self._directory.cleanup()
             self._directory = None
-        super().stop()

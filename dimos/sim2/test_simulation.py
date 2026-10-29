@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+import time
 
 import mujoco
 import pytest
@@ -20,6 +21,7 @@ import pytest
 from dimos.core.module import Module, ModuleConfig
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Mount, SimulatedRobot, SimulatedSensor
+from dimos.sim2.state import SimClient
 from dimos.sim2.world import compile_world
 
 
@@ -52,6 +54,7 @@ def robot_model(tmp_path: Path) -> Path:
       </body>
     </body>
   </worldbody>
+  <actuator><motor name="neck" joint="neck"/></actuator>
   <keyframe><key name="home" qpos="0 0 0 1 0 0 0 0"/></keyframe>
 </mujoco>
 """)
@@ -141,3 +144,21 @@ def test_simulation_builds_and_describes_its_world(scene, robot_model):
     finally:
         simulation.stop()
     assert not Path(description["model"]).exists()
+
+
+def test_simulation_steps_physics_and_takes_commands(scene, robot_model):
+    simulation = Simulation(
+        scene=scene, simulated={"dog": SimulatedRobot("dog", robot_model, "base", xyz=(0, 0, 1))}
+    )
+    try:
+        simulation.build()
+        simulation.start()
+        client = SimClient(simulation.describe())
+        client.write(client.actuator_ids(["dog/neck"]), [1.0])
+        time.sleep(0.5)
+        data = client.read()
+        assert data.time > 0.3
+        assert data.body("dog/base").xpos[2] < 0.2
+        assert data.joint("dog/neck").qvel[0] > 1.0
+    finally:
+        simulation.stop()
