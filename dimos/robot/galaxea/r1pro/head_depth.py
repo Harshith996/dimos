@@ -44,6 +44,8 @@ class R1ProHeadDepthConfig(Depth2DepthCloudConfig, NativeModuleConfig):
     # Floor prior on height_frame's z = 0: probe one pixel per floor_anchor_step block (8: one per cloud pixel at decimation 8), anchor those within floor_tolerance_m.
     floor_anchor_step: int = Field(default=8, ge=1, le=256)
     floor_tolerance_m: float = Field(default=0.05, ge=0.0, le=10.0)
+    # Deeper under the floor is a drop, left as measured rather than anchored on the floor.
+    floor_min_height_m: float = Field(default=-0.15, ge=-10.0, le=0.0)
     floor_anchor_rounds: int = Field(default=3, ge=1, le=16)
 
 
@@ -193,6 +195,8 @@ def r1pro_head_depth(tf_tolerance_s: float, **overrides: object) -> Blueprint:
                 # The lidar never sees the floor (base_link z = 0): unanchored, the near field read 2-5x short.
                 "height_frame": BASE_FRAME,
                 "floor_tolerance_m": HeadFloorPriorConfig.model_fields["floor_tolerance_m"].default,
+                # A drop the floor prior leaves alone is one HeadFloorPrior keeps out of the map too.
+                "floor_min_height_m": HeadFloorPriorConfig.model_fields["min_height_m"].default,
                 # 8x8 / 3000 over 11x11 / 1500 raised near floor coverage from ~45% to 51% on r1_live_20260930_1332.
                 "decimation": 8,
                 "max_points": 3000,
