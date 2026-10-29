@@ -30,7 +30,6 @@ from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import RobotConfig, RobotInstance, WorldConfig
 from dimos.sim2.world.scene_types import SceneDescription
-from dimos.utils.data import LfsPath
 
 
 def quaternion(rpy: tuple[float, float, float]) -> NDArray[np.float64]:
@@ -122,27 +121,14 @@ def _attach_sensors(spec: mujoco.MjSpec, sensors: tuple[Sensor, ...], owner: str
                 )
 
 
-def scene_path(value: str | None, default: str) -> Path:
-    if value is None or value == "none":
-        return LfsPath("sim2/scenes") / default
+def scene_path(value: str | Path) -> Path:
+    """An MJCF file, or a directory containing scene.xml."""
     path = Path(value).expanduser()
-    if not path.exists() and len(path.parts) == 1:
-        path = LfsPath("sim2/scenes") / path
     if path.is_dir():
         path = path / "scene.xml"
     if not path.is_file():
-        names = ", ".join(list_scenes())
-        raise FileNotFoundError(f"sim2 scene {value!r} is not installed; available: {names}")
+        raise FileNotFoundError(f"sim2 scene {str(value)!r} does not exist")
     return path.resolve()
-
-
-def list_scenes() -> list[str]:
-    """List installed native scene names without loading or compiling them."""
-    root = Path(str(LfsPath("sim2/scenes")))
-    return sorted(
-        [p.name for p in root.iterdir() if p.is_dir() and (p / "scene.xml").is_file()]
-        + [p.name for p in root.glob("*.xml")]
-    )
 
 
 def describe_scene(path: Path) -> SceneDescription:

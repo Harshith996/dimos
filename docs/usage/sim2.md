@@ -63,7 +63,7 @@ go2_sim = Simulation.autoconnect(
     Go2Sim.blueprint(),
     SimRGBDCameraModule.blueprint(robot_id="go2", sensor=go2_camera()),
     LidarModule.blueprint(robot_id="go2", sensor=go2_lidar(), root_body="base"),
-    scene="logistics.xml",
+    scene="path/to/scene.xml",
 ).remappings([(LidarModule, "pointcloud", "lidar")])
 ```
 
@@ -75,7 +75,7 @@ world compiles in `build()`. Descriptions come from the blueprint's own kwargs:
 set spawn and sensor mounts there, not as CLI overrides. Add robots by
 rebuilding the complete blueprint.
 
-`Simulation`'s scene defaults to `--scene-package`, then `logistics.xml`. An
+`Simulation` takes a scene path (default `--scene-package`). An
 explicit `world=WorldConfig(...)` can also preset robots, timestep and
 scene-mounted devices. A named spawn places a robot on that scene support. The
 world timestep is lowered to the smallest robot `max_timestep`. Several robots

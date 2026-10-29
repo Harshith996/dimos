@@ -58,7 +58,6 @@ class SimulationConfig(ModuleConfig):
     # An explicit world takes precedence over the scene name/path.
     world: WorldConfig | None = None
     scene: str | Path | None = Field(default_factory=lambda m: m["g"].scene_package)
-    default_scene: str = "logistics.xml"
     sim_id: str = "sim"
     viewer: bool = False
     evidence_dir: Path | None = None
@@ -102,13 +101,9 @@ class Simulation(Module):
         self._truth_thread: threading.Thread | None = None
         self._run_record: dict[str, Any] | None = None
         self._record_path: Path | None = None
-        self._world = self.config.world or WorldConfig(
-            scene_path(
-                None if self.config.scene is None else str(self.config.scene),
-                self.config.default_scene,
-            ),
-            {},
-        )
+        if self.config.world is None and self.config.scene is None:
+            raise ValueError("Simulation needs a scene (or world); pass scene= or --scene-package")
+        self._world = self.config.world or WorldConfig(scene_path(str(self.config.scene)), {})
 
     def _resolved_world(self) -> WorldConfig:
         world = self._world
