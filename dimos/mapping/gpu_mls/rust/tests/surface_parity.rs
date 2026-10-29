@@ -14,6 +14,9 @@
 
 //! GPU surface extraction and wall distance against the MLS planner's CPU
 //! stages, on a synthetic room and on a real map cloud when it is pulled.
+//! The GPU judges headroom, slope and steps from sub-voxel planes, so where
+//! the CPU's whole-voxel stages differ these report the divergence and bound
+//! it; subvoxel.rs checks those verdicts against ground truth instead.
 
 mod common;
 
@@ -24,22 +27,41 @@ use dimos_gpu_mls::surfaces::{SurfaceConfig, SurfaceExtractor, Window};
 use dimos_gpu_mls::synthetic::{Lcg, Scene};
 use dimos_mls_planner::{surface_cells, wall_distances};
 
-/// The MLS planner module's defaults.
-const ROBOT_HEIGHT: f32 = 0.3;
-const CLOSING_RADIUS: f32 = 0.3;
-const STEP_THRESHOLD: f32 = 0.16;
 const WALL_CLEARANCE: f32 = 0.1;
+/// Largest share of the CPU's standable cells the sub-voxel stages may
+/// disagree on: mostly wall tops and other cells the slope gate turns down.
+const STANDABLE_DIVERGENCE: f64 = 0.15;
+/// ...and of its wall cells: mostly where the CPU links three voxels of rise
+/// (15 to 20 cm at 5 cm voxels) that the 16 cm threshold in meters blocks.
+const WALL_DIVERGENCE: f64 = 0.30;
 /// Meters two float distances may differ by and still agree.
 const DISTANCE_TOLERANCE: f32 = 1e-3;
 /// Real map named in the report; pulled with get_data.
 const REAL_MAP: &str = "go2_hongkong_office_twopass_map.pc2.lcm";
 
-fn surface_config(voxel_size: f32) -> SurfaceConfig {
-    SurfaceConfig {
-        clearance_cells: (ROBOT_HEIGHT / voxel_size).ceil() as i32,
-        closing_cells: (CLOSING_RADIUS / voxel_size).ceil() as i32,
-        step_cells: (STEP_THRESHOLD / voxel_size).floor() as i32,
-    }
+/// The planner defaults, and the CPU's whole-voxel equivalents of them.
+struct Cells {
+    clearance: i32,
+    closing: i32,
+    step: i32,
+}
+
+fn surface_config(voxel_size: f32) -> (SurfaceConfig, Cells) {
+    let config = SurfaceConfig::mls_defaults();
+    let cells = Cells {
+        clearance: config.clearance_cells(voxel_size),
+        closing: config.closing_cells(voxel_size),
+        step: config.step_cells(voxel_size),
+    };
+    (config, cells)
+}
+
+/// Report how far two sets differ and bound the difference by a share of the CPU's.
+fn expect_divergence(label: &str, cpu: &AHashSet<VoxelKey>, gpu: &AHashSet<VoxelKey>, bound: f64) {
+    let (only_cpu, only_gpu) = compare(label, "cpu", cpu, "gpu", gpu);
+    let share = (only_cpu + only_gpu) as f64 / cpu.len().max(1) as f64;
+    eprintln!("  expected divergence: {:.2}% of the cpu's", 100.0 * share);
+    assert!(share <= bound, "{label} diverges on {:.1}%", 100.0 * share);
 }
 
 fn synthetic_cloud() -> Vec<(f32, f32, f32)> {
@@ -64,9 +86,9 @@ fn extract(cloud: &[(f32, f32, f32)], voxel_size: f32) -> (AHashSet<VoxelKey>, S
         .filter(|v| v.health > 0)
         .map(|v| v.key)
         .collect();
-    let config = surface_config(voxel_size);
-    let window = Window::covering(occupied.iter().copied(), config.closing_cells + 1)
-        .expect("an occupied map");
+    let (config, cells) = surface_config(voxel_size);
+    let window =
+        Window::covering(occupied.iter().copied(), cells.closing + 1).expect("an occupied map");
     let mut surfaces = SurfaceExtractor::new(&map, window, config).expect("window fits the device");
     surfaces.extract(&mut map);
     map.finish();
@@ -74,13 +96,12 @@ fn extract(cloud: &[(f32, f32, f32)], voxel_size: f32) -> (AHashSet<VoxelKey>, S
 }
 
 /// Exact Euclidean closing of each z slice of `standable`, then the CPU's
-/// headroom and support filters on the added cells.
+/// support filter on the added cells; headroom is left to the GPU's meters.
 fn euclidean_closing(
     standable: &[VoxelKey],
     occupied: &AHashSet<VoxelKey>,
-    config: SurfaceConfig,
+    n: i32,
 ) -> AHashSet<VoxelKey> {
-    let n = config.closing_cells;
     let disk: Vec<(i32, i32)> = (-n..=n)
         .flat_map(|dx| (-n..=n).map(move |dy| (dx, dy)))
         .filter(|(dx, dy)| dx * dx + dy * dy <= n * n)
@@ -93,11 +114,6 @@ fn euclidean_closing(
     for &(x, y, z) in occupied {
         columns.entry((x, y)).or_default().push(z);
     }
-    let clear_above = |x: i32, y: i32, z: i32| {
-        columns
-            .get(&(x, y))
-            .is_none_or(|zs| !zs.iter().any(|&o| o > z && o - z <= config.clearance_cells))
-    };
     let supported = |x: i32, y: i32, z: i32| {
         (-3..=3).any(|dx| {
             (-3..=3).any(|dy| {
@@ -120,7 +136,7 @@ fn euclidean_closing(
             let closed = disk
                 .iter()
                 .all(|&(dx, dy)| grown.contains(&(x + dx, y + dy)));
-            if closed && clear_above(x, y, z) && supported(x, y, z) {
+            if closed && supported(x, y, z) {
                 out.insert((x, y, z));
             }
         }
@@ -154,7 +170,7 @@ fn percentile(sorted: &[f32], p: f32) -> f32 {
 }
 
 fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
-    let config = surface_config(voxel_size);
+    let (config, cells) = surface_config(voxel_size);
     let (occupied, mut surfaces) = extract(cloud, voxel_size);
     let gpu = surfaces.read();
     eprintln!(
@@ -163,15 +179,19 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         occupied.len()
     );
 
-    let cpu_standable: AHashSet<VoxelKey> = surface_cells(&occupied, config.clearance_cells, 0)
+    let cpu_standable: AHashSet<VoxelKey> = surface_cells(&occupied, cells.clearance, 0)
         .into_iter()
         .collect();
     let gpu_standable: AHashSet<VoxelKey> = gpu.standable.iter().copied().collect();
-    let (a, b) = compare("standable", "cpu", &cpu_standable, "gpu", &gpu_standable);
-    assert_eq!((a, b), (0, 0), "the standable test is exact");
+    expect_divergence(
+        "standable",
+        &cpu_standable,
+        &gpu_standable,
+        STANDABLE_DIVERGENCE,
+    );
 
     let gpu_surface: AHashSet<VoxelKey> = gpu.surface.iter().copied().collect();
-    let reference = euclidean_closing(&gpu.standable, &occupied, config);
+    let reference = euclidean_closing(&gpu.standable, &occupied, cells.closing);
     let (a, b) = compare(
         "closing vs exact euclidean",
         "exact",
@@ -179,14 +199,12 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         "gpu",
         &gpu_surface,
     );
-    assert_eq!((a, b), (0, 0), "the round closing is exact");
-    let cpu_surface: AHashSet<VoxelKey> = surface_cells(
-        &occupied,
-        config.clearance_cells,
-        config.closing_cells as u32,
-    )
-    .into_iter()
-    .collect();
+    eprintln!("  filled cells the meter headroom turned down: {a}");
+    assert_eq!(b, 0, "the round closing adds nothing beyond the exact one");
+    let cpu_surface: AHashSet<VoxelKey> =
+        surface_cells(&occupied, cells.clearance, cells.closing as u32)
+            .into_iter()
+            .collect();
     compare(
         "closing vs cpu diamond",
         "cpu",
@@ -197,18 +215,14 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
     let filled_cpu = cpu_surface.len() - cpu_standable.len();
     let filled_gpu = gpu_surface.len() - gpu_standable.len();
     eprintln!("  filled cells: cpu {filled_cpu} gpu {filled_gpu}");
-    // The round and diamond closings only ever disagree on filled cells.
-    assert!(cpu_surface
-        .symmetric_difference(&gpu_surface)
-        .all(|k| !cpu_standable.contains(k)));
 
     // Wall distance on the GPU's surface, so only the distance itself differs.
     let surface_list: Vec<VoxelKey> = gpu.surface.clone();
     let cpu_dist: AHashMap<VoxelKey, f32> = wall_distances(
         &occupied,
         &surface_list,
-        config.clearance_cells,
-        config.step_cells,
+        cells.clearance,
+        cells.step,
         voxel_size,
     )
     .into_iter()
@@ -219,8 +233,7 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
         .map(|(k, _)| *k)
         .collect();
     let gpu_walls: AHashSet<VoxelKey> = gpu.walls.iter().copied().collect();
-    let (a, b) = compare("wall cells", "cpu", &cpu_walls, "gpu", &gpu_walls);
-    assert_eq!((a, b), (0, 0), "wall-adjacent cells are exact");
+    expect_divergence("wall cells", &cpu_walls, &gpu_walls, WALL_DIVERGENCE);
 
     let gpu_dist = surfaces.wall_distances();
     let stats = surfaces.plane_stats;
@@ -261,7 +274,7 @@ fn check_surfaces(label: &str, cloud: &[(f32, f32, f32)], voxel_size: f32) {
     );
     // Jump flooding against an exact nearest-wall search per plane, on a sample.
     let planes: AHashMap<VoxelKey, u32> = surfaces.plane_ids().into_iter().collect();
-    let components = host_components(&gpu.surface, config.step_cells);
+    let components = host_components(&gpu.surface, cells.step);
     let mut planes_per_component: AHashMap<u32, AHashSet<u32>> = AHashMap::new();
     for (k, c) in &components {
         planes_per_component
