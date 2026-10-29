@@ -16,7 +16,7 @@
 
 #![allow(dead_code)]
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use ahash::AHashMap;
 use dimos_gpu_mls::brick_map::{MapConfig, VoxelKey, VoxelSnapshot};
@@ -69,18 +69,13 @@ pub fn gpu_config(cfg: &Config, brick_capacity: u32, max_points: u32) -> MapConf
     }
 }
 
-/// One device for the whole test binary, as in a running module.
 pub fn gpu() -> Arc<Gpu> {
-    static GPU: OnceLock<Arc<Gpu>> = OnceLock::new();
-    GPU.get_or_init(|| {
-        let gpu = Gpu::new().expect("these tests need a GPU");
-        eprintln!(
-            "adapter: {} ({:?})",
-            gpu.adapter_info.name, gpu.adapter_info.backend
-        );
-        gpu
-    })
-    .clone()
+    let gpu = Gpu::new().expect("these tests need a GPU");
+    eprintln!(
+        "adapter: {} ({:?})",
+        gpu.adapter_info.name, gpu.adapter_info.backend
+    );
+    gpu
 }
 
 /// How a GPU map differs from a CPU one, voxel by voxel.
