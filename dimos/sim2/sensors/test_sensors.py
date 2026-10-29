@@ -24,11 +24,9 @@ import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import ZenohTransport
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.blueprint import simulation
-from dimos.sim2.client import SimRobotClient
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.device import CameraDevice
 from dimos.sim2.sensors.camera.module import SimRGBDCameraModule
@@ -42,25 +40,26 @@ from dimos.sim2.sensors.lidar.raycast import Raycaster
 from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.sim2.sensors.spec import Mount
-from dimos.sim2.world.scene_types import SceneUpdate
+
+
+def _description(world, model_path):
+    mujoco.mj_saveModel(world.model, str(model_path), None)
+    return {"model": str(model_path), **world.describe()}
 
 
 @pytest.fixture
 def reader(worlds, tmp_path):
+    """A world wired to a reader the way the snapshot stream wires a sensor worker."""
     world = worlds()
-    model_path = tmp_path / "world.mjb"
-    mujoco.mj_saveModel(world.model, str(model_path), None)
-    observer = WorldReader(
-        {"model": str(model_path), "snapshot": world.snapshot_descriptor.to_dict()}
-    )
-    try:
-        yield world, observer
-    finally:
-        observer.close()
+    observer = WorldReader(_description(world, tmp_path / "world.mjb"))
+    world.publish_snapshot = observer.push
+    observer.push(world.last_snapshot)
+    return world, observer
 
 
-def _render_snapshot(description, camera_name, pipe):
+def _render_snapshot(description, frame, camera_name, pipe):
     observer = WorldReader(description)
+    observer.push(frame)
     try:
         assert observer.update()
         sensor = Camera("test", camera_name, width=160, height=120)
@@ -71,7 +70,6 @@ def _render_snapshot(description, camera_name, pipe):
         finally:
             renderer.close()
     finally:
-        observer.close()
         pipe.close()
 
 
@@ -79,12 +77,12 @@ def _render_snapshot(description, camera_name, pipe):
 def capture(tmp_path):
     # Keep native graphics contexts out of the test coordinator, as in deployment.
     def render(world, camera_name):
-        model_path = tmp_path / "capture.mjb"
-        mujoco.mj_saveModel(world.model, str(model_path), None)
-        description = {"model": str(model_path), "snapshot": world.snapshot_descriptor.to_dict()}
+        description = _description(world, tmp_path / "capture.mjb")
         context = multiprocessing.get_context("spawn")
         reader, writer = context.Pipe(duplex=False)
-        process = context.Process(target=_render_snapshot, args=(description, camera_name, writer))
+        process = context.Process(
+            target=_render_snapshot, args=(description, world.last_snapshot, camera_name, writer)
+        )
         try:
             process.start()
             writer.close()
@@ -124,7 +122,10 @@ def test_lidar_uses_its_own_model_and_sees_scene_mutations(reader):
     origin = np.array([0.0, 0, 0.3])
     before = raycaster.ranges(observer.data, origin, rays, 10)
     assert before == pytest.approx([1.3])
-    world.set_scene_state(SceneUpdate(poses={"box": Pose(2.5, 0, 0.3)}))
+    box = world.model.jnt_qposadr[world.model.body("box").jntadr[0]]
+    world.data.qpos[box] = 2.5
+    for _ in range(world.snapshot_stride):
+        world.step()
     assert observer.update()
     after = raycaster.ranges(observer.data, origin, rays, 10)
     assert after == pytest.approx([2.3])
@@ -190,7 +191,9 @@ def test_world_device_can_follow_a_movable_scene_body(world_config, worlds):
     world = worlds(config=replace(world_config, sensors=(camera,)))
     camera_id = world.model.camera("sensor/inspection").id
     assert world.data.cam_xpos[camera_id] == pytest.approx([1.5, 0, 1.3])
-    world.set_scene_state(SceneUpdate(poses={"box": Pose(2.5, 0, 0.3)}))
+    box = world.model.jnt_qposadr[world.model.body("box").jntadr[0]]
+    world.data.qpos[box] = 2.5
+    world.step()
     assert world.data.cam_xpos[camera_id] == pytest.approx([2.5, 0, 1.3])
 
 
@@ -237,7 +240,7 @@ def test_devices_acquire_without_a_module_and_wait_for_modeled_delivery(
         assert measurements
         assert {m.acquisition_end for m in measurements} == {0.0}
         assert {m.available_at for m in measurements} == {0.025}
-        assert all(m.episode == world.generation for m in measurements)
+        assert all(m.episode == world.episode for m in measurements)
         device.published(measurements[0], at=measurements[0].available_timestamp + 0.02)
         assert device.status()["lateness_seconds"] == pytest.approx(0.02, abs=1e-6)
         assert device.poll() == []
@@ -267,7 +270,7 @@ def test_pause_and_reset_discard_old_deliveries(reader):
     device = ImuDevice(observer, sensor, "left")
     try:
         assert device.poll() == []
-        old_episode = world.generation
+        old_episode = world.episode
         world.set_paused(True)
         world.step()
         assert device.poll() == []
@@ -377,8 +380,20 @@ def test_blueprint_deploys_physics_camera_and_lidar_in_workers(world_config, ext
             assert len(depth_clouds[0].pointcloud.points) > 100
         assert sim.status()["running"]
         assert sim.status()["steps"] > 0
-        with SimRobotClient(world=sim, robot_id="left", writable=False) as client:
-            before = client.read()
-            sim.reset()
-            after = client.read()
-            assert after.metadata.episode_id == before.metadata.episode_id + 1
+        episode = sim.status()["episode"]
+        sim.reset()
+        assert sim.status()["episode"] == episode + 1
+
+
+def test_reader_history_is_bounded_and_cleared_at_reset(reader):
+    world, observer = reader
+    for _ in range(100):
+        world.step()
+    frames = observer.frames()
+    assert len(frames) == world.snapshot_slots
+    assert all(f.metadata.episode_id == world.episode for f in frames)
+    world.reset()
+    frames = observer.frames()
+    assert len(frames) == 1
+    assert frames[0].metadata.sim_time == 0
+    assert frames[0].metadata.episode_id == world.episode

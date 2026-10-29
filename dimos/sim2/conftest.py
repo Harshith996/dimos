@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Small MJCFs exercise the emulator without LFS, robot SDKs or network services."""
+"""Small MJCFs exercise the world without LFS, robot SDKs or network services."""
 
 from contextlib import ExitStack
-from copy import deepcopy
-import time
-from uuid import uuid4
 
 import pytest
 
-from dimos.core.transport import pZenohTransport
-from dimos.protocol.pubsub.impl.memory import Memory
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.sim2.client import SimRobotClient
-from dimos.sim2.module import SimulationSpec
 from dimos.sim2.sensors.camera.spec import Camera
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.lidar.models.fibonacci import Fibonacci
@@ -33,46 +25,6 @@ from dimos.sim2.sensors.lidar.spec import Lidar
 from dimos.sim2.spec import Joint, RobotConfig, RobotInstance, WorldConfig
 from dimos.sim2.world.runtime import SimulationRuntime
 from dimos.sim2.world.scene_types import SceneDescription, SceneEntity, SceneJoint, SceneRegion
-
-
-@pytest.fixture(autouse=True)
-def local_transport(request, mocker):
-    """Unit tests step synchronously; native tests exercise real asynchronous delivery."""
-    if request.node.get_closest_marker("native_e2e") or request.node.get_closest_marker(
-        "self_hosted"
-    ):
-        return
-    # A manually stepped world does not age while the test constructs its clients.
-    # Deadline tests advance this clock explicitly; native tests keep real clocks.
-    clock = mocker.Mock(wraps=time)
-    clock.monotonic.return_value = time.monotonic()
-    for module in ("client", "streams", "world.runtime"):
-        mocker.patch(f"dimos.sim2.{module}.time", clock)
-    bus = Memory()
-    methods = {}
-
-    def transport(topic):
-        value = mocker.create_autospec(pZenohTransport, instance=True)
-        value.broadcast.side_effect = lambda stream, message: bus.publish(topic.pattern, message)
-        value.subscribe.side_effect = lambda callback: bus.subscribe(
-            topic.pattern, lambda msg, _: callback(deepcopy(msg))
-        )
-        return value
-
-    def rpc(**kwargs):
-        value = mocker.create_autospec(ZenohRPC, instance=True)
-        value.serve_rpc.side_effect = lambda method, name: methods.update({name: method})
-
-        def call(name, arguments, **kwargs):
-            if name not in methods:
-                raise TimeoutError("sim2 endpoint unavailable")
-            return deepcopy(methods[name](*arguments[0], **arguments[1])), lambda: None
-
-        value.call_sync.side_effect = call
-        return value
-
-    mocker.patch("dimos.sim2.streams.pZenohTransport", side_effect=transport)
-    mocker.patch("dimos.sim2.streams.ZenohRPC", side_effect=rpc)
 
 
 @pytest.fixture
@@ -170,27 +122,22 @@ def world_config(tmp_path):
 def worlds(world_config):
     with ExitStack() as stack:
 
-        def create(*, config=None, sim_id=None):
+        def create(*, config=None):
             config = world_config if config is None else config
-            return stack.enter_context(SimulationRuntime(config, sim_id or uuid4().hex))
+            return stack.enter_context(SimulationRuntime(config))
 
         yield create
 
 
 @pytest.fixture
-def clients(mocker):
-    with ExitStack() as stack:
+def feedback(mocker):
+    """Attach a recording feedback callback to a world; returns the list of samples."""
 
-        def create(world, robot_id="left", *, start=False, **kwargs):
-            source = mocker.Mock(spec=SimulationSpec)
-            source.describe_robot.side_effect = lambda name: world.robots[name].channel.descriptor
-            kwargs.setdefault("writable", False)
-            client = SimRobotClient(world=source, robot_id=robot_id, **kwargs)
-            stack.callback(client.close)
-            if start:
-                client.start()
-            else:
-                client.connect()
-            return client
+    def attach(world):
+        samples = []
+        world.publish_feedback = lambda robot_id, joints, imu, odom: samples.append(
+            (robot_id, joints, imu, odom)
+        )
+        return samples
 
-        yield create
+    return attach

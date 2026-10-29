@@ -12,38 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only worker-local model/data; physics publishes only integration state."""
+"""Worker-local MuJoCo model and data, restored from the world's snapshot stream."""
 
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
+from collections import deque
+import threading
 from typing import Any
 
 import mujoco
 import numpy as np
 
-from dimos.sim2.messages import StateFrame, StreamDescriptor
-from dimos.sim2.streams import SimStream
+from dimos.sim2.messages import StateFrame
 from dimos.sim2.world.runtime import STATE
 
 
 class WorldReader:
+    """Keeps a bounded snapshot history and restores any instant of it into local data.
+
+    ``push`` is the subscriber callback for the world's ``snapshots`` stream.
+    ``update`` restores the newest frame; ``history`` and ``restore_at`` serve
+    devices that integrate over an interval, such as a rolling lidar.
+    """
+
     def __init__(self, description: dict[str, Any]) -> None:
         self.model = mujoco.MjModel.from_binary_path(description["model"])
         self.data = mujoco.MjData(self.model)
-        self.channel: SimStream[StateFrame] = SimStream.attach(
-            StreamDescriptor.from_dict(description["snapshot"])
-        )
+        self.period = float(description["physics_dt"]) * int(description["snapshot_stride"])
+        self._frames: deque[StateFrame] = deque(maxlen=int(description["snapshot_slots"]))
+        self._lock = threading.Lock()
         self.sequence = -1
         self.timestamp = 0.0
         self.episode = -1
         self._history: tuple[StateFrame, ...] = ()
         self._next: mujoco.MjData | None = None
 
+    def push(self, frame: StateFrame) -> None:
+        """Accept a published snapshot; older sequences and repeated paused ticks are dropped."""
+        with self._lock:
+            if self._frames:
+                last = self._frames[-1]
+                if frame.metadata.sequence <= last.metadata.sequence:
+                    return
+                if frame.metadata.episode_id != last.metadata.episode_id:
+                    self._frames.clear()
+                elif frame.metadata.physics_tick == last.metadata.physics_tick:
+                    self._frames.pop()
+            self._frames.append(frame)
+
+    def frames(self) -> tuple[StateFrame, ...]:
+        with self._lock:
+            return tuple(self._frames)
+
+    @property
+    def latest_episode(self) -> int:
+        """Episode of the newest received frame, which may be newer than the restored one."""
+        with self._lock:
+            return self._frames[-1].metadata.episode_id if self._frames else -1
+
     def update(self) -> bool:
-        if self.channel.lifecycle != "ready":
-            return False
-        frame = self.channel.read_observation()
+        with self._lock:
+            frame = self._frames[-1] if self._frames else None
         if frame is None:
             return False
         changed = frame.metadata.sequence != self.sequence
@@ -53,26 +83,24 @@ class WorldReader:
         return changed
 
     def restore(self, frame: StateFrame) -> None:
-        """Restore an exact observation, including MuJoCo's mounted IMU readings."""
+        """Restore an exact snapshot, including MuJoCo's mounted IMU readings."""
         mujoco.mj_setState(self.model, self.data, frame.values["state"], STATE)
         mujoco.mj_forward(self.model, self.data)
         self.timestamp = float(frame.values["wall_time"][0])
 
     def history(self, start: float, end: float) -> bool:
         """Pin a complete interval from this episode; never invent missing motion."""
-        frames = self.channel.read_observations()
-        self._history = tuple(f for f in frames if f.metadata.episode_id == self.episode)
+        self._history = tuple(f for f in self.frames() if f.metadata.episode_id == self.episode)
         times = np.array([f.metadata.sim_time for f in self._history])
         first = max(0, bisect_right(times, start) - 1)
         last = bisect_left(times, end) + 1
         self._history = self._history[first:last]
         times = times[first:last]
-        period = self.channel.descriptor.physics_dt * self.channel.descriptor.control_decimation
         if (
             len(times) == 0
             or times[0] > start + 1e-9
             or times[-1] < end - 1e-9
-            or np.any(np.diff(times) > period * 1.5)
+            or np.any(np.diff(times) > self.period * 1.5)
             or np.any(np.diff(times) < 0)
         ):
             self._history = ()
@@ -113,6 +141,3 @@ class WorldReader:
             + alpha * (after.values["wall_time"][0] - before.values["wall_time"][0])
         )
         mujoco.mj_forward(self.model, self.data)
-
-    def close(self) -> None:
-        self.channel.close()

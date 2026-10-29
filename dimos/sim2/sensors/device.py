@@ -70,7 +70,7 @@ class SensorDevice(ABC, Generic[SensorT]):
     def poll(self) -> list[Measurement]:
         with self._error_lock:
             self.reader.update()
-            if self.reader.sequence < 0 or self.reader.channel.lifecycle != "ready":
+            if self.reader.sequence < 0:
                 return []
             now = float(self.reader.data.time)
             if self._episode != self.reader.episode:
@@ -79,7 +79,7 @@ class SensorDevice(ABC, Generic[SensorT]):
                 self._pending.clear()
                 self.reset()
             self.capture()
-            if self.reader.channel.episode_id != self._episode:
+            if self.reader.latest_episode != self._episode:
                 self._pending.clear()
                 return []
             ready = [m for m in self._pending if m.available_at <= now + 1e-9]

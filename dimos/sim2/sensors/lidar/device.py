@@ -138,7 +138,7 @@ class LidarDevice(SensorDevice[Lidar]):
         imu = self.sensor.imu
         if imu is None:
             return
-        observations = self.reader.channel.read_observations()
+        observations = self.reader.frames()
         frames = [
             frame
             for frame in observations
@@ -164,7 +164,7 @@ class LidarDevice(SensorDevice[Lidar]):
                 self.reader.restore_at(t)
             else:
                 continue
-            if self.reader.channel.episode_id != self._episode:
+            if self.reader.latest_episode != self._episode:
                 return
             self.emit(
                 "imu_raw",
@@ -230,7 +230,7 @@ class LidarDevice(SensorDevice[Lidar]):
             distances = measured
         self.reader.restore_at(end)
         self.reader.timestamp = self._clock_origin + end
-        if self.reader.channel.episode_id != self._episode:
+        if self.reader.latest_episode != self._episode:
             return
         hit = (distances >= pattern.min_range) & (distances <= pattern.max_range)
         raw = rays.directions[hit] * distances[hit, None]

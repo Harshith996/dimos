@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compose one world and its sensors; robot connections own their device clients."""
-
-from pathlib import Path
+"""Compose one world and its sensor workers into a Blueprint."""
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.sim2.module import SimulationModule
@@ -30,27 +28,23 @@ from dimos.sim2.spec import WorldConfig
 def simulation(
     *,
     world: WorldConfig,
-    sim_id: str = "sim",
-    viewer: bool = False,
+    module: type[SimulationModule] = SimulationModule,
     instance_name: str | None = None,
-    evidence_dir: Path | None = None,
 ) -> Blueprint:
-    """Build physics and declared sensing, without choosing a controller or robot driver."""
-    modules = [
-        SimulationModule.blueprint(
-            world=world,
-            sim_id=sim_id,
-            viewer=viewer,
-            instance_name=instance_name,
-            evidence_dir=evidence_dir,
-        )
-    ]
+    """Build physics and the declared sensor workers.
+
+    Args:
+        world: Scene, robots and world-mounted sensors.
+        module: The world class; a subclass declares the per-robot IO ports.
+        instance_name: Name of the world module in the blueprint.
+    """
+    modules = [module.blueprint(world=world, instance_name=instance_name)]
     for robot_id, sensor in world.devices:
         owner = robot_id or "world"
         kwargs = dict(instance_name=f"{owner}_{sensor.name}", robot_id=robot_id, sensor=sensor)
         if isinstance(sensor, Camera):
-            module = SimRGBDCameraModule if sensor.depth else SimCameraModule
-            blueprint = module.blueprint(**kwargs)
+            camera_module = SimRGBDCameraModule if sensor.depth else SimCameraModule
+            blueprint = camera_module.blueprint(**kwargs)
         elif isinstance(sensor, Lidar):
             root_body = world.robots[robot_id].config.root_body if robot_id is not None else None
             blueprint = LidarModule.blueprint(**kwargs, root_body=root_body)

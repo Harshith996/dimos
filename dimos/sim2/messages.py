@@ -12,131 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Internal simulator messages. Joint order and units come from RobotConfig.
+"""Snapshot messages between physics and sensor workers.
 
-These are Python messages over DimOS transport, not a shared-memory ABI.
-World snapshots are privileged MuJoCo integration state, not robot observations.
+Robot IO uses standard DimOS messages on ordinary module ports. Only the full
+MuJoCo integration state, which sensor workers restore into their own copy of
+the model, has no DimOS message type and travels as this pickled dataclass.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-import hashlib
-import json
-from typing import Any, Literal
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.spec import RobotInstance
-
-Lifecycle = Literal["starting", "ready", "faulted", "closed"]
-
-
-@dataclass(frozen=True)
-class StreamDescriptor:
-    sim_id: str
-    robot_id: str
-    generation: str
-    physics_dt: float
-    control_decimation: int = 1
-    observation_slots: int = 2
-    joint_names: tuple[str, ...] = ()
-    actuator_modes: tuple[Literal["effort", "position"], ...] = ()
-    position_gains: tuple[tuple[float, float], ...] = ()
-    control_imu: str | None = None
-
-    @property
-    def dof(self) -> int:
-        return len(self.joint_names)
-
-    @property
-    def topic(self) -> str:
-        suffix = f"robots/{self.robot_id}" if self.dof else "world"
-        return f"sim2/{self.generation}/{suffix}"
-
-    @property
-    def fingerprint(self) -> str:
-        return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> StreamDescriptor:
-        return cls(
-            **{
-                **value,
-                "joint_names": tuple(value["joint_names"]),
-                "actuator_modes": tuple(value["actuator_modes"]),
-                "position_gains": tuple(tuple(g) for g in value["position_gains"]),
-            }
-        )
-
-
-def robot_descriptor(
-    sim_id: str, robot_id: str, generation: str, instance: RobotInstance, timestep: float
-) -> StreamDescriptor:
-    return StreamDescriptor(
-        sim_id,
-        robot_id,
-        generation,
-        timestep,
-        joint_names=tuple(j.name for j in instance.config.joints),
-        actuator_modes=tuple(j.mode for j in instance.config.joints),
-        position_gains=tuple((j.kp, j.kd) for j in instance.config.joints),
-        control_imu=instance.control_imu,
-    )
-
 
 @dataclass(frozen=True)
 class FrameMetadata:
-    """Internal transport stamp; episode_id is the command/sensor generation.
+    """Where a snapshot sits in the run.
 
-    Unlike SceneState.episode, it also changes on an edit or resume.
+    Attributes:
+        sequence: Publication counter; a reader ignores anything it already has.
+        episode_id: Advances on reset and on resume after a pause. Pending sensor
+            work from an older episode is discarded.
+        physics_tick: Steps taken since the world was built.
+        sim_time: MuJoCo time in seconds.
     """
 
     sequence: int
     episode_id: int
     physics_tick: int
-    control_tick: int
     sim_time: float
-    applied_action_sequence: int = 0
 
 
 @dataclass(frozen=True)
 class StateFrame:
-    """Internal MuJoCo world snapshot, consumed only by sensor workers."""
+    """MuJoCo integration state after one step.
+
+    Attributes:
+        metadata: Position of this frame in the run.
+        values: ``state`` is the ``mjSTATE_INTEGRATION`` vector; ``wall_time`` is
+            the Unix time the frame corresponds to, as a one-element array.
+    """
 
     metadata: FrameMetadata
     values: dict[str, NDArray[np.float64]]
-    lifecycle: Lifecycle = "ready"
-    reset_at: float = 0.0
-
-
-@dataclass(frozen=True)
-class RobotFeedback:
-    """One physics acquisition. Odometry is simulator truth, not an estimator."""
-
-    metadata: FrameMetadata
-    joints: JointState
-    imu: Imu | None
-    odom: PoseStamped
-    base_velocity: Twist
-    monotonic_time: float
-    enabled: bool
-    estopped: bool = False
-    lifecycle: Lifecycle = "ready"
-    reset_at: float = 0.0
-
-
-@dataclass(frozen=True)
-class MotorFrame:
-    metadata: FrameMetadata
-    values: dict[str, NDArray[np.float64]]
-    writer: str
-    source_ts: float
