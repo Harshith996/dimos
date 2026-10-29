@@ -19,11 +19,11 @@
 use std::sync::Arc;
 
 use dimos_depth2depth_cloud::depth2depth::{Anchor, Calibration};
-use dimos_depth2depth_cloud::module::{Config as DepthConfig, FrameAnchors, Pipeline};
+use dimos_depth2depth_cloud::module::{Config as DepthConfig, FrameHooks, Pipeline};
 use dimos_depth2depth_cloud::undistort::UndistortMap;
 use dimos_module::{Builder, Input, Module, NativeConfig};
 use lcm_msgs::sensor_msgs::{CameraInfo, CompressedImage, PointCloud2};
-use nalgebra::{Isometry3, Vector3};
+use nalgebra::{Isometry3, Point3, Vector3};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use validator::Validate;
@@ -38,24 +38,42 @@ pub struct Config {
     #[validate(range(min = 1, max = 256))]
     pub floor_anchor_step: i64,
     /// A probed pixel the calibration puts at most this above the floor, and no deeper under it than
-    /// `floor_min_height_m`, is anchored on it.
+    /// Depth2DepthCloud's `min_height_m` (deeper is a drop, left as measured), is anchored on it.
     #[validate(range(min = 0.0, max = 10.0))]
     pub floor_tolerance_m: f64,
-    /// Deeper than this under the floor is a drop, left as measured rather than anchored on the floor.
-    #[validate(range(min = -10.0, max = 0.0))]
-    pub floor_min_height_m: f64,
     /// Probe-and-anchor rounds per frame: each round's anchors recalibrate the pixels the next one probes.
     #[validate(range(min = 1, max = 16))]
     pub floor_anchor_rounds: i64,
+    /// A cloud point no higher than this above the floor (and no deeper than `min_height_m`) is slid along its ray onto it.
+    #[validate(range(min = 0.0, max = 10.0))]
+    pub floor_snap_tolerance_m: f64,
+    /// The floor under the robot, which it stands on and no sensor sees, as points this far apart; 0 radius adds none.
+    #[validate(range(min = 0.0, max = 10.0))]
+    pub footprint_radius_m: f64,
+    #[validate(range(min = 0.001, max = 10.0))]
+    pub footprint_spacing_m: f64,
+    /// Unseen floor past the footprint, per bearing out to its nearest point within this reach if that is floor; 0 adds none.
+    #[validate(range(min = 0.0, max = 100.0))]
+    pub view_fill_reach_m: f64,
+    #[validate(range(min = 0.1, max = 180.0))]
+    pub view_fill_bin_deg: f64,
     #[serde(flatten)]
     #[validate(nested)]
     pub depth: DepthConfig,
-    /// Depth2DepthCloud's `max_range_m`: the floor is counted out to it.
+    /// Depth2DepthCloud's `max_range_m` and `min_height_m`: the floor is counted out to the first, drops start under the second.
     #[serde(skip)]
     max_range_m: f64,
+    #[serde(skip)]
+    min_height_m: f64,
 }
 
 impl NativeConfig for Config {}
+
+fn field<T: serde::de::DeserializeOwned, E: serde::de::Error>(
+    value: serde_json::Value,
+) -> Result<T, E> {
+    serde_json::from_value(value).map_err(E::custom)
+}
 
 impl<'de> Deserialize<'de> for Config {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -69,26 +87,34 @@ impl<'de> Deserialize<'de> for Config {
         let head_right = take("head_right")?;
         let floor_anchor_step = take("floor_anchor_step")?;
         let floor_tolerance_m = take("floor_tolerance_m")?;
-        let floor_min_height_m = take("floor_min_height_m")?;
         let floor_anchor_rounds = take("floor_anchor_rounds")?;
-        let max_range_m = fields
-            .get("max_range_m")
-            .and_then(serde_json::Value::as_f64)
-            .ok_or_else(|| D::Error::missing_field("max_range_m"))?;
+        let floor_snap_tolerance_m = take("floor_snap_tolerance_m")?;
+        let footprint_radius_m = take("footprint_radius_m")?;
+        let footprint_spacing_m = take("footprint_spacing_m")?;
+        let view_fill_reach_m = take("view_fill_reach_m")?;
+        let view_fill_bin_deg = take("view_fill_bin_deg")?;
+        let depth_field = |name: &'static str| {
+            fields
+                .get(name)
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| D::Error::missing_field(name))
+        };
+        let max_range_m = depth_field("max_range_m")?;
+        let min_height_m = depth_field("min_height_m")?;
         Ok(Config {
-            head_left: serde_json::from_value(head_left).map_err(D::Error::custom)?,
-            head_right: serde_json::from_value(head_right).map_err(D::Error::custom)?,
-            floor_anchor_step: serde_json::from_value(floor_anchor_step)
-                .map_err(D::Error::custom)?,
-            floor_tolerance_m: serde_json::from_value(floor_tolerance_m)
-                .map_err(D::Error::custom)?,
-            floor_min_height_m: serde_json::from_value(floor_min_height_m)
-                .map_err(D::Error::custom)?,
-            floor_anchor_rounds: serde_json::from_value(floor_anchor_rounds)
-                .map_err(D::Error::custom)?,
-            depth: serde_json::from_value(serde_json::Value::Object(fields))
-                .map_err(D::Error::custom)?,
+            head_left: field::<_, D::Error>(head_left)?,
+            head_right: field::<_, D::Error>(head_right)?,
+            floor_anchor_step: field::<_, D::Error>(floor_anchor_step)?,
+            floor_tolerance_m: field::<_, D::Error>(floor_tolerance_m)?,
+            floor_anchor_rounds: field::<_, D::Error>(floor_anchor_rounds)?,
+            floor_snap_tolerance_m: field::<_, D::Error>(floor_snap_tolerance_m)?,
+            footprint_radius_m: field::<_, D::Error>(footprint_radius_m)?,
+            footprint_spacing_m: field::<_, D::Error>(footprint_spacing_m)?,
+            view_fill_reach_m: field::<_, D::Error>(view_fill_reach_m)?,
+            view_fill_bin_deg: field::<_, D::Error>(view_fill_bin_deg)?,
+            depth: field::<_, D::Error>(serde_json::Value::Object(fields))?,
             max_range_m,
+            min_height_m,
         })
     }
 }
@@ -109,19 +135,27 @@ impl Module for R1ProHeadDepth {
     type Config = Config;
 
     fn build(builder: &mut Builder, config: Config) -> Self {
-        let floor: Arc<dyn FrameAnchors> = Arc::new(FloorPrior {
+        let floor: Arc<dyn FrameHooks> = Arc::new(FloorPrior {
             step: config.floor_anchor_step as usize,
             tolerance: config.floor_tolerance_m,
-            min_height: config.floor_min_height_m,
+            min_height: config.min_height_m,
             rounds: config.floor_anchor_rounds as usize,
             max_range: config.max_range_m,
+            snap: FloorSnap {
+                tolerance: config.floor_snap_tolerance_m,
+                min_height: config.min_height_m,
+                footprint_radius: config.footprint_radius_m,
+                footprint_spacing: config.footprint_spacing_m,
+                view_fill_reach: config.view_fill_reach_m,
+                view_fill_bin_deg: config.view_fill_bin_deg,
+            },
         });
         let tf = builder.tf();
-        let output = builder.output("head_depth_raw", PointCloud2::encode);
+        let output = builder.output("head_cloud", PointCloud2::encode);
         let pipeline = |enabled: bool| {
             enabled.then(|| {
                 Pipeline::new(config.depth.clone(), tf.clone(), output.clone())
-                    .with_frame_anchors(floor.clone())
+                    .with_frame_hooks(floor.clone())
             })
         };
         Self {
@@ -173,7 +207,7 @@ impl Module for R1ProHeadDepth {
     }
 }
 
-impl FrameAnchors for FloorPrior {
+impl FrameHooks for FloorPrior {
     fn anchors(
         &self,
         calibration: &Calibration,
@@ -186,6 +220,17 @@ impl FrameAnchors for FloorPrior {
             self.floor_anchors(calibration, pred, map, visible, floor_from_camera)
         })
     }
+
+    fn points(
+        &self,
+        points: Vec<[f32; 3]>,
+        height_from_camera: Option<&Isometry3<f64>>,
+    ) -> Vec<[f32; 3]> {
+        match height_from_camera {
+            Some(floor_from_camera) => self.snap.apply(points, floor_from_camera),
+            None => points,
+        }
+    }
 }
 
 /// Floor prior: the Config fields of the same names (`height_frame`'s z = 0 is the floor), and the floor counted out to `max_range` along the optical axis.
@@ -195,6 +240,104 @@ struct FloorPrior {
     min_height: f64,
     rounds: usize,
     max_range: f64,
+    snap: FloorSnap,
+}
+
+/// The finished cloud's floor: the Config fields `floor_snap_tolerance_m`, `min_height_m`, `footprint_*` and `view_fill_*`.
+struct FloorSnap {
+    tolerance: f64,
+    min_height: f64,
+    footprint_radius: f64,
+    footprint_spacing: f64,
+    view_fill_reach: f64,
+    view_fill_bin_deg: f64,
+}
+
+impl FloorSnap {
+    /// Camera-frame points near the floor slid along their rays onto it, then the unseen floor ahead and under the robot added.
+    fn apply(&self, points: Vec<[f32; 3]>, floor_from_camera: &Isometry3<f64>) -> Vec<[f32; 3]> {
+        let camera_z = floor_from_camera.translation.vector.z;
+        let mut in_floor: Vec<Point3<f64>> = Vec::with_capacity(points.len());
+        let mut out: Vec<[f32; 3]> = Vec::with_capacity(points.len());
+        for [x, y, z] in points {
+            let mut point = Point3::new(x as f64, y as f64, z as f64);
+            let mut floor_point = floor_from_camera * point;
+            let height = floor_point.z;
+            if height < camera_z - 1e-3 && (self.min_height..=self.tolerance).contains(&height) {
+                point.coords *= -camera_z / (height - camera_z);
+                floor_point = floor_from_camera * point;
+            }
+            in_floor.push(floor_point);
+            out.push([point.x as f32, point.y as f32, point.z as f32]);
+        }
+        let camera_from_floor = floor_from_camera.inverse();
+        let mut added: Vec<[f64; 2]> = Vec::new();
+        if self.view_fill_reach > 0.0 {
+            added.extend(self.view_fill(&in_floor));
+        }
+        if self.footprint_radius > 0.0 {
+            added.extend(self.footprint());
+        }
+        out.extend(added.into_iter().map(|[x, y]| {
+            let point = camera_from_floor * Point3::new(x, y, 0.0);
+            [point.x as f32, point.y as f32, point.z as f32]
+        }));
+        out
+    }
+
+    /// Floor (x, y) on a `footprint_spacing` grid over the disc of `footprint_radius` around the floor frame's origin.
+    fn footprint(&self) -> Vec<[f64; 2]> {
+        let radius = self.footprint_radius;
+        let grid = arange(-radius, radius + 1e-9, self.footprint_spacing);
+        grid.iter()
+            .flat_map(|&y| grid.iter().map(move |&x| [x, y]))
+            .filter(|&[x, y]| x.hypot(y) <= radius)
+            .collect()
+    }
+
+    /// Floor (x, y) from the footprint out to the nearest point per bearing within `view_fill_reach`, where that point is floor.
+    fn view_fill(&self, in_floor: &[Point3<f64>]) -> Vec<[f64; 2]> {
+        let (inner, reach, bin_deg) = (
+            self.footprint_radius,
+            self.view_fill_reach,
+            self.view_fill_bin_deg,
+        );
+        let bins = (360.0 / bin_deg).ceil() as usize;
+        let bin =
+            |x: f64, y: f64| (y.atan2(x).to_degrees().rem_euclid(360.0) / bin_deg).floor() as usize;
+        // Per bearing: the radius of its nearest point, and whether that point is floor.
+        let mut nearest: Vec<Option<(f64, bool)>> = vec![None; bins];
+        for point in in_floor {
+            let radius = point.x.hypot(point.y);
+            if radius > inner && radius < reach {
+                let slot = &mut nearest[bin(point.x, point.y)];
+                if slot.is_none_or(|(best, _)| radius < best) {
+                    *slot = Some((radius, point.z.abs() < 1e-3));
+                }
+            }
+        }
+        let limit: Vec<f64> = nearest
+            .iter()
+            .map(|slot| match slot {
+                Some((radius, true)) => *radius,
+                _ => 0.0,
+            })
+            .collect();
+        let grid = arange(-reach, reach + 1e-9, self.footprint_spacing);
+        grid.iter()
+            .flat_map(|&y| grid.iter().map(move |&x| [x, y]))
+            .filter(|&[x, y]| {
+                let radius = x.hypot(y);
+                radius > inner && radius < limit[bin(x, y)]
+            })
+            .collect()
+    }
+}
+
+/// numpy's `arange(start, stop, step)`: `start + i * step` while below `stop`.
+fn arange(start: f64, stop: f64, step: f64) -> Vec<f64> {
+    let count = ((stop - start) / step).ceil().max(0.0) as usize;
+    (0..count).map(|i| start + i as f64 * step).collect()
 }
 
 impl FloorPrior {
@@ -336,7 +479,95 @@ mod tests {
             min_height,
             rounds: 3,
             max_range: 6.0,
+            snap: snap(0.0, 0.0),
         }
+    }
+
+    /// HeadFloorPrior's defaults: snap from 15 cm under to 5 cm over the floor, footprint and view fill as given.
+    fn snap(footprint_radius: f64, view_fill_reach: f64) -> FloorSnap {
+        FloorSnap {
+            tolerance: 0.05,
+            min_height: -0.15,
+            footprint_radius,
+            footprint_spacing: 0.05,
+            view_fill_reach,
+            view_fill_bin_deg: 5.0,
+        }
+    }
+
+    #[test]
+    fn points_near_the_floor_slide_onto_it_and_obstacles_and_drops_do_not() {
+        let (map, floor_from_camera) = camera();
+        // Floor rays stopped (or carried on) until they met a plane offset from the floor: (offset, slides).
+        for (offset, slides) in [(0.03, true), (-0.1, true), (0.1, false), (-0.3, false)] {
+            let pin = &map.camera;
+            let points: Vec<[f32; 3]> = (0..map.height)
+                .step_by(8)
+                .flat_map(|row| (0..map.width).step_by(8).map(move |column| (column, row)))
+                .filter_map(|(column, row)| {
+                    let (depth, _) = floor_hit(&map, &floor_from_camera, column, row)?;
+                    let ray = Vector3::new(
+                        (column as f64 - pin.cx as f64) / pin.fx as f64,
+                        (row as f64 - pin.cy as f64) / pin.fy as f64,
+                        1.0,
+                    );
+                    // Camera 1 m up: reaching the plane `offset` from the floor scales the floor depth by (1 - offset).
+                    let point = ray * depth * (1.0 - offset);
+                    (depth < 6.0).then_some([point.x as f32, point.y as f32, point.z as f32])
+                })
+                .collect();
+            assert!(points.len() > 50);
+
+            let moved = snap(0.0, 0.0).apply(points, &floor_from_camera);
+
+            for [x, y, z] in moved {
+                let height = (floor_from_camera * Point3::new(x as f64, y as f64, z as f64)).z;
+                let expected = if slides { 0.0 } else { offset };
+                assert!(
+                    (height - expected).abs() < 1e-4,
+                    "offset {offset}: {height}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_footprint_is_a_disc_of_floor() {
+        let under = snap(0.325, 0.0).footprint();
+        assert!(under.iter().all(|&[x, y]| x.hypot(y) <= 0.325));
+        let disc = std::f64::consts::PI * 0.325f64.powi(2) / 0.05f64.powi(2);
+        assert!(
+            (under.len() as f64 - disc).abs() < 0.15 * disc,
+            "{}",
+            under.len()
+        );
+    }
+
+    #[test]
+    fn unseen_floor_is_filled_only_where_the_nearest_thing_seen_is_floor() {
+        // Floor seen 0.8 m out on bearings 0-30 deg, a box 0.6 m out on 40-50 deg with floor behind it; nothing seen behind.
+        let at = |radius: f64, degrees: f64, height: f64| {
+            let angle = degrees.to_radians();
+            Point3::new(radius * angle.cos(), radius * angle.sin(), height)
+        };
+        let seen: Vec<Point3<f64>> = (0..=30)
+            .map(|degrees| at(0.8, degrees as f64, 0.0))
+            .chain((40..=50).map(|degrees| at(0.6, degrees as f64, 0.3)))
+            .chain((40..=50).map(|degrees| at(0.8, degrees as f64, 0.0)))
+            .collect();
+
+        let filled = snap(0.325, 1.5).view_fill(&seen);
+
+        assert!(!filled.is_empty());
+        for &[x, y] in &filled {
+            let (radius, bearing) = (x.hypot(y), y.atan2(x).to_degrees());
+            assert!(radius > 0.325 && radius < 0.8, "{radius}");
+            assert!((-0.01..35.0).contains(&bearing), "{bearing}");
+        }
+        assert!(filled.iter().any(|&[x, y]| {
+            let bearing = y.atan2(x).to_degrees();
+            (10.0..15.0).contains(&bearing) && x.hypot(y) > 0.7
+        }));
     }
 
     #[test]

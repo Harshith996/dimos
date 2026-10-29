@@ -34,7 +34,7 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_ROTATION_DIAMETER_M,
     R1PRO_URDF_MANAGER_CONFIG,
 )
-from dimos.robot.galaxea.r1pro.head_depth import HeadFloorPrior, r1pro_head_depth
+from dimos.robot.galaxea.r1pro.head_depth import R1ProHeadDepth, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import R1ProPointLio
 from dimos.robot.galaxea.r1pro.rerun import r1pro_nav_rerun_config
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
@@ -74,7 +74,7 @@ r1pro_nav = autoconnect(
     ),
     # Head depth within a voxel of the floor lands in the floor's layer, so it is anchored as floor.
     r1pro_head_depth(tf_tolerance_s=TF_TOLERANCE_S, floor_tolerance_m=VOXEL_SIZE_M).remappings(
-        [(HeadFloorPrior, "head_cloud", "lidar_with_robot")]
+        [(R1ProHeadDepth, "head_cloud", "lidar_with_robot")]
     ),
     RayTracingVoxelMap.blueprint(
         voxel_size=VOXEL_SIZE_M,
