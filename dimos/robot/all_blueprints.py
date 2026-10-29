@@ -348,6 +348,7 @@ all_modules = {
     "replay-module": "dimos.memory.replay_module.ReplayModule",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge.RerunBridgeModule",
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
+    "robot-state-module": "dimos.sim2.robot_state.RobotStateModule",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",

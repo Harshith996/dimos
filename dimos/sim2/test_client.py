@@ -36,10 +36,11 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.sim2.client import SimRobotClient
 from dimos.sim2.discovery import collect_simulation
 from dimos.sim2.messages import StreamDescriptor
-from dimos.sim2.module import SimulationModule, SimulationSpec
+from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.imu.spec import Imu
 from dimos.sim2.sensors.spec import Mount
 from dimos.sim2.spec import RobotConfig, RobotInstance
+from dimos.sim2.world.spec import SimulationSpec
 
 
 class _RobotConfig(ModuleConfig):

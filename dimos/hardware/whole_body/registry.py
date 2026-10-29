@@ -44,6 +44,7 @@ class WholeBodyAdapterRegistry(LazyAdapterRegistry[WholeBodyAdapter]):
     manifest_roots = (
         ("dimos.hardware.whole_body", 2),
         ("dimos.simulation.adapters.whole_body", 1),
+        ("dimos.sim2.control", 1),
     )
 
 

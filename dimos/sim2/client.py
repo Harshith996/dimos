@@ -31,14 +31,33 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
+from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.sim2.messages import FrameMetadata, RobotFeedback
 from dimos.sim2.streams import SimStream
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.sim2.module import SimulationSpec
+    from dimos.sim2.world.spec import SimulationSpec
 
 logger = setup_logger()
+
+
+def connect_with_retry(client: SimRobotClient, timeout: float, *, poll: float = 0.2) -> None:
+    """Connect once the world describes the robot and publishes a fresh sample.
+
+    Modules start in parallel, so a consumer can ask before the world has
+    described its robots or before physics has published its first live sample.
+    Every failure before ``timeout`` elapses is retried; the last one is raised.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            client.connect(timeout=max(0.0, deadline - time.monotonic()))
+            return
+        except (RuntimeError, TimeoutError, OSError, RemoteError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(poll)
 
 
 class SimRobotClient:

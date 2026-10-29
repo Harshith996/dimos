@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,7 +32,9 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.sim2.spec import RobotInstance
+
+if TYPE_CHECKING:
+    from dimos.sim2.spec import RobotInstance
 
 Lifecycle = Literal["starting", "ready", "faulted", "closed"]
 
