@@ -43,25 +43,21 @@ Module booleans require an explicit value (`--go2connection.replay-exit true` or
 
 ### `dimos imitation`
 
-Run the complete manipulation imitation-learning workflow through one command
-group:
+| Command | Purpose |
+| --- | --- |
+| `dimos imitation control` | Attach one panel for available episode and policy controls |
+| `dimos imitation prepare RECORDING_DIR --output DATASET_DIR` | Convert saved episodes to a new LeRobot dataset directory |
+| `dimos imitation inspect ARTIFACT [--verbose] [--json]` | Inspect a recording or prepared dataset |
+| `dimos imitation visualize DATASET_DIR --episode 0` | View a local LeRobot episode in Rerun |
+| `dimos imitation train [LEROBOT_ARGS...]` | Forward arguments to isolated `lerobot-train`, including `--help` |
 
-```bash
-dimos run COLLECTION_BLUEPRINT --daemon --recording RECORDING_DIR --task TEXT
-dimos imitation collect
-dimos imitation prepare RECORDING_DIR --output DATASET_DIR
-dimos imitation inspect ARTIFACT
-dimos imitation train [LEROBOT_ARGS...]
-dimos run ROLLOUT_BLUEPRINT --daemon --policy-path CHECKPOINT --task TEXT
-dimos imitation rollout
-```
+The panel discovers episode and rollout controls in a stack launched with
+`dimos run`. Q detaches. **Stop stack…** requests shutdown after confirmation;
+an active episode must first be saved or discarded. `dimos stop` also shuts down
+the runtime.
 
-`dimos run` owns the robot stack. The collection and rollout panels attach by
-typed Spec; quitting either panel only disconnects. Stop the runtime separately
-with `dimos stop`. Rollout checks checkpoint and live-input readiness before
-accepting a start request. See the
-[imitation-learning guide](/docs/capabilities/manipulation/imitation-learning.md)
-for hardware safety, controls, artifact paths, and compatibility limits.
+See [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md)
+for tutorials, task guides, and compatibility limits.
 
 ### `dimos run`
 
