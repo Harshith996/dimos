@@ -22,13 +22,16 @@ import time
 from typing import Any
 
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.sim2.module import SimulationSpec
+from dimos.core.stream import In
+from dimos.sim2.messages import StateFrame
 from dimos.sim2.sensors.composition import Sensor
 from dimos.sim2.sensors.device import SensorDevice
 from dimos.sim2.sensors.reader import WorldReader
+from dimos.sim2.world.spec import SimulationSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -52,6 +55,7 @@ class SensorModuleConfig(ModuleConfig):
 class SensorModule(Module):
     config: SensorModuleConfig
     _simulation: SimulationSpec
+    snapshots: In[StateFrame]
     dedicated_worker = True
 
     def __init__(self, **kwargs: Any) -> None:
@@ -67,20 +71,19 @@ class SensorModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        description = self._simulation.describe()
+        self.reader = WorldReader(self._simulation.describe())
+        self.register_disposable(Disposable(self.snapshots.subscribe(self.reader.push)))
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, args=(description,), daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         error = self._ready.get(timeout=60)
         if error is not None:
             raise error
 
-    def _run(self, description: dict[str, Any]) -> None:
+    def _run(self) -> None:
         opened = False
-        reader_created = False
         try:
-            self.reader = WorldReader(description)
-            reader_created = True
+            # The device is constructed on its own thread: renderers own a GL context there.
             self.open()
             opened = True
             self._ready.put(None)
@@ -97,15 +100,13 @@ class SensorModule(Module):
             logger.exception("sim2 sensor failed", module=type(self).__name__)
         finally:
             self.close_sensor()
-            if reader_created:
-                self.reader.close()
 
     def open(self) -> None:
         raise NotImplementedError("sensor modules construct their measurement device")
 
     def capture(self) -> None:
         for measurement in self.device.poll():
-            if self.reader.channel.episode_id != measurement.episode:
+            if self.reader.latest_episode != measurement.episode:
                 break
             getattr(self, measurement.port).publish(measurement.value)
             self.device.published(measurement)

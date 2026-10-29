@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Named scene geometry and physical state, independent of MuJoCo indices."""
+"""The scene sidecar: names for bodies, fixture joints, regions and spawns, independent of MuJoCo indices."""
 
 from __future__ import annotations
 
 import math
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, PlainSerializer
 
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.spec.utils import Spec
 
 Vec3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
 
@@ -98,47 +97,3 @@ class SceneDescription(SceneRecord):
     spawns: dict[str, PoseValue] = Field(default_factory=dict)
     hidden_geom_groups: tuple[int, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
-
-
-class EntityState(SceneRecord):
-    pose: PoseValue
-    velocity: Vec3
-    angular_velocity: Vec3
-    bounds_min: Vec3
-    bounds_max: Vec3
-
-
-class RegionState(SceneRecord):
-    pose: PoseValue
-    size: Vec3
-
-
-class SceneState(SceneRecord):
-    """Privileged physical observation; never a substitute for robot perception.
-
-    A reset starts a new episode. Edits and resume also advance generation to
-    invalidate pending control/sensing work, but remain in the same episode.
-    """
-
-    world_id: str
-    scene_id: str
-    episode: int
-    generation: int
-    tick: int
-    sim_time: float
-    ts: float
-    entities: dict[str, EntityState]
-    robots: dict[str, PoseValue]
-    joints: dict[str, float]
-    regions: dict[str, RegionState]
-    contacts: tuple[tuple[str, str], ...]
-
-
-class SceneControlSpec(Spec, Protocol):
-    def status(self) -> dict[str, Any]: ...
-    def describe_scene(self) -> SceneDescription: ...
-    def scene_state(self) -> SceneState: ...
-    def set_scene_state(self, update: SceneUpdate) -> SceneState: ...
-    def reset(self, initial: SceneUpdate | None = None) -> SceneState: ...
-    def set_paused(self, paused: bool) -> None: ...
-    def set_truth_enabled(self, enabled: bool) -> None: ...

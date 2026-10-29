@@ -20,10 +20,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import Literal
 
 import mujoco
-from pydantic import BaseModel
 
 from dimos.sim2.sensors.composition import Sensor, mounted_sensors
 from dimos.sim2.sensors.imu.spec import Imu
@@ -129,8 +128,11 @@ class RobotInstance:
     control_imu: str | None = None
     wait_for_first_command: bool = False
     hold_gains: dict[str, tuple[float, float]] = field(default_factory=dict)
-    # Identity/configuration of the external controller; never executed by physics.
-    controller: dict[str, Any] = field(default_factory=dict)
+    # A command older than this holds the robot where it is, like a deadman.
+    command_timeout: float = 0.25
+    # Frame stamped on joint and IMU feedback and used as the TF child; default
+    # ``<robot_id>/<root_body>``.
+    frame_id: str | None = None
 
     def __post_init__(self) -> None:
         joints = {joint.name: joint for joint in self.config.joints}
@@ -151,16 +153,8 @@ class RobotInstance:
             raise ValueError(f"unknown control IMU {self.control_imu!r}")
         if any(s.name == self.control_imu and s.latency for s in self.config.mounted_sensors):
             raise ValueError("coherent control IMU feedback does not support a delayed measurement")
-
-
-@runtime_checkable
-class SimRobotSpec(Protocol):
-    """A connection describes its simulated device without opening real hardware."""
-
-    default_sim_scene: ClassVar[str]
-
-    @staticmethod
-    def describe_simulated_robot(config: BaseModel, scene: Path) -> RobotInstance: ...
+        if not math.isfinite(self.command_timeout) or self.command_timeout <= 0:
+            raise ValueError("command_timeout must be finite and positive")
 
 
 @dataclass(frozen=True)
@@ -170,11 +164,6 @@ class WorldConfig:
     timestep: float = 0.005
     snapshot_hz: float = 60.0
     sensors: tuple[Sensor, ...] = ()
-    # Parameter path -> evidence URI/revision. Empty means no calibration claim.
-    calibration_evidence: dict[str, str] = field(default_factory=dict)
-    # Caller-sampled variation, including its distribution, seed and sampled value.
-    # This records sampling; it does not change parameters or seed external RNGs.
-    sampled_variation: dict[str, Any] = field(default_factory=dict)
 
     @property
     def devices(self) -> tuple[tuple[str | None, Sensor], ...]:
