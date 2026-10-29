@@ -50,7 +50,7 @@ collect = "vendor_robot.collection:collect"
 dimos run vendor-robot.collect --daemon \
   --recorder.recording recordings/session-001 \
   --episodes.task "pick up the cup"
-dimos imitation collect
+dimos imitation control
 ```
 
 ## Use another episode controller

@@ -16,7 +16,7 @@
 
 from dataclasses import replace
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
@@ -29,6 +29,7 @@ from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS, openyam_hardware
+from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 
 OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
 
@@ -52,7 +53,7 @@ def _teach_robot() -> Blueprint:
         hardware,
         wb_config=WholeBodyConfig(kp=(0.0,) * len(OPENYAM_JOINTS), kd=OPENYAM_TEACH_DAMPING),
     )
-    return ControlCoordinator.blueprint(
+    return OpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[hardware],
         tasks=[

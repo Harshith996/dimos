@@ -1,6 +1,6 @@
 # Prepare and inspect a recording
 
-Start with a complete DimOS recording directory containing `schema.json` and its
+Start with a complete dimOS recording directory containing `schema.json` and its
 MCAP or SQLite payload. This workflow produces a local LeRobot dataset; it does
 not require a running robot. Copy the whole recording directory if conversion
 runs on another machine.

@@ -16,7 +16,6 @@ from threading import Lock
 
 import pytest
 
-from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tick_loop import TickLoop
@@ -32,6 +31,7 @@ from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection impor
     openyam_quest_collection,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
+from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 
 
 @pytest.mark.parametrize("blueprint", [openyam_teach_collection, openyam_quest_collection])
@@ -56,7 +56,7 @@ def test_collection_uses_normal_module_configuration(blueprint, tmp_path):
 def test_teach_collection_is_a_minimal_native_stack():
     modules = [atom.module for atom in openyam_teach_collection.active_blueprints]
     assert issubclass(modules[0], CollectionRecorder)
-    assert modules[1:] == [EpisodeMonitorModule, ControlCoordinator, CameraModule]
+    assert modules[1:] == [EpisodeMonitorModule, OpenYamCoordinator, CameraModule]
     assert len(modules) == 4
 
 
@@ -64,7 +64,7 @@ def test_teach_collection_sends_zero_stiffness_commands_on_every_tick(mocker):
     coordinator = next(
         atom
         for atom in openyam_teach_collection.active_blueprints
-        if atom.module is ControlCoordinator
+        if atom.module is OpenYamCoordinator
     )
     component = coordinator.kwargs["hardware"][0]
     adapter = mocker.Mock(spec=WholeBodyAdapter)
@@ -104,7 +104,7 @@ def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness(
 ) -> None:
     blueprint = openyam_teach_collection
     coordinator = next(
-        atom for atom in blueprint.active_blueprints if atom.module is ControlCoordinator
+        atom for atom in blueprint.active_blueprints if atom.module is OpenYamCoordinator
     )
     hardware = coordinator.kwargs["hardware"][0]
     assert hardware.joints == OPENYAM_JOINTS

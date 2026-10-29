@@ -31,7 +31,7 @@ from dimos.experimental.isolated_python.module import (
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 from dimos.imitation.dataprep.formats.lerobot.adapter import lerobot_project, run_lerobot_dataprep
 from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema
-from dimos.imitation.tui import CollectionApp, CollectionSession, RolloutApp, RolloutSession
+from dimos.imitation.tui import ControlApp, ControlSession
 from dimos.porcelain.dimos import Dimos
 from dimos.utils.cache import cache_usage_guard
 
@@ -50,32 +50,21 @@ def _require_new_path(path: Path) -> Path:
 
 
 @imitation_app.command()
-def collect() -> None:
-    """Attach episode controls to a blueprint started with dimos run."""
+def control() -> None:
+    """Attach episode and policy controls to the running learning stack."""
     driver = None
+    session = None
     try:
         driver = Dimos.connect()
-        CollectionApp(CollectionSession(driver)).run()
+        session = ControlSession(driver)
+        ControlApp(session).run()
     except Exception as exc:
-        typer.echo(f"Collection controls failed: {exc}", err=True)
+        typer.echo(f"Learning controls failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     finally:
-        if driver is not None:
-            driver.stop()
-
-
-@imitation_app.command()
-def rollout() -> None:
-    """Attach policy start/stop controls; quitting only disconnects."""
-    driver = None
-    try:
-        driver = Dimos.connect()
-        RolloutApp(RolloutSession(driver)).run()
-    except Exception as exc:
-        typer.echo(f"Rollout controls failed: {exc}", err=True)
-        raise typer.Exit(1) from exc
-    finally:
-        if driver is not None:
+        if session is not None:
+            session.close()
+        elif driver is not None:
             driver.stop()
 
 

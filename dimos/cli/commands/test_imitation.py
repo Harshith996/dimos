@@ -22,7 +22,6 @@ from typer.testing import CliRunner
 
 from dimos.cli.commands.imitation import imitation_app
 from dimos.cli.dimos import main
-from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.schema import RecordingSchema
 from dimos.robot.manipulators.openyam.blueprints.learning_collection import openyam_teach_collection
 from dimos.utils.data import get_project_root
@@ -50,46 +49,29 @@ def test_root_registers_imitation_when_removing_the_legacy_dataprep_command():
 def test_help_exposes_attached_controls_and_no_workflow_launcher():
     result = CliRunner().invoke(imitation_app, ["--help"])
     assert result.exit_code == 0
-    for command in ("collect", "rollout", "prepare", "inspect", "visualize", "train"):
+    for command in ("control", "prepare", "inspect", "visualize", "train"):
         assert command in result.output
     assert CliRunner().invoke(imitation_app, ["list"]).exit_code == 2
     assert CliRunner().invoke(imitation_app, ["run"]).exit_code == 2
-    assert CliRunner().invoke(imitation_app, ["collect", "--module", "foo"]).exit_code == 2
+    assert CliRunner().invoke(imitation_app, ["control", "--module", "foo"]).exit_code == 2
 
 
-@pytest.mark.parametrize(
-    ("command", "app"),
-    [
-        ("collect", "CollectionApp"),
-        ("rollout", "RolloutApp"),
-    ],
-)
-def test_live_commands_only_connect_and_detach(command, app, mocker):
-    driver = mocker.Mock()
-    driver.find_module_by_spec.return_value.get_status.return_value = EpisodeStatus(
-        ts=1.0, state="idle", episodes_saved=0, episodes_discarded=0
-    )
-    mocker.patch("dimos.cli.commands.imitation.Dimos.connect", return_value=driver)
-    ui = mocker.patch(f"dimos.cli.commands.imitation.{app}")
-    result = CliRunner().invoke(imitation_app, [command])
+def test_control_only_connects_and_detaches(mocker):
+    driver = mocker.patch("dimos.cli.commands.imitation.Dimos.connect").return_value
+    session = mocker.patch("dimos.cli.commands.imitation.ControlSession").return_value
+    ui = mocker.patch("dimos.cli.commands.imitation.ControlApp")
+    result = CliRunner().invoke(imitation_app, ["control"])
     assert result.exit_code == 0, result.output
     ui.return_value.run.assert_called_once_with()
+    session.close.assert_called_once_with()
     driver.run.assert_not_called()
-    driver.stop.assert_called_once_with()
 
 
-@pytest.mark.parametrize(
-    "error",
-    [
-        LookupError("No deployed module matches EpisodeControlSpec"),
-        ValueError("Multiple modules match EpisodeControlSpec"),
-    ],
-)
+@pytest.mark.parametrize("error", [LookupError("no controls"), ValueError("ambiguous")])
 def test_discovery_errors_close_connection_and_explain_failure(error, mocker):
-    driver = mocker.Mock()
-    driver.find_module_by_spec.side_effect = error
-    mocker.patch("dimos.cli.commands.imitation.Dimos.connect", return_value=driver)
-    result = CliRunner().invoke(imitation_app, ["collect"])
+    driver = mocker.patch("dimos.cli.commands.imitation.Dimos.connect").return_value
+    mocker.patch("dimos.cli.commands.imitation.ControlSession", side_effect=error)
+    result = CliRunner().invoke(imitation_app, ["control"])
     assert result.exit_code == 1
     assert str(error) in result.output
     driver.stop.assert_called_once_with()

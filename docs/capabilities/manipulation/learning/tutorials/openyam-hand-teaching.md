@@ -11,7 +11,7 @@ as a complete workflow.
 
 ## 1. Prepare the arm and camera
 
-Start with a working DimOS installation, a configured OpenYAM CAN interface, and
+Start with a working dimOS installation, a configured OpenYAM CAN interface, and
 a connected RGB camera. Follow the [OpenYAM integration guide](/docs/capabilities/manipulation/openyam_integration.md)
 for hardware setup. The example uses CAN interface `follower_l` and camera
 `/dev/video0`; replace them with your devices. Keep the same camera placement
@@ -27,42 +27,40 @@ Support the arm before stopping the runtime.
 Choose a new recording directory and a task description for the demonstration:
 
 ```bash skip
-dimos --can-port follower_l run openyam-teach-collection --daemon \
+dimos run openyam-teach-collection --daemon \
+  --controlcoordinator.can-port follower_l \
   --recorder.recording recordings/session-001 \
-  --recorder.format mcap \
   --episodes.task "pick up the cube" \
   --wrist.hardware.camera-index /dev/video0
 
-dimos imitation collect
+dimos imitation control
 ```
 
-The panel displays the task, recording state, elapsed time, and episode counts.
+The panel displays episode controls, the task, recording state, and episode counts.
 With the arm supported, confirm that you can guide it by hand. The profile uses
 measured seven-dimensional joint positions as both state and teaching action.
 
 ## 3. Record a demonstration
 
 1. Reset the scene for the task.
-2. Press **Space** to start an episode.
+2. Select **Start episode**.
 3. Guide the arm through the demonstration.
-4. Press **Space** again to save the episode. The panel returns to ready and the
+4. Select **Save episode**. The panel returns to ready and the
    saved count increases.
 
-To discard an active take, press **D** instead. Repeat these steps to collect
+To discard an active take, select **Discard** instead. Repeat these steps to collect
 additional demonstrations. Saving an episode marks a dataset boundary; it does
 not stop gravity compensation or assess whether the task succeeded.
 
 ## 4. Finish collection
 
-Save or discard the final take, then press **Q** to detach. During an active
-episode, Q asks for confirmation; press Q again to detach.
+Save or discard the final take. Select **Stop stack…**, support the arm, then
+select **Confirm shutdown**. Shutdown ends recording and stops the robot runtime.
 
-Recording and the robot continue after the panel exits. You can reattach with
-`dimos imitation collect`. Support the arm, then shut down the stack:
-
-```bash skip
-dimos stop
-```
+To leave the stack running, press **Q** to detach instead. During an active
+episode, press Q again to confirm detaching. Reattach with
+`dimos imitation control`. If the panel is unavailable, support the arm and run
+`dimos stop` from another terminal.
 
 The recording directory contains `schema.json` and `recording.mcap`.
 
@@ -76,9 +74,8 @@ dimos imitation prepare recordings/session-001 --output datasets/session-001
 dimos imitation inspect datasets/session-001
 ```
 
-Preparation prints `Wrote dataset:` followed by the output path. The dataset
-summary shows frame counts and features. Discarded and incomplete episodes are
-not exported. If validation fails, use the
+Check that the exported episode count matches the takes you saved. Discarded
+and incomplete episodes are not exported. If validation fails, use the
 [data preparation guide](/docs/capabilities/manipulation/learning/guides/prepare-and-inspect-data.md).
 
 On a machine with a graphical display, open the first exported episode:

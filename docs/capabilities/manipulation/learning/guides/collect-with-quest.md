@@ -10,22 +10,22 @@ Choose new recording and dataset paths. Configure your CAN interface and wrist
 camera, then launch the collection stack:
 
 ```bash skip
-dimos --can-port follower_l run openyam-quest-collection --daemon \
+dimos run openyam-quest-collection --daemon \
+  --controlcoordinator.can-port follower_l \
   --recorder.recording recordings/quest-001 \
-  --recorder.format mcap \
   --episodes.task "pick up the cube" \
   --wrist.hardware.camera-index /dev/video0
-dimos imitation collect
+dimos imitation control
 ```
 
 Use your configured Quest teleoperation connection to control the arm. The panel
 controls episode boundaries, not teleoperation:
 
-| Key | Action |
+| Control | Action |
 | --- | --- |
-| Space, while ready | Start an episode |
-| Space, while recording | Save the episode |
-| D, while recording | Discard the episode |
+| Start episode | Start a take |
+| Save episode | Save the active take |
+| Discard | Discard the active take |
 | Q | Detach; during recording, press Q again to confirm |
 
 The profile records measured joint state and the main coordinator's
@@ -40,13 +40,12 @@ same episode controls:
 ```bash skip
 dimos run dual-openyam-quest-collection --daemon \
   --recorder.recording recordings/fold-001 \
-  --recorder.format mcap \
   --episodes.task "fold the towel" \
   --controlcoordinator.left-can-port follower_l \
   --controlcoordinator.right-can-port follower_r \
   --left-wrist.hardware.camera-index /dev/video0 \
   --right-wrist.hardware.camera-index /dev/video2
-dimos imitation collect
+dimos imitation control
 ```
 
 The dual profile uses 640x480 RGB images at 30 Hz with a 20 ms alignment
@@ -63,8 +62,9 @@ access with `--manipulationmodule.visualization.host 127.0.0.1`.
 
 ## Finish and prepare the recording
 
-Save or discard the final take. Detach, support the arms, then stop the runtime
-with `dimos stop`. Detaching or losing the panel connection does not stop the
-robot or recorder. Reattach with `dimos imitation collect` if needed.
+Save or discard the final take. Select **Stop stack…**, support the arms, and
+confirm shutdown. Press **Q** to detach instead if you want the stack to keep
+running. Detaching or losing the connection does not stop the robot or recorder.
+Reattach with `dimos imitation control` if needed.
 
 Continue with [Prepare and inspect a recording](/docs/capabilities/manipulation/learning/guides/prepare-and-inspect-data.md).

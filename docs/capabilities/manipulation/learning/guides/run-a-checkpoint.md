@@ -8,25 +8,27 @@ with a compatible pretrained-model directory, such as
 `outputs/openyam-act/checkpoints/last/pretrained_model`.
 
 ```bash skip
-dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
+dimos run openyam-lerobot-rollout --daemon \
+  --controlcoordinator.can-port follower_l \
   --policy.policy-path CHECKPOINT_DIR \
   --policy.task "pick up the red block" \
   --policy.device cuda \
   --wristcamera.hardware.camera-index 0
-dimos imitation rollout
+dimos imitation control
 ```
 
 Use `openyam-lerobot-quest-rollout` for the graph with Quest takeover.
-The optional rollout panel discovers `RolloutControlSpec` and shows policy
-state and errors. Space explicitly starts/stops policy execution. Before
+The shared control panel discovers `RolloutControlSpec` and shows policy
+state and errors. Select **Start policy** to request execution. Before
 starting, preflight loads the checkpoint and checks the control task and fresh
 observations without sending a trajectory. A failed check leaves the policy
 stopped and reports the error.
 
-Q only detaches, even while the policy is active. Run `dimos imitation rollout`
-again to reattach. To finish, stop the policy with Space, detach, support the
-arm, and use `dimos stop` to shut down the runtime. Neither UI is a deadman
-switch: lost connectivity does not guarantee stopping motion.
+Q only detaches, even while the policy is active. Run `dimos imitation control`
+again to reattach. Select **Stop policy** to stop execution while keeping the stack running.
+To finish, select **Stop stack…**, support the arm, and confirm shutdown.
+The panel is not a deadman switch: lost connectivity does not guarantee stopping
+motion. Use `dimos stop` if the panel is unavailable.
 
 See the [LeRobot module contract](/dimos/imitation/policy/lerobot/README.md)
 for checkpoint and control requirements. Rollout uses the existing single-arm,

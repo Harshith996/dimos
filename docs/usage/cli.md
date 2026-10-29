@@ -45,15 +45,16 @@ Module booleans require an explicit value (`--go2connection.replay-exit true` or
 
 | Command | Purpose |
 | --- | --- |
-| `dimos imitation collect` | Attach episode start, save, and discard controls |
+| `dimos imitation control` | Attach one panel for available episode and policy controls |
 | `dimos imitation prepare RECORDING_DIR --output DATASET_DIR` | Convert saved episodes to a new LeRobot dataset directory |
 | `dimos imitation inspect ARTIFACT [--verbose] [--json]` | Inspect a recording or prepared dataset |
 | `dimos imitation visualize DATASET_DIR --episode 0` | View a local LeRobot episode in Rerun |
 | `dimos imitation train [LEROBOT_ARGS...]` | Forward arguments to isolated `lerobot-train`, including `--help` |
-| `dimos imitation rollout` | Attach policy start and stop controls |
 
-Collection and rollout panels attach to a stack launched with `dimos run`.
-Quitting a panel only disconnects; `dimos stop` shuts down the runtime.
+The panel discovers episode and rollout controls in a stack launched with
+`dimos run`. Q detaches. **Stop stack…** requests shutdown after confirmation;
+an active episode must first be saved or discarded. `dimos stop` also shuts down
+the runtime.
 
 See [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md)
 for tutorials, task guides, and compatibility limits.

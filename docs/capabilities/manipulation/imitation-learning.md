@@ -1,11 +1,13 @@
 # Imitation learning
 
-Record demonstrations with a DimOS robot stack, convert saved episodes into a
+Record demonstrations with a dimOS robot stack, convert saved episodes into a
 LeRobot dataset, train a policy, and run a compatible checkpoint.
 
 `dimos run` launches the robot, cameras, and collection or policy modules.
-`dimos imitation` provides attached operator panels and offline data tools.
-Quitting a panel only detaches; use `dimos stop` to stop the runtime.
+`dimos imitation control` opens one panel with the episode and policy controls
+available in that stack. Q detaches; **Stop stack…** shuts down the runtime after
+confirmation. Other `dimos imitation` commands prepare, inspect, visualize, and
+train from saved data.
 
 ## Start with your task
 
@@ -13,7 +15,7 @@ Quitting a panel only detaches; use `dimos stop` to stop the runtime.
 | --- | --- | --- |
 | First time, with one OpenYAM arm and a wrist camera | [Collect demonstrations and train an OpenYAM policy](/docs/capabilities/manipulation/learning/tutorials/openyam-hand-teaching.md) | A recording, LeRobot dataset, and training outputs |
 | Working Quest teleoperation, with one or two OpenYAM arms | [Collect demonstrations with Quest](/docs/capabilities/manipulation/learning/guides/collect-with-quest.md) | Saved demonstrations |
-| An existing DimOS recording | [Prepare and inspect a recording](/docs/capabilities/manipulation/learning/guides/prepare-and-inspect-data.md) | A checked, viewable LeRobot dataset |
+| An existing dimOS recording | [Prepare and inspect a recording](/docs/capabilities/manipulation/learning/guides/prepare-and-inspect-data.md) | A checked, viewable LeRobot dataset |
 | A compatible pretrained checkpoint | [Run a compatible checkpoint](/docs/capabilities/manipulation/learning/guides/run-a-checkpoint.md) | Explicit policy start and stop controls |
 | A robot in your own Python package | [Add a collection blueprint](/docs/capabilities/manipulation/learning/guides/add-a-collection-blueprint.md) | Typed recording inputs and discoverable Blueprint |
 
