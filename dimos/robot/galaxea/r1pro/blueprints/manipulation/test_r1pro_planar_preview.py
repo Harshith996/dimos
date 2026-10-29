@@ -15,7 +15,6 @@
 """R1 Pro real-hardware and planar-preview blueprint contracts."""
 
 from dataclasses import replace
-import math
 import os
 import platform
 
@@ -117,7 +116,7 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         wait_until(
             lambda: coordinator.task_invoke("base_trajectory", "get_status", {}).state
             is not TrajectoryState.EXECUTING,
-            timeout=math.inf,
+            timeout=_DRIVE_TIMEOUT_S,
         )
         status = coordinator.task_invoke("base_trajectory", "get_status", {})
         assert status.state is TrajectoryState.COMPLETED
