@@ -30,11 +30,15 @@ from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
 from dimos.evals.environments.base import Environment, EnvironmentConfig
-from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
+from dimos.evals.environments.lib.launch import (
+    default_mcp_url,
+    launched_mcp_url,
+    validate_blueprints,
+)
 from dimos.evals.types import RunningEnvironment
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -94,7 +98,7 @@ class Sim(Environment):
     def latest_pose(self, recording: Store) -> PoseStamped:
         """Return achieved pose for settling; raise LookupError before the first sample."""
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         if self.config.attach:
             if agent.config.modules:
                 raise RuntimeError(
@@ -131,7 +135,9 @@ class Sim(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-        mcp_url = default_mcp_url()
+            mcp_url = launched_mcp_url(proc.process, deadline)
+        else:
+            mcp_url = default_mcp_url()
         adapter = McpAdapter(mcp_url)
         if proc is not None:
             process = proc.process
