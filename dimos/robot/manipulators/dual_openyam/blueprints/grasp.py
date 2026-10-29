@@ -140,6 +140,20 @@ def dual_openyam_grasp_model_config() -> RobotModelConfig:
     return config
 
 
+def dual_openyam_contact_model_config() -> RobotModelConfig:
+    """The grasp model without the modelled workcell, for the grasp contact check.
+
+    The check stands the arm in the camera's scene cloud, which already holds the real
+    table. The modelled slab top is 1 cm under the fitted table top and the camera puts
+    the table 3 to 15 mm low with 1 cm of noise, so table points land inside the slab and
+    the checker reads a static link on a scene point as a collision wherever the gripper
+    is: every grasp dropped (scene 56 runs, 2026-10-28/29). The planner keeps the slab.
+    """
+    config = dual_openyam_grasp_model_config()
+    config.model = config.model.without_joint_subtrees("workcell_fixed_joint")
+    return config
+
+
 def dual_openyam_grasp_view() -> Any:
     """Rerun layout: the three cameras as tiles on the left, the scene on the right."""
     # Heavy optional dependency, loaded only when the bridge builds its layout.
@@ -243,9 +257,10 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         # 0.10 puts the pre-place above the fingers-down reach ceiling.
         PickAndPlaceModule.blueprint(
             planning_frame="world",
-            # The contact check drops grasps the arm cannot reach or that would hit the
-            # table, a neighbour, or the object off the fingertips, before any IK.
-            robot=model,
+            # robot=dual_openyam_contact_model_config() would turn on the grasp contact
+            # check. Off: the checker takes the overhead frame as the scene and only
+            # clears a 15 cm sphere at each tool tip, so the arm's own shoulder in the
+            # image collides with the arm at every grasp (scene 56 replay, 2026-10-29).
             pregrasp_offset=0.05,
             # Empty closes read 0.01 to 0.02 on these jaws and the thinnest benchmark object,
             # a toothpaste carton end, settles at 0.05 to 0.07; the 0.10 default threw it away.
@@ -274,11 +289,6 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
             max_distance=1.5,
             use_aabb=True,
             max_obstacle_width=0.06,
-            # Overhead view: a mask edge holds table and the object's slanted sides, and the
-            # 3 px default made the Spam can's cloud 12 x 10 cm for a 5 x 8 cm tin, wider than
-            # the 94 mm jaws in every direction, so the grasp contact check dropped every
-            # heuristic grasp. 10 px gives 8.4 x 6.4 cm (scene 56 recording, 2026-10-28).
-            mask_erode_pixels=10,
         ),
         dual_openyam_grasp_rerun(),
         DualOpenYamCoordinator.blueprint(

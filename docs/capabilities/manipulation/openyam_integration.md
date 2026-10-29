@@ -151,12 +151,19 @@ folded rest pose on the supports. The hardware gains in `config.py` are the
 ones chosen by the step sweeps of the same calibration. The package's `SOURCE.md` records where every
 number comes from. v5 restores the i2rt model's prismatic fingertip joints (zero closed,
 47 mm open each) so the pick's grasp contact check can open and close the fingers; the
-planner lists the arm joints only and keeps them closed. The check is on in the
-grasp stacks through `robot=` on `PickAndPlaceModule` and the model's `GripperConfig`
-(fingertip links as the pads): grasps the arm cannot reach, that would touch the
-table or a neighbour, or that close on nothing are dropped before any motion, and
-the GraspGenX stack hands it all 500 samples. A revised model ships under a new package name, because LFS
-extraction caches by directory name.
+planner lists the arm joints only and keeps them closed. The model's `GripperConfig`
+(fingertip links as the pads) and `dual_openyam_contact_model_config()` are what
+`robot=` on `PickAndPlaceModule` needs to turn the check on, and the GraspGenX stack
+hands it all 500 samples. The check is off in the grasp stacks for now. Replaying the
+scene 56 runs of 2026-10-28/29 through it found two things the overhead camera does
+to it: the camera's table points land inside the modelled slab (its top is 1 cm under
+the fitted table top, the camera is 3 to 15 mm low with 1 cm of noise) and the checker
+counts a static link on a scene point as a collision wherever the gripper is, which
+the contact model avoids by leaving the `workcell` link out; and the arm's own shoulder
+in the overhead frame stays in the scene, since the checker only clears a 15 cm sphere
+at each tool tip, so the arm collides with its own image at every grasp. The second
+needs the checker to filter the robot's body out of the scene. A revised model ships
+under a new package name, because LFS extraction caches by directory name.
 
 ## Safety
 

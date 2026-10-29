@@ -34,6 +34,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_TABLE_TOP_Z,
+    dual_openyam_contact_model_config,
     dual_openyam_grasp_model_config,
 )
 
@@ -87,7 +88,7 @@ MID = DUAL_OPENYAM_TABLE_TOP_Z + HEIGHT / 2
 
 @pytest.fixture(scope="module")
 def checker() -> GraspContactChecker:
-    return GraspContactChecker(dual_openyam_grasp_model_config(), "right_manipulator")
+    return GraspContactChecker(dual_openyam_contact_model_config(), "right_manipulator")
 
 
 def _clear(checker: GraspContactChecker, grasp: Pose, target: NDArray, *scene: NDArray) -> bool:
@@ -153,3 +154,14 @@ def test_rejects_a_grasp_that_puts_the_finger_carriage_into_a_tall_object(
     top = DUAL_OPENYAM_TABLE_TOP_Z + 0.12
     assert _clear(checker, _pose(X, Y, top - 0.04), tall, _table(hole=0.04))
     assert not _clear(checker, _pose(X, Y, top - 0.08), tall, _table(hole=0.04))
+
+
+def test_the_modelled_slab_swallows_the_camera_table_but_the_contact_model_does_not(
+    checker: GraspContactChecker,
+) -> None:
+    # The overhead D405 puts the table 3 to 15 mm under the fitted top; the slab top is 10 mm
+    # under it. With the workcell in the model every grasp collides, wherever the gripper is.
+    low_table = _table(hole=0.03) - np.array([0.0, 0.0, 0.012])
+    with_slab = GraspContactChecker(dual_openyam_grasp_model_config(), "right_manipulator")
+    assert not _clear(with_slab, _pose(X, Y, MID), CAN, low_table)
+    assert _clear(checker, _pose(X, Y, MID), CAN, low_table)

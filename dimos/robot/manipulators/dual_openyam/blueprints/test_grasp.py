@@ -35,6 +35,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_GRIPPER_TASKS,
     DUAL_OPENYAM_RECORD_TOPICS,
     DUAL_OPENYAM_VIEW_TOPICS,
+    dual_openyam_contact_model_config,
     dual_openyam_grasp,
     dual_openyam_grasp_graspgenx,
     dual_openyam_grasp_model_config,
@@ -159,31 +160,37 @@ def test_rerun_bridge_throttles_the_image_streams() -> None:
     assert "world/color_image" in atom.kwargs["max_hz"]
 
 
-def test_registration_erodes_masks_for_the_overhead_view() -> None:
+def test_registration_keeps_the_default_mask_erosion() -> None:
     from dimos.perception.experimental.object_scene_registration import (
         ObjectSceneRegistrationModule,
     )
 
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
         atom = _atom(stack, ObjectSceneRegistrationModule)
-        assert atom.kwargs["mask_erode_pixels"] == 10
+        assert "mask_erode_pixels" not in atom.kwargs
         assert atom.kwargs["distance_threshold"] == 0.03
 
 
-def test_pick_checks_grasps_against_the_openyam_fingertips() -> None:
+def test_contact_check_is_off_until_the_checker_filters_the_arm_out_of_the_scene() -> None:
     for stack in (dual_openyam_grasp, dual_openyam_grasp_graspgenx):
-        robot = _atom(stack, PickAndPlaceModule).kwargs["robot"]
-        assert robot.gripper is not None
-        assert set(robot.gripper.pad_links) == {
-            f"{side}_tip_{jaw}" for side in ("left", "right") for jaw in ("left", "right")
-        }
-        assert set(robot.gripper.finger_joints) == {
-            f"{side}_finger_{jaw}_joint" for side in ("left", "right") for jaw in ("left", "right")
-        }
-        assert all(
-            opened == -0.04695 and closed == 0.0
-            for opened, closed in robot.gripper.finger_joints.values()
-        )
-        assert len(robot.gripper.joint_positions()) == 5
-        assert {g.tip_link for g in robot.planning_groups} == {"left_tcp", "right_tcp"}
-        assert robot is _atom(stack, ManipulationModule).kwargs["model"]
+        assert "robot" not in _atom(stack, PickAndPlaceModule).kwargs
+        assert _atom(stack, ManipulationModule).kwargs["model"].gripper is not None
+
+
+def test_contact_model_is_the_grasp_model_without_the_workcell() -> None:
+    robot = dual_openyam_contact_model_config()
+    assert robot.gripper is not None
+    assert set(robot.gripper.pad_links) == {
+        f"{side}_tip_{jaw}" for side in ("left", "right") for jaw in ("left", "right")
+    }
+    assert set(robot.gripper.finger_joints) == {
+        f"{side}_finger_{jaw}_joint" for side in ("left", "right") for jaw in ("left", "right")
+    }
+    assert all(
+        opened == -0.04695 and closed == 0.0
+        for opened, closed in robot.gripper.finger_joints.values()
+    )
+    assert len(robot.gripper.joint_positions()) == 5
+    assert {g.tip_link for g in robot.planning_groups} == {"left_tcp", "right_tcp"}
+    assert 'name="workcell"' not in robot.model.load().xml
+    assert 'name="workcell"' in dual_openyam_grasp_model_config().model.load().xml
